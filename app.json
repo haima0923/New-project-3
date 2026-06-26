@@ -1,0 +1,50 @@
+{
+  "pages": [
+    "pages/onboarding/onboarding",
+    "pages/dashboard/dashboard",
+    "pages/input/input",
+    "pages/quotations/quotations",
+    "pages/orders/orders",
+    "pages/receivables/receivables",
+    "pages/todos/todos",
+    "pages/pending/pending",
+    "pages/query/query",
+    "pages/customer/customer"
+  ],
+  "window": {
+    "navigationBarTitleText": "生意备忘秘书",
+    "navigationBarBackgroundColor": "#1668dc",
+    "navigationBarTextStyle": "white",
+    "backgroundTextStyle": "light",
+    "backgroundColor": "#f5f7fb"
+  },
+  "tabBar": {
+    "color": "#667085",
+    "selectedColor": "#1668dc",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/dashboard/dashboard",
+        "text": "看板"
+      },
+      {
+        "pagePath": "pages/input/input",
+        "text": "记一笔"
+      },
+      {
+        "pagePath": "pages/quotations/quotations",
+        "text": "报价"
+      },
+      {
+        "pagePath": "pages/orders/orders",
+        "text": "订单"
+      },
+      {
+        "pagePath": "pages/receivables/receivables",
+        "text": "收款"
+      }
+    ]
+  },
+  "style": "v2"
+}

@@ -1,0 +1,65 @@
+<view class="page">
+  <block wx:if="{{!id}}">
+    <view class="page-title">客户档案</view>
+    <view class="page-subtitle">客户是底层数据，不强迫你一开始填完整。</view>
+    <view wx:if="{{!customers.length}}" class="empty">
+      <view class="card-title">还没有客户</view>
+      <view class="muted">第一笔报价、订单或欠款保存后，会自动生成客户档案。</view>
+    </view>
+    <view wx:for="{{customers}}" wx:key="id" class="card" data-id="{{item.id}}" bindtap="openCustomer">
+      <view class="row-between">
+        <view class="card-title">{{item.display}}</view>
+        <view wx:if="{{item.duplicateSuspect}}" class="pill pill-warning">疑似重复</view>
+      </view>
+      <view class="muted">{{item.isTemporary ? '临时客户，可后补手机号' : '已记录手机号指纹'}}</view>
+    </view>
+  </block>
+
+  <block wx:else>
+    <view class="page-title">{{customer.name || '客户详情'}}</view>
+    <view class="page-subtitle">{{customer.company || customer.region || '临时客户，可后续补充资料'}}</view>
+
+    <view class="card">
+      <view class="card-title">快捷操作</view>
+      <view class="button-row">
+        <button class="primary-button" bindtap="goInput">记一笔</button>
+      </view>
+    </view>
+
+    <view wx:if="{{duplicateCandidates.length}}" class="card">
+      <view class="card-title">疑似重复客户</view>
+      <view class="muted">如果是同一个人，合并后报价、订单、应收都会归到当前客户下面。</view>
+      <view wx:for="{{duplicateCandidates}}" wx:key="id" class="duplicate-item">
+        <view class="duplicate-title">{{item.display}}</view>
+        <view class="button-row">
+          <button class="primary-button" data-id="{{item.id}}" catchtap="mergeDuplicate">合并到当前客户</button>
+          <button class="secondary-button" data-id="{{item.id}}" catchtap="keepSeparate">保留为不同客户</button>
+        </view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">报价历史 {{quotations.length}}</view>
+      <view wx:for="{{quotations}}" wx:key="id" class="list-item">
+        <view>{{item.productName}} {{item.totalAmount || '-'}} 元</view>
+        <view class="muted">{{item.quoteDate}} · {{item.status}}</view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">订单历史 {{orders.length}}</view>
+      <view wx:for="{{orders}}" wx:key="id" class="list-item">
+        <view>{{item.productName}} · {{item.status}}</view>
+        <view class="muted">交期 {{item.requiredDeliveryDate || '-'}}</view>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">收款记录 {{receivables.length}}</view>
+      <view wx:for="{{receivables}}" wx:key="id" class="list-item">
+        <view>{{item.amount || 0}} 元 · {{item.status}}</view>
+        <view class="muted">到期 {{item.dueDate || '-'}}</view>
+      </view>
+    </view>
+  </block>
+</view>

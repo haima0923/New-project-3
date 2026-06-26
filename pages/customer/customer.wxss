@@ -1,0 +1,18 @@
+.list-item view:first-child {
+  color: #101828;
+  font-size: 28rpx;
+  line-height: 1.6;
+}
+
+.duplicate-item {
+  border-top: 1rpx solid #eaecf0;
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+}
+
+.duplicate-title {
+  color: #101828;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.5;
+}

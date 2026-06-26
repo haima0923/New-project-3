@@ -1,0 +1,44 @@
+.hero-card {
+  padding: 34rpx 28rpx;
+}
+
+.hero-number {
+  color: #1668dc;
+  display: block;
+  font-size: 84rpx;
+  font-weight: 800;
+  line-height: 1;
+  margin: 10rpx 0;
+}
+
+.dashboard-grid {
+  margin-top: 20rpx;
+}
+
+.stat-card {
+  min-height: 210rpx;
+}
+
+.empty-button {
+  margin-top: 28rpx;
+  width: 100%;
+}
+
+.todo-line {
+  align-items: center;
+  border-top: 1rpx solid #eaecf0;
+  display: flex;
+  justify-content: space-between;
+  padding: 18rpx 0;
+}
+
+.todo-line:first-of-type {
+  margin-top: 14rpx;
+}
+
+.todo-title {
+  color: #101828;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.4;
+}

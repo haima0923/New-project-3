@@ -1,0 +1,24 @@
+<view class="page">
+  <view class="page-title">待整理记录</view>
+  <view class="page-subtitle">AI 没听全或你还不确定的内容，先放在这里，不会丢。</view>
+
+  <view wx:if="{{!notes.length}}" class="empty">
+    <view class="card-title">没有待整理记录</view>
+    <view class="muted">信息完整的记录会直接进入报价、订单或收款。</view>
+  </view>
+
+  <view wx:for="{{notes}}" wx:key="id" class="card">
+    <view class="row-between">
+      <view class="card-title">{{item.intentLabel}}</view>
+      <view class="pill pill-warning">待整理</view>
+    </view>
+    <view class="muted">{{item.reasonText}}</view>
+    <view class="divider"></view>
+    <view class="note-text">{{item.originalText}}</view>
+    <view class="muted">这条还缺：{{item.missingText}}</view>
+    <view class="button-row">
+      <button class="secondary-button" data-id="{{item.id}}" bindtap="ignoreNote">忽略</button>
+      <button class="primary-button" data-id="{{item.id}}" bindtap="editNote">继续整理</button>
+    </view>
+  </view>
+</view>

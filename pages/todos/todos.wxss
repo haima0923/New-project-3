@@ -1,0 +1,41 @@
+.todo-section {
+  margin-bottom: 24rpx;
+}
+
+.section-title {
+  color: #344054;
+  font-size: 28rpx;
+  font-weight: 700;
+  margin: 10rpx 4rpx 14rpx;
+}
+
+.todo-card {
+  margin-bottom: 16rpx;
+}
+
+.todo-detail {
+  color: #475467;
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 12rpx;
+}
+
+.note-text {
+  background: #f9fafb;
+  border-radius: 12rpx;
+  color: #475467;
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 14rpx;
+  padding: 16rpx;
+}
+
+.todo-button {
+  margin-top: 18rpx;
+  width: 100%;
+}
+
+.empty-button {
+  margin-top: 28rpx;
+  width: 100%;
+}

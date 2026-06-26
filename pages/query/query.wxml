@@ -1,0 +1,22 @@
+<view class="page">
+  <view class="page-title">问一句</view>
+  <view class="page-subtitle">只查数据，不直接修改。可以问欠款、交期、报价和最近交易。</view>
+
+  <view class="card">
+    <textarea class="textarea" value="{{question}}" bindinput="onQuestionInput" placeholder="例如：谁还欠我钱？月底前要交哪些货？王总上次报多少？" />
+    <button class="primary-button ask-button" loading="{{asking}}" disabled="{{asking}}" bindtap="ask">{{askButtonText}}</button>
+  </view>
+
+  <view class="example-row">
+    <view class="pill" data-text="谁还欠我钱？" bindtap="fillExample">谁还欠我钱？</view>
+    <view class="pill" data-text="月底前要交哪些货？" bindtap="fillExample">月底前要交哪些货？</view>
+    <view class="pill" data-text="哪些报价还没转订单？" bindtap="fillExample">哪些报价还没转订单？</view>
+  </view>
+
+  <view wx:if="{{answer}}" class="card">
+    <view class="card-title">{{answer.title}}</view>
+    <view wx:if="{{assistText}}" class="muted">{{assistText}}</view>
+    <view class="divider"></view>
+    <view wx:for="{{answer.lines}}" wx:key="*this" class="answer-line">{{item}}</view>
+  </view>
+</view>

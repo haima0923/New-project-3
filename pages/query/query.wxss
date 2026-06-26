@@ -1,0 +1,17 @@
+.ask-button {
+  margin-top: 20rpx;
+}
+
+.example-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14rpx;
+  margin-bottom: 20rpx;
+}
+
+.answer-line {
+  color: #344054;
+  font-size: 28rpx;
+  line-height: 1.7;
+  padding: 10rpx 0;
+}

@@ -1,0 +1,17 @@
+<view class="page onboarding">
+  <view class="page-title">老板的生意备忘秘书</view>
+  <view class="page-subtitle">谁欠钱、哪单要交、哪个报价要跟，打开就知道。</view>
+
+  <view class="card">
+    <view class="card-title">你主要做什么品类？</view>
+    <view class="muted">这一步可以跳过，后面也能补。首版不会强制你填复杂资料。</view>
+    <picker mode="selector" range="{{industries}}" bindchange="chooseIndustry">
+      <view class="input industry-picker">
+        {{selectedIndustry || '选择行业'}}
+      </view>
+    </picker>
+  </view>
+
+  <button class="primary-button" bindtap="start">开始记第一笔</button>
+  <button class="secondary-button skip-button" bindtap="skip">先跳过</button>
+</view>

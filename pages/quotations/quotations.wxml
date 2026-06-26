@@ -1,0 +1,84 @@
+<view class="page">
+  <view class="page-title">报价</view>
+  <view class="page-subtitle">报价先进入待确认，到跟进时间会提醒。</view>
+
+  <view wx:if="{{allQuotations.length}}" class="compact-filter-bar">
+    <input class="compact-search-input" value="{{filterKeyword}}" data-field="filterKeyword" bindinput="changeTextFilter" confirm-type="search" placeholder="搜客户或产品" />
+    <button class="compact-filter-button {{hasAdvancedFilters ? 'compact-filter-button-active' : ''}}" bindtap="toggleFilters">{{showFilters ? '收起' : '筛选'}}</button>
+  </view>
+
+  <view wx:if="{{allQuotations.length && showFilters}}" class="filter-panel">
+    <view class="filter-panel-header">
+      <view class="filter-panel-title">高级筛选</view>
+      <button class="filter-panel-close" bindtap="toggleFilters">完成</button>
+    </view>
+    <view class="filter-grid">
+      <view class="field">
+        <text class="label">客户</text>
+        <input class="input" value="{{filterCustomer}}" data-field="filterCustomer" bindinput="changeTextFilter" placeholder="输入客户称呼" />
+      </view>
+      <view class="field">
+        <text class="label">产品</text>
+        <input class="input" value="{{filterProduct}}" data-field="filterProduct" bindinput="changeTextFilter" placeholder="输入产品名" />
+      </view>
+      <view class="field">
+        <text class="label">报价日期</text>
+        <picker mode="date" value="{{filterQuoteDate}}" data-field="filterQuoteDate" bindchange="changeDateFilter">
+          <view class="filter-date-input">
+            <text wx:if="{{filterQuoteDate}}">{{filterQuoteDate}}</text>
+            <text wx:else class="filter-placeholder">选择日期</text>
+          </view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="label">跟进日期</text>
+        <picker mode="date" value="{{filterDueDate}}" data-field="filterDueDate" bindchange="changeDateFilter">
+          <view class="filter-date-input">
+            <text wx:if="{{filterDueDate}}">{{filterDueDate}}</text>
+            <text wx:else class="filter-placeholder">选择日期</text>
+          </view>
+        </picker>
+      </view>
+    </view>
+    <view class="filter-footer">
+      <text class="muted">显示 {{quotations.length}} / {{allQuotations.length}} 条</text>
+      <button class="filter-reset-button" bindtap="resetFilters" disabled="{{!hasActiveFilters}}">清空筛选</button>
+    </view>
+  </view>
+
+  <view wx:if="{{allQuotations.length && hasActiveFilters && !showFilters}}" class="compact-filter-summary">
+    <text>显示 {{quotations.length}} / {{allQuotations.length}} 条</text>
+    <text class="compact-clear-text" bindtap="resetFilters">清空</text>
+  </view>
+
+  <view wx:if="{{!allQuotations.length}}" class="empty">
+    <view class="card-title">还没有报价</view>
+    <view class="muted">客户问什么价，统一去“记一笔”说一句或粘贴聊天。</view>
+    <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
+  </view>
+
+  <view wx:elif="{{hasActiveFilters && !quotations.length}}" class="empty">
+    <view class="card-title">没有符合筛选的报价</view>
+    <view class="muted">换个客户、产品或日期试试。</view>
+    <button class="secondary-button empty-button" bindtap="resetFilters">清空筛选</button>
+  </view>
+
+  <view wx:for="{{quotations}}" wx:key="id" class="card">
+    <view class="row-between">
+      <view class="card-title">{{item.customerDisplay || '临时客户'}}</view>
+      <view class="pill {{item.needFollowup ? 'pill-warning' : ''}}">{{item.status}}</view>
+    </view>
+    <view class="muted">{{item.productName || '未填产品'}}</view>
+    <view class="divider"></view>
+    <view class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
+    <view class="detail-line">单价：{{item.unitPrice || '-'}}</view>
+    <view class="detail-line">总价：{{item.totalAmount || '-'}}</view>
+    <view class="detail-line">报价日期：{{item.quoteDate || '-'}}</view>
+    <view class="detail-line">跟进日期：{{item.followupDate || '-'}}</view>
+    <view wx:if="{{item.needFollowup}}" class="followup-box">这个报价到了跟进时间，建议跟一下。</view>
+    <view class="button-row">
+      <button class="secondary-button" data-id="{{item.id}}" bindtap="copyFollowup">复制跟进话术</button>
+      <button class="primary-button" data-id="{{item.id}}" bindtap="convert">转订单</button>
+    </view>
+  </view>
+</view>

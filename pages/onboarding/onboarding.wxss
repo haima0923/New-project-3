@@ -1,0 +1,14 @@
+.onboarding {
+  padding-top: 80rpx;
+}
+
+.industry-picker {
+  align-items: center;
+  color: #344054;
+  display: flex;
+  margin-top: 22rpx;
+}
+
+.skip-button {
+  margin-top: 18rpx;
+}

@@ -1,0 +1,103 @@
+<view class="page">
+  <view class="page-title">今天别漏这几件事</view>
+  <view class="page-subtitle">默认静默展示，只先给你看数量；点进去再看明细。</view>
+
+  <view wx:if="{{summary && summary.totalThings === 0}}" class="empty">
+    <view class="card-title">还没有要处理的事</view>
+    <view class="muted">说一句、打一段，或者粘贴微信聊天，先记第一笔。</view>
+    <button class="primary-button empty-button" bindtap="goInput">开始记第一笔</button>
+  </view>
+
+  <view wx:else class="card hero-card">
+    <view class="muted">今天有</view>
+    <text class="hero-number">{{summary.totalThings}}</text>
+    <view class="card-title">件事需要留意</view>
+  </view>
+
+  <view class="grid-2 dashboard-grid">
+    <view class="card stat-card" bindtap="goReceivables">
+      <text class="stat-number">{{summary.dueToday.length + summary.overdue.length}}</text>
+      <view class="card-title">款要处理</view>
+      <view class="muted">到期和逾期都在这里</view>
+    </view>
+    <view class="card stat-card" bindtap="goDeliverySoonOrders">
+      <text class="stat-number">{{summary.deliverySoon.length}}</text>
+      <view class="card-title">货快到期</view>
+      <view class="muted">3 天内或已逾期</view>
+    </view>
+    <view class="card stat-card" bindtap="goQuotations">
+      <text class="stat-number">{{summary.quoteFollowups.length}}</text>
+      <view class="card-title">报价待跟</view>
+      <view class="muted">超过 3 天未下单</view>
+    </view>
+    <view class="card stat-card" bindtap="goTodos">
+      <text class="stat-number">{{summary.todoActive.length}}</text>
+      <view class="card-title">待办提醒</view>
+      <view class="muted">未完成提醒都在这里</view>
+    </view>
+    <view class="card stat-card" bindtap="goPending">
+      <text class="stat-number">{{summary.pendingNotes.length}}</text>
+      <view class="card-title">待整理</view>
+      <view class="muted">AI 没听全也先记住</view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card-title">快速入口</view>
+    <view class="button-row">
+      <button class="primary-button" bindtap="goInput">记一笔</button>
+      <button class="secondary-button" bindtap="goQuery">问一句</button>
+    </view>
+  </view>
+
+  <view wx:if="{{overdue.length || dueToday.length}}" class="card">
+    <view class="row-between">
+      <view class="card-title">收款提醒</view>
+      <view class="small-action" bindtap="goReceivables">去处理</view>
+    </view>
+    <view class="muted">首页只展示摘要，金额和客户名进收款页再看。</view>
+  </view>
+
+  <view wx:if="{{deliverySoon.length}}" class="card">
+    <view class="row-between">
+      <view class="card-title">交期提醒</view>
+      <view class="small-action" bindtap="goDeliverySoonOrders">看订单</view>
+    </view>
+    <view class="muted">{{deliverySoon.length}} 批货需要尽快确认进度。</view>
+  </view>
+
+  <view wx:if="{{todoOverdue.length || todoDueToday.length}}" class="card">
+    <view class="row-between">
+      <view class="card-title">待办提醒</view>
+      <view class="small-action" bindtap="goTodos">查看全部</view>
+    </view>
+    <view class="muted">这些事到点了，处理完可以标记完成。</view>
+    <view wx:for="{{todoOverdue}}" wx:key="id" class="todo-line">
+      <view>
+        <view class="todo-title">{{item.title}}</view>
+        <view class="muted">已逾期 · {{item.remindDate || '-'}}</view>
+      </view>
+      <view class="small-action" data-id="{{item.id}}" bindtap="completeTodo">完成</view>
+    </view>
+    <view wx:for="{{todoDueToday}}" wx:key="id" class="todo-line">
+      <view>
+        <view class="todo-title">{{item.title}}</view>
+        <view class="muted">今天 · {{item.customerDisplay || ''}}</view>
+      </view>
+      <view class="small-action" data-id="{{item.id}}" bindtap="completeTodo">完成</view>
+    </view>
+  </view>
+
+  <view wx:if="{{todoTomorrow.length}}" class="card">
+    <view class="row-between">
+      <view class="card-title">明日待办</view>
+      <view class="small-action" bindtap="goTodos">查看全部</view>
+    </view>
+    <view wx:for="{{todoTomorrow}}" wx:key="id" class="todo-line">
+      <view>
+        <view class="todo-title">{{item.title}}</view>
+        <view class="muted">明天 · {{item.customerDisplay || ''}}</view>
+      </view>
+    </view>
+  </view>
+</view>

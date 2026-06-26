@@ -1,0 +1,44 @@
+<view class="page">
+  <view class="page-title">收款</view>
+  <view class="page-subtitle">先生成话术复制到微信，发完回来点已催款；不自动发消息。</view>
+
+  <view wx:if="{{!receivables.length}}" class="empty">
+    <view class="card-title">还没有应收款</view>
+    <view class="muted">谁欠你多少钱，统一去“记一笔”说一句或打一段。</view>
+    <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
+  </view>
+
+  <view wx:for="{{receivables}}" wx:key="id" class="card">
+    <view class="row-between">
+      <view class="card-title">{{item.customerDisplay}}</view>
+      <view class="pill {{item.overdueDays ? 'pill-danger' : ''}}">{{item.status}}</view>
+    </view>
+    <view class="divider"></view>
+    <view class="amount-row">
+      <view>
+        <view class="muted">应收</view>
+        <view class="money">{{item.amount || 0}} 元</view>
+      </view>
+      <view>
+        <view class="muted">剩余</view>
+        <view class="money">{{item.remainingAmount}} 元</view>
+      </view>
+    </view>
+    <view class="detail-line">到期日：{{item.dueDate || '-'}}</view>
+    <view wx:if="{{item.overdueDays}}" class="overdue">已逾期 {{item.overdueDays}} 天</view>
+    <view class="detail-line">已催款：{{item.dunningCount || 0}} 次，最近 {{item.lastDunningDate || '无'}}</view>
+
+    <view class="field payment-field">
+      <text class="label">本次收款</text>
+      <input class="input" data-id="{{item.id}}" type="digit" bindinput="updatePaymentAmount" placeholder="输入金额" />
+    </view>
+    <view class="button-row">
+      <button class="secondary-button" data-id="{{item.id}}" bindtap="savePayment">记录收款</button>
+      <button class="secondary-button" data-id="{{item.id}}" data-tone="polite" bindtap="copyDunning">客气话术</button>
+    </view>
+    <view class="button-row">
+      <button class="secondary-button" data-id="{{item.id}}" data-tone="direct" bindtap="copyDunning">直接话术</button>
+      <button class="primary-button" data-id="{{item.id}}" bindtap="markDunned">已催款</button>
+    </view>
+  </view>
+</view>

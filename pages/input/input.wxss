@@ -1,0 +1,252 @@
+.segmented {
+  background: #f2f4f7;
+  border-radius: 14rpx;
+  display: grid;
+  gap: 6rpx;
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 20rpx;
+  padding: 6rpx;
+}
+
+.segment {
+  border-radius: 10rpx;
+  color: #667085;
+  font-size: 28rpx;
+  padding: 18rpx 8rpx;
+  text-align: center;
+}
+
+.segment.active {
+  background: #ffffff;
+  color: #1668dc;
+  font-weight: 700;
+}
+
+.parse-button {
+  margin-top: 20rpx;
+}
+
+.assist-box,
+.computed-box {
+  background: #eef4ff;
+  border-radius: 12rpx;
+  color: #1849a9;
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 16rpx;
+  padding: 16rpx;
+}
+
+.field-tip {
+  color: #667085;
+  font-size: 24rpx;
+  line-height: 1.5;
+  margin-top: 8rpx;
+}
+
+.date-picker-input {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.placeholder-text {
+  color: #98a2b3;
+}
+
+.picker-arrow {
+  color: #1668dc;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.operation-box,
+.draft-box,
+.customer-match-box,
+.payment-confirm-box,
+.payment-preview {
+  background: #f8fafc;
+  border-radius: 12rpx;
+  margin-top: 16rpx;
+  padding: 16rpx;
+}
+
+.customer-match-box {
+  border: 1rpx solid #d1e0ff;
+  margin-bottom: 18rpx;
+}
+
+.match-line {
+  color: #344054;
+  font-size: 26rpx;
+  line-height: 1.5;
+}
+
+.match-picker-field {
+  margin-top: 14rpx;
+}
+
+.customer-history-box {
+  background: #ffffff;
+  border: 1rpx solid #e4e7ec;
+  border-radius: 12rpx;
+  margin-top: 14rpx;
+  padding: 14rpx;
+}
+
+.history-title {
+  color: #101828;
+  font-size: 26rpx;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.history-line {
+  color: #475467;
+  font-size: 24rpx;
+  line-height: 1.5;
+  margin-top: 6rpx;
+}
+
+.history-action-row {
+  display: grid;
+  gap: 12rpx;
+  grid-template-columns: 1fr 1fr;
+  margin-top: 14rpx;
+}
+
+.history-confirm-button {
+  font-size: 26rpx;
+  min-height: 76rpx;
+  padding: 18rpx 12rpx;
+}
+
+.operation-title {
+  color: #101828;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.draft-line,
+.preview-line {
+  color: #344054;
+  font-size: 26rpx;
+  line-height: 1.6;
+  margin-top: 6rpx;
+}
+
+.payment-warning {
+  background: #fff7e6;
+  border-radius: 10rpx;
+  color: #8a4b00;
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 12rpx;
+  padding: 12rpx;
+}
+
+.history-default-box {
+  background: #fff8f6;
+  border: 1rpx solid #fecdca;
+  border-radius: 14rpx;
+  margin-top: 18rpx;
+  padding: 18rpx;
+}
+
+.history-default-line {
+  color: #b42318;
+  font-size: 26rpx;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-top: 8rpx;
+}
+
+.history-default-input {
+  border-color: #f04438;
+  box-shadow: 0 0 0 2rpx rgba(240, 68, 56, 0.08);
+  color: #b42318;
+  font-weight: 700;
+}
+
+.followup-card {
+  background: #fff8f6;
+  border: 1rpx solid #fecdca;
+  border-radius: 14rpx;
+  padding: 18rpx;
+}
+
+.followup-card-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14rpx;
+}
+
+.followup-title {
+  color: #101828;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.followup-subtitle {
+  color: #b42318;
+  font-size: 24rpx;
+  line-height: 1.4;
+  margin-top: 2rpx;
+}
+
+.followup-default-pill {
+  background: #fff1f3;
+  border-radius: 999rpx;
+  color: #b42318;
+  font-size: 22rpx;
+  padding: 10rpx 14rpx;
+}
+
+.followup-picker {
+  align-items: center;
+  background: #ffffff;
+  border: 1rpx solid #fda29b;
+  border-radius: 12rpx;
+  color: #b42318;
+  display: flex;
+  font-size: 30rpx;
+  font-weight: 700;
+  justify-content: space-between;
+  min-height: 82rpx;
+  padding: 0 18rpx;
+}
+
+.followup-warning {
+  color: #b42318;
+  font-size: 24rpx;
+  line-height: 1.45;
+  margin-top: 12rpx;
+}
+
+.voice-box {
+  margin-bottom: 20rpx;
+}
+
+.voice-tip {
+  margin-top: 12rpx;
+}
+
+.small-textarea {
+  min-height: 150rpx;
+}
+
+.warning-box {
+  background: #fff7e6;
+  border-radius: 14rpx;
+  margin-top: 18rpx;
+  padding: 20rpx;
+}
+
+.warning-line {
+  color: #8a4b00;
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 10rpx;
+}

@@ -1,0 +1,79 @@
+<view class="page">
+  <view class="page-title">待办提醒</view>
+  <view class="page-subtitle">这里是所有未完成提醒，处理完就点完成。</view>
+
+  <view wx:if="{{!total}}" class="empty">
+    <view class="card-title">没有未完成待办</view>
+    <view class="muted">可以在“记一笔”里说：明天提醒我给周姐回报价。</view>
+    <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
+  </view>
+
+  <view wx:if="{{overdueTodos.length}}" class="todo-section">
+    <view class="section-title">已逾期</view>
+    <view wx:for="{{overdueTodos}}" wx:key="id" class="card todo-card">
+      <view class="row-between">
+        <view class="card-title">{{item.title}}</view>
+        <view class="pill pill-danger">逾期</view>
+      </view>
+      <view class="muted">{{item.metaText}}</view>
+      <view wx:if="{{item.productName || item.quantity || item.unitPrice}}" class="todo-detail">
+        <text wx:if="{{item.productName}}">{{item.productName}}</text>
+        <text wx:if="{{item.quantity}}"> · {{item.quantity}}{{item.unit || ''}}</text>
+        <text wx:if="{{item.unitPrice}}"> · 单价{{item.unitPrice}}</text>
+      </view>
+      <view wx:if="{{item.remark}}" class="note-text">{{item.remark}}</view>
+      <button class="primary-button todo-button" data-id="{{item.id}}" bindtap="completeTodo">完成</button>
+    </view>
+  </view>
+
+  <view wx:if="{{todayTodos.length}}" class="todo-section">
+    <view class="section-title">今天</view>
+    <view wx:for="{{todayTodos}}" wx:key="id" class="card todo-card">
+      <view class="row-between">
+        <view class="card-title">{{item.title}}</view>
+        <view class="pill pill-warning">今天</view>
+      </view>
+      <view class="muted">{{item.metaText}}</view>
+      <view wx:if="{{item.productName || item.quantity || item.unitPrice}}" class="todo-detail">
+        <text wx:if="{{item.productName}}">{{item.productName}}</text>
+        <text wx:if="{{item.quantity}}"> · {{item.quantity}}{{item.unit || ''}}</text>
+        <text wx:if="{{item.unitPrice}}"> · 单价{{item.unitPrice}}</text>
+      </view>
+      <view wx:if="{{item.remark}}" class="note-text">{{item.remark}}</view>
+      <button class="primary-button todo-button" data-id="{{item.id}}" bindtap="completeTodo">完成</button>
+    </view>
+  </view>
+
+  <view wx:if="{{tomorrowTodos.length}}" class="todo-section">
+    <view class="section-title">明天</view>
+    <view wx:for="{{tomorrowTodos}}" wx:key="id" class="card todo-card">
+      <view class="row-between">
+        <view class="card-title">{{item.title}}</view>
+        <view class="pill">明天</view>
+      </view>
+      <view class="muted">{{item.metaText}}</view>
+      <view wx:if="{{item.productName || item.quantity || item.unitPrice}}" class="todo-detail">
+        <text wx:if="{{item.productName}}">{{item.productName}}</text>
+        <text wx:if="{{item.quantity}}"> · {{item.quantity}}{{item.unit || ''}}</text>
+        <text wx:if="{{item.unitPrice}}"> · 单价{{item.unitPrice}}</text>
+      </view>
+      <view wx:if="{{item.remark}}" class="note-text">{{item.remark}}</view>
+      <button class="primary-button todo-button" data-id="{{item.id}}" bindtap="completeTodo">完成</button>
+    </view>
+  </view>
+
+  <view wx:if="{{laterTodos.length}}" class="todo-section">
+    <view class="section-title">以后</view>
+    <view wx:for="{{laterTodos}}" wx:key="id" class="card todo-card">
+      <view class="card-title">{{item.title}}</view>
+      <view class="muted">{{item.metaText}}</view>
+      <view wx:if="{{item.productName || item.quantity || item.unitPrice}}" class="todo-detail">
+        <text wx:if="{{item.productName}}">{{item.productName}}</text>
+        <text wx:if="{{item.quantity}}"> · {{item.quantity}}{{item.unit || ''}}</text>
+        <text wx:if="{{item.unitPrice}}"> · 单价{{item.unitPrice}}</text>
+      </view>
+      <view wx:if="{{item.remark}}" class="note-text">{{item.remark}}</view>
+      <button class="primary-button todo-button" data-id="{{item.id}}" bindtap="completeTodo">完成</button>
+    </view>
+  </view>
+</view>

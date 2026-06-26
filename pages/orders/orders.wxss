@@ -1,0 +1,14 @@
+.detail-line {
+  color: #344054;
+  font-size: 28rpx;
+  line-height: 1.7;
+}
+
+.status-picker {
+  margin-top: 18rpx;
+}
+
+.empty-button {
+  margin-top: 28rpx;
+  width: 100%;
+}

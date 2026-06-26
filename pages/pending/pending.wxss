@@ -1,0 +1,6 @@
+.note-text {
+  color: #101828;
+  font-size: 30rpx;
+  line-height: 1.6;
+  margin-bottom: 16rpx;
+}
