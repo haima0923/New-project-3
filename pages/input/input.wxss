@@ -26,6 +26,32 @@
   margin-top: 20rpx;
 }
 
+.paste-tip {
+  line-height: 1.5;
+  margin: -4rpx 0 16rpx;
+}
+
+.input-confirm-modal {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.42);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  padding: 56rpx 32rpx calc(56rpx + env(safe-area-inset-bottom));
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1320;
+}
+
+.input-confirm-card {
+  max-height: 82vh;
+  margin-bottom: 0;
+  overflow-y: auto;
+  width: 100%;
+}
+
 .assist-box,
 .computed-box {
   background: #eef4ff;
@@ -42,6 +68,10 @@
   font-size: 24rpx;
   line-height: 1.5;
   margin-top: 8rpx;
+}
+
+.paste-original-text {
+  white-space: pre-wrap;
 }
 
 .date-picker-input {
@@ -133,6 +163,10 @@
   font-size: 26rpx;
   line-height: 1.6;
   margin-top: 6rpx;
+}
+
+.conversation-box {
+  background: #eef4ff;
 }
 
 .payment-warning {

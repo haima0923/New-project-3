@@ -1,0 +1,226 @@
+.records-page {
+  padding-bottom: calc(180rpx + env(safe-area-inset-bottom));
+}
+
+.record-filter-scroll {
+  margin: 0 -32rpx 24rpx;
+  white-space: nowrap;
+  width: auto;
+}
+
+.record-filter-row {
+  display: inline-flex;
+  gap: 14rpx;
+  padding: 0 32rpx;
+}
+
+.record-filter {
+  background: #FFFFFF;
+  border: 1rpx solid #D7E5FF;
+  border-radius: 999rpx;
+  color: #1F2937;
+  font-size: 26rpx;
+  font-weight: 600;
+  line-height: 1;
+  padding: 18rpx 24rpx;
+}
+
+.record-filter-active {
+  background: #1677FF;
+  border-color: #1677FF;
+  color: #FFFFFF;
+}
+
+.record-card {
+  border: 1rpx solid #E7ECF4;
+  box-shadow: 0 8rpx 22rpx rgba(31, 41, 55, 0.055);
+  margin-bottom: 18rpx;
+  overflow: hidden;
+  position: relative;
+}
+
+.record-card::before {
+  border-radius: 999rpx;
+  bottom: 22rpx;
+  content: "";
+  left: 0;
+  position: absolute;
+  top: 22rpx;
+  width: 8rpx;
+}
+
+.record-card-quotation {
+  background: linear-gradient(135deg, #FCF8FF 0%, #F6EDFF 100%);
+  border-color: #E7D3FF;
+}
+
+.record-card-quotation::before {
+  background: #7C3AED;
+}
+
+.record-card-order {
+  background: linear-gradient(135deg, #F8FBFF 0%, #EAF2FF 100%);
+  border-color: #CFE1FF;
+}
+
+.record-card-order::before {
+  background: #1677FF;
+}
+
+.record-card-receivable {
+  background: linear-gradient(135deg, #F8FFFB 0%, #EAFBF1 100%);
+  border-color: #CBEFD8;
+}
+
+.record-card-receivable::before {
+  background: #22C55E;
+}
+
+.record-card-payment {
+  background: linear-gradient(135deg, #F7FDFF 0%, #E0F6FE 100%);
+  border-color: #BEEBFF;
+}
+
+.record-card-payment::before {
+  background: #0EA5E9;
+}
+
+.record-card-todo {
+  background: linear-gradient(135deg, #FFFDF8 0%, #FFF4DC 100%);
+  border-color: #FFE1A8;
+}
+
+.record-card-todo::before {
+  background: #FF9500;
+}
+
+.record-card-pending {
+  background: linear-gradient(135deg, #FFFFFF 0%, #F3F4F6 100%);
+  border-color: #DDE3EA;
+}
+
+.record-card-pending::before {
+  background: #6B7280;
+}
+
+.record-card-log {
+  background: linear-gradient(135deg, #FBFCFF 0%, #EEF2FF 100%);
+  border-color: #D9DFFF;
+}
+
+.record-card-log::before {
+  background: #6366F1;
+}
+
+.record-type {
+  align-items: center;
+  background: #EAF2FF;
+  border-radius: 999rpx;
+  color: #1677FF;
+  display: inline-flex;
+  font-size: 24rpx;
+  font-weight: 700;
+  gap: 8rpx;
+  padding: 8rpx 14rpx;
+}
+
+.record-type-icon {
+  align-items: center;
+  background: #1677FF;
+  border-radius: 999rpx;
+  color: #FFFFFF;
+  display: flex;
+  font-size: 20rpx;
+  font-weight: 900;
+  height: 34rpx;
+  justify-content: center;
+  line-height: 1;
+  width: 34rpx;
+}
+
+.record-type-quotation {
+  background: #F3E8FF;
+  color: #7C3AED;
+}
+
+.record-type-quotation .record-type-icon {
+  background: #7C3AED;
+}
+
+.record-type-order {
+  background: #EAF2FF;
+  color: #1677FF;
+}
+
+.record-type-order .record-type-icon {
+  background: #1677FF;
+}
+
+.record-type-receivable {
+  background: #ECFDF3;
+  color: #16A34A;
+}
+
+.record-type-receivable .record-type-icon {
+  background: #22C55E;
+}
+
+.record-type-payment {
+  background: #E0F2FE;
+  color: #0284C7;
+}
+
+.record-type-payment .record-type-icon {
+  background: #0EA5E9;
+}
+
+.record-type-todo {
+  background: #FFF7E6;
+  color: #B54708;
+}
+
+.record-type-todo .record-type-icon {
+  background: #FF9500;
+}
+
+.record-type-pending {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+
+.record-type-pending .record-type-icon {
+  background: #6B7280;
+}
+
+.record-type-log {
+  background: #EEF2FF;
+  color: #4F46E5;
+}
+
+.record-type-log .record-type-icon {
+  background: #6366F1;
+}
+
+.record-time {
+  color: #6B7280;
+  font-size: 24rpx;
+}
+
+.record-title {
+  color: #1F2937;
+  font-size: 32rpx;
+  font-weight: 800;
+  line-height: 1.35;
+  margin-top: 18rpx;
+}
+
+.record-summary {
+  color: #6B7280;
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 8rpx;
+}
+
+.records-empty {
+  margin-top: 40rpx;
+}

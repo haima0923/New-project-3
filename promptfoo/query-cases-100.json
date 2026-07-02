@@ -1,0 +1,1302 @@
+[
+  {
+    "description": "001 欠款总览 - 谁还欠我钱",
+    "vars": {
+      "category": "欠款总览",
+      "question": "谁还欠我钱？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "应列出未结清欠款客户，排除已结清王总。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "002 欠款总览 - 现在还有哪些欠款",
+    "vars": {
+      "category": "欠款总览",
+      "question": "现在还有哪些欠款？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖欠款总览的直接问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "003 欠款总览 - 哪些客户还没收款",
+    "vars": {
+      "category": "欠款总览",
+      "question": "有哪些客户还没收款？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖未收款口语问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "004 欠款总览 - 还有哪些未收款",
+    "vars": {
+      "category": "欠款总览",
+      "question": "现在还有哪些未收款？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖未收关键词。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "005 欠款总览 - 应收未结清",
+    "vars": {
+      "category": "欠款总览",
+      "question": "哪些应收还没结清？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖应收问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "006 欠款总览 - 欠款客户",
+    "vars": {
+      "category": "欠款总览",
+      "question": "哪些人还有欠款？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖欠款客户问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "007 欠款总览 - 未收的钱",
+    "vars": {
+      "category": "欠款总览",
+      "question": "帮我看下未收的钱",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖短句问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "008 欠款总览 - 款没收",
+    "vars": {
+      "category": "欠款总览",
+      "question": "还有谁的款没收？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖没收问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "009 欠款总览 - 欠款客户有哪些",
+    "vars": {
+      "category": "欠款总览",
+      "question": "欠款客户有哪些？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖列表问法。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "010 欠款总览 - 当前应收款",
+    "vars": {
+      "category": "欠款总览",
+      "question": "当前应收款有哪些？",
+      "expectedContains": "陈总|刘总|老李|剩余",
+      "expectedExcludes": "王总",
+      "notes": "覆盖应收款总览。"
+    },
+    "metadata": {
+      "category": "欠款总览"
+    }
+  },
+  {
+    "description": "011 单客户欠款 - 陈总欠多少",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "陈总欠我多少？",
+      "expectedContains": "陈总|15000|剩余15000",
+      "expectedExcludes": "刘总|老李",
+      "notes": "应只返回陈总欠款。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "012 单客户欠款 - 陈总没收",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "陈总还有多少没收？",
+      "expectedContains": "陈总|15000",
+      "expectedExcludes": "刘总|老李",
+      "notes": "覆盖客户加没收问法。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "013 单客户欠款 - 陈总应收",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "陈总应收是多少？",
+      "expectedContains": "陈总|15000",
+      "expectedExcludes": "刘总|老李",
+      "notes": "覆盖客户应收问法。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "014 单客户欠款 - 刘总剩余",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "刘总还剩多少钱没收？",
+      "expectedContains": "刘总|剩余2000",
+      "expectedExcludes": "陈总|老李",
+      "notes": "应计算部分收款后的剩余金额。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "015 单客户欠款 - 刘总欠款",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "刘总欠款还有多少？",
+      "expectedContains": "刘总|5000|2000",
+      "expectedExcludes": "陈总|老李",
+      "notes": "覆盖客户欠款问法。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "016 单客户欠款 - 刘总应收情况",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "刘总应收情况？",
+      "expectedContains": "刘总|5000",
+      "expectedExcludes": "陈总|老李",
+      "notes": "覆盖客户应收情况。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "017 单客户欠款 - 老李还欠",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "老李还欠多少？",
+      "expectedContains": "老李|23000|13000",
+      "expectedExcludes": "陈总|刘总",
+      "notes": "应返回老李部分收款后的欠款。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "018 单客户欠款 - 老李剩余",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "老李还剩多少没收？",
+      "expectedContains": "老李|剩余13000",
+      "expectedExcludes": "陈总|刘总",
+      "notes": "覆盖剩余金额问法。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "019 单客户欠款 - 老李应收款",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "老李应收款多少？",
+      "expectedContains": "老李|23000",
+      "expectedExcludes": "陈总|刘总",
+      "notes": "覆盖应收款问法。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "020 单客户欠款 - 王总已结清",
+    "vars": {
+      "category": "单客户欠款",
+      "question": "王总还有欠款吗？",
+      "expectedContains": "王总|暂无",
+      "expectedExcludes": "应收15000",
+      "notes": "王总已结清，不应显示历史已结清欠款。"
+    },
+    "metadata": {
+      "category": "单客户欠款"
+    }
+  },
+  {
+    "description": "021 近期收款 - 月底前",
+    "vars": {
+      "category": "近期收款",
+      "question": "月底前要收哪些款？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "月底前只应包含本月底到期款。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "022 近期收款 - 本月底",
+    "vars": {
+      "category": "近期收款",
+      "question": "本月底要处理哪些款？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖本月底说法。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "023 近期收款 - 月末前",
+    "vars": {
+      "category": "近期收款",
+      "question": "月末前有哪几笔款要收？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖月末前说法。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "024 近期收款 - 这周要收",
+    "vars": {
+      "category": "近期收款",
+      "question": "这周要收哪些款？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖本周收款。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "025 近期收款 - 最近要收",
+    "vars": {
+      "category": "近期收款",
+      "question": "最近要收哪些款？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖最近收款。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "026 近期收款 - 这几天处理",
+    "vars": {
+      "category": "近期收款",
+      "question": "哪些款这几天要处理？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖要处理说法。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "027 近期收款 - 本周收款客户",
+    "vars": {
+      "category": "近期收款",
+      "question": "收款这周看哪些客户？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖收款关键词。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "028 近期收款 - 要收的款",
+    "vars": {
+      "category": "近期收款",
+      "question": "帮我看下要收的款",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖短句要收问法。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "029 近期收款 - 近期要收",
+    "vars": {
+      "category": "近期收款",
+      "question": "近期要收哪些款？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖近期问法。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "030 近期收款 - 本周收款",
+    "vars": {
+      "category": "近期收款",
+      "question": "本周收款有哪些？",
+      "expectedContains": "陈总|刘总",
+      "expectedExcludes": "老李",
+      "notes": "覆盖本周收款列表。"
+    },
+    "metadata": {
+      "category": "近期收款"
+    }
+  },
+  {
+    "description": "031 近期交货 - 这周要交",
+    "vars": {
+      "category": "近期交货",
+      "question": "这周要交哪些货？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "应列出近期要交的订单。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "032 近期交货 - 最近要交",
+    "vars": {
+      "category": "近期交货",
+      "question": "最近要交什么货？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖最近交货问法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "033 近期交货 - 近期货要交",
+    "vars": {
+      "category": "近期交货",
+      "question": "近期有哪些货要交？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖近期要交。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "034 近期交货 - 订单快交期",
+    "vars": {
+      "category": "近期交货",
+      "question": "哪些订单快到交期？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖订单交期问法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "035 近期交货 - 哪些货近期要交",
+    "vars": {
+      "category": "近期交货",
+      "question": "哪些货近期要交？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖货物列表问法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "036 近期交货 - 本周订单",
+    "vars": {
+      "category": "近期交货",
+      "question": "这周要交的货有哪些？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖本周订单问法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "037 近期交货 - 未来几天",
+    "vars": {
+      "category": "近期交货",
+      "question": "未来几天要交货吗？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖交货关键词。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "038 近期交货 - 临近交货",
+    "vars": {
+      "category": "近期交货",
+      "question": "有哪些临近交货的单？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖临近交货说法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "039 近期交货 - 要交的货",
+    "vars": {
+      "category": "近期交货",
+      "question": "帮我看下要交的货",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖短句要交问法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "040 近期交货 - 近七天",
+    "vars": {
+      "category": "近期交货",
+      "question": "近七天交货安排？",
+      "expectedContains": "马总|杯垫|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖交货安排问法。"
+    },
+    "metadata": {
+      "category": "近期交货"
+    }
+  },
+  {
+    "description": "041 订单状态 - 马总单子",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总的单子现在怎么样了？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "应返回马总进行中订单。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "042 订单状态 - 马总订单状态",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总订单现在什么状态？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖订单状态问法。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "043 订单状态 - 马总订单进展",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总的订单进展怎样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖进展问法。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "044 订单状态 - 马总单子进展",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总的单子进展怎么样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖单子进展。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "045 订单状态 - 杯垫订单",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总杯垫订单状态？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖商品加订单状态。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "046 订单状态 - 订单进度",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总的订单进度现在怎样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖订单进度。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "047 订单状态 - 那批订单",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总那批订单现在怎样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖那批订单口语表达。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "048 订单状态 - 货进度",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总的货进度现在怎么样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖货进度问法。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "049 订单状态 - 订单现在进展",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总订单现在进展怎样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖现在进展。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "050 订单状态 - 这笔订单",
+    "vars": {
+      "category": "订单状态",
+      "question": "马总这笔订单状态怎么样？",
+      "expectedContains": "马总|杯垫|300|待生产",
+      "expectedExcludes": "",
+      "notes": "覆盖这笔订单问法。"
+    },
+    "metadata": {
+      "category": "订单状态"
+    }
+  },
+  {
+    "description": "051 上次报价 - 王总报多少",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总上次报多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "应返回王总最近报价。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "052 上次报价 - 王总报价",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总上次报价是多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖上次报价问法。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "053 上次报价 - 卡通水杯",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总上次卡通水杯报多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖产品名加报价。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "054 上次报价 - 之前报价",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总之前报价多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖之前报价说法。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "055 上次报价 - 价格",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总的价格是多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖价格问法。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "056 上次报价 - 最近报价",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总最近报价看一下",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖最近报价。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "057 上次报价 - 报的多少钱",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总上次报的卡通水杯多少钱？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖多少钱问法。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "058 上次报价 - 查上次报价",
+    "vars": {
+      "category": "上次报价",
+      "question": "帮我查王总上次报价",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖查询表达。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "059 上次报价 - 单价",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总水杯上次单价多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖单价问法。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "060 上次报价 - 总价",
+    "vars": {
+      "category": "上次报价",
+      "question": "王总上次总价多少？",
+      "expectedContains": "王总|卡通水杯|5.5|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖总价问法。"
+    },
+    "metadata": {
+      "category": "上次报价"
+    }
+  },
+  {
+    "description": "061 待跟进报价 - 报价没转订单",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "哪些报价还没转订单？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "应返回待确认且未转订单报价。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "062 待跟进报价 - 有哪些没转",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "有哪些报价还没转订单？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖有哪些问法。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "063 待跟进报价 - 没转订单报价",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "没转订单的报价有哪些？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖没转订单前置说法。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "064 待跟进报价 - 报价待跟进",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "哪些报价还没转订单需要处理？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖待跟进问法。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "065 待跟进报价 - 有哪些待跟进",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "有哪些没转订单的报价？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖待跟进列表。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "066 待跟进报价 - 跟进清单",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "没转订单报价清单看一下",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖跟进清单表达。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "067 待跟进报价 - 需要跟进",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "现在还有哪些没转订单的报价？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖需要跟进问法。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "068 待跟进报价 - 找没转订单",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "帮我找没转订单的报价",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖找报价表达。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "069 待跟进报价 - 还有没转订单",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "还有没转订单的吗？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖省略报价二字的问法。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "070 待跟进报价 - 待跟进报价有哪些",
+    "vars": {
+      "category": "待跟进报价",
+      "question": "待确认没转订单的报价有哪些？",
+      "expectedContains": "王总|卡通水杯|5500",
+      "expectedExcludes": "",
+      "notes": "覆盖待跟进报价有哪些。"
+    },
+    "metadata": {
+      "category": "待跟进报价"
+    }
+  },
+  {
+    "description": "071 今天事项 - 今天有什么事",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天有什么事？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "应返回今日工作台摘要。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "072 今天事项 - 今天处理",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天要处理什么事？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖处理事情问法。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "073 今天事项 - 今日事项",
+    "vars": {
+      "category": "今天事项",
+      "question": "今日有什么事？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖今日说法。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "074 今天事项 - 工作台",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天工作台看一下",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖工作台表达。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "075 今天事项 - 有啥事",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天有啥事要干？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖口语有啥事。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "076 今天事项 - 今日待办",
+    "vars": {
+      "category": "今天事项",
+      "question": "今日待办和事情有哪些？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖今日待办摘要。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "077 今天事项 - 今天要处理",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天有什么要处理的？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖要处理问法。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "078 今天事项 - 今天事项",
+    "vars": {
+      "category": "今天事项",
+      "question": "帮我看今天事项",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖今天事项。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "079 今天事项 - 老板关注",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天老板要关注什么？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖关注事项。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "080 今天事项 - 几件事",
+    "vars": {
+      "category": "今天事项",
+      "question": "今天有几件事？",
+      "expectedContains": "今天有|款要处理|批货快到交期|待办提醒|待整理",
+      "expectedExcludes": "",
+      "notes": "覆盖数量问法。"
+    },
+    "metadata": {
+      "category": "今天事项"
+    }
+  },
+  {
+    "description": "081 明天待办 - 明天待办",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天有什么待办？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "应只返回明天待办，不含今天待办。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "082 明天待办 - 明天提醒",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天有什么提醒？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖提醒问法。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "083 明天待办 - 明天什么事",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天有什么待办要处理？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖明天事情问法。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "084 明天待办 - 明日待办",
+    "vars": {
+      "category": "明天待办",
+      "question": "明日待办有哪些？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖明日说法。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "085 明天待办 - 跟进什么",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天要跟进什么待办？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖跟进待办。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "086 明天待办 - 待办提醒",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天有没有待办提醒？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖有没有提醒。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "087 明天待办 - 看明天提醒",
+    "vars": {
+      "category": "明天待办",
+      "question": "帮我看明天提醒",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖短句提醒。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "088 明天待办 - 明天处理待办",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天需要处理哪些待办？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖处理待办。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "089 明天待办 - 明日事情",
+    "vars": {
+      "category": "明天待办",
+      "question": "明日有什么待办要做？",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖明日事情。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "090 明天待办 - 待办清单",
+    "vars": {
+      "category": "明天待办",
+      "question": "明天的待办清单",
+      "expectedContains": "明日待办|周姐|跟进周姐礼品盒",
+      "expectedExcludes": "回复周姐礼品盒报价",
+      "notes": "覆盖清单问法。"
+    },
+    "metadata": {
+      "category": "明天待办"
+    }
+  },
+  {
+    "description": "091 待整理记录 - 有没有待整理",
+    "vars": {
+      "category": "待整理记录",
+      "question": "有没有待整理的记录？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "应返回待整理原始记录。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "092 待整理记录 - 记录有哪些",
+    "vars": {
+      "category": "待整理记录",
+      "question": "待整理记录有哪些？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖记录列表。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "093 待整理记录 - 还有待整理",
+    "vars": {
+      "category": "待整理记录",
+      "question": "还有待整理的吗？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖还有待整理。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "094 待整理记录 - 未整理记录",
+    "vars": {
+      "category": "待整理记录",
+      "question": "未整理的记录看一下",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖未整理说法。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "095 待整理记录 - 没整理内容",
+    "vars": {
+      "category": "待整理记录",
+      "question": "有没有没整理的内容？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖没整理问法。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "096 待整理记录 - 看待整理",
+    "vars": {
+      "category": "待整理记录",
+      "question": "帮我看待整理",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖短句待整理。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "097 待整理记录 - 原始记录",
+    "vars": {
+      "category": "待整理记录",
+      "question": "待整理的原始记录是什么？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖原始记录问法。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "098 待整理记录 - 还没整理",
+    "vars": {
+      "category": "待整理记录",
+      "question": "有哪些记录还没整理？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖还没整理。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "099 待整理记录 - 当前清单",
+    "vars": {
+      "category": "待整理记录",
+      "question": "当前待整理清单",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖清单问法。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  },
+  {
+    "description": "100 待整理记录 - 几条",
+    "vars": {
+      "category": "待整理记录",
+      "question": "待整理有几条？",
+      "expectedContains": "待整理记录|孙总欠款一万五",
+      "expectedExcludes": "",
+      "notes": "覆盖数量问法。"
+    },
+    "metadata": {
+      "category": "待整理记录"
+    }
+  }
+]

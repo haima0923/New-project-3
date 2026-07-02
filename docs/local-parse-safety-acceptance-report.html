@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>本地解析安全门控验收报告</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #172033; line-height: 1.7; margin: 36px auto; max-width: 980px; padding: 0 24px; }
+    h1 { font-size: 28px; margin-bottom: 8px; }
+    h2 { font-size: 20px; margin-top: 32px; border-bottom: 1px solid #e6e8ef; padding-bottom: 8px; }
+    table { border-collapse: collapse; width: 100%; margin: 14px 0 22px; }
+    th, td { border: 1px solid #dfe3eb; padding: 10px 12px; text-align: left; vertical-align: top; }
+    th { background: #f5f7fb; }
+    code { background: #f5f7fb; border-radius: 4px; padding: 2px 5px; }
+    .pass { color: #087443; font-weight: 700; }
+    .warn { color: #a15c00; font-weight: 700; }
+    .meta { color: #667085; }
+    .box { background: #f7fbff; border: 1px solid #d7e7ff; border-radius: 8px; padding: 14px 16px; }
+  </style>
+</head>
+<body>
+  <h1>本地解析安全门控验收报告</h1>
+  <div class="meta">验收日期：2026-07-02 ｜ 范围：记一笔本地解析、AI 路由、微信/语音输入策略</div>
+
+  <h2>一、改造目标</h2>
+  <div class="box">
+    本次改造不是继续堆正则，而是增加一层“本地解析安全门控”。本地规则只有在字段完整、字段合法、无冲突、无复杂语义时才标记为 <code>SAFE_LOCAL</code>。其余情况进入 <code>NEEDS_AI</code> 或 <code>NEEDS_USER_CONFIRM</code>，避免错误字段静默进入确认卡片。
+  </div>
+
+  <h2>二、核心链路</h2>
+  <table>
+    <tr><th>输入来源</th><th>处理顺序</th><th>验收标准</th></tr>
+    <tr><td>手动输入</td><td>本地解析 → 字段合法性校验 → 安全门控 → 安全才跳过 AI</td><td><code>SAFE_LOCAL</code> 的字段必须正确；不确定则不自动通过</td></tr>
+    <tr><td>微信复制聊天</td><td>聊天提取 → 本地草稿/冲突检查 → 直接请求 AI；AI 不可用时显示安全提示</td><td>多轮、改价、特殊要求不能只靠本地静默保存</td></tr>
+    <tr><td>语音输入</td><td>转文字后直接走 AI；本地只做草稿和校验</td><td>语音口误、同音错字、断句问题不由本地硬猜</td></tr>
+  </table>
+
+  <h2>三、关键修复点</h2>
+  <table>
+    <tr><th>问题</th><th>修复结果</th><th>状态</th></tr>
+    <tr><td><code>报给王总拖鞋3000双2块8</code> 把客户识别成“报给王总”</td><td>客户识别为“王总”；动作词“报给/给/帮/问”等不能进入客户字段</td><td class="pass">通过</td></tr>
+    <tr><td>把 <code>2块8</code> 误识别成产品</td><td>产品识别为“拖鞋”；价格样式不能进入产品字段</td><td class="pass">通过</td></tr>
+    <tr><td>本地置信度只看是否匹配到字段</td><td>新增字段合法性、语义复杂度、来源路由、冲突检查</td><td class="pass">通过</td></tr>
+    <tr><td>AI 不可用时提示不够明确</td><td>页面会显示“需要 AI / 需补字段 / 本地安全通过”的安全判断</td><td class="pass">通过</td></tr>
+  </table>
+
+  <h2>四、样例验收</h2>
+  <table>
+    <tr><th>样例</th><th>期望结果</th><th>实际结果</th><th>状态</th></tr>
+    <tr>
+      <td><code>报给王总拖鞋3000双2块8</code></td>
+      <td>报价；客户王总；产品拖鞋；数量3000双；单价2.8；<code>SAFE_LOCAL</code></td>
+      <td>完全一致，AI 不请求</td>
+      <td class="pass">通过</td>
+    </tr>
+    <tr>
+      <td><code>王总拖鞋3000双，价格还是上次那个，颜色要淡一点</code></td>
+      <td>不能本地硬猜；价格和备注需要 AI/人工确认</td>
+      <td><code>NEEDS_AI</code>，低置信字段包含单价和备注</td>
+      <td class="pass">通过</td>
+    </tr>
+    <tr>
+      <td>人工构造脏字段：客户=<code>报给王总</code></td>
+      <td>不能安全通过</td>
+      <td><code>NEEDS_AI</code>，标记 customerName 低置信</td>
+      <td class="pass">通过</td>
+    </tr>
+    <tr>
+      <td>人工构造脏字段：产品=<code>2块8</code></td>
+      <td>不能安全通过</td>
+      <td><code>NEEDS_AI</code>，标记 productName 低置信</td>
+      <td class="pass">通过</td>
+    </tr>
+    <tr>
+      <td>微信/粘贴来源</td>
+      <td>直接走 AI</td>
+      <td><code>NEEDS_AI</code>，AI 不可用时保留草稿并提示核对</td>
+      <td class="pass">通过</td>
+    </tr>
+  </table>
+
+  <h2>五、自动化测试结果</h2>
+  <table>
+    <tr><th>测试项</th><th>结果</th></tr>
+    <tr><td>核心功能回归</td><td class="pass">全部通过</td></tr>
+    <tr><td>本地解析安全门控专项测试</td><td class="pass">5/5 通过</td></tr>
+    <tr><td>微信升级难度 100 题</td><td class="pass">100/100 通过，失败 0</td></tr>
+    <tr><td>前端/服务端解析文件语法检查</td><td class="pass">通过</td></tr>
+  </table>
+
+  <h2>六、结论</h2>
+  <p>
+    本地解析现在不再只依赖“正则匹配成功”来给高置信度，而是通过安全门控判断是否可以本地通过。验收标准应改为：
+    <strong><code>SAFE_LOCAL</code> 必须 100% 正确；覆盖不了的内容进入 AI 或用户确认。</strong>
+  </p>
+  <p class="warn">
+    后续如果继续用 1200 道题验收，建议按 <code>SAFE_LOCAL 正确率</code>、<code>NEEDS_AI 路由准确率</code>、<code>NEEDS_USER_CONFIRM 缺字段准确率</code> 三类分别统计，不再只看总通过率。
+  </p>
+</body>
+</html>

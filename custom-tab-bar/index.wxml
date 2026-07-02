@@ -1,0 +1,36 @@
+<view class="tab-shell">
+  <view class="tab-safe">
+    <block wx:for="{{list}}" wx:key="pagePath">
+      <view
+        wx:if="{{item.center}}"
+        class="tab-item tab-item-center {{selected === index ? 'tab-item-active' : ''}}"
+        data-index="{{index}}"
+        bindtap="noop"
+        bindtouchstart="startCenterVoice"
+        bindtouchmove="moveCenterVoice"
+        bindtouchend="stopCenterVoice"
+        bindtouchcancel="cancelCenterVoice"
+      >
+        <view class="center-icon">
+          <view class="tab-mic-symbol">
+            <view class="tab-mic-body"></view>
+            <view class="tab-mic-stem"></view>
+            <view class="tab-mic-base"></view>
+          </view>
+        </view>
+        <view class="tab-text">{{item.text}}</view>
+      </view>
+      <view
+        wx:else
+        class="tab-item {{selected === index ? 'tab-item-active' : ''}}"
+        data-path="{{item.pagePath}}"
+        data-index="{{index}}"
+        bindtap="switchTab"
+      >
+        <view class="tab-icon tab-icon-{{item.key}}">{{item.icon}}</view>
+        <view class="tab-text">{{item.text}}</view>
+        <view wx:if="{{item.badge}}" class="tab-badge">{{item.badge}}</view>
+      </view>
+    </block>
+  </view>
+</view>

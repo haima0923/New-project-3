@@ -1,7 +1,7 @@
 const http = require('http');
 const { getConfig, isRealAiEnabled } = require('./config');
 const { getAllowedOrigin, readJsonBody, sendJson } = require('./lib/http');
-const { parseWithAi, queryWithAi } = require('./ai/model');
+const { parseWithAi, queryWithAi, transcribeWithAi } = require('./ai/model');
 
 const config = getConfig();
 
@@ -39,6 +39,16 @@ function handleRequest(req, res) {
       .then((payload) => sendJson(res, 200, payload, origin))
       .catch((error) => sendJson(res, 500, {
         error: 'AI_QUERY_FAILED',
+        message: error.message
+      }, origin));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/ai/transcribe') {
+    transcribeWithAi(config)
+      .then((payload) => sendJson(res, 200, payload, origin))
+      .catch((error) => sendJson(res, 500, {
+        error: 'AI_TRANSCRIBE_FAILED',
         message: error.message
       }, origin));
     return;

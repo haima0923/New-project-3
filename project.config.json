@@ -1,7 +1,15 @@
 {
   "description": "Yiwu factory owner AI assistant MVP",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {"type": "folder", "value": "docs"},
+    {"type": "folder", "value": "promptfoo"},
+    {"type": "folder", "value": "reports"},
+    {"type": "folder", "value": "scripts"},
+    {"type": "folder", "value": "server"},
+    {"type": "folder", "value": "temp"},
+    {"type": "folder", "value": "node_modules"}
+    ],
     "include": []
   },
   "setting": {

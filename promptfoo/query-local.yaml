@@ -1,0 +1,151 @@
+description: "Local mock regression tests for 问一句"
+
+prompts:
+  - "{{question}}"
+
+providers:
+  - id: file://./providers/local-query.js
+    label: local-query-mock
+    config:
+      baseUrl: http://127.0.0.1:3001
+
+defaultTest:
+  assert:
+    - type: is-json
+      value:
+        type: object
+        required:
+          - title
+          - lines
+          - readonly
+          - provider
+        properties:
+          title:
+            type: string
+            minLength: 1
+          lines:
+            type: array
+            items:
+              type: string
+          readonly:
+            const: true
+          provider:
+            const: mock
+    - type: javascript
+      value: |
+        const data = JSON.parse(output);
+        const text = `${data.title}\n${data.lines.join('\n')}`;
+        if (text.includes('我还没完全听懂')) {
+          return {
+            pass: false,
+            score: 0,
+            reason: 'Query fell back instead of answering the fixture question.',
+          };
+        }
+        return true;
+
+tests:
+  - description: "欠款总览"
+    vars:
+      question: "谁还欠我钱？"
+    assert:
+      - type: contains-all
+        value:
+          - "陈总"
+          - "刘总"
+          - "老李"
+          - "剩余"
+      - type: not-contains
+        value: "王总：应收15000元"
+
+  - description: "单个客户欠款"
+    vars:
+      question: "陈总欠我多少？"
+    assert:
+      - type: contains-all
+        value:
+          - "陈总"
+          - "15000"
+
+  - description: "月底前收款"
+    vars:
+      question: "月底前要收哪些款？"
+    assert:
+      - type: contains-all
+        value:
+          - "陈总"
+          - "刘总"
+      - type: not-contains
+        value: "老李"
+
+  - description: "近期交货"
+    vars:
+      question: "这周要交哪些货？"
+    assert:
+      - type: contains-all
+        value:
+          - "马总"
+          - "杯垫"
+          - "待生产"
+
+  - description: "订单状态"
+    vars:
+      question: "马总的单子现在怎么样了？"
+    assert:
+      - type: contains-all
+        value:
+          - "马总"
+          - "杯垫"
+          - "300"
+          - "待生产"
+
+  - description: "上次报价"
+    vars:
+      question: "王总上次报多少？"
+    assert:
+      - type: contains-all
+        value:
+          - "王总"
+          - "卡通水杯"
+          - "5.5"
+          - "5500"
+
+  - description: "未转订单报价"
+    vars:
+      question: "哪些报价还没转订单？"
+    assert:
+      - type: contains-all
+        value:
+          - "王总"
+          - "卡通水杯"
+          - "5500"
+
+  - description: "今天事项"
+    vars:
+      question: "今天有什么事？"
+    assert:
+      - type: contains-all
+        value:
+          - "今天有"
+          - "款要处理"
+          - "批货快到交期"
+          - "待办提醒"
+          - "待整理"
+
+  - description: "明天待办"
+    vars:
+      question: "明天有什么待办？"
+    assert:
+      - type: contains-all
+        value:
+          - "明日待办"
+          - "跟进周姐礼品盒"
+
+  - description: "待整理记录"
+    vars:
+      question: "有没有待整理的记录？"
+    assert:
+      - type: contains-all
+        value:
+          - "待整理记录"
+          - "孙总欠款一万五"

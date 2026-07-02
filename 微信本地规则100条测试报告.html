@@ -1,0 +1,466 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>微信聊天本地规则解析 100 条离线评测报告</title>
+  <style>
+    body {
+      margin: 0;
+      color: #1f2937;
+      background: #f6f7f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+      line-height: 1.65;
+    }
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 32px 24px 56px;
+      background: #fff;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    h1 {
+      margin: 0 0 18px;
+      font-size: 30px;
+      line-height: 1.25;
+    }
+    h2 {
+      margin: 34px 0 12px;
+      padding-top: 6px;
+      border-top: 1px solid #e5e7eb;
+      font-size: 22px;
+    }
+    h3 {
+      margin: 26px 0 8px;
+      font-size: 18px;
+    }
+    p, li {
+      font-size: 15px;
+    }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #f3f4f6;
+      color: #111827;
+      font-family: Consolas, "SFMono-Regular", monospace;
+    }
+    pre {
+      overflow-x: auto;
+      padding: 14px 16px;
+      border-radius: 8px;
+      background: #111827;
+      color: #f9fafb;
+      white-space: pre-wrap;
+    }
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      margin: 14px 0 22px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 760px;
+    }
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: #f9fafb;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    tr:last-child td {
+      border-bottom: 0;
+    }
+    .numbered {
+      margin-left: 4px;
+    }
+  </style>
+</head>
+<body>
+  <main>
+<h1>微信聊天本地规则解析 100 条离线评测报告</h1>
+<p>生成时间：2026-07-01T03:18:32.927Z</p>
+<h2>评测说明</h2>
+<ul><li>本报告模拟 100 条不同场景的微信聊天复制内容。</li><li>评测链路：<code>analyzeClipboardText -&gt; parseHybridInput</code>，在 Node 环境下没有 <code>wx</code> 和 API endpoint，因此不会调用真实 AI，相当于只看本地规则/本地兜底能力。</li><li>“通过”表示本地结果满足该用例预期；“失败”表示字段、意图、备注、冲突提示或多记录拆分存在问题。</li><li>部分改价场景如果能填最终候选值并标出冲突，视为通过，因为本地规则已做到安全拦截，不会直接误存。</li></ul>
+<h2>总览</h2>
+<ul><li>总用例：100</li><li>通过：52</li><li>失败：48</li><li>通过率：52.0%</li></ul>
+<h2>按场景统计</h2>
+<div class="table-wrap"><table><tr><th>场景</th><th>用例数</th><th>通过</th><th>失败</th><th>通过率</th></tr>
+<tr><td>报价</td><td>12</td><td>8</td><td>4</td><td>66.7%</td></tr>
+<tr><td>订单</td><td>12</td><td>8</td><td>4</td><td>66.7%</td></tr>
+<tr><td>改价确认</td><td>12</td><td>5</td><td>7</td><td>41.7%</td></tr>
+<tr><td>特殊要求</td><td>12</td><td>9</td><td>3</td><td>75.0%</td></tr>
+<tr><td>收款应收</td><td>16</td><td>13</td><td>3</td><td>81.3%</td></tr>
+<tr><td>更新历史</td><td>12</td><td>2</td><td>10</td><td>16.7%</td></tr>
+<tr><td>多产品</td><td>12</td><td>0</td><td>12</td><td>0.0%</td></tr>
+<tr><td>待办</td><td>12</td><td>7</td><td>5</td><td>58.3%</td></tr></table></div>
+<h2>错误类型统计</h2>
+<div class="table-wrap"><table><tr><th>错误类型</th><th>次数</th><th>初步解决方向</th></tr>
+<tr><td>intent_error</td><td>22</td><td>把意图判断从关键词计分升级为“候选意图+证据+冲突”结构；复杂对话交给 AI 仲裁。</td></tr>
+<tr><td>wrong_quantity</td><td>13</td><td>数量抽取跳过单价中的“一个/一件”，增强“万、千、包、盒”等单位换算。</td></tr>
+<tr><td>multi_record_not_supported</td><td>12</td><td>增加多记录拆分能力：一段微信聊天可生成多个报价/订单草稿。</td></tr>
+<tr><td>wrong_unit_price</td><td>9</td><td>价格抽取按时间顺序保留候选，结合“可以/就按/贵了/确认”等词选择最终价。</td></tr>
+<tr><td>field_missing</td><td>8</td><td>增加字段候选池，不只取单一摘要；对产品、价格、日期分别做多候选抽取。</td></tr>
+<tr><td>wrong_todo_title</td><td>3</td><td>待办标题用意图模板+产品/客户/动作组合，复杂句交由 AI 重写标题。</td></tr>
+<tr><td>wrong_product</td><td>1</td><td>扩充商品抽取，支持未知商品；避免把“想问/先做/要货”等动作词混入产品。</td></tr>
+<tr><td>wrong_customer</td><td>1</td><td>区分说话人、老板本人和客户称呼；微信昵称与客户档案做候选匹配。</td></tr>
+<tr><td>no_business_extracted</td><td>1</td><td>提高业务片段召回：保留更多上下文，降低多消息业务阈值，并让 AI 对整段原文做兜底判断。</td></tr></table></div>
+<h2>主要发现</h2>
+<p class="numbered">1. intent_error：22 次。把意图判断从关键词计分升级为“候选意图+证据+冲突”结构；复杂对话交给 AI 仲裁。</p>
+<p class="numbered">2. wrong_quantity：13 次。数量抽取跳过单价中的“一个/一件”，增强“万、千、包、盒”等单位换算。</p>
+<p class="numbered">3. multi_record_not_supported：12 次。增加多记录拆分能力：一段微信聊天可生成多个报价/订单草稿。</p>
+<p class="numbered">4. wrong_unit_price：9 次。价格抽取按时间顺序保留候选，结合“可以/就按/贵了/确认”等词选择最终价。</p>
+<p class="numbered">5. field_missing：8 次。增加字段候选池，不只取单一摘要；对产品、价格、日期分别做多候选抽取。</p>
+<p class="numbered">6. wrong_todo_title：3 次。待办标题用意图模板+产品/客户/动作组合，复杂句交由 AI 重写标题。</p>
+<h2>失败样例摘录</h2>
+<h3>002 李总钥匙扣报价</h3>
+<ul><li>场景：报价</li><li>错误类型：wrong_unit_price</li><li>原因：口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=quotation；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.2</li><li>实际：intent=quotation；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.1；amount=2200；payment=；deposit=；due=；missing=；low=；conflict=</li></ul>
+<pre><code>李总
+2026年07月01日 09:10
+想问下钥匙扣2000个多少钱
+
+海马
+2026年07月01日 09:11
+一块二一个</code></pre>
+<h3>005 钱总包装袋报价</h3>
+<ul><li>场景：报价</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=quotation；customer=钱总；product=包装袋；quantity=10000；unitPrice=0.08</li><li>实际：intent=quotation；customer=钱总；product=包装袋；quantity=0；unitPrice=0.08；amount=0；payment=；deposit=；due=；missing=；low=；conflict=</li></ul>
+<pre><code>钱总
+2026年07月01日 09:10
+想问下包装袋1万只多少钱
+
+海马
+2026年07月01日 09:11
+8分钱一只</code></pre>
+<h3>006 孙总老款杯垫报价</h3>
+<ul><li>场景：报价</li><li>错误类型：wrong_unit_price</li><li>原因：口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=quotation；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.8</li><li>实际：intent=quotation；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.81；amount=810；payment=；deposit=；due=；missing=；low=；conflict=</li></ul>
+<pre><code>孙总
+2026年07月01日 09:10
+想问下老款杯垫1000个多少钱
+
+海马
+2026年07月01日 09:11
+还是八毛一个</code></pre>
+<h3>012 何姐贴纸报价</h3>
+<ul><li>场景：报价</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=quotation；customer=何姐；product=贴纸；quantity=20000；unitPrice=0.12</li><li>实际：intent=quotation；customer=何姐；product=贴纸；quantity=0；unitPrice=0.12；amount=0；payment=；deposit=；due=；missing=；low=；conflict=</li></ul>
+<pre><code>何姐
+2026年07月01日 09:10
+想问下贴纸2万张多少钱
+
+海马
+2026年07月01日 09:11
+1毛2一张</code></pre>
+<h3>014 李总钥匙扣下单</h3>
+<ul><li>场景：订单</li><li>错误类型：wrong_unit_price</li><li>原因：口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=order；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.2；dueDate=有</li><li>实际：intent=order；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.1；amount=2200；payment=；deposit=；due=2026-07-08；missing=；low=；conflict=</li></ul>
+<pre><code>李总
+2026年07月01日 09:10
+钥匙扣2000个先做
+
+海马
+2026年07月01日 09:11
+一块二一个，7天后发</code></pre>
+<h3>017 钱总包装袋下单</h3>
+<ul><li>场景：订单</li><li>错误类型：wrong_quantity、field_missing</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。；相对日期或口语交期没有被日期规则识别。</li><li>预期：intent=order；customer=钱总；product=包装袋；quantity=10000；unitPrice=0.08；dueDate=有</li><li>实际：intent=order；customer=钱总；product=包装袋；quantity=0；unitPrice=0.08；amount=0；payment=；deposit=；due=；missing=dueDate；low=dueDate；conflict=</li></ul>
+<pre><code>钱总
+2026年07月01日 09:10
+包装袋1万只先做
+
+海马
+2026年07月01日 09:11
+8分钱一只，下周发</code></pre>
+<h3>018 孙总老款杯垫下单</h3>
+<ul><li>场景：订单</li><li>错误类型：wrong_unit_price</li><li>原因：口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=order；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.8；dueDate=有</li><li>实际：intent=order；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.81；amount=810；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</li></ul>
+<pre><code>孙总
+2026年07月01日 09:10
+老款杯垫1000个先做
+
+海马
+2026年07月01日 09:11
+八毛一个，月底交</code></pre>
+<h3>024 何姐贴纸下单</h3>
+<ul><li>场景：订单</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=order；customer=何姐；product=贴纸；quantity=20000；unitPrice=0.12；dueDate=有</li><li>实际：intent=order；customer=何姐；product=贴纸；quantity=0；unitPrice=0.12；amount=0；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</li></ul>
+<pre><code>何姐
+2026年07月01日 09:10
+贴纸2万张先做
+
+海马
+2026年07月01日 09:11
+1毛2一张，月底交</code></pre>
+<h3>028 周姐礼品盒先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_quantity、wrong_unit_price</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=order；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=周姐；product=礼品盒；quantity=1；unitPrice=4.1；amount=4.1；payment=；deposit=；due=2026-07-03；missing=；low=unitPrice；conflict=unitPrice</li></ul>
+<pre><code>周姐
+2026年07月01日 09:10
+礼品盒多少钱
+
+海马
+2026年07月01日 09:11
+4块一套
+
+周姐
+2026年07月01日 09:12
+贵了，3.8一套可以吗
+
+海马
+2026年07月01日 09:13
+可以，就3.8一套，先做500套，后天交</code></pre>
+<h3>029 钱总包装袋先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_quantity、wrong_unit_price、field_missing</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。；相对日期或口语交期没有被日期规则识别。</li><li>预期：intent=order；customer=钱总；product=包装袋；quantity=10000；unitPrice=0.08；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=钱总；product=包装袋；quantity=1；unitPrice=0.11；amount=0.11；payment=；deposit=；due=；missing=dueDate；low=dueDate,unitPrice；conflict=unitPrice</li></ul>
+<pre><code>钱总
+2026年07月01日 09:10
+包装袋多少钱
+
+海马
+2026年07月01日 09:11
+1毛一只
+
+钱总
+2026年07月01日 09:12
+贵了，8分钱一只可以吗
+
+海马
+2026年07月01日 09:13
+可以，就8分钱一只，先做1万只，下周发</code></pre>
+<h3>030 孙总杯子先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=order；customer=孙总；product=杯子；quantity=800；unitPrice=5.5；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=孙总；product=杯子；quantity=1；unitPrice=5.5；amount=5.5；payment=；deposit=；due=2026-07-31；missing=；low=unitPrice；conflict=unitPrice</li></ul>
+<pre><code>孙总
+2026年07月01日 09:10
+杯子多少钱
+
+海马
+2026年07月01日 09:11
+6元一个
+
+孙总
+2026年07月01日 09:12
+贵了，5块5一个可以吗
+
+海马
+2026年07月01日 09:13
+可以，就5块5一个，先做800个，月底交</code></pre>
+<h3>032 黄老板挂件先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=order；customer=黄老板；product=挂件；quantity=3000；unitPrice=1.5；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=黄老板；product=挂件；quantity=1；unitPrice=1.5；amount=1.5；payment=；deposit=；due=2026-07-03；missing=；low=unitPrice；conflict=unitPrice</li></ul>
+<pre><code>黄老板
+2026年07月01日 09:10
+挂件多少钱
+
+海马
+2026年07月01日 09:11
+2元一个
+
+黄老板
+2026年07月01日 09:12
+贵了，一块五可以吗
+
+海马
+2026年07月01日 09:13
+可以，就一块五，先做3000个，周五出</code></pre>
+<h3>033 吴总头绳先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_unit_price</li><li>原因：口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=0.35；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=0.4；amount=2000；payment=；deposit=；due=2026-07-02；missing=；low=unitPrice；conflict=unitPrice</li></ul>
+<pre><code>吴总
+2026年07月01日 09:10
+头绳多少钱
+
+海马
+2026年07月01日 09:11
+4毛
+
+吴总
+2026年07月01日 09:12
+贵了，三毛五可以吗
+
+海马
+2026年07月01日 09:13
+可以，就三毛五，先做5000条，明天发</code></pre>
+<h3>035 马总小夜灯先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_quantity、wrong_unit_price</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=order；customer=马总；product=小夜灯；quantity=1200；unitPrice=4.6；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=马总；product=小夜灯；quantity=1；unitPrice=5.1；amount=5.1；payment=；deposit=；due=2026-07-06；missing=；low=unitPrice；conflict=unitPrice</li></ul>
+<pre><code>马总
+2026年07月01日 09:10
+小夜灯多少钱
+
+海马
+2026年07月01日 09:11
+5元一个
+
+马总
+2026年07月01日 09:12
+贵了，4.6元一个可以吗
+
+海马
+2026年07月01日 09:13
+可以，就4.6元一个，先做1200个，5天后交</code></pre>
+<h3>036 何姐贴纸先报价后改价</h3>
+<ul><li>场景：改价确认</li><li>错误类型：wrong_quantity、wrong_unit_price</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。</li><li>预期：intent=order；customer=何姐；product=贴纸；quantity=20000；unitPrice=0.12；dueDate=有；conflict=unitPrice</li><li>实际：intent=order；customer=何姐；product=贴纸；quantity=0；unitPrice=0.15；amount=0；payment=；deposit=；due=2026-07-31；missing=；low=unitPrice；conflict=unitPrice</li></ul>
+<pre><code>何姐
+2026年07月01日 09:10
+贴纸多少钱
+
+海马
+2026年07月01日 09:11
+1毛5一张
+
+何姐
+2026年07月01日 09:12
+贵了，1毛2一张可以吗
+
+海马
+2026年07月01日 09:13
+可以，就1毛2一张，先做2万张，月底交</code></pre>
+<h3>038 李总钥匙扣带特殊要求</h3>
+<ul><li>场景：特殊要求</li><li>错误类型：wrong_product</li><li>原因：商品词库和“问/要/做+产品”提取规则覆盖不足。</li><li>预期：intent=order；customer=李总；product=钥匙扣；quantity=2000；dueDate=有；remark包含=包装袋每100个一包</li><li>实际：intent=order；customer=李总；product=包装袋；quantity=2000；unitPrice=1.3；amount=2600；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</li></ul>
+<pre><code>李总
+2026年07月01日 09:10
+钥匙扣2000个，包装袋每100个一包
+
+海马
+2026年07月01日 09:11
+好的，1.3一个，月底交</code></pre>
+<h3>041 钱总包装袋带特殊要求</h3>
+<ul><li>场景：特殊要求</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=order；customer=钱总；product=包装袋；quantity=10000；dueDate=有；remark包含=透明度高一点</li><li>实际：intent=order；customer=钱总；product=包装袋；quantity=0；unitPrice=0.08；amount=0；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</li></ul>
+<pre><code>钱总
+2026年07月01日 09:10
+包装袋1万只，透明度高一点
+
+海马
+2026年07月01日 09:11
+好的，8分钱一只，月底交</code></pre>
+<h3>048 何姐贴纸带特殊要求</h3>
+<ul><li>场景：特殊要求</li><li>错误类型：wrong_quantity</li><li>原因：数量单位识别、中文数字或万单位换算不稳定。</li><li>预期：intent=order；customer=何姐；product=贴纸；quantity=20000；dueDate=有；remark包含=图案不要裁边</li><li>实际：intent=order；customer=何姐；product=贴纸；quantity=0；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</li></ul>
+<pre><code>何姐
+2026年07月01日 09:10
+贴纸2万张，图案不要裁边
+
+海马
+2026年07月01日 09:11
+好的，0.12，月底交</code></pre>
+<h3>051 老李收款应收</h3>
+<ul><li>场景：收款应收</li><li>错误类型：wrong_customer</li><li>原因：说话人/客户称呼提取或清洗规则不足。</li><li>预期：intent=payment；customer=老李；paymentAmount=3000</li><li>实际：intent=payment；customer=刚总；product=；quantity=；unitPrice=；amount=；payment=3000；deposit=；due=；missing=；low=；conflict=</li></ul>
+<pre><code>老李
+2026年07月01日 09:10
+刚转了3000，还剩2000</code></pre>
+<h3>057 吴总收款应收</h3>
+<ul><li>场景：收款应收</li><li>错误类型：intent_error、field_missing</li><li>原因：意图打分规则被关键词误导，或缺少该类表达规则。；应收总额/收款金额容易和单价、总价混淆。</li><li>预期：intent=receivable；customer=吴总；amount=1750</li><li>实际：intent=payment；customer=吴总；product=；quantity=；unitPrice=；amount=；payment=1750；deposit=；due=2026-07-02；missing=；low=；conflict=</li></ul>
+<pre><code>吴总
+2026年07月01日 09:10
+头绳一共1750，明天付款</code></pre>
+<h2>100 条明细</h2>
+<div class="table-wrap"><table><tr><th>ID</th><th>场景</th><th>微信聊天摘要</th><th>是否通过</th><th>错误类型</th><th>错误原因</th><th>预期</th><th>实际</th></tr>
+<tr><td>001</td><td>报价</td><td>王总 / 想问下水杯1000个多少钱 / 海马 / 5块5一个</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=王总；product=水杯；quantity=1000；unitPrice=5.5</td><td>intent=quotation；customer=王总；product=水杯；quantity=1000；unitPrice=5.5；amount=5500；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>002</td><td>报价</td><td>李总 / 想问下钥匙扣2000个多少钱 / 海马 / 一块二一个</td><td>失败</td><td>wrong_unit_price</td><td>口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=quotation；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.2</td><td>intent=quotation；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.1；amount=2200；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>003</td><td>报价</td><td>陈老板 / 想问下杯垫300个多少钱 / 海马 / 9毛</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9</td><td>intent=quotation；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9；amount=270；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>004</td><td>报价</td><td>周姐 / 想问下礼品盒500套多少钱 / 海马 / 3.8一套</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8</td><td>intent=quotation；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8；amount=1900；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>005</td><td>报价</td><td>钱总 / 想问下包装袋1万只多少钱 / 海马 / 8分钱一只</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=quotation；customer=钱总；product=包装袋；quantity=10000；unitPrice=0.08</td><td>intent=quotation；customer=钱总；product=包装袋；quantity=0；unitPrice=0.08；amount=0；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>006</td><td>报价</td><td>孙总 / 想问下老款杯垫1000个多少钱 / 海马 / 还是八毛一个</td><td>失败</td><td>wrong_unit_price</td><td>口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=quotation；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.8</td><td>intent=quotation；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.81；amount=810；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>007</td><td>报价</td><td>赵姐 / 想问下饰品盒800个多少钱 / 海马 / 两块三</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=赵姐；product=饰品盒；quantity=800；unitPrice=2.3</td><td>intent=quotation；customer=赵姐；product=饰品盒；quantity=800；unitPrice=2.3；amount=1840；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>008</td><td>报价</td><td>黄老板 / 想问下五金挂件3000个多少钱 / 海马 / 单价一块五</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=黄老板；product=五金挂件；quantity=3000；unitPrice=1.5</td><td>intent=quotation；customer=黄老板；product=五金挂件；quantity=3000；unitPrice=1.5；amount=4500；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>009</td><td>报价</td><td>吴总 / 想问下头绳5000条多少钱 / 海马 / 三毛五</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=吴总；product=头绳；quantity=5000；unitPrice=0.35</td><td>intent=quotation；customer=吴总；product=头绳；quantity=5000；unitPrice=0.35；amount=1750；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>010</td><td>报价</td><td>刘总 / 想问下收纳盒600个多少钱 / 海马 / 7块8</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=刘总；product=收纳盒；quantity=600；unitPrice=7.8</td><td>intent=quotation；customer=刘总；product=收纳盒；quantity=600；unitPrice=7.8；amount=4680；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>011</td><td>报价</td><td>马总 / 想问下小夜灯1200个多少钱 / 海马 / 4.6元一个</td><td>通过</td><td>无</td><td>通过</td><td>intent=quotation；customer=马总；product=小夜灯；quantity=1200；unitPrice=4.6</td><td>intent=quotation；customer=马总；product=小夜灯；quantity=1200；unitPrice=4.6；amount=5520；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>012</td><td>报价</td><td>何姐 / 想问下贴纸2万张多少钱 / 海马 / 1毛2一张</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=quotation；customer=何姐；product=贴纸；quantity=20000；unitPrice=0.12</td><td>intent=quotation；customer=何姐；product=贴纸；quantity=0；unitPrice=0.12；amount=0；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>013</td><td>订单</td><td>王总 / 卡通水杯1000个先做 / 海马 / 5块5一个，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=王总；product=卡通水杯；quantity=1000；unitPrice=5.5；dueDate=有</td><td>intent=order；customer=王总；product=卡通水杯；quantity=1000；unitPrice=5.5；amount=5500；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>014</td><td>订单</td><td>李总 / 钥匙扣2000个先做 / 海马 / 一块二一个，7天后发</td><td>失败</td><td>wrong_unit_price</td><td>口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=order；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.2；dueDate=有</td><td>intent=order；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.1；amount=2200；payment=；deposit=；due=2026-07-08；missing=；low=；conflict=</td></tr>
+<tr><td>015</td><td>订单</td><td>陈老板 / 杯垫300个先做 / 海马 / 9毛，明天交货</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9；dueDate=有</td><td>intent=order；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9；amount=270；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>016</td><td>订单</td><td>周姐 / 礼品盒500套先做 / 海马 / 3.8一套，后天出货</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8；dueDate=有</td><td>intent=order；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8；amount=1900；payment=；deposit=；due=2026-07-03；missing=；low=；conflict=</td></tr>
+<tr><td>017</td><td>订单</td><td>钱总 / 包装袋1万只先做 / 海马 / 8分钱一只，下周发</td><td>失败</td><td>wrong_quantity、field_missing</td><td>数量单位识别、中文数字或万单位换算不稳定。；相对日期或口语交期没有被日期规则识别。</td><td>intent=order；customer=钱总；product=包装袋；quantity=10000；unitPrice=0.08；dueDate=有</td><td>intent=order；customer=钱总；product=包装袋；quantity=0；unitPrice=0.08；amount=0；payment=；deposit=；due=；missing=dueDate；low=dueDate；conflict=</td></tr>
+<tr><td>018</td><td>订单</td><td>孙总 / 老款杯垫1000个先做 / 海马 / 八毛一个，月底交</td><td>失败</td><td>wrong_unit_price</td><td>口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=order；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.8；dueDate=有</td><td>intent=order；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.81；amount=810；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>019</td><td>订单</td><td>赵姐 / 饰品盒800个先做 / 海马 / 两块三，3天后拿</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=800；unitPrice=2.3；dueDate=有</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=800；unitPrice=2.3；amount=1840；payment=；deposit=；due=2026-07-04；missing=；low=；conflict=</td></tr>
+<tr><td>020</td><td>订单</td><td>黄老板 / 五金挂件3000个先做 / 海马 / 一块五，周五出</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=黄老板；product=五金挂件；quantity=3000；unitPrice=1.5；dueDate=有</td><td>intent=order；customer=黄老板；product=五金挂件；quantity=3000；unitPrice=1.5；amount=4500；payment=；deposit=；due=2026-07-03；missing=；low=；conflict=</td></tr>
+<tr><td>021</td><td>订单</td><td>吴总 / 头绳5000条先做 / 海马 / 三毛五，明天发</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=0.35；dueDate=有</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=0.35；amount=1750；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>022</td><td>订单</td><td>刘总 / 收纳盒600个先做 / 海马 / 7块8，7月10日交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=刘总；product=收纳盒；quantity=600；unitPrice=7.8；dueDate=有</td><td>intent=order；customer=刘总；product=收纳盒；quantity=600；unitPrice=7.8；amount=4680；payment=；deposit=；due=2026-07-10；missing=；low=；conflict=</td></tr>
+<tr><td>023</td><td>订单</td><td>马总 / 小夜灯1200个先做 / 海马 / 4.6元一个，5天后交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=马总；product=小夜灯；quantity=1200；unitPrice=4.6；dueDate=有</td><td>intent=order；customer=马总；product=小夜灯；quantity=1200；unitPrice=4.6；amount=5520；payment=；deposit=；due=2026-07-06；missing=；low=；conflict=</td></tr>
+<tr><td>024</td><td>订单</td><td>何姐 / 贴纸2万张先做 / 海马 / 1毛2一张，月底交</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=order；customer=何姐；product=贴纸；quantity=20000；unitPrice=0.12；dueDate=有</td><td>intent=order；customer=何姐；product=贴纸；quantity=0；unitPrice=0.12；amount=0；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>025</td><td>改价确认</td><td>王总 / 水杯多少钱 / 海马 / 30一个 / 王总 / 贵了，25一个可以吗 / 海马 / 可以，就25一个，先做1000个，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=王总；product=水杯；quantity=1000；unitPrice=25；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=王总；product=水杯；quantity=1000；unitPrice=25；amount=25000；payment=；deposit=；due=2026-07-31；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>026</td><td>改价确认</td><td>李总 / 钥匙扣多少钱 / 海马 / 1.5一个 / 李总 / 贵了，1.3一个可以吗 / 海马 / 可以，就1.3一个，先做2000个，7天后发</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.3；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=李总；product=钥匙扣；quantity=2000；unitPrice=1.3；amount=2600；payment=；deposit=；due=2026-07-08；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>027</td><td>改价确认</td><td>陈老板 / 杯垫多少钱 / 海马 / 1块 / 陈老板 / 贵了，9毛可以吗 / 海马 / 可以，就9毛，先做300个，明天交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9；amount=270；payment=；deposit=；due=2026-07-02；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>028</td><td>改价确认</td><td>周姐 / 礼品盒多少钱 / 海马 / 4块一套 / 周姐 / 贵了，3.8一套可以吗 / 海马 / 可以，就3.8一套，先做500套，后天交</td><td>失败</td><td>wrong_quantity、wrong_unit_price</td><td>数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=order；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=周姐；product=礼品盒；quantity=1；unitPrice=4.1；amount=4.1；payment=；deposit=；due=2026-07-03；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>029</td><td>改价确认</td><td>钱总 / 包装袋多少钱 / 海马 / 1毛一只 / 钱总 / 贵了，8分钱一只可以吗 / 海马 / 可以，就8分钱一只，先做1万只，下周发</td><td>失败</td><td>wrong_quantity、wrong_unit_price、field_missing</td><td>数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。；相对日期或口语交期没有被日期规则识别。</td><td>intent=order；customer=钱总；product=包装袋；quantity=10000；unitPrice=0.08；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=钱总；product=包装袋；quantity=1；unitPrice=0.11；amount=0.11；payment=；deposit=；due=；missing=dueDate；low=dueDate,unitPrice；conflict=unitPrice</td></tr>
+<tr><td>030</td><td>改价确认</td><td>孙总 / 杯子多少钱 / 海马 / 6元一个 / 孙总 / 贵了，5块5一个可以吗 / 海马 / 可以，就5块5一个，先做800个，月底交</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=order；customer=孙总；product=杯子；quantity=800；unitPrice=5.5；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=孙总；product=杯子；quantity=1；unitPrice=5.5；amount=5.5；payment=；deposit=；due=2026-07-31；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>031</td><td>改价确认</td><td>赵姐 / 饰品盒多少钱 / 海马 / 两块五 / 赵姐 / 贵了，两块三可以吗 / 海马 / 可以，就两块三，先做800个，3天后拿</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=800；unitPrice=2.3；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=800；unitPrice=2.3；amount=1840；payment=；deposit=；due=2026-07-04；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>032</td><td>改价确认</td><td>黄老板 / 挂件多少钱 / 海马 / 2元一个 / 黄老板 / 贵了，一块五可以吗 / 海马 / 可以，就一块五，先做3000个，周五出</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=order；customer=黄老板；product=挂件；quantity=3000；unitPrice=1.5；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=黄老板；product=挂件；quantity=1；unitPrice=1.5；amount=1.5；payment=；deposit=；due=2026-07-03；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>033</td><td>改价确认</td><td>吴总 / 头绳多少钱 / 海马 / 4毛 / 吴总 / 贵了，三毛五可以吗 / 海马 / 可以，就三毛五，先做5000条，明天发</td><td>失败</td><td>wrong_unit_price</td><td>口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=0.35；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=0.4；amount=2000；payment=；deposit=；due=2026-07-02；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>034</td><td>改价确认</td><td>刘总 / 收纳盒多少钱 / 海马 / 8块 / 刘总 / 贵了，7块8可以吗 / 海马 / 可以，就7块8，先做600个，7月10日交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=刘总；product=收纳盒；quantity=600；unitPrice=7.8；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=刘总；product=收纳盒；quantity=600；unitPrice=7.8；amount=4680；payment=；deposit=；due=2026-07-10；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>035</td><td>改价确认</td><td>马总 / 小夜灯多少钱 / 海马 / 5元一个 / 马总 / 贵了，4.6元一个可以吗 / 海马 / 可以，就4.6元一个，先做1200个，5天后交</td><td>失败</td><td>wrong_quantity、wrong_unit_price</td><td>数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=order；customer=马总；product=小夜灯；quantity=1200；unitPrice=4.6；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=马总；product=小夜灯；quantity=1；unitPrice=5.1；amount=5.1；payment=；deposit=；due=2026-07-06；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>036</td><td>改价确认</td><td>何姐 / 贴纸多少钱 / 海马 / 1毛5一张 / 何姐 / 贵了，1毛2一张可以吗 / 海马 / 可以，就1毛2一张，先做2万张，月底交</td><td>失败</td><td>wrong_quantity、wrong_unit_price</td><td>数量单位识别、中文数字或万单位换算不稳定。；口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=order；customer=何姐；product=贴纸；quantity=20000；unitPrice=0.12；dueDate=有；conflict=unitPrice</td><td>intent=order；customer=何姐；product=贴纸；quantity=0；unitPrice=0.15；amount=0；payment=；deposit=；due=2026-07-31；missing=；low=unitPrice；conflict=unitPrice</td></tr>
+<tr><td>037</td><td>特殊要求</td><td>王总 / 杯子1000个，颜色要淡一点，不要太深 / 海马 / 好的，25一个，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=王总；product=杯子；quantity=1000；dueDate=有；remark包含=颜色要淡一点，不要太深</td><td>intent=order；customer=王总；product=杯子；quantity=1000；unitPrice=25；amount=25000；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>038</td><td>特殊要求</td><td>李总 / 钥匙扣2000个，包装袋每100个一包 / 海马 / 好的，1.3一个，月底交</td><td>失败</td><td>wrong_product</td><td>商品词库和“问/要/做+产品”提取规则覆盖不足。</td><td>intent=order；customer=李总；product=钥匙扣；quantity=2000；dueDate=有；remark包含=包装袋每100个一包</td><td>intent=order；customer=李总；product=包装袋；quantity=2000；unitPrice=1.3；amount=2600；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>039</td><td>特殊要求</td><td>陈老板 / 杯垫300个，logo放大一点 / 海马 / 好的，9毛，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=陈老板；product=杯垫；quantity=300；dueDate=有；remark包含=logo放大一点</td><td>intent=order；customer=陈老板；product=杯垫；quantity=300；unitPrice=0.9；amount=270；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>040</td><td>特殊要求</td><td>周姐 / 礼品盒500套，外箱不要太厚 / 海马 / 好的，3.8一套，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=周姐；product=礼品盒；quantity=500；dueDate=有；remark包含=外箱不要太厚</td><td>intent=order；customer=周姐；product=礼品盒；quantity=500；unitPrice=3.8；amount=1900；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>041</td><td>特殊要求</td><td>钱总 / 包装袋1万只，透明度高一点 / 海马 / 好的，8分钱一只，月底交</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=order；customer=钱总；product=包装袋；quantity=10000；dueDate=有；remark包含=透明度高一点</td><td>intent=order；customer=钱总；product=包装袋；quantity=0；unitPrice=0.08；amount=0；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>042</td><td>特殊要求</td><td>孙总 / 老款杯垫1000个，颜色按上次，不要偏黄 / 海马 / 好的，8毛，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=孙总；product=老款杯垫；quantity=1000；dueDate=有；remark包含=颜色按上次，不要偏黄</td><td>intent=order；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=0.8；amount=800；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>043</td><td>特殊要求</td><td>赵姐 / 饰品盒800个，盒子里面加隔板 / 海马 / 好的，2.3，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=800；dueDate=有；remark包含=盒子里面加隔板</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=800；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>044</td><td>特殊要求</td><td>黄老板 / 五金挂件3000个，材质换成不锈钢 / 海马 / 好的，1.5，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=黄老板；product=五金挂件；quantity=3000；dueDate=有；remark包含=材质换成不锈钢</td><td>intent=order；customer=黄老板；product=五金挂件；quantity=3000；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>045</td><td>特殊要求</td><td>吴总 / 头绳5000条，黑色多一点 / 海马 / 好的，0.35，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；dueDate=有；remark包含=黑色多一点</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>046</td><td>特殊要求</td><td>刘总 / 收纳盒600个，尺寸比上次大一点 / 海马 / 好的，7.8，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=刘总；product=收纳盒；quantity=600；dueDate=有；remark包含=尺寸比上次大一点</td><td>intent=order；customer=刘总；product=收纳盒；quantity=600；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=unitPrice；conflict=</td></tr>
+<tr><td>047</td><td>特殊要求</td><td>马总 / 小夜灯1200个，插头要欧规 / 海马 / 好的，4.6，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=马总；product=小夜灯；quantity=1200；dueDate=有；remark包含=插头要欧规</td><td>intent=order；customer=马总；product=小夜灯；quantity=1200；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>048</td><td>特殊要求</td><td>何姐 / 贴纸2万张，图案不要裁边 / 海马 / 好的，0.12，月底交</td><td>失败</td><td>wrong_quantity</td><td>数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=order；customer=何姐；product=贴纸；quantity=20000；dueDate=有；remark包含=图案不要裁边</td><td>intent=order；customer=何姐；product=贴纸；quantity=0；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>049</td><td>收款应收</td><td>陈总 / 有一笔货款15000，月底结</td><td>通过</td><td>无</td><td>通过</td><td>intent=receivable；customer=陈总；amount=15000</td><td>intent=receivable；customer=陈总；product=；quantity=；unitPrice=；amount=15000；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>050</td><td>收款应收</td><td>刘总 / 上次尾款还差5000，下周给</td><td>通过</td><td>无</td><td>通过</td><td>intent=receivable；customer=刘总；amount=5000</td><td>intent=receivable；customer=刘总；product=；quantity=；unitPrice=；amount=5000；payment=；deposit=；due=；missing=dueDate；low=dueDate,unitPrice；conflict=</td></tr>
+<tr><td>051</td><td>收款应收</td><td>老李 / 刚转了3000，还剩2000</td><td>失败</td><td>wrong_customer</td><td>说话人/客户称呼提取或清洗规则不足。</td><td>intent=payment；customer=老李；paymentAmount=3000</td><td>intent=payment；customer=刚总；product=；quantity=；unitPrice=；amount=；payment=3000；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>052</td><td>收款应收</td><td>周姐 / 已到账8600，微信转的</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=周姐；paymentAmount=8600</td><td>intent=payment；customer=周姐；product=；quantity=；unitPrice=；amount=；payment=8600；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>053</td><td>收款应收</td><td>马总 / 杯垫定金收了1000，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=马总；paymentAmount=1000</td><td>intent=payment；customer=马总；product=；quantity=；unitPrice=；amount=；payment=1000；deposit=1000；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>054</td><td>收款应收</td><td>王总 / 水杯1000个，先付定金2000，月底交</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=王总；depositAmount=2000</td><td>intent=order；customer=王总；product=水杯；quantity=1000；unitPrice=；amount=；payment=2000；deposit=2000；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>055</td><td>收款应收</td><td>黄老板 / 那笔五金挂件尾款12000还没结</td><td>通过</td><td>无</td><td>通过</td><td>intent=receivable；customer=黄老板；amount=12000</td><td>intent=receivable；customer=黄老板；product=；quantity=；unitPrice=；amount=12000；payment=；deposit=；due=；missing=dueDate；low=dueDate；conflict=</td></tr>
+<tr><td>056</td><td>收款应收</td><td>赵姐 / 饰品盒款付了2300，剩余4600</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=赵姐；paymentAmount=2300</td><td>intent=payment；customer=赵姐；product=；quantity=；unitPrice=；amount=；payment=2300；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>057</td><td>收款应收</td><td>吴总 / 头绳一共1750，明天付款</td><td>失败</td><td>intent_error、field_missing</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；应收总额/收款金额容易和单价、总价混淆。</td><td>intent=receivable；customer=吴总；amount=1750</td><td>intent=payment；customer=吴总；product=；quantity=；unitPrice=；amount=；payment=1750；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>058</td><td>收款应收</td><td>何姐 / 贴纸款2400已到账</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=何姐；paymentAmount=2400</td><td>intent=payment；customer=何姐；product=；quantity=；unitPrice=；amount=；payment=2400；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>059</td><td>收款应收</td><td>钱总 / 包装袋先收了800，后面还有2000</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=钱总；paymentAmount=800</td><td>intent=payment；customer=钱总；product=；quantity=；unitPrice=；amount=；payment=800；deposit=；due=；missing=；low=dueDate；conflict=</td></tr>
+<tr><td>060</td><td>收款应收</td><td>孙总 / 老款杯垫挂账800，月底一起结</td><td>通过</td><td>无</td><td>通过</td><td>intent=receivable；customer=孙总；amount=800</td><td>intent=receivable；customer=孙总；product=；quantity=；unitPrice=；amount=800；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>061</td><td>收款应收</td><td>郭总 / 今天打款5000，不是3000</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=郭总；paymentAmount=5000</td><td>intent=payment；customer=郭总；product=；quantity=；unitPrice=；amount=；payment=5000；deposit=；due=2026-07-01；missing=；low=；conflict=</td></tr>
+<tr><td>062</td><td>收款应收</td><td>范姐 / 定金三千，货月底交</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=payment；customer=范姐；paymentAmount=3000</td><td>intent=order；customer=范姐；product=；quantity=；unitPrice=；amount=；payment=3000；deposit=3000；due=2026-07-31；missing=productName,quantity；low=；conflict=</td></tr>
+<tr><td>063</td><td>收款应收</td><td>郑总 / 还有一笔没结，一共一万二</td><td>通过</td><td>无</td><td>通过</td><td>intent=receivable；customer=郑总；amount=12000</td><td>intent=receivable；customer=郑总；product=；quantity=；unitPrice=；amount=12000；payment=；deposit=；due=；missing=dueDate；low=dueDate；conflict=</td></tr>
+<tr><td>064</td><td>收款应收</td><td>曹老板 / 上次货款结清了</td><td>通过</td><td>无</td><td>通过</td><td>intent=payment；customer=曹老板</td><td>intent=payment；customer=曹老板；product=；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=paymentAmount；low=dueDate,unitPrice；conflict=</td></tr>
+<tr><td>065</td><td>更新历史</td><td>王总 / 那单水杯价格改成25一个</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=update_order；customer=王总；unitPrice=25</td><td>intent=quotation；customer=王总；product=水杯；quantity=1；unitPrice=25；amount=25；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>066</td><td>更新历史</td><td>李总 / 钥匙扣那单数量改成2500个</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=update_order；customer=李总；quantity=2500</td><td>intent=order；customer=李总；product=钥匙扣；quantity=2500；unitPrice=；amount=；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>067</td><td>更新历史</td><td>陈老板 / 杯垫交期提前到明天</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=update_order；customer=陈老板</td><td>intent=order；customer=陈老板；product=杯垫；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>068</td><td>更新历史</td><td>周姐 / 礼品盒延期到下周</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=update_order；customer=周姐</td><td>intent=order；customer=周姐；product=礼品盒；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=；low=dueDate；conflict=</td></tr>
+<tr><td>069</td><td>更新历史</td><td>钱总 / 包装袋按上次价格做1万只</td><td>失败</td><td>intent_error、wrong_quantity</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；数量单位识别、中文数字或万单位换算不稳定。</td><td>intent=order；customer=钱总；quantity=10000</td><td>intent=quotation；customer=钱总；product=包装袋；quantity=0；unitPrice=；amount=；payment=；deposit=；due=；missing=unitPrice；low=unitPrice；conflict=</td></tr>
+<tr><td>070</td><td>更新历史</td><td>孙总 / 老款杯垫照旧价，补1000个</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=孙总；quantity=1000</td><td>intent=order；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=；amount=；payment=；deposit=；due=；missing=dueDate；low=unitPrice；conflict=</td></tr>
+<tr><td>071</td><td>更新历史</td><td>赵姐 / 饰品盒不要做了</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=unknown；customer=赵姐</td><td>intent=order；customer=赵姐；product=饰品盒；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=quantity,dueDate；low=；conflict=</td></tr>
+<tr><td>072</td><td>更新历史</td><td>黄老板 / 五金挂件上次那笔报价改一下</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=update_quotation；customer=黄老板</td><td>intent=quotation；customer=黄老板；product=五金挂件；quantity=；unitPrice=1；amount=；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>073</td><td>更新历史</td><td>吴总 / 头绳再来5000条，按上回</td><td>通过</td><td>无</td><td>通过</td><td>intent=order；customer=吴总；quantity=5000</td><td>intent=order；customer=吴总；product=头绳；quantity=5000；unitPrice=；amount=；payment=；deposit=；due=；missing=dueDate；low=unitPrice；conflict=</td></tr>
+<tr><td>074</td><td>更新历史</td><td>刘总 / 收纳盒这单备注一下，箱规改小</td><td>失败</td><td>intent_error</td><td>意图打分规则被关键词误导，或缺少该类表达规则。</td><td>intent=update_order；customer=刘总</td><td>intent=unknown；customer=刘总；product=；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>075</td><td>更新历史</td><td>马总 / 小夜灯先别发，等通知</td><td>失败</td><td>no_business_extracted</td><td>本地业务打分没有选出有效业务片段。</td><td>intent=unknown；customer=马总</td><td>analysis=no_business</td></tr>
+<tr><td>076</td><td>更新历史</td><td>何姐 / 贴纸价格写错了，不是0.15，是0.12</td><td>失败</td><td>intent_error、field_missing</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；口语价格、改价或单位价格解析规则覆盖不足。</td><td>intent=quotation；customer=何姐；unitPrice=0.12</td><td>intent=payment；customer=何姐；product=；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=paymentAmount；low=；conflict=</td></tr>
+<tr><td>077</td><td>多产品</td><td>王总 / 你好 / 海马 / 在的 / 王总 / 水杯1000个25一个，杯垫300个9毛，月底一起交</td><td>失败</td><td>multi_record_not_supported</td><td>当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=王总；multiProducts=水杯+杯垫</td><td>intent=order；customer=王总；product=水杯；quantity=1000；unitPrice=0.9；amount=900；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>078</td><td>多产品</td><td>李总 / 你好 / 海马 / 在的 / 李总 / 钥匙扣2000个1.3，包装袋1万只8分，下周发</td><td>失败</td><td>multi_record_not_supported</td><td>当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=李总；multiProducts=钥匙扣+包装袋</td><td>intent=order；customer=李总；product=包装袋；quantity=2000；unitPrice=0.08；amount=160；payment=；deposit=；due=；missing=dueDate；low=dueDate；conflict=</td></tr>
+<tr><td>079</td><td>多产品</td><td>陈老板 / 你好 / 海马 / 在的 / 陈老板 / 杯垫300个，颜色浅一点；礼品盒500套，logo放大</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=陈老板；multiProducts=杯垫+礼品盒</td><td>intent=unknown；customer=陈老板；product=；quantity=300；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>080</td><td>多产品</td><td>周姐 / 你好 / 海马 / 在的 / 周姐 / 先问礼品盒500套多少钱，再问收纳盒600个多少钱</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=周姐；multiProducts=礼品盒+收纳盒</td><td>intent=quotation；customer=周姐；product=收纳盒；quantity=500；unitPrice=；amount=；payment=；deposit=；due=；missing=unitPrice；low=；conflict=</td></tr>
+<tr><td>081</td><td>多产品</td><td>钱总 / 你好 / 海马 / 在的 / 钱总 / 包装袋和贴纸一起报，包装袋1万只，贴纸2万张</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=钱总；multiProducts=包装袋+贴纸</td><td>intent=unknown；customer=钱总；product=；quantity=0；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>082</td><td>多产品</td><td>孙总 / 你好 / 海马 / 在的 / 孙总 / 老款杯垫1000个，水杯800个，价格照旧</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=孙总；multiProducts=老款杯垫+水杯</td><td>intent=quotation；customer=孙总；product=老款杯垫；quantity=1000；unitPrice=；amount=；payment=；deposit=；due=；missing=unitPrice；low=unitPrice；conflict=</td></tr>
+<tr><td>083</td><td>多产品</td><td>赵姐 / 你好 / 海马 / 在的 / 赵姐 / 饰品盒800个2.3，小夜灯1200个4.6</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=赵姐；multiProducts=饰品盒+小夜灯</td><td>intent=unknown；customer=赵姐；product=；quantity=800；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>084</td><td>多产品</td><td>黄老板 / 你好 / 海马 / 在的 / 黄老板 / 五金挂件3000个，钥匙扣2000个，周五出</td><td>失败</td><td>multi_record_not_supported</td><td>当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=黄老板；multiProducts=五金挂件+钥匙扣</td><td>intent=order；customer=黄老板；product=五金挂件；quantity=3000；unitPrice=；amount=；payment=；deposit=；due=2026-07-03；missing=；low=；conflict=</td></tr>
+<tr><td>085</td><td>多产品</td><td>吴总 / 你好 / 海马 / 在的 / 吴总 / 头绳5000条0.35，扣子1000件0.38</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=吴总；multiProducts=头绳+扣子</td><td>intent=unknown；customer=吴总；product=；quantity=5000；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>086</td><td>多产品</td><td>刘总 / 你好 / 海马 / 在的 / 刘总 / 收纳盒600个7.8，箱子500个59</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=刘总；multiProducts=收纳盒+箱子</td><td>intent=unknown；customer=刘总；product=；quantity=600；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>087</td><td>多产品</td><td>马总 / 你好 / 海马 / 在的 / 马总 / 小夜灯1200个4.6，包装袋5000只0.08</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=马总；multiProducts=小夜灯+包装袋</td><td>intent=unknown；customer=马总；product=；quantity=1200；unitPrice=；amount=；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>088</td><td>多产品</td><td>何姐 / 你好 / 海马 / 在的 / 何姐 / 贴纸2万张0.12，文具套装200套12块</td><td>失败</td><td>intent_error、multi_record_not_supported</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；当前确认卡只能生成单条草稿，多产品聊天无法拆成多条记录。</td><td>intent=order；customer=何姐；multiProducts=贴纸+文具套装</td><td>intent=unknown；customer=何姐；product=；quantity=0；unitPrice=12；amount=0；payment=；deposit=；due=；missing=intent；low=；conflict=</td></tr>
+<tr><td>089</td><td>待办</td><td>王总 / 明天提醒我回复水杯报价</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=王总；todoTitle=回复王总水杯报价；dueDate=有</td><td>intent=todo；customer=王总；product=水杯；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>090</td><td>待办</td><td>李总 / 后天给他回钥匙扣价格</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=李总；todoTitle=回复李总钥匙扣报价；dueDate=有</td><td>intent=todo；customer=李总；product=钥匙扣；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-03；missing=；low=；conflict=</td></tr>
+<tr><td>091</td><td>待办</td><td>陈老板 / 下午催一下杯垫尾款</td><td>失败</td><td>intent_error、field_missing</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；相对日期或口语交期没有被日期规则识别。；待办标题生成依赖有限模板，无法覆盖复杂说法。</td><td>intent=todo；customer=陈老板；todoTitle=催陈老板货款；dueDate=有</td><td>intent=dunning；customer=陈老板；product=；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=；low=；conflict=</td></tr>
+<tr><td>092</td><td>待办</td><td>周姐 / 明天跟进礼品盒确认没</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=周姐；todoTitle=跟进周姐礼品盒；dueDate=有</td><td>intent=todo；customer=周姐；product=礼品盒；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>093</td><td>待办</td><td>钱总 / 下周联系包装袋样品</td><td>失败</td><td>field_missing、wrong_todo_title</td><td>相对日期或口语交期没有被日期规则识别。；待办标题生成依赖有限模板，无法覆盖复杂说法。</td><td>intent=todo；customer=钱总；todoTitle=联系包装袋样品；dueDate=有</td><td>intent=todo；customer=钱总；product=包装袋；quantity=；unitPrice=；amount=；payment=；deposit=；due=；missing=dueDate；low=dueDate；conflict=</td></tr>
+<tr><td>094</td><td>待办</td><td>孙总 / 月底催老款杯垫货款</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=孙总；todoTitle=催孙总货款；dueDate=有</td><td>intent=todo；customer=孙总；product=老款杯垫；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-31；missing=；low=；conflict=</td></tr>
+<tr><td>095</td><td>待办</td><td>赵姐 / 明天问饰品盒数量</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=赵姐；todoTitle=跟进赵姐饰品盒；dueDate=有</td><td>intent=todo；customer=赵姐；product=饰品盒；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>096</td><td>待办</td><td>黄老板 / 后天发五金挂件对账单</td><td>失败</td><td>intent_error、field_missing</td><td>意图打分规则被关键词误导，或缺少该类表达规则。；待办标题生成依赖有限模板，无法覆盖复杂说法。</td><td>intent=todo；customer=黄老板；todoTitle=发五金挂件对账单；dueDate=有</td><td>intent=order；customer=黄老板；product=五金挂件；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-03；missing=quantity；low=；conflict=</td></tr>
+<tr><td>097</td><td>待办</td><td>吴总 / 今天回头绳单价</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=吴总；todoTitle=回复吴总头绳报价；dueDate=有</td><td>intent=todo；customer=吴总；product=头绳；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-01；missing=；low=；conflict=</td></tr>
+<tr><td>098</td><td>待办</td><td>刘总 / 明天确认收纳盒颜色</td><td>失败</td><td>wrong_todo_title</td><td>待办标题生成依赖有限模板，无法覆盖复杂说法。</td><td>intent=todo；customer=刘总；todoTitle=确认收纳盒颜色；dueDate=有</td><td>intent=todo；customer=刘总；product=收纳盒；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-02；missing=；low=；conflict=</td></tr>
+<tr><td>099</td><td>待办</td><td>马总 / 周五提醒我看小夜灯进度</td><td>失败</td><td>wrong_todo_title</td><td>待办标题生成依赖有限模板，无法覆盖复杂说法。</td><td>intent=todo；customer=马总；todoTitle=看小夜灯进度；dueDate=有</td><td>intent=todo；customer=马总；product=小夜灯；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-03；missing=；low=；conflict=</td></tr>
+<tr><td>100</td><td>待办</td><td>何姐 / 后天跟进贴纸报价</td><td>通过</td><td>无</td><td>通过</td><td>intent=todo；customer=何姐；todoTitle=跟进何姐贴纸；dueDate=有</td><td>intent=todo；customer=何姐；product=贴纸；quantity=；unitPrice=；amount=；payment=；deposit=；due=2026-07-03；missing=；low=；conflict=</td></tr></table></div>
+<h2>建议优先级</h2>
+<p class="numbered">1. 先解决高频字段错误：产品、单价、金额、待办标题，这些直接影响确认卡可用性。</p>
+<p class="numbered">2. 对多产品聊天新增“拆多条草稿”能力；如果本地不能拆，必须提示用户或交给 AI。</p>
+<p class="numbered">3. 本地继续保留“安全拦截”边界：有多个价格/数量候选时不要直接保存，除非 AI 返回明确 <code>superseded_facts</code>。</p>
+<p class="numbered">4. 真机要接通 AI，必须把 <code>apiBaseUrl</code> 换成合法 HTTPS 域名，并在微信公众平台配置 request 合法域名。</p>
+  </main>
+</body>
+</html>

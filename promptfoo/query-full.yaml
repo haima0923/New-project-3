@@ -1,0 +1,52 @@
+description: "Local mock 100-case regression tests for 问一句"
+
+prompts:
+  - "{{question}}"
+
+providers:
+  - id: file://./providers/local-query.js
+    label: local-query-mock
+    config:
+      baseUrl: http://127.0.0.1:3001
+
+defaultTest:
+  assert:
+    - type: javascript
+      value: |
+        function list(value) {
+          if (Array.isArray(value)) return value;
+          if (typeof value === 'string') return value.split('|').map((item) => item.trim()).filter(Boolean);
+          return [];
+        }
+        const vars = context.vars || {};
+        const expectedContains = list(vars.expectedContains);
+        const expectedExcludes = list(vars.expectedExcludes);
+        let data;
+        try {
+          data = JSON.parse(output);
+        } catch (error) {
+          return { pass: false, score: 0, reason: `返回不是合法 JSON: ${error.message}` };
+        }
+
+        const errors = [];
+        if (!data || typeof data !== 'object') errors.push('返回不是对象');
+        if (typeof data.title !== 'string' || !data.title.trim()) errors.push('缺少 title');
+        if (!Array.isArray(data.lines)) errors.push('lines 不是数组');
+        if (data.readonly !== true) errors.push('readonly 不是 true');
+        if (data.provider !== 'mock') errors.push(`provider 不是 mock: ${data.provider}`);
+
+        const lines = Array.isArray(data.lines) ? data.lines : [];
+        const text = `${data.title || ''}\n${lines.join('\n')}`;
+        if (text.includes('我还没完全听懂')) errors.push('触发了兜底回复');
+
+        const missing = expectedContains.filter((keyword) => !text.includes(keyword));
+        const unexpected = expectedExcludes.filter((keyword) => text.includes(keyword));
+        if (missing.length) errors.push(`缺少关键词: ${missing.join('、')}`);
+        if (unexpected.length) errors.push(`出现了不该出现的内容: ${unexpected.join('、')}`);
+
+        if (errors.length) {
+          return { pass: false, score: 0, reason: errors.join('；') };
+        }
+        return { pass: true, score: 1, reason: '通过' };
+
+tests: file://./query-cases-100.json

@@ -32,14 +32,23 @@ function normalizeParseResult(result) {
 }
 
 function mockParse(payload) {
+  const businessContext = payload.businessContext || {};
   const state = {
-    customers: payload.customerCandidates || []
+    customers: payload.customerCandidates || businessContext.recentCustomers || [],
+    quotations: businessContext.recentQuotations || [],
+    orders: businessContext.recentOrders || [],
+    receivables: businessContext.recentReceivables || [],
+    paymentRecords: businessContext.recentPaymentRecords || [],
+    todos: []
   };
   return normalizeParseResult(parseInput({
     text: payload.text || '',
     source: payload.source || 'typed',
     context: payload.context || 'home',
-    state
+    state,
+    rawText: payload.rawText || '',
+    extractedText: payload.extractedText || '',
+    pasteMeta: payload.pasteMeta || null
   }));
 }
 
@@ -71,7 +80,18 @@ function mockQuery(payload) {
   });
 }
 
+function mockTranscribe() {
+  return {
+    text: '',
+    confidence: 0,
+    provider: 'mock',
+    status: 'not_configured',
+    message: '录音已保存，当前未配置语音转文字，请补充文字。'
+  };
+}
+
 module.exports = {
   mockParse,
-  mockQuery
+  mockQuery,
+  mockTranscribe
 };

@@ -1,0 +1,49 @@
+<view class="page profile-page">
+  <view class="page-title">我的</view>
+  <view class="page-subtitle">先把状态讲清楚，少放复杂设置。</view>
+
+  <view class="profile-card">
+    <view class="profile-name">义乌老板 AI 小助理</view>
+    <view class="profile-subtitle">你的生意事务，语音来帮你搞定</view>
+  </view>
+
+  <view class="card">
+    <view class="card-title">本地数据</view>
+    <view class="profile-grid">
+      <view class="profile-stat">
+        <view class="profile-number">{{stats.customers}}</view>
+        <view class="profile-label">客户</view>
+      </view>
+      <view class="profile-stat">
+        <view class="profile-number">{{stats.orders}}</view>
+        <view class="profile-label">订单</view>
+      </view>
+      <view class="profile-stat">
+        <view class="profile-number">{{stats.receivables}}</view>
+        <view class="profile-label">应收</view>
+      </view>
+      <view class="profile-stat">
+        <view class="profile-number">{{stats.todos}}</view>
+        <view class="profile-label">提醒</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="card-title">识别状态</view>
+    <view class="status-line">
+      <text>文字识别</text>
+      <text class="status-pill">{{parseStatus}}</text>
+    </view>
+    <view class="status-line">
+      <text>语音转文字</text>
+      <text class="{{voiceStatusClass}}">{{voiceStatus}}</text>
+    </view>
+    <view class="muted status-note">没有配置语音转文字时，录音不会自动保存，避免记错账。</view>
+  </view>
+
+  <view class="card">
+    <view class="card-title">版本说明</view>
+    <view class="muted">当前是本地测试版，重点验证“记一笔 / 查一下 / 提醒我”的日常流程。</view>
+  </view>
+</view>

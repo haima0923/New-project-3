@@ -8,6 +8,7 @@ App({
   globalData: {
     userId: 'local-user',
     apiBaseUrl: 'https://39.105.7.48',
-    aiParseEndpoint: '/api/ai/parse'
+    aiParseEndpoint: '/api/ai/parse',
+    aiTranscribeEndpoint: ''
   }
 });

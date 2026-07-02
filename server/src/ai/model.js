@@ -1,5 +1,5 @@
 const { isRealAiEnabled } = require('../config');
-const { mockParse, mockQuery } = require('./mock');
+const { mockParse, mockQuery, mockTranscribe } = require('./mock');
 
 function extractJson(text) {
   const source = String(text || '').trim();
@@ -20,6 +20,7 @@ function compactStateForPrompt(state) {
     quotations: (safeState.quotations || []).slice(0, 50),
     orders: (safeState.orders || []).slice(0, 50),
     receivables: (safeState.receivables || []).slice(0, 50),
+    paymentRecords: (safeState.paymentRecords || []).slice(0, 50),
     todos: (safeState.todos || []).slice(0, 50),
     pendingNotes: (safeState.pendingNotes || []).slice(0, 20)
   };
@@ -73,10 +74,16 @@ function parseWithAi(config, payload) {
         '所有日期必须输出YYYY-MM-DD，不能输出2026.6.30或中文日期。',
         'intent只能是 quotation, order, receivable, payment, dunning, todo, query, unknown。',
         'AI只生成草稿，不能声称已经保存。',
-        '意图规则：出现提醒我、明天给客户回、回复、答复、跟进、到点再催等老板自己稍后要做的动作，优先todo；出现欠、还欠、记账、月底给、月底结、货款未结，优先receivable；出现刚转了、已转、付款、打款、到账、收了，优先payment；出现要、订、补、返单、先下、做、要发、交货、发货，优先order；出现报价、报个价、问价且老板已完成报价动作，优先quotation。',
+        '如果输入包含rawMessages，必须优先按rawMessages的时间顺序理解完整对话；不要只依赖text或localDraft，因为本地摘要可能已经选错旧价格或旧数量。',
+        '多轮微信规则：后出现且被明确确认的信息优先于早期报价/试探信息；被“贵了、不要、改成、就按、可以、最终、确认”语义覆盖的旧价格、旧数量、旧交期，必须放入superseded_facts。',
+        '冲突规则：如果无法判断最终价格、数量、产品、客户或交期，以field_conflicts列出冲突，不要强行选择；对应字段也要放入low_confidence_fields。',
+        '证据规则：关键字段必须在field_evidence中给出来源消息索引和原句，至少覆盖customerName、productName、quantity、unitPrice、dueDate、paymentAmount、amount中已填写的字段。',
+        '备注规则：客户对颜色、包装、logo、材质、尺寸、图案、唛头、印字、加急、特殊交期等要求，必须提取到remark_items，并整理进fields.remark。fields.remark应是业务备注，不要只原样塞完整聊天。',
+        '意图规则：出现提醒我、明天给客户回、回复、答复、跟进、到点再催等老板自己稍后要做的动作，优先todo；出现欠、还欠、记账、月底给、月底结、货款未结，优先receivable；出现刚转了、已转、付款、打款、到账、收了，优先payment；出现定金、订金、预付、预付款、先付定金时，若同时有订单产品/数量/交期则优先order并填写depositAmount/paymentAmount/paymentKind=deposit，若只是补记定金则优先payment并填写paymentKind=deposit；出现要、订、补、返单、先下、做、要发、交货、发货，优先order；出现报价、报个价、问价且老板已完成报价动作，优先quotation。',
         '待办规则：例如“周姐问500套礼品盒，单价3.8，明天给她回”应解析todo，todoTitle=回复周姐礼品盒报价，dueDate=明天日期，同时保留产品、数量、单价和remark。',
         '口语规则：刚转了3000还剩2000，应解析payment，paymentAmount=3000，remainingAmount=2000，remark保留剩余2000；一共8600月底给，应解析receivable，amount=8600；补500个、返单300个、先下1000个通常是订单。',
-        '字段规则：payment场景里paymentAmount表示本次收了多少钱；receivable场景里amount表示应收总额。不要把本次收款金额误填成应收总额。',
+        '字段规则：payment场景里paymentAmount表示本次收了多少钱；定金场景里depositAmount和paymentAmount都填写本次定金金额，paymentKind必须是deposit；receivable场景里amount表示应收总额。不要把本次收款金额误填成应收总额。',
+        '定金规则：定金属于订单阶段的已收款，不是应收款。能从businessContext.recentOrders唯一匹配订单时填写orderId；匹配不到订单时不要编orderId，也不要新建应收，放入low_confidence_fields或missing_fields等待用户确认。',
         '历史规则：用户说还是原价、价格跟上次一样、按上次报价做时，必须先看businessContext里的recentQuotations/recentOrders；能匹配同客户和同产品才可沿用价格，并在field_sources里标history；找不到历史时不要编价格，unitPrice留空，并把unitPrice放入missing_fields或low_confidence_fields。',
         '背景规则：customerCandidates和businessContext只代表前端筛选后的同客户背景；如果为空，表示没有可用历史。不能自行引用或猜测其他客户的历史。',
         '客户规则：如果原文明确出现客户称呼，如老王、王总、周老板，必须优先使用原文客户；背景信息只能补价格、旧应收、旧订单或旧报价ID，不能覆盖原文客户。',
@@ -93,6 +100,10 @@ function parseWithAi(config, payload) {
         text: payload.text || '',
         source: payload.source || 'typed',
         context: payload.context || 'home',
+        rawText: payload.rawText || '',
+        extractedText: payload.extractedText || payload.text || '',
+        rawMessages: payload.rawMessages || (payload.pasteMeta && payload.pasteMeta.rawMessages) || [],
+        localDraft: payload.localDraft || {},
         customerCandidates: payload.customerCandidates || [],
         businessContext: payload.businessContext || {},
         requiredShape: {
@@ -110,10 +121,12 @@ function parseWithAi(config, payload) {
             quantity: '',
             unit: '',
             unitPrice: '',
+            depositAmount: '',
             paymentAmount: '',
             amount: '',
             remainingAmount: '',
             paymentMethod: '',
+            paymentKind: '',
             dueDate: '',
             orderId: '',
             quotationId: '',
@@ -122,6 +135,10 @@ function parseWithAi(config, payload) {
           missing_fields: [],
           low_confidence_fields: [],
           customer_candidates: [],
+          field_conflicts: [],
+          field_evidence: {},
+          superseded_facts: [],
+          remark_items: [],
           computed_fields: [],
           computed_tips: [],
           field_sources: {},
@@ -161,7 +178,12 @@ function queryWithAi(config, payload) {
   }));
 }
 
+function transcribeWithAi() {
+  return Promise.resolve(mockTranscribe());
+}
+
 module.exports = {
   parseWithAi,
-  queryWithAi
+  queryWithAi,
+  transcribeWithAi
 };

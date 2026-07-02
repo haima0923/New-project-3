@@ -3,6 +3,8 @@ node_modules/
 miniprogram_npm/
 dist/
 temp/
+reports/promptfoo-query/
+reports/promptfoo-record/
 *.log
 *.tmp
 server/.env

@@ -56,7 +56,9 @@ function parseChineseDate(text) {
   if (/明天|明日/.test(source)) return addDays(now, 1);
   if (/大后天/.test(source)) return addDays(now, 3);
   if (/后天/.test(source)) return addDays(now, 2);
+  if (/上午|中午|下午|晚上|今晚/.test(source)) return today();
   if (/月底|月末/.test(source)) return endOfMonth(now);
+  if (/下(?:周|星期|礼拜)(?![一二三四五六日天])/.test(source)) return addDays(now, 7);
 
   const dayAfterMatch = source.match(new RegExp(`(${numberPattern()})\\s*天后`));
   if (dayAfterMatch) {
@@ -90,6 +92,11 @@ function parseChineseDate(text) {
   const fullMatch = source.match(/(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?/);
   if (fullMatch) {
     return formatDate(new Date(Number(fullMatch[1]), Number(fullMatch[2]) - 1, Number(fullMatch[3])));
+  }
+
+  const slashMonthDayMatch = source.match(/(\d{1,2})[/-](\d{1,2})(?:号|日)?/);
+  if (slashMonthDayMatch) {
+    return formatDate(new Date(now.getFullYear(), Number(slashMonthDayMatch[1]) - 1, Number(slashMonthDayMatch[2])));
   }
 
   const monthDayMatch = source.match(/(\d{1,2})月(\d{1,2})日?/);

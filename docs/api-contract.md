@@ -39,6 +39,9 @@ Response:
     "unit": "个",
     "unitPrice": "5.5",
     "amount": "5500",
+    "depositAmount": "",
+    "paymentAmount": "",
+    "paymentKind": "",
     "paymentMethod": "",
     "dueDate": "2026-06-30",
     "remark": "给王总报1000个卡通水杯，5块5一个，月底交"
@@ -67,6 +70,7 @@ Rules:
 - `computed_fields` marks values calculated by the system, such as `amount = quantity * unitPrice`.
 - `field_sources` identifies where each field came from, such as local rules or AI.
 - `intent_candidates` should list plausible business types when the utterance is ambiguous.
+- Deposit input must use `paymentKind: "deposit"` and fill `depositAmount` plus `paymentAmount`; it belongs to an order, not a receivable.
 - Low confidence customer matches must return candidate customers instead of auto-merging.
 - Missing or low confidence critical fields must prevent direct formal save.
 - Raw input and parse result should be persisted in `ai_parse_log`.

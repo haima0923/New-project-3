@@ -1,6 +1,6 @@
 const { parseInput } = require('../utils/parser');
 const { answerQuery } = require('../utils/query');
-const { completeTodo, getDashboard, mergeCustomer, saveConfirmedDraft } = require('../utils/business');
+const { completeTodo, generateReceivableFromOrder, getDashboard, getOrderDepositAmount, mergeCustomer, recordPayment, saveConfirmedDraft } = require('../utils/business');
 const { addDays, endOfMonth, today } = require('../utils/date');
 const fs = require('fs');
 const path = require('path');
@@ -13,6 +13,7 @@ const {
   normalizeAiResult,
   parseHybridInput
 } = require('../utils/ai-parser');
+const { evaluateLocalParseSafety } = require('../utils/parse-safety');
 const { getIntentDraftLabel, getMissingText, getPendingReasonText } = require('../utils/display');
 const {
   consumeNextOrderFilter,
@@ -20,6 +21,22 @@ const {
   requestOrderFilterReset,
   setNextOrderFilter
 } = require('../utils/navigation-state');
+const {
+  buildAllRecords,
+  buildRecentRecords,
+  buildTodayTasks
+} = require('../utils/home-workbench');
+const {
+  analyzeClipboardText,
+  buildNoBusinessPasteResult,
+  getClipboardDiagnostics,
+  getClipboardDisplayText,
+  getPasteMeta,
+  getSingleMessagePasteTip,
+  isSingleMessageClipboard,
+  isWechatChatText
+} = require('../utils/clipboard-chat');
+const { buildFinanceViewModel } = require('../utils/finance');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -60,6 +77,8 @@ function runParseCase(item, index) {
   if (item.unitPrice !== undefined) assertNumber(fields.unitPrice, item.unitPrice, `${prefix}: unitPrice`);
   if (item.amount !== undefined) assertNumber(fields.amount, item.amount, `${prefix}: amount`);
   if (item.paymentAmount !== undefined) assertNumber(fields.paymentAmount, item.paymentAmount, `${prefix}: paymentAmount`);
+  if (item.depositAmount !== undefined) assertNumber(fields.depositAmount, item.depositAmount, `${prefix}: depositAmount`);
+  if (item.paymentKind !== undefined) assert(fields.paymentKind === item.paymentKind, `${prefix}: paymentKind expected ${item.paymentKind}, got ${fields.paymentKind}`);
   if (item.remainingAmount !== undefined) assertNumber(fields.remainingAmount, item.remainingAmount, `${prefix}: remainingAmount`);
   if (item.amountBlank) assert(!fields.amount, `${prefix}: amount should stay blank, got ${fields.amount}`);
   if (item.unitPriceBlank) assert(!fields.unitPrice, `${prefix}: unitPrice should stay blank, got ${fields.unitPrice}`);
@@ -136,7 +155,7 @@ function buildQueryState() {
         customerId: 'cus_laoli',
         amount: '23000',
         paidAmount: '10000',
-        dueDate: addDays(current, 20),
+        dueDate: addDays(monthEnd, 7),
         status: '部分收款'
       },
       {
@@ -300,6 +319,8 @@ function runQueryCase(state, item, index) {
 function runParseTests() {
   const cases = [
     { text: '给王总报1000个卡通水杯，5块5一个，月底交', intent: 'order', customer: '王总', product: '卡通水杯', quantity: 1000, unitPrice: 5.5, amount: 5500, dueDateRequired: true },
+    { text: '王总订1000个水杯，5块一个，先付定金1000，月底交', intent: 'order', customer: '王总', product: '水杯', quantity: 1000, unitPrice: 5, amount: 5000, paymentAmount: 1000, depositAmount: 1000, paymentKind: 'deposit', dueDateRequired: true },
+    { text: '王总订1000个水杯，先付定金1000，月底交', intent: 'order', customer: '王总', product: '水杯', quantity: 1000, amountBlank: true, paymentAmount: 1000, depositAmount: 1000, paymentKind: 'deposit', dueDateRequired: true },
     { text: '给王总报价1000个卡通水杯，5块5一个', intent: 'quotation', customer: '王总', product: '卡通水杯', quantity: 1000, unitPrice: 5.5, amount: 5500 },
     { text: '李总问钥匙扣2000个多少钱，一块二一个', intent: 'quotation', customer: '李总', product: '钥匙扣', quantity: 2000, unitPrice: 1.2, amount: 2400 },
     { text: '陈老板要报个价，杯垫300个，9毛', intent: 'quotation', customer: '陈老板', product: '杯垫', quantity: 300, unitPrice: 0.9, amount: 270 },
@@ -330,6 +351,261 @@ function runParseTests() {
   ];
   cases.forEach(runParseCase);
   console.log(`记一笔核心样例通过：${cases.length} 条`);
+}
+
+function runLocalParseSafetyTests() {
+  const safe = parseInput({
+    text: '报给王总拖鞋3000双2块8',
+    source: 'typed',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(safe.intent === 'quotation', `safe local case should be quotation, got ${safe.intent}`);
+  assert(safe.fields.customerName === '王总', `customer should strip action prefix, got ${safe.fields.customerName}`);
+  assert(safe.fields.productName === '拖鞋', `product should stop before quantity, got ${safe.fields.productName}`);
+  assert(safe.fields.quantity === '3000', `quantity should be 3000, got ${safe.fields.quantity}`);
+  assert(safe.fields.unitPrice === '2.8', `unitPrice should be 2.8, got ${safe.fields.unitPrice}`);
+  assert(safe.local_parse_safety.status === 'SAFE_LOCAL', `safe case should be SAFE_LOCAL, got ${safe.local_parse_safety.status}`);
+  assert(safe.ai_fallback.needed === false, 'safe typed case should not need AI');
+
+  const dirtyCustomer = evaluateLocalParseSafety({
+    intent: 'quotation',
+    source: 'typed',
+    fields: {
+      customerName: '报给王总',
+      productName: '拖鞋',
+      quantity: '3000',
+      unitPrice: '2.8'
+    },
+    missing_fields: [],
+    low_confidence_fields: []
+  }, {
+    source: 'typed',
+    normalizedText: '报给王总拖鞋3000双2块8'
+  });
+  assert(dirtyCustomer.status === 'NEEDS_AI', `dirty customer should route to AI, got ${dirtyCustomer.status}`);
+  assert(dirtyCustomer.low_confidence_fields.includes('customerName'), 'dirty customer should mark customerName low confidence');
+
+  const dirtyProduct = evaluateLocalParseSafety({
+    intent: 'quotation',
+    source: 'typed',
+    fields: {
+      customerName: '王总',
+      productName: '2块8',
+      quantity: '3000',
+      unitPrice: '2.8'
+    },
+    missing_fields: [],
+    low_confidence_fields: []
+  }, {
+    source: 'typed',
+    normalizedText: '报给王总拖鞋3000双2块8'
+  });
+  assert(dirtyProduct.status === 'NEEDS_AI', `price-like product should route to AI, got ${dirtyProduct.status}`);
+  assert(dirtyProduct.low_confidence_fields.includes('productName'), 'price-like product should mark productName low confidence');
+
+  const semantic = parseInput({
+    text: '王总拖鞋3000双，价格还是上次那个，颜色要淡一点',
+    source: 'typed',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(semantic.local_parse_safety.status === 'NEEDS_AI', `history price and requirement should need AI, got ${semantic.local_parse_safety.status}`);
+  assert(semantic.ai_fallback.needed === true, 'semantic typed case should request AI when available');
+
+  const paste = parseInput({
+    text: '王总拖鞋3000双2块8',
+    source: 'paste',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(paste.local_parse_safety.status === 'NEEDS_AI', `paste source should directly need AI, got ${paste.local_parse_safety.status}`);
+  assert(paste.ai_fallback.needed === true, 'paste source should mark AI needed');
+  console.log('本地解析安全门控测试通过：5 条');
+}
+
+function runClipboardChatTests() {
+  const noBusinessChat = `海马
+2026年06月29日 14:51
+再试试
+
+李子树🌳
+2026年06月29日 14:53
+好用了
+
+海马
+2026年06月29日 14:53
+震动吗
+
+海马
+2026年06月29日 14:53
+有波纹吗
+
+李子树🌳
+2026年06月29日 14:53
+没感觉
+
+李子树🌳
+2026年06月29日 14:53
+就是长按可以
+
+李子树🌳
+2026年06月29日 14:53
+不长按也可以
+
+海马
+2026年06月29日 14:53
+右上滑跳转了吗`;
+  const noBusiness = analyzeClipboardText(noBusinessChat);
+  assert(noBusiness.status === 'no_business', `test chat should be no_business, got ${noBusiness.status}`);
+  assert(noBusiness.lineCount > 20, `test chat should keep multiple lines, got ${noBusiness.lineCount}`);
+  assert(noBusiness.messageCount >= 8, `test chat should detect messages, got ${noBusiness.messageCount}`);
+  assert(!noBusiness.extractedText, `test chat should not extract business text, got ${noBusiness.extractedText}`);
+  const pendingResult = buildNoBusinessPasteResult(noBusiness);
+  assert(pendingResult.intent === 'unknown', `no business paste should be unknown, got ${pendingResult.intent}`);
+  assert(pendingResult.original_text.includes('右上滑跳转了吗'), 'no business paste should preserve raw chat');
+  assert(pendingResult.fields.remark.includes('没感觉'), 'no business paste remark should preserve raw chat');
+
+  const singleMessageChat = `海马
+2026年06月30日 12:55
+你好`;
+  const singleAnalysis = analyzeClipboardText(singleMessageChat);
+  assert(singleAnalysis.messageCount === 1, `single chat should detect one message, got ${singleAnalysis.messageCount}`);
+  assert(isSingleMessageClipboard(singleAnalysis), 'single chat should be marked as single-message clipboard');
+  assertIncludes(getSingleMessagePasteTip(), '长按输入框', 'single-message tip should guide direct textarea paste');
+
+  const orderChat = `王总
+2026年06月29日 14:51
+水杯要500个
+
+海马
+2026年06月29日 14:52
+7天后交，20一个`;
+  const orderAnalysis = analyzeClipboardText(orderChat);
+  assert(orderAnalysis.status === 'ok', `order chat should extract business text, got ${orderAnalysis.status}`);
+  assert(orderAnalysis.customerNameFromChat === '王总', `order chat customer should keep speaker name, got ${orderAnalysis.customerNameFromChat}`);
+  assert(orderAnalysis.structuredDraft.intent === 'order', `order chat structured draft should be order, got ${orderAnalysis.structuredDraft.intent}`);
+  assert(orderAnalysis.structuredDraft.productName === '水杯', `order chat structured product should be 水杯, got ${orderAnalysis.structuredDraft.productName}`);
+  assert(orderAnalysis.structuredDraft.quantity === '500', `order chat structured quantity should be 500, got ${orderAnalysis.structuredDraft.quantity}`);
+  assert(orderAnalysis.structuredDraft.unit === '个', `order chat structured unit should be 个, got ${orderAnalysis.structuredDraft.unit}`);
+  assert(orderAnalysis.structuredDraft.unitPrice === '20', `order chat structured unit price should be 20, got ${orderAnalysis.structuredDraft.unitPrice}`);
+  assertIncludes(orderAnalysis.structuredDraft.dueText, '7天后', 'order chat structured due text should keep delivery date');
+  assert(getClipboardDisplayText(orderAnalysis) === orderAnalysis.rawText, 'paste display text should preserve full raw chat');
+  assertNotIncludes(getClipboardDisplayText(orderAnalysis), '王总：水杯要500个', 'paste display text should not be replaced by extracted snippet');
+  assertIncludes(orderAnalysis.extractedText, '王总', 'order chat should keep customer speaker');
+  assertIncludes(orderAnalysis.extractedText, '水杯要500个', 'order chat should keep product and quantity');
+  assertIncludes(orderAnalysis.extractedText, '7天后交', 'order chat should merge adjacent delivery message');
+
+  const parsed = parseInput({
+    text: orderAnalysis.extractedText,
+    rawText: orderAnalysis.rawText,
+    extractedText: orderAnalysis.extractedText,
+    pasteMeta: getPasteMeta(orderAnalysis),
+    source: 'paste',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(parsed.original_text.includes('\n'), 'paste original text should preserve line breaks');
+  assert(parsed.fields.customerName === '王总', `paste parser should keep titled chat speaker, got ${parsed.fields.customerName}`);
+  assert(parsed.fields.remark.includes('海马'), 'paste remark should keep raw chat');
+  assert(parsed.extracted_text.includes('水杯要500个'), 'paste parse result should expose extracted text');
+
+  const fragmentedChat = `海马
+2026年06月30日 12:55
+你好
+
+李子树🌳
+2026年06月30日 12:55
+你好我想问下箱子
+
+海马
+2026年06月30日 12:55
+想要多少
+
+李子树🌳
+2026年06月30日 12:55
+500个
+
+李子树🌳
+2026年06月30日 12:55
+多少钱一个
+
+海马
+2026年06月30日 12:55
+59`;
+  const fragmentedAnalysis = analyzeClipboardText(fragmentedChat);
+  assert(isWechatChatText(fragmentedChat), 'fragmented chat should be detected as wechat chat text');
+  assert(fragmentedAnalysis.status === 'ok', `fragmented chat should extract business text, got ${fragmentedAnalysis.status}`);
+  assert(fragmentedAnalysis.customerNameFromChat === '李子树', `fragmented chat customer should preserve nickname, got ${fragmentedAnalysis.customerNameFromChat}`);
+  assert(fragmentedAnalysis.structuredDraft.intent === 'quotation', `fragmented chat structured draft should be quotation, got ${fragmentedAnalysis.structuredDraft.intent}`);
+  assert(fragmentedAnalysis.structuredDraft.productName === '箱子', `fragmented chat structured product should be 箱子, got ${fragmentedAnalysis.structuredDraft.productName}`);
+  assert(fragmentedAnalysis.structuredDraft.quantity === '500', `fragmented chat structured quantity should be 500, got ${fragmentedAnalysis.structuredDraft.quantity}`);
+  assert(fragmentedAnalysis.structuredDraft.unit === '个', `fragmented chat structured unit should be 个, got ${fragmentedAnalysis.structuredDraft.unit}`);
+  assert(fragmentedAnalysis.structuredDraft.unitPrice === '59', `fragmented chat structured unit price should be 59, got ${fragmentedAnalysis.structuredDraft.unitPrice}`);
+  assert(fragmentedAnalysis.messageCount === 6, `fragmented chat should detect 6 messages, got ${fragmentedAnalysis.messageCount}`);
+  assertIncludes(fragmentedAnalysis.extractedText, '箱子', 'fragmented chat should keep product');
+  assertIncludes(fragmentedAnalysis.extractedText, '500个', 'fragmented chat should keep quantity');
+  assertIncludes(fragmentedAnalysis.extractedText, '59一个', 'fragmented chat should infer unit price from price answer');
+  assertIncludes(getClipboardDiagnostics(fragmentedAnalysis), '6 条消息', 'clipboard diagnostics should show message count');
+  const fragmentedParsed = parseInput({
+    text: fragmentedAnalysis.extractedText,
+    rawText: fragmentedAnalysis.rawText,
+    extractedText: fragmentedAnalysis.extractedText,
+    pasteMeta: getPasteMeta(fragmentedAnalysis),
+    source: 'paste',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(fragmentedParsed.intent === 'quotation', `fragmented chat should become quotation, got ${fragmentedParsed.intent}`);
+  assert(fragmentedParsed.fields.customerName === '李子树', `fragmented chat customer should be 李子树, got ${fragmentedParsed.fields.customerName}`);
+  assert(fragmentedParsed.fields.productName === '箱子', `fragmented chat product should be 箱子, got ${fragmentedParsed.fields.productName}`);
+  assert(fragmentedParsed.fields.quantity === '500', `fragmented chat quantity should be 500, got ${fragmentedParsed.fields.quantity}`);
+  assert(fragmentedParsed.fields.unitPrice === '59', `fragmented chat unit price should be 59, got ${fragmentedParsed.fields.unitPrice}`);
+
+  const maoPriceChat = `张三
+2026年06月30日 13:00
+想问下扣子
+
+海马
+2026年06月30日 13:01
+要多少
+
+张三
+2026年06月30日 13:02
+一千件
+
+张三
+2026年06月30日 13:03
+单价多少
+
+海马
+2026年06月30日 13:04
+3毛8`;
+  const maoAnalysis = analyzeClipboardText(maoPriceChat);
+  assert(maoAnalysis.status === 'ok', `mao price chat should extract business text, got ${maoAnalysis.status}`);
+  assert(maoAnalysis.structuredDraft.customerNameFromChat === '张三', `mao price chat customer should be 张三, got ${maoAnalysis.structuredDraft.customerNameFromChat}`);
+  assert(maoAnalysis.structuredDraft.productName === '扣子', `mao price chat product should be 扣子, got ${maoAnalysis.structuredDraft.productName}`);
+  assert(maoAnalysis.structuredDraft.quantity === '1000', `mao price chat quantity should be 1000, got ${maoAnalysis.structuredDraft.quantity}`);
+  assert(maoAnalysis.structuredDraft.unit === '件', `mao price chat unit should be 件, got ${maoAnalysis.structuredDraft.unit}`);
+  assert(maoAnalysis.structuredDraft.unitPrice === '0.38', `mao price chat unit price should be 0.38, got ${maoAnalysis.structuredDraft.unitPrice}`);
+  assertIncludes(maoAnalysis.extractedText, '0.38一件', 'mao price display should follow quantity unit');
+  const maoParsed = parseInput({
+    text: maoAnalysis.extractedText,
+    rawText: maoAnalysis.rawText,
+    extractedText: maoAnalysis.extractedText,
+    pasteMeta: getPasteMeta(maoAnalysis),
+    source: 'paste',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(maoParsed.intent === 'quotation', `mao price chat should become quotation, got ${maoParsed.intent}`);
+  assert(maoParsed.fields.customerName === '张三', `mao price chat customer should be 张三, got ${maoParsed.fields.customerName}`);
+  assert(maoParsed.fields.productName === '扣子', `mao price chat product should be 扣子, got ${maoParsed.fields.productName}`);
+  assert(maoParsed.fields.quantity === '1000', `mao price chat quantity should be 1000, got ${maoParsed.fields.quantity}`);
+  assert(maoParsed.fields.unit === '件', `mao price chat unit should be 件, got ${maoParsed.fields.unit}`);
+  assert(maoParsed.fields.unitPrice === '0.38', `mao price chat unit price should be 0.38, got ${maoParsed.fields.unitPrice}`);
+  assert(maoParsed.fields.amount === '380', `mao price chat amount should be 380, got ${maoParsed.fields.amount}`);
+  console.log('粘贴聊天提取测试通过：15 条');
 }
 
 function runQueryTests() {
@@ -756,6 +1032,192 @@ function runTodoPageTests() {
   console.log('待办提醒页面测试通过：5 条');
 }
 
+function runHomeWorkbenchTests() {
+  const current = today();
+  const state = {
+    customers: [
+      { id: 'cus_zhang', name: '张总', company: '义乌市启航贸易有限公司' },
+      { id: 'cus_li', name: '李总', company: '义乌盛旺工艺品有限公司' }
+    ],
+    quotations: [
+      {
+        id: 'quo_li',
+        customerId: 'cus_li',
+        productName: '礼品盒',
+        totalAmount: '1900',
+        quoteDate: addDays(current, -4),
+        status: '待确认',
+        createdAt: `${current}T09:00:00.000Z`
+      }
+    ],
+    orders: [
+      {
+        id: 'ord_li',
+        customerId: 'cus_li',
+        productName: '包装袋',
+        requiredDeliveryDate: addDays(current, 2),
+        status: '待生产',
+        createdAt: `${current}T10:00:00.000Z`
+      }
+    ],
+    receivables: [
+      {
+        id: 'rec_zhang',
+        customerId: 'cus_zhang',
+        amount: '38500',
+        paidAmount: '0',
+        dueDate: current,
+        status: '待收',
+        createdAt: `${current}T08:00:00.000Z`
+      }
+    ],
+    paymentRecords: [],
+    dunningRecords: [],
+    todos: [
+      {
+        id: 'todo_li',
+        customerId: 'cus_li',
+        title: '确认打样',
+        remindDate: current,
+        status: '未完成',
+        createdAt: `${current}T11:00:00.000Z`
+      }
+    ],
+    pendingNotes: [
+      {
+        id: 'pending_1',
+        status: '待整理',
+        originalText: '客户说晚点补数量',
+        createdAt: `${current}T12:00:00.000Z`
+      }
+    ],
+    aiParseLogs: [
+      {
+        id: 'log_1',
+        originalText: '收到张总尾款38500',
+        action: 'save_payment',
+        createdAt: `${current}T13:00:00.000Z`
+      }
+    ]
+  };
+
+  const tasks = buildTodayTasks(state, 3);
+  assert(tasks.length === 3, `home tasks should show 3 items, got ${tasks.length}`);
+  assert(tasks[0].type === 'receivable', `first home task should be receivable, got ${tasks[0].type}`);
+  assert(tasks.some((item) => item.type === 'order'), 'home tasks should include delivery-soon order');
+  assert(tasks.some((item) => item.type === 'quotation'), 'home tasks should include quotation followup');
+
+  const recent = buildRecentRecords(state, 3);
+  assert(recent[0].title.includes('张总尾款'), `recent records should prefer parse logs, got ${recent[0].title}`);
+  const orderRecords = buildAllRecords(state, 'order');
+  assert(orderRecords.length === 1 && orderRecords[0].title.includes('包装袋'), 'record filter should return order records');
+  console.log('首页工作台数据测试通过：6 条');
+}
+
+function runFinanceTests() {
+  const current = today();
+  const depositState = buildEmptyBusinessState();
+  const orderWithDepositDraft = parseInput({
+    text: '王总订1000个水杯，5块一个，先付定金1000，月底交',
+    source: 'typed',
+    context: 'home',
+    state: depositState
+  });
+  const savedOrderWithDeposit = saveConfirmedDraft(depositState, orderWithDepositDraft);
+  assert(savedOrderWithDeposit.type === 'order', `order with deposit should save as order, got ${savedOrderWithDeposit.type}`);
+  const depositOrder = depositState.orders[0];
+  assert(depositState.paymentRecords.length === 1, `order deposit should create one payment record, got ${depositState.paymentRecords.length}`);
+  assert(depositState.paymentRecords[0].kind === 'deposit', `payment kind should be deposit, got ${depositState.paymentRecords[0].kind}`);
+  assert(depositState.paymentRecords[0].orderId === depositOrder.id, 'deposit payment should link to order');
+  assertNumber(getOrderDepositAmount(depositState, depositOrder.id), 1000, 'order deposit amount');
+  let depositFinance = buildFinanceViewModel(depositState);
+  assert(depositFinance.summary.productionSettlementAmount === 4000, `deposit should reduce production settlement to 4000, got ${depositFinance.summary.productionSettlementAmount}`);
+  assert(depositFinance.paymentRows[0].kindLabel === '定金', `payment row should label deposit, got ${depositFinance.paymentRows[0].kindLabel}`);
+
+  const extraDepositDraft = parseInput({
+    text: '王总水杯订单又转了200定金',
+    source: 'typed',
+    context: 'home',
+    state: depositState
+  });
+  const savedExtraDeposit = saveConfirmedDraft(depositState, extraDepositDraft);
+  assert(savedExtraDeposit.type === 'order_deposit', `extra deposit should save as order_deposit, got ${savedExtraDeposit.type}`);
+  assertNumber(getOrderDepositAmount(depositState, depositOrder.id), 1200, 'extra order deposit amount');
+
+  const depositReceivable = generateReceivableFromOrder(depositState, depositOrder.id);
+  assert(depositReceivable.status === '部分收款', `deposit receivable should be partial, got ${depositReceivable.status}`);
+  assertNumber(depositReceivable.paidAmount, 1200, 'generated receivable paid amount should include deposits');
+  assert(depositState.paymentRecords.every((item) => item.receivableId === depositReceivable.id), 'deposit records should be linked to generated receivable');
+  depositFinance = buildFinanceViewModel(depositState);
+  assert(depositFinance.receivableRows[0].remainingAmount === 3800, `deposit receivable remaining should be 3800, got ${depositFinance.receivableRows[0].remainingAmount}`);
+  const depositQuery = answerQuery('王总这个订单收了多少定金？', depositState);
+  assertIncludes(depositQuery.lines.join('\n'), '已收定金1200元', 'deposit query should include paid deposit');
+  const settlementQuery = answerQuery('生产中的货还有多少尾款没收？', buildEmptyBusinessState());
+  assertIncludes(settlementQuery.lines.join('\n'), '当前没有生产中待结算订单', 'empty settlement query should be readable');
+
+  const flowState = buildEmptyBusinessState([
+    { id: 'cus_fin', name: '周总', company: '义乌财务测试厂' }
+  ]);
+  flowState.orders.push(
+    {
+      id: 'ord_fin',
+      customerId: 'cus_fin',
+      productName: '水杯',
+      quantity: '100',
+      unit: '个',
+      totalAmount: '1000',
+      requiredDeliveryDate: addDays(current, 2),
+      status: '生产中',
+      createdAt: `${current}T09:00:00.000Z`
+    },
+    {
+      id: 'ord_ship',
+      customerId: 'cus_fin',
+      productName: '杯垫',
+      quantity: '200',
+      unit: '个',
+      totalAmount: '800',
+      requiredDeliveryDate: current,
+      status: '已发货',
+      createdAt: `${current}T10:00:00.000Z`
+    }
+  );
+
+  let finance = buildFinanceViewModel(flowState);
+  assert(finance.summary.productionSettlementAmount === 1000, `production settlement should be 1000, got ${finance.summary.productionSettlementAmount}`);
+  assert(finance.stats.shippedPendingAmount === 800, `shipped pending should be 800, got ${finance.stats.shippedPendingAmount}`);
+  assert(finance.settlementRows.length === 2, `settlement rows should include two orders, got ${finance.settlementRows.length}`);
+
+  const receivable = generateReceivableFromOrder(flowState, 'ord_fin');
+  assert(receivable && receivable.source === 'order', `order receivable source should be order, got ${receivable && receivable.source}`);
+  finance = buildFinanceViewModel(flowState);
+  assert(finance.settlementRows.length === 1, `generated order should leave settlement rows, got ${finance.settlementRows.length}`);
+  assert(finance.receivableRows.some((item) => item.id === receivable.id), 'generated receivable should enter finance receivable rows');
+
+  recordPayment(flowState, receivable.id, '400');
+  finance = buildFinanceViewModel(flowState);
+  assert(finance.summary.monthlyPaymentAmount === 400, `monthly payment should be 400, got ${finance.summary.monthlyPaymentAmount}`);
+  assert(finance.stats.partialRemainingAmount === 600, `partial remaining should be 600, got ${finance.stats.partialRemainingAmount}`);
+  recordPayment(flowState, receivable.id, '600');
+  finance = buildFinanceViewModel(flowState);
+  assert(flowState.receivables[0].status === '已结清', `receivable should be settled, got ${flowState.receivables[0].status}`);
+  assert(finance.stats.settledThisMonthCount === 1, `settled count should be 1, got ${finance.stats.settledThisMonthCount}`);
+
+  const legacyState = buildEmptyBusinessState();
+  const legacyDraft = parseInput({
+    text: '王总以前欠我5000，月底结',
+    source: 'typed',
+    context: 'home',
+    state: legacyState
+  });
+  const saved = saveConfirmedDraft(legacyState, legacyDraft);
+  assert(saved.type === 'receivable', `legacy debt should save as receivable, got ${saved.type}`);
+  assert(legacyState.receivables[0].source === 'legacy', `legacy debt source should be legacy, got ${legacyState.receivables[0].source}`);
+  finance = buildFinanceViewModel(legacyState);
+  assert(finance.receivableRows[0].sourceLabel === '历史应收', `legacy source label should be 历史应收, got ${finance.receivableRows[0].sourceLabel}`);
+  console.log('财务页面和定金数据测试通过');
+}
+
 function runHybridMergeTests() {
   const text = '老王补500个老款杯垫，9毛，三天后给他';
   const localResult = parseInput({
@@ -785,7 +1247,8 @@ function runHybridMergeTests() {
 
   assert(merged.fields.customerName === '老王', `hybrid merge should keep 老王, got ${merged.fields.customerName}`);
   assert(!merged.fields.customerId, `hybrid merge should drop wrong customerId, got ${merged.fields.customerId}`);
-  assert(merged.fields.remark === text, `hybrid merge should preserve original remark, got ${merged.fields.remark}`);
+  assert(merged.original_text === text, `hybrid merge should preserve original text, got ${merged.original_text}`);
+  assertIncludes(merged.fields.remark, '补500个', `hybrid merge should keep a useful business remark, got ${merged.fields.remark}`);
   assert(merged.intent_candidates[0] === 'order', `hybrid merge should normalize intent candidate objects, got ${merged.intent_candidates[0]}`);
   console.log('远程合并保护测试通过：1 条');
 }
@@ -801,6 +1264,99 @@ async function runHybridSkipTests() {
   assert(result.fields.remark === '老王补500个老款杯垫，9毛，三天后给他', `hybrid skip should keep original remark, got ${result.fields.remark}`);
   assert(result.ai_fallback.status === 'not_requested', `hybrid skip should not request remote AI, got ${result.ai_fallback.status}`);
   console.log('高置信本地识别跳过远程测试通过：1 条');
+}
+
+async function runWechatAiRoutingTests() {
+  const finalPriceChat = `王总
+2026年07月01日 09:10
+这个水杯多少钱
+
+海马
+2026年07月01日 09:12
+30一个
+
+王总
+2026年07月01日 09:14
+贵了，25一个可以吗
+
+海马
+2026年07月01日 09:15
+可以，就25一个，先做1000个，月底交`;
+  const analysis = analyzeClipboardText(finalPriceChat);
+  assert(analysis.rawMessages.length === 4, `rawMessages should keep 4 chat messages, got ${analysis.rawMessages.length}`);
+  const localResult = await parseHybridInput({
+    text: analysis.extractedText,
+    rawText: analysis.rawText,
+    extractedText: analysis.extractedText,
+    pasteMeta: getPasteMeta(analysis),
+    source: 'paste',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(localResult.ai_fallback.status === 'skipped_no_endpoint', `multi-message paste should request AI when available, got ${localResult.ai_fallback.status}`);
+  assert(localResult.ai_fallback.needed === true, 'multi-message paste should mark AI fallback as needed');
+  assert(localResult.intent === 'order', `local fallback should infer final order intent, got ${localResult.intent}`);
+  assert(localResult.fields.quantity === '1000', `local fallback should keep final quantity 1000, got ${localResult.fields.quantity}`);
+  assert(localResult.fields.unitPrice === '25', `local fallback should show final candidate price 25, got ${localResult.fields.unitPrice}`);
+  assert(localResult.fields.dueDate, 'local fallback should parse final delivery date');
+  assert(localResult.field_conflicts.length === 1, `local fallback should flag price conflict, got ${JSON.stringify(localResult.field_conflicts)}`);
+  assert(localResult.field_conflicts[0].field === 'unitPrice', `price conflict should be unitPrice, got ${localResult.field_conflicts[0].field}`);
+  const blocked = buildConfirmationStateForTest({ customers: [] }, localResult, localResult.intent, localResult.fields);
+  assert(blocked.showFieldConflicts, 'confirmation should show field conflict lines');
+  assert(blocked.disableFormalSave, 'field conflicts should block formal save');
+
+  const colorChat = `王总
+2026年07月01日 09:10
+杯子1000个，颜色要淡一点，不要太深
+
+海马
+2026年07月01日 09:12
+好的，25一个，月底交`;
+  const colorAnalysis = analyzeClipboardText(colorChat);
+  const colorResult = await parseHybridInput({
+    text: colorAnalysis.extractedText,
+    rawText: colorAnalysis.rawText,
+    extractedText: colorAnalysis.extractedText,
+    pasteMeta: getPasteMeta(colorAnalysis),
+    source: 'paste',
+    context: 'home',
+    state: { customers: [] }
+  });
+  assert(colorResult.remark_items.length === 1, `color requirement should become remark item, got ${JSON.stringify(colorResult.remark_items)}`);
+  assertIncludes(colorResult.fields.remark, '客户要求：', 'local fallback remark should start with summarized requirement');
+  assertIncludes(colorResult.fields.remark, '颜色要淡一点', 'local fallback remark should include color requirement');
+
+  const merged = normalizeAiResult(localResult, {
+    provider: 'ai',
+    intent: 'order',
+    fields: {
+      customerName: '王总',
+      productName: '水杯',
+      quantity: '1000',
+      unit: '个',
+      unitPrice: '25',
+      dueDate: today(),
+      remark: '客户确认：单价25一个，先做1000个。'
+    },
+    field_conflicts: [],
+    superseded_facts: [
+      { field: 'unitPrice', oldValue: '30', newValue: '25', reason: '后续已确认25一个' }
+    ],
+    remark_items: [
+      { text: '客户确认：先做1000个' }
+    ],
+    field_evidence: {
+      unitPrice: [{ messageIndex: 3, text: '可以，就25一个，先做1000个，月底交' }]
+    },
+    low_confidence_fields: [],
+    missing_fields: []
+  });
+  assert(!merged.field_conflicts.length, 'AI resolved result should clear local field conflicts');
+  assert(merged.fields.unitPrice === '25', `AI resolved unit price should be 25, got ${merged.fields.unitPrice}`);
+  assert(merged.fields.amount === '25000', `AI resolved amount should be recomputed to 25000, got ${merged.fields.amount}`);
+  assert(merged.superseded_facts.length === 1, 'AI resolved result should keep superseded fact');
+  assertIncludes(merged.fields.remark, '单价25', 'AI remark should not be overwritten by raw chat');
+  console.log('微信多轮 AI 路由与冲突保护测试通过：16 条');
 }
 
 async function runHistoryWarningTests() {
@@ -846,6 +1402,8 @@ async function runHistoryWarningTests() {
 
 async function main() {
   runParseTests();
+  runLocalParseSafetyTests();
+  runClipboardChatTests();
   runQueryTests();
   runContextPolicyTests();
   runDisplayTextTests();
@@ -856,8 +1414,11 @@ async function main() {
   runListFilterTests();
   runNavigationStateTests();
   runTodoPageTests();
+  runHomeWorkbenchTests();
+  runFinanceTests();
   runHybridMergeTests();
   await runHybridSkipTests();
+  await runWechatAiRoutingTests();
   await runHistoryWarningTests();
   console.log('核心功能测试全部通过');
 }

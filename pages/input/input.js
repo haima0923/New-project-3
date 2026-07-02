@@ -1,10 +1,20 @@
 const { INPUT_SOURCE_LABELS, INTENT_LABELS } = require('../../utils/constants');
-const { findCustomerMatches, saveConfirmedDraft, savePendingNote } = require('../../utils/business');
+const { findCustomerMatches, getOrderDepositAmount, saveConfirmedDraft, savePendingNote } = require('../../utils/business');
 const { parseHybridInput } = require('../../utils/ai-parser');
 const { addDays, diffDays, today } = require('../../utils/date');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
+const {
+  analyzeClipboardText,
+  buildNoBusinessPasteResult,
+  getClipboardDiagnostics,
+  getClipboardDisplayText,
+  getPasteMeta,
+  getSingleMessagePasteTip,
+  isSingleMessageClipboard,
+  isWechatChatText
+} = require('../../utils/clipboard-chat');
 
 const intentOptions = ['quotation', 'order', 'receivable', 'payment', 'dunning', 'todo', 'unknown'];
 const NEW_CUSTOMER_OPTION_ID = '__new_customer__';
@@ -20,6 +30,7 @@ const requiredFields = {
   create_receivable: ['customerName', 'amount', 'dueDate'],
   create_receivable_with_payment: ['customerName', 'amount', 'paymentAmount', 'dueDate'],
   record_payment: ['customerName', 'paymentAmount', 'receivableId'],
+  record_order_deposit: ['customerName', 'paymentAmount', 'orderId'],
   create_todo: ['todoTitle', 'dueDate'],
   quotation: ['customerName', 'productName'],
   order: ['customerName', 'productName', 'dueDate'],
@@ -31,23 +42,25 @@ const requiredFields = {
 };
 const warningFieldsByOperation = {
   create_quotation: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
-  create_order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
+  create_order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'depositAmount', 'paymentAmount', 'dueDate'],
   update_quotation: ['quotationId', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
   update_order: ['orderId', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
   create_receivable: ['customerName', 'amount', 'dueDate'],
   create_receivable_with_payment: ['customerName', 'amount', 'paymentAmount', 'remainingAmount', 'dueDate'],
   record_payment: ['customerName', 'paymentAmount', 'remainingAmount', 'receivableId'],
+  record_order_deposit: ['customerName', 'productName', 'paymentAmount', 'depositAmount', 'orderId'],
   create_todo: ['todoTitle', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
   pending: ['intent'],
   quotation: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
-  order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
+  order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'depositAmount', 'paymentAmount', 'dueDate'],
   receivable: ['customerName', 'amount', 'dueDate'],
-  payment: ['customerName', 'paymentAmount', 'remainingAmount', 'receivableId'],
+  payment: ['customerName', 'paymentAmount', 'depositAmount', 'remainingAmount', 'receivableId'],
   dunning: ['customerName'],
   todo: ['todoTitle', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
   unknown: ['intent']
 };
 const activeReceivableStatuses = ['待收', '部分收款'];
+const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
 const operationByIntent = {
   quotation: 'create_quotation',
   order: 'create_order',
@@ -65,6 +78,7 @@ const operationTitles = {
   create_receivable: '保存为应收款',
   create_receivable_with_payment: '新建应收并记录已收',
   record_payment: '记录收款',
+  record_order_deposit: '记录订单定金',
   create_todo: '保存为待办提醒',
   pending: '待整理记录'
 };
@@ -81,6 +95,7 @@ const fieldLabels = {
   unit: '单位',
   unitPrice: '单价',
   amount: '金额/总价',
+  depositAmount: '定金金额',
   paymentAmount: '已收金额',
   remainingAmount: '剩余金额',
   dueDate: '交期/到期日',
@@ -159,6 +174,52 @@ function getWarningState(missingFields, lowConfidenceFields, currentFields) {
   };
 }
 
+function getMetaText(item) {
+  if (!item) return '';
+  if (typeof item === 'string') return item;
+  return String(item.message || item.text || item.reason || '').trim();
+}
+
+function formatFieldConflicts(conflicts) {
+  return (conflicts || [])
+    .map((item) => {
+      if (!item || typeof item !== 'object') return getMetaText(item);
+      const label = getFieldLabel(item.field || '');
+      const values = Array.isArray(item.values) ? item.values.join('、') : '';
+      return item.message || `${label}${values ? `有多个候选：${values}` : '不确定'}，请确认。`;
+    })
+    .filter(Boolean);
+}
+
+function formatSupersededFacts(facts) {
+  return (facts || [])
+    .map((item) => {
+      if (!item || typeof item !== 'object') return getMetaText(item);
+      const label = getFieldLabel(item.field || '');
+      const oldValue = item.oldValue || item.old_value || item.value || '';
+      const newValue = item.newValue || item.new_value || '';
+      const reason = item.reason || item.message || '';
+      return [label && oldValue ? `${label} ${oldValue}` : oldValue, newValue ? `已改为 ${newValue}` : '', reason].filter(Boolean).join('，');
+    })
+    .filter(Boolean);
+}
+
+function formatRemarkItems(items) {
+  return (items || [])
+    .map(getMetaText)
+    .filter(Boolean);
+}
+
+function formatLocalParseSafety(safety) {
+  if (!safety || safety.status === 'SAFE_LOCAL') return [];
+  const statusText = {
+    NEEDS_AI: '本地规则判断这条需要 AI 解析或人工重点核对。',
+    NEEDS_USER_CONFIRM: '本地规则只生成草稿，需要补齐或确认字段。',
+    NO_RECORD: '本地规则没有识别到可直接保存的业务记录。'
+  }[safety.status] || '本地规则结果需要确认。';
+  return uniqueFields([statusText].concat(safety.reason_texts || [])).slice(0, 6);
+}
+
 function toMoney(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return 0;
@@ -203,7 +264,7 @@ function getCustomerById(state, customerId) {
 }
 
 function customerNeedsMatch(operation) {
-  return ['create_quotation', 'create_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment', 'create_todo'].includes(operation);
+  return ['create_quotation', 'create_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment', 'record_order_deposit', 'create_todo'].includes(operation);
 }
 
 function hasCustomerDiscriminator(fields) {
@@ -428,25 +489,41 @@ function formatReceivableOption(receivable) {
   return `应收${formatMoney(receivable.amount)}元，剩余${formatMoney(receivable.remainingAmount)}元，到期${receivable.dueDate || '-'}`;
 }
 
+function productMatches(inputProduct, orderProduct) {
+  const input = String(inputProduct || '').replace(/\s+/g, '');
+  const current = String(orderProduct || '').replace(/\s+/g, '');
+  if (!input || !current) return true;
+  return input === current || input.includes(current) || current.includes(input);
+}
+
+function getOrderRemainingSettlement(state, order) {
+  return Math.max(0, toMoney(order.totalAmount) - getOrderDepositAmount(state, order.id));
+}
+
+function formatOrderOption(state, order) {
+  return `${order.productName || '未填产品'}，${order.status || '-'}，交期${order.requiredDeliveryDate || '-'}，待收尾款${formatMoney(getOrderRemainingSettlement(state, order))}元`;
+}
+
 function getFieldVisibility(intent, operation, fields = {}) {
   const quoteOrOrder = ['quotation', 'order'].includes(intent);
   const todo = intent === 'todo';
   const createReceivable = operation === 'create_receivable';
   const createReceivableWithPayment = operation === 'create_receivable_with_payment';
   const recordPayment = operation === 'record_payment';
+  const recordOrderDeposit = operation === 'record_order_deposit';
   const quoteOperation = ['create_quotation', 'update_quotation'].includes(operation);
   const editableBusiness = operation !== 'pending' && intent !== 'unknown';
   const todoHasProductInfo = todo && Boolean(fields.productName || fields.quantity || fields.unit || fields.unitPrice || fields.amount);
   return {
     showCustomerFields: editableBusiness,
-    showPhoneField: ['create_quotation', 'create_order', 'update_quotation', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment'].includes(operation),
+    showPhoneField: ['create_quotation', 'create_order', 'update_quotation', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment', 'record_order_deposit'].includes(operation),
     showTodoTitleField: todo,
     showFollowupDaysField: quoteOperation,
-    showProductField: quoteOrOrder || todoHasProductInfo,
+    showProductField: quoteOrOrder || recordOrderDeposit || todoHasProductInfo,
     showQuantityFields: quoteOrOrder || (todo && Boolean(fields.quantity || fields.unit)),
     showPriceFields: quoteOrOrder || (todo && Boolean(fields.unitPrice || fields.amount)),
     showAmountField: quoteOrOrder || createReceivable || createReceivableWithPayment,
-    showPaymentAmountField: recordPayment || createReceivableWithPayment,
+    showPaymentAmountField: recordPayment || createReceivableWithPayment || recordOrderDeposit || (intent === 'order' && Boolean(fields.paymentAmount || fields.depositAmount)),
     showRemainingAmountField: createReceivableWithPayment,
     showDueDateField: ['create_order', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'create_todo'].includes(operation),
     showRemarkField: editableBusiness,
@@ -467,6 +544,90 @@ function normalizePaymentMissing(missingFields, fields, operation) {
       if (operation === 'create_receivable_with_payment' && field === 'receivableId') return false;
       return !hasFieldValue(fields, field);
     }), 'payment', operation);
+}
+
+function normalizeOrderDepositMissing(missingFields, fields) {
+  return filterRelevantWarningFields((missingFields || [])
+    .map((field) => (field === 'depositAmount' ? 'paymentAmount' : field))
+    .filter((field) => !hasFieldValue(fields, field)), 'payment', 'record_order_deposit');
+}
+
+function buildOrderDepositState(state, fields, aiMissingFields, lowConfidenceFields) {
+  const nextFields = Object.assign({}, fields);
+  const low = uniqueFields(lowConfidenceFields)
+    .map((field) => (field === 'depositAmount' ? 'paymentAmount' : field));
+  if (!hasFieldValue(nextFields, 'paymentAmount') && hasFieldValue(nextFields, 'depositAmount')) {
+    nextFields.paymentAmount = nextFields.depositAmount;
+  }
+  if (!hasFieldValue(nextFields, 'depositAmount') && hasFieldValue(nextFields, 'paymentAmount')) {
+    nextFields.depositAmount = nextFields.paymentAmount;
+  }
+
+  const customer = findCustomerForFields(state, nextFields);
+  if (customer) nextFields.customerId = customer.id;
+  const hasReceivableOrderMap = (state.receivables || []).reduce((map, receivable) => {
+    if (receivable.orderId) map[receivable.orderId] = true;
+    return map;
+  }, {});
+  const orders = customer
+    ? (state.orders || [])
+      .filter((item) => item.customerId === customer.id)
+      .filter((item) => activeOrderStatuses.includes(item.status))
+      .filter((item) => !hasReceivableOrderMap[item.id])
+      .filter((item) => productMatches(nextFields.productName, item.productName))
+    : [];
+
+  const existingSelected = orders.find((item) => item.id === nextFields.orderId);
+  if (!existingSelected && orders.length === 1) nextFields.orderId = orders[0].id;
+  const selected = orders.find((item) => item.id === nextFields.orderId) || null;
+  const selectedIndex = selected ? orders.findIndex((item) => item.id === selected.id) : -1;
+  const orderOptions = orders.map((item) => ({
+    id: item.id,
+    label: formatOrderOption(state, item)
+  }));
+  const orderRange = orderOptions.map((item) => item.label);
+  const paymentAmount = toMoney(nextFields.paymentAmount);
+  const orderDepositPreview = [];
+  let orderDepositWarningText = '';
+
+  if (!orders.length) {
+    orderDepositWarningText = customer
+      ? '没有找到这个客户可关联的进行中订单，请先存到待整理，避免定金挂错订单。'
+      : '请先确认客户，系统才能匹配这笔定金属于哪个订单。';
+    low.push('orderId');
+  } else if (!selected) {
+    orderDepositWarningText = '这个客户有多笔进行中订单，请先选择本次定金属于哪一笔。';
+    low.push('orderId');
+  } else {
+    const paidBefore = getOrderDepositAmount(state, selected.id);
+    const paidAfter = toMoney(paidBefore + paymentAmount);
+    const remainingAfter = Math.max(0, toMoney(toMoney(selected.totalAmount) - paidAfter));
+    orderDepositPreview.push(`匹配订单：${selected.productName || '未填产品'}，交期${selected.requiredDeliveryDate || '-'}`);
+    orderDepositPreview.push(`订单金额：${formatMoney(selected.totalAmount)}元`);
+    orderDepositPreview.push(`定金前：已收${formatMoney(paidBefore)}元，待收尾款${formatMoney(getOrderRemainingSettlement(state, selected))}元`);
+    orderDepositPreview.push(`本次定金：${formatMoney(paymentAmount)}元`);
+    orderDepositPreview.push(`保存后：已收定金${formatMoney(paidAfter)}元，待收尾款${formatMoney(remainingAfter)}元`);
+    if (paymentAmount > getOrderRemainingSettlement(state, selected)) {
+      low.push('paymentAmount');
+      orderDepositWarningText = '本次定金大于订单剩余待结算金额，请确认是否录错。';
+    }
+  }
+
+  const missing = uniqueFields(normalizeOrderDepositMissing(aiMissingFields, nextFields)
+    .concat(getMissing('payment', nextFields, 'record_order_deposit')));
+
+  return {
+    fields: nextFields,
+    operation: 'record_order_deposit',
+    missingFields: missing,
+    lowConfidenceFields: uniqueFields(low),
+    orderDepositPreview,
+    orderDepositWarningText,
+    orderOptions,
+    orderRange,
+    selectedOrderIndex: selectedIndex,
+    selectedOrderLabel: selectedIndex >= 0 ? orderRange[selectedIndex] : ''
+  };
 }
 
 function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields) {
@@ -605,6 +766,13 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     receivableRange: [],
     selectedReceivableIndex: -1
   };
+  let orderDepositState = {
+    orderDepositPreview: [],
+    orderDepositWarningText: '',
+    orderOptions: [],
+    orderRange: [],
+    selectedOrderIndex: -1
+  };
   let customerMatchState = emptyCustomerMatchState(nextFields);
 
   if (intent === 'quotation' && nextFields.quotationId) {
@@ -629,7 +797,17 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     }
   }
 
-  if (intent === 'payment') {
+  const isOrderDeposit = parseResult.operation === 'record_order_deposit'
+    || nextFields.paymentKind === 'deposit'
+    || nextFields.depositAmount;
+
+  if (intent === 'payment' && isOrderDeposit) {
+    orderDepositState = buildOrderDepositState(state, nextFields, parseResult.missing_fields || [], lowConfidenceFields);
+    operation = orderDepositState.operation;
+    nextFields = orderDepositState.fields;
+    missingFields = orderDepositState.missingFields;
+    lowConfidenceFields = orderDepositState.lowConfidenceFields;
+  } else if (intent === 'payment') {
     paymentState = buildPaymentState(state, nextFields, parseResult.missing_fields || [], lowConfidenceFields);
     operation = paymentState.operation;
     nextFields = paymentState.fields;
@@ -660,7 +838,15 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     low_confidence_fields: lowConfidenceFields
   });
   const warningState = getWarningState(missingFields, lowConfidenceFields, nextFields);
-  const canFormalSave = !missingFields.length && !lowConfidenceFields.length && !customerMatchState.customerMatchBlocksSave && intent !== 'unknown';
+  const fieldConflictLines = formatFieldConflicts(normalizedParseResult.field_conflicts || []);
+  const supersededFactLines = formatSupersededFacts(normalizedParseResult.superseded_facts || []);
+  const remarkItemLines = formatRemarkItems(normalizedParseResult.remark_items || []);
+  const localParseSafetyLines = formatLocalParseSafety(normalizedParseResult.local_parse_safety);
+  const canFormalSave = !missingFields.length
+    && !lowConfidenceFields.length
+    && !fieldConflictLines.length
+    && !customerMatchState.customerMatchBlocksSave
+    && intent !== 'unknown';
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
 
   return Object.assign({
@@ -669,7 +855,9 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     operation,
     operationTitle: operationTitles[operation],
     amountLabel: operation === 'create_receivable_with_payment' ? '应收总额' : (intent === 'receivable' ? '应收金额' : '金额/总价'),
-    paymentAmountLabel: operation === 'record_payment' ? '本次收款' : '已收金额',
+    paymentAmountLabel: operation === 'record_order_deposit'
+      ? '本次定金'
+      : (intent === 'order' && (nextFields.depositAmount || nextFields.paymentKind === 'deposit') ? '定金金额' : (operation === 'record_payment' ? '本次收款' : '已收金额')),
     dueDateLabel: intent === 'todo' ? '提醒日期' : (['receivable', 'payment'].includes(intent) ? '到期日' : (intent === 'quotation' ? '跟进日期' : '交期/到期日')),
     selectedFollowupDayIndex: getFollowupDayIndex(nextFields.followupDays),
     followupWarningText: ['create_quotation', 'update_quotation'].includes(operation)
@@ -680,13 +868,23 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showHistoryWarning: Boolean(normalizedParseResult.history_warning_text),
     historyDefaultWarningText: normalizedParseResult.history_default_warning_text || '',
     showHistoryDefaultWarning: Boolean(normalizedParseResult.history_default_warning_text),
+    fieldConflictLines,
+    showFieldConflicts: Boolean(fieldConflictLines.length),
+    localParseSafetyLines,
+    showLocalParseSafety: Boolean(localParseSafetyLines.length),
+    supersededFactLines,
+    showSupersededFacts: Boolean(supersededFactLines.length),
+    remarkItemLines,
+    showRemarkItems: Boolean(remarkItemLines.length),
     historyDefaultFieldMap: getFieldFlagMap(historyDefaultedFields),
     formalButtonText: canFormalSave ? '确认保存' : '补齐后保存',
     disableFormalSave: !canFormalSave,
     showPaymentConfirm: operation === 'record_payment',
     showNewReceivableWithPayment: operation === 'create_receivable_with_payment',
-    showReceivablePicker: operation === 'record_payment' && paymentState.receivableOptions.length > 1
-  }, visibility, warningState, paymentState, customerMatchState);
+    showReceivablePicker: operation === 'record_payment' && paymentState.receivableOptions.length > 1,
+    showOrderDepositConfirm: operation === 'record_order_deposit',
+    showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1
+  }, visibility, warningState, paymentState, orderDepositState, customerMatchState);
 }
 
 function getSourceState(source) {
@@ -715,6 +913,10 @@ function getEmptyConfirmationData() {
     showComputedTips: false,
     showHistoryWarning: false,
     showHistoryDefaultWarning: false,
+    showFieldConflicts: false,
+    showLocalParseSafety: false,
+    showSupersededFacts: false,
+    showRemarkItems: false,
     showWarning: false,
     showCustomerFields: false,
     showPhoneField: false,
@@ -732,8 +934,14 @@ function getEmptyConfirmationData() {
     showPaymentConfirm: false,
     showNewReceivableWithPayment: false,
     showReceivablePicker: false,
+    showOrderDepositConfirm: false,
+    showOrderPicker: false,
     warningMissingText: '',
     warningLowText: '',
+    fieldConflictLines: [],
+    localParseSafetyLines: [],
+    supersededFactLines: [],
+    remarkItemLines: [],
     historyWarningText: '',
     historyDefaultWarningText: '',
     historyDefaultFieldMap: {},
@@ -751,6 +959,12 @@ function getEmptyConfirmationData() {
     receivableRange: [],
     selectedReceivableIndex: -1,
     selectedReceivableLabel: '',
+    orderDepositPreview: [],
+    orderDepositWarningText: '',
+    orderOptions: [],
+    orderRange: [],
+    selectedOrderIndex: -1,
+    selectedOrderLabel: '',
     showCustomerMatchBox: false,
     showCustomerPicker: false,
     showCustomerDisambiguationField: false,
@@ -764,8 +978,17 @@ function getEmptyConfirmationData() {
     selectedCustomerIndex: -1,
     selectedCustomerLabel: '',
     customerMatchBlocksSave: false,
+    pasteAnalysis: null,
     computedTips: []
   };
+}
+
+function refreshTabBarSelected(page) {
+  if (!page || typeof page.getTabBar !== 'function') return;
+  const tabBar = page.getTabBar();
+  if (tabBar && typeof tabBar.updateSelected === 'function') {
+    tabBar.updateSelected();
+  }
 }
 
 Page({
@@ -793,6 +1016,7 @@ Page({
     parsing: false,
     parseButtonText: '识别成确认卡片',
     parseAssistText: '',
+    pasteAnalysis: null,
     intentCandidatesText: '',
     typedClass: 'segment active',
     pasteClass: 'segment',
@@ -862,11 +1086,36 @@ Page({
   },
 
   onShow() {
+    refreshTabBarSelected(this);
     requestOrderFilterReset();
     const pendingId = wx.getStorageSync('pending_to_edit');
     if (pendingId) {
       wx.removeStorageSync('pending_to_edit');
       this.loadPendingForEdit(pendingId);
+      return;
+    }
+    const forceTextInput = wx.getStorageSync('force_text_input');
+    if (forceTextInput) {
+      wx.removeStorageSync('force_text_input');
+      this.setData(Object.assign(getEmptyConfirmationData(), {
+        source: 'typed',
+        sourceLabel: INPUT_SOURCE_LABELS.typed,
+        parseButtonText: '识别成确认卡片',
+        parseAssistText: ''
+      }, getSourceState('typed')));
+      return;
+    }
+    const draft = wx.getStorageSync('draft_to_input');
+    if (draft && draft.text) {
+      wx.removeStorageSync('draft_to_input');
+      const source = draft.source || 'typed';
+      this.setData(Object.assign(getEmptyConfirmationData(), {
+        text: draft.text,
+        source,
+        sourceLabel: INPUT_SOURCE_LABELS[source] || INPUT_SOURCE_LABELS.typed,
+        parseButtonText: '识别成确认卡片',
+        parseAssistText: ''
+      }, getSourceState(source)));
     }
   },
 
@@ -915,19 +1164,86 @@ Page({
   },
 
   onTextInput(event) {
-    this.setData({ text: event.detail.value });
+    const text = event.detail.value;
+    if (isWechatChatText(text)) {
+      const analysis = analyzeClipboardText(text);
+      const diagnosticText = getClipboardDiagnostics(analysis);
+      this.setData(Object.assign({
+        source: 'paste',
+        sourceLabel: INPUT_SOURCE_LABELS.paste,
+        text,
+        pasteAnalysis: analysis,
+        parseAssistText: [diagnosticText, analysis.warning].filter(Boolean).join('\n')
+      }, getSourceState('paste')));
+      return;
+    }
+    this.setData({ text, pasteAnalysis: null });
   },
 
-  pasteClipboard() {
+  readClipboardToInput(options = {}) {
+    const append = Boolean(options.append);
     wx.getClipboardData({
       success: (res) => {
+        const analysis = analyzeClipboardText(res.data || '');
+        if (!analysis.rawText) {
+          wx.showToast({ title: '剪贴板是空的', icon: 'none' });
+          return;
+        }
+        const displayText = getClipboardDisplayText(analysis);
+        const currentText = append ? String(this.data.text || '').trim() : '';
+        const nextText = currentText && displayText
+          ? `${currentText}\n\n${displayText}`
+          : displayText;
+        const nextAnalysis = append ? analyzeClipboardText(nextText) : analysis;
+        const singleMessage = isSingleMessageClipboard(analysis);
+        const diagnosticText = getClipboardDiagnostics(nextAnalysis);
+        const assistText = singleMessage
+          ? `${diagnosticText}\n${getSingleMessagePasteTip()}`
+          : [diagnosticText, nextAnalysis.warning].filter(Boolean).join('\n');
         this.setData(Object.assign({
           source: 'paste',
           sourceLabel: INPUT_SOURCE_LABELS.paste,
-          text: res.data || ''
-        }, getSourceState('paste')));
+          text: nextText,
+          pasteAnalysis: nextAnalysis,
+          parseAssistText: assistText
+        }, getSourceState('paste')), () => {
+          if (nextAnalysis.status === 'ok') {
+            this.runParse();
+            return;
+          }
+          if (singleMessage) {
+            wx.showToast({ title: '只读到1条消息', icon: 'none' });
+            return;
+          }
+          this.showNoBusinessPaste(nextAnalysis);
+        });
       }
     });
+  },
+
+  pasteClipboard() {
+    this.readClipboardToInput({ append: false });
+  },
+
+  appendClipboard() {
+    this.readClipboardToInput({ append: true });
+  },
+
+  showNoBusinessPaste(analysis) {
+    const parseResult = buildNoBusinessPasteResult(analysis);
+    const state = getState();
+    const confirmationState = buildConfirmationState(state, parseResult, parseResult.intent, parseResult.fields);
+    this.setData(Object.assign({}, confirmationState, {
+      source: 'paste',
+      sourceLabel: INPUT_SOURCE_LABELS.paste,
+      intent: confirmationState.parseResult.intent,
+      intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
+      parseAssistText: analysis.warning || '没有识别到可保存的业务内容。',
+      intentCandidatesText: '',
+      parsing: false,
+      parseButtonText: '识别成确认卡片',
+      pasteAnalysis: analysis
+    }, getSourceState('paste')));
   },
 
   startVoice() {
@@ -959,6 +1275,23 @@ Page({
   },
 
   runParse() {
+    let text = this.data.text.trim();
+    let pasteAnalysis = null;
+    let source = this.data.source;
+    if (text && (this.data.source === 'paste' || isWechatChatText(text))) {
+      pasteAnalysis = this.data.pasteAnalysis && (
+        this.data.pasteAnalysis.rawText === this.data.text
+        || this.data.pasteAnalysis.extractedText === this.data.text
+      )
+        ? this.data.pasteAnalysis
+        : analyzeClipboardText(this.data.text);
+      if (pasteAnalysis.status !== 'ok') {
+        this.showNoBusinessPaste(pasteAnalysis);
+        return;
+      }
+      text = pasteAnalysis.extractedText;
+      source = 'paste';
+    }
     if (!this.data.text.trim()) {
       wx.showToast({ title: '先输入一句话或粘贴聊天', icon: 'none' });
       return;
@@ -969,21 +1302,33 @@ Page({
       parseAssistText: '正在识别，请稍等。'
     });
     const state = getState();
-    parseHybridInput({
-        text: this.data.text,
-        source: this.data.source,
-        context: 'home',
-        state
-      })
+    const payload = {
+      text,
+      source,
+      context: 'home',
+      state
+    };
+    if (pasteAnalysis) {
+      payload.rawText = pasteAnalysis.rawText;
+      payload.extractedText = pasteAnalysis.extractedText;
+      payload.pasteMeta = getPasteMeta(pasteAnalysis);
+    }
+    parseHybridInput(payload)
       .then((parseResult) => {
       const confirmationState = buildConfirmationState(state, parseResult, parseResult.intent, parseResult.fields);
-      const aiStatusText = {
+      const aiStatus = (parseResult.ai_fallback && parseResult.ai_fallback.status) || 'not_requested';
+      const safetyStatus = parseResult.local_parse_safety && parseResult.local_parse_safety.status;
+      const aiStatusText = (safetyStatus === 'NEEDS_AI' && ['failed', 'skipped_no_endpoint'].includes(aiStatus))
+        ? '这条内容需要 AI 判断最终信息；当前 AI 暂不可用，请重点核对安全提示里的字段，或先存到待整理。'
+        : (safetyStatus === 'NEEDS_USER_CONFIRM'
+          ? '本地规则已生成草稿，但有字段需要你补齐或确认。'
+          : {
         not_requested: '本地高频规则已完成识别。',
         skipped_no_endpoint: '本地规则先完成识别；这类输入以后可接真实 AI 继续增强。',
         mock_used: '已通过测试后端 mock 识别，结果仍需你确认。',
         used: '已调用 AI 解析，结果仍需你确认。',
         failed: 'AI 解析暂不可用，已使用本地规则结果。'
-      }[(parseResult.ai_fallback && parseResult.ai_fallback.status) || 'not_requested'];
+      }[aiStatus]);
       this.setData(Object.assign({}, confirmationState, {
         intent: confirmationState.parseResult.intent,
         intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
@@ -1040,9 +1385,11 @@ Page({
       if (['customerName', 'phone'].includes(field)) {
         delete nextFields.customerId;
         delete nextFields.receivableId;
+        delete nextFields.orderId;
         delete nextFields.customerHistoryConfirmed;
         if (field === 'customerName') delete nextFields.forceNewCustomer;
       }
+      if (field === 'productName') delete nextFields.orderId;
       const baseResult = Object.assign({}, this.data.parseResult, {
         missing_fields: [],
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
@@ -1157,6 +1504,21 @@ Page({
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
 
+  changeOrderDeposit(event) {
+    if (!this.data.parseResult) return;
+    const selected = this.data.orderOptions[Number(event.detail.value)];
+    if (!selected) return;
+    const fields = Object.assign({}, this.data.fields, {
+      orderId: selected.id
+    });
+    const baseResult = Object.assign({}, this.data.parseResult, {
+      missing_fields: [],
+      low_confidence_fields: this.data.parseResult.low_confidence_fields || []
+    });
+    const state = getState();
+    this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
+  },
+
   saveFormal() {
     if (!this.data.parseResult) return;
     const state = getState();
@@ -1166,7 +1528,11 @@ Page({
     });
     const confirmationState = buildConfirmationState(state, baseResult, this.data.intent, this.data.fields);
     if (confirmationState.disableFormalSave) {
-      const missingText = confirmationState.customerMatchWarningText || confirmationState.warningMissingText || confirmationState.warningLowText || '关键信息';
+      const missingText = confirmationState.customerMatchWarningText
+        || (confirmationState.showFieldConflicts ? '先确认聊天里的冲突信息' : '')
+        || confirmationState.warningMissingText
+        || confirmationState.warningLowText
+        || '关键信息';
       this.setData(confirmationState);
       wx.showToast({
         title: missingText.startsWith('系统里') || missingText.startsWith('如果这是') || missingText.startsWith('这个客户')

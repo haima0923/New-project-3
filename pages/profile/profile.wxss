@@ -1,0 +1,84 @@
+.profile-page {
+  padding-bottom: calc(180rpx + env(safe-area-inset-bottom));
+}
+
+.profile-card {
+  background: linear-gradient(135deg, #1677FF, #63A6FF);
+  border-radius: 32rpx;
+  box-shadow: 0 16rpx 36rpx rgba(22, 119, 255, 0.22);
+  color: #FFFFFF;
+  margin-bottom: 24rpx;
+  padding: 34rpx 30rpx;
+}
+
+.profile-name {
+  font-size: 36rpx;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.profile-subtitle {
+  font-size: 26rpx;
+  line-height: 1.5;
+  margin-top: 8rpx;
+  opacity: 0.9;
+}
+
+.profile-grid {
+  display: grid;
+  gap: 14rpx;
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 20rpx;
+}
+
+.profile-stat {
+  background: #F6F7FB;
+  border-radius: 22rpx;
+  padding: 20rpx 10rpx;
+  text-align: center;
+}
+
+.profile-number {
+  color: #1677FF;
+  font-size: 36rpx;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.profile-label {
+  color: #6B7280;
+  font-size: 22rpx;
+  margin-top: 8rpx;
+}
+
+.status-line {
+  align-items: center;
+  border-top: 1rpx solid #E5E7EB;
+  color: #1F2937;
+  display: flex;
+  font-size: 28rpx;
+  justify-content: space-between;
+  padding: 22rpx 0;
+}
+
+.status-line:first-of-type {
+  border-top: 0;
+}
+
+.status-pill {
+  background: #EAF2FF;
+  border-radius: 999rpx;
+  color: #1677FF;
+  font-size: 24rpx;
+  font-weight: 700;
+  padding: 10rpx 16rpx;
+}
+
+.status-muted {
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+.status-note {
+  margin-top: 6rpx;
+}

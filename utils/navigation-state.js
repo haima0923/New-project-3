@@ -11,6 +11,12 @@ function setNextOrderFilter(filter) {
   globalData.resetOrderFiltersOnNextShow = false;
 }
 
+function setNextRecordFilter(filterType) {
+  const globalData = getGlobalData();
+  if (!globalData) return;
+  globalData.nextRecordFilter = filterType || null;
+}
+
 function peekNextOrderFilter() {
   const globalData = getGlobalData();
   return globalData ? globalData.nextOrderFilter : null;
@@ -45,11 +51,21 @@ function consumeOrderFilterReset() {
   return true;
 }
 
+function consumeNextRecordFilter() {
+  const globalData = getGlobalData();
+  if (!globalData || !globalData.nextRecordFilter) return null;
+  const filter = globalData.nextRecordFilter;
+  globalData.nextRecordFilter = null;
+  return filter;
+}
+
 module.exports = {
   clearNextOrderFilter,
   consumeNextOrderFilter,
+  consumeNextRecordFilter,
   consumeOrderFilterReset,
   peekNextOrderFilter,
   requestOrderFilterReset,
+  setNextRecordFilter,
   setNextOrderFilter
 };

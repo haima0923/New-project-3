@@ -1,3 +1,6 @@
 {
-  "navigationBarTitleText": "今日看板"
+  "navigationBarTitleText": "义乌老板 AI 小助理",
+  "navigationBarBackgroundColor": "#F6F9FF",
+  "navigationBarTextStyle": "black",
+  "backgroundColor": "#F6F9FF"
 }

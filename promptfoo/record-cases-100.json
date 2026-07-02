@@ -1,0 +1,1323 @@
+[
+  {
+    "description": "001 报价 王总卡通水杯",
+    "vars": {
+      "category": "报价",
+      "question": "给王总报1000个卡通水杯，5块5一个",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "王总",
+      "expectedProduct": "卡通水杯",
+      "expectedQuantity": "1000",
+      "expectedUnitPrice": "5.5",
+      "expectedAmount": "5500",
+      "notes": "基础报价表达"
+    }
+  },
+  {
+    "description": "002 报价 李总钥匙扣",
+    "vars": {
+      "category": "报价",
+      "question": "李总问钥匙扣2000个多少钱，一块二一个",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "李总",
+      "expectedProduct": "钥匙扣",
+      "expectedQuantity": "2000",
+      "expectedUnitPrice": "1.2",
+      "expectedAmount": "2400",
+      "notes": "问价口语"
+    }
+  },
+  {
+    "description": "003 报价 陈老板杯垫",
+    "vars": {
+      "category": "报价",
+      "question": "陈老板要报个价，杯垫300个，9毛",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "陈老板",
+      "expectedProduct": "杯垫",
+      "expectedQuantity": "300",
+      "expectedUnitPrice": "0.9",
+      "expectedAmount": "270",
+      "notes": "毛钱单价"
+    }
+  },
+  {
+    "description": "004 报价 周姐礼品盒",
+    "vars": {
+      "category": "报价",
+      "question": "周姐问500套礼品盒，单价3.8",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "周姐",
+      "expectedProduct": "礼品盒",
+      "expectedQuantity": "500",
+      "expectedUnitPrice": "3.8",
+      "expectedAmount": "1900",
+      "notes": "单价数字"
+    }
+  },
+  {
+    "description": "005 报价 钱总水杯",
+    "vars": {
+      "category": "报价",
+      "question": "钱总那边水杯500个，报6元一个",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "钱总",
+      "expectedProduct": "水杯",
+      "expectedQuantity": "500",
+      "expectedUnitPrice": "6",
+      "expectedAmount": "3000",
+      "notes": "那边加商品"
+    }
+  },
+  {
+    "description": "006 报价 孙总老款杯垫",
+    "vars": {
+      "category": "报价",
+      "question": "孙总问老款杯垫一千个，还是八毛一个",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "孙总",
+      "expectedProduct": "老款杯垫",
+      "expectedQuantity": "1000",
+      "expectedUnitPrice": "0.8",
+      "expectedAmount": "800",
+      "notes": "还是原价口语"
+    }
+  },
+  {
+    "description": "007 报价 赵姐饰品盒",
+    "vars": {
+      "category": "报价",
+      "question": "赵姐要问价，饰品盒800个，两块三",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "赵姐",
+      "expectedProduct": "饰品盒",
+      "expectedQuantity": "800",
+      "expectedUnitPrice": "2.3",
+      "expectedAmount": "1840",
+      "notes": "块三口语"
+    }
+  },
+  {
+    "description": "008 报价 黄老板五金挂件",
+    "vars": {
+      "category": "报价",
+      "question": "黄老板发来问五金挂件3000个，单价一块五",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "黄老板",
+      "expectedProduct": "五金挂件",
+      "expectedQuantity": "3000",
+      "expectedUnitPrice": "1.5",
+      "expectedAmount": "4500",
+      "notes": "发来问价"
+    }
+  },
+  {
+    "description": "009 报价 老客户文具套装",
+    "vars": {
+      "category": "报价",
+      "question": "老客户问文具套装200套，12块一套",
+      "expectedIntent": "quotation",
+      "expectedProduct": "文具",
+      "expectedQuantity": "200",
+      "expectedUnitPrice": "12",
+      "expectedAmount": "2400",
+      "expectedMissingIncludes": "customerName",
+      "notes": "客户不明确，应阻止直接保存"
+    }
+  },
+  {
+    "description": "010 报价 吴总包装袋",
+    "vars": {
+      "category": "报价",
+      "question": "给吴总记一下报价，包装袋一万只，8分钱一只",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "吴总",
+      "expectedProduct": "包装袋",
+      "expectedQuantity": "10000",
+      "expectedUnitPrice": "0.08",
+      "expectedAmount": "800",
+      "notes": "分钱单价"
+    }
+  },
+  {
+    "description": "011 报价 义乌王哥头绳",
+    "vars": {
+      "category": "报价",
+      "question": "义乌王哥问头绳5000条，三毛五",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "王哥",
+      "expectedProduct": "头绳",
+      "expectedQuantity": "5000",
+      "expectedUnitPrice": "0.35",
+      "expectedAmount": "1750",
+      "notes": "哥/地区称呼"
+    }
+  },
+  {
+    "description": "012 报价 刘总收纳盒",
+    "vars": {
+      "category": "报价",
+      "question": "刘总那边要个价格，收纳盒600个，7块8",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "刘总",
+      "expectedProduct": "收纳盒",
+      "expectedQuantity": "600",
+      "expectedUnitPrice": "7.8",
+      "expectedAmount": "4680",
+      "notes": "要个价格"
+    }
+  },
+  {
+    "description": "013 报价 马总小夜灯",
+    "vars": {
+      "category": "报价",
+      "question": "马总问小夜灯1200个，4.6元一个",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "马总",
+      "expectedProduct": "小夜灯",
+      "expectedQuantity": "1200",
+      "expectedUnitPrice": "4.6",
+      "expectedAmount": "5520",
+      "notes": "小数单价"
+    }
+  },
+  {
+    "description": "014 报价 何姐贴纸",
+    "vars": {
+      "category": "报价",
+      "question": "何姐问贴纸2万张，1毛2一张",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "何姐",
+      "expectedProduct": "贴纸",
+      "expectedQuantity": "20000",
+      "expectedUnitPrice": "0.12",
+      "expectedAmount": "2400",
+      "notes": "万数量和毛分"
+    }
+  },
+  {
+    "description": "015 报价 老李玩具车",
+    "vars": {
+      "category": "报价",
+      "question": "老李问玩具车100箱，85一箱",
+      "expectedIntent": "quotation",
+      "expectedCustomer": "老李",
+      "expectedProduct": "玩具",
+      "expectedQuantity": "100",
+      "expectedUnitPrice": "85",
+      "expectedAmount": "8500",
+      "notes": "箱为单位"
+    }
+  },
+  {
+    "description": "016 订单 王总卡通水杯",
+    "vars": {
+      "category": "订单",
+      "question": "王总定1000个卡通水杯，5块5一个，月底交",
+      "expectedIntent": "order",
+      "expectedCustomer": "王总",
+      "expectedProduct": "卡通水杯",
+      "expectedQuantity": "1000",
+      "expectedUnitPrice": "5.5",
+      "expectedAmount": "5500",
+      "requireDueDate": true,
+      "notes": "基础订单表达"
+    }
+  },
+  {
+    "description": "017 订单 马总杯垫",
+    "vars": {
+      "category": "订单",
+      "question": "马总300个杯垫，三天后交，9毛一个",
+      "expectedIntent": "order",
+      "expectedCustomer": "马总",
+      "expectedProduct": "杯垫",
+      "expectedQuantity": "300",
+      "expectedUnitPrice": "0.9",
+      "expectedAmount": "270",
+      "requireDueDate": true,
+      "notes": "三天后交"
+    }
+  },
+  {
+    "description": "018 订单 老王老款杯垫",
+    "vars": {
+      "category": "订单",
+      "question": "老王补500个老款杯垫，还是9毛，后天给他",
+      "expectedIntent": "order",
+      "expectedCustomer": "老王",
+      "expectedProduct": "老款杯垫",
+      "expectedQuantity": "500",
+      "expectedUnitPrice": "0.9",
+      "expectedAmount": "450",
+      "requireDueDate": true,
+      "notes": "补货加后天"
+    }
+  },
+  {
+    "description": "019 订单 周老板钥匙扣",
+    "vars": {
+      "category": "订单",
+      "question": "周老板下周一要发2000个钥匙扣，一块二一个",
+      "expectedIntent": "order",
+      "expectedCustomer": "周老板",
+      "expectedProduct": "钥匙扣",
+      "expectedQuantity": "2000",
+      "expectedUnitPrice": "1.2",
+      "expectedAmount": "2400",
+      "requireDueDate": true,
+      "notes": "下周一要发"
+    }
+  },
+  {
+    "description": "020 订单 张总杯子",
+    "vars": {
+      "category": "订单",
+      "question": "张总要一千个杯子，五块五，月底交",
+      "expectedIntent": "order",
+      "expectedCustomer": "张总",
+      "expectedProduct": "杯子",
+      "expectedQuantity": "1000",
+      "expectedUnitPrice": "5.5",
+      "expectedAmount": "5500",
+      "requireDueDate": true,
+      "notes": "中文数字数量"
+    }
+  },
+  {
+    "description": "021 订单 赵总挂件",
+    "vars": {
+      "category": "订单",
+      "question": "赵总要订二千个挂件，一块五，礼拜五出",
+      "expectedIntent": "order",
+      "expectedCustomer": "赵总",
+      "expectedProduct": "挂件",
+      "expectedQuantity": "2000",
+      "expectedUnitPrice": "1.5",
+      "expectedAmount": "3000",
+      "requireDueDate": true,
+      "notes": "礼拜五出货"
+    }
+  },
+  {
+    "description": "022 订单 吴总扣子",
+    "vars": {
+      "category": "订单",
+      "question": "吴总定3000个扣子，三毛五，周六拿",
+      "expectedIntent": "order",
+      "expectedCustomer": "吴总",
+      "expectedProduct": "扣子",
+      "expectedQuantity": "3000",
+      "expectedUnitPrice": "0.35",
+      "expectedAmount": "1050",
+      "requireDueDate": true,
+      "notes": "周六拿"
+    }
+  },
+  {
+    "description": "023 订单 陈总礼品盒",
+    "vars": {
+      "category": "订单",
+      "question": "陈总那批礼品盒确认了，500套，3块8，明天发",
+      "expectedIntent": "order",
+      "expectedCustomer": "陈总",
+      "expectedProduct": "礼品盒",
+      "expectedQuantity": "500",
+      "expectedUnitPrice": "3.8",
+      "expectedAmount": "1900",
+      "requireDueDate": true,
+      "notes": "确认了"
+    }
+  },
+  {
+    "description": "024 订单 刘总水杯",
+    "vars": {
+      "category": "订单",
+      "question": "刘总要走一批水杯，800个，6块，6月30号交",
+      "expectedIntent": "order",
+      "expectedCustomer": "刘总",
+      "expectedProduct": "水杯",
+      "expectedQuantity": "800",
+      "expectedUnitPrice": "6",
+      "expectedAmount": "4800",
+      "requireDueDate": true,
+      "notes": "固定日期交货"
+    }
+  },
+  {
+    "description": "025 订单 何姐文具",
+    "vars": {
+      "category": "订单",
+      "question": "何姐先做200套文具，12块一套，下个月5号交",
+      "expectedIntent": "order",
+      "expectedCustomer": "何姐",
+      "expectedProduct": "文具",
+      "expectedQuantity": "200",
+      "expectedUnitPrice": "12",
+      "expectedAmount": "2400",
+      "requireDueDate": true,
+      "notes": "下个月日期"
+    }
+  },
+  {
+    "description": "026 订单 老李返单玩具",
+    "vars": {
+      "category": "订单",
+      "question": "老李返单100箱玩具，照上次85一箱，三天后出",
+      "expectedIntent": "order",
+      "expectedCustomer": "老李",
+      "expectedProduct": "玩具",
+      "expectedQuantity": "100",
+      "expectedUnitPrice": "85",
+      "expectedAmount": "8500",
+      "requireDueDate": true,
+      "notes": "返单照上次价格"
+    }
+  },
+  {
+    "description": "027 订单 孙总头绳",
+    "vars": {
+      "category": "订单",
+      "question": "孙总追加5000条头绳，三毛五，今天下午发",
+      "expectedIntent": "order",
+      "expectedCustomer": "孙总",
+      "expectedProduct": "头绳",
+      "expectedQuantity": "5000",
+      "expectedUnitPrice": "0.35",
+      "expectedAmount": "1750",
+      "requireDueDate": true,
+      "notes": "今天下午"
+    }
+  },
+  {
+    "description": "028 订单 钱总包装袋",
+    "vars": {
+      "category": "订单",
+      "question": "钱总那边包装袋一万只，8分，明天必须出货",
+      "expectedIntent": "order",
+      "expectedCustomer": "钱总",
+      "expectedProduct": "包装袋",
+      "expectedQuantity": "10000",
+      "expectedUnitPrice": "0.08",
+      "expectedAmount": "800",
+      "requireDueDate": true,
+      "notes": "分钱和必须出货"
+    }
+  },
+  {
+    "description": "029 订单 老客户收纳盒",
+    "vars": {
+      "category": "订单",
+      "question": "老客户说先做300个收纳盒，价格按7块8，月底",
+      "expectedIntent": "order",
+      "expectedProduct": "收纳盒",
+      "expectedQuantity": "300",
+      "expectedUnitPrice": "7.8",
+      "expectedAmount": "2340",
+      "requireDueDate": true,
+      "expectedMissingIncludes": "customerName",
+      "notes": "客户不明确"
+    }
+  },
+  {
+    "description": "030 订单 郑总小夜灯",
+    "vars": {
+      "category": "订单",
+      "question": "郑总要货了，小夜灯1200个，4块6，礼拜三交",
+      "expectedIntent": "order",
+      "expectedCustomer": "郑总",
+      "expectedProduct": "小夜灯",
+      "expectedQuantity": "1200",
+      "expectedUnitPrice": "4.6",
+      "expectedAmount": "5520",
+      "requireDueDate": true,
+      "notes": "要货了"
+    }
+  },
+  {
+    "description": "031 应收 陈总一万五",
+    "vars": {
+      "category": "应收",
+      "question": "陈总欠我一万五，月底结",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "陈总",
+      "expectedAmount": "15000",
+      "requireDueDate": true,
+      "notes": "欠款基础表达"
+    }
+  },
+  {
+    "description": "032 应收 刘总记账",
+    "vars": {
+      "category": "应收",
+      "question": "刘总这批货先记账，一共8600，月底给",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "刘总",
+      "expectedAmount": "8600",
+      "requireDueDate": true,
+      "notes": "先记账"
+    }
+  },
+  {
+    "description": "033 应收 王总还差",
+    "vars": {
+      "category": "应收",
+      "question": "王总货款还差3200，明天说打",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "王总",
+      "expectedAmount": "3200",
+      "requireDueDate": true,
+      "notes": "还差金额"
+    }
+  },
+  {
+    "description": "034 应收 老李尾款",
+    "vars": {
+      "category": "应收",
+      "question": "老李尾款2万3，下个月5号前给",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "老李",
+      "expectedAmount": "23000",
+      "requireDueDate": true,
+      "notes": "尾款和下月日期"
+    }
+  },
+  {
+    "description": "035 应收 张老板月结",
+    "vars": {
+      "category": "应收",
+      "question": "张老板这单月结，金额12500，月底收",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "张老板",
+      "expectedAmount": "12500",
+      "requireDueDate": true,
+      "notes": "月结金额"
+    }
+  },
+  {
+    "description": "036 应收 赵姐杯子款",
+    "vars": {
+      "category": "应收",
+      "question": "赵姐杯子货款欠6800，礼拜五收",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "赵姐",
+      "expectedAmount": "6800",
+      "requireDueDate": true,
+      "notes": "货款欠"
+    }
+  },
+  {
+    "description": "037 应收 吴总未结",
+    "vars": {
+      "category": "应收",
+      "question": "吴总还有一笔没结，4200，明天催一下",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "吴总",
+      "expectedAmount": "4200",
+      "requireDueDate": true,
+      "notes": "应收里带催款动作"
+    }
+  },
+  {
+    "description": "038 应收 孙总挂账",
+    "vars": {
+      "category": "应收",
+      "question": "孙总这边先挂账，包装袋款960，月底一起算",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "孙总",
+      "expectedAmount": "960",
+      "requireDueDate": true,
+      "notes": "挂账"
+    }
+  },
+  {
+    "description": "039 应收 钱总尾款",
+    "vars": {
+      "category": "应收",
+      "question": "钱总尾款还剩1万2，6月30号前付",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "钱总",
+      "expectedAmount": "12000",
+      "requireDueDate": true,
+      "notes": "还剩尾款"
+    }
+  },
+  {
+    "description": "040 应收 何姐文具款",
+    "vars": {
+      "category": "应收",
+      "question": "何姐欠文具款2400，后天给我",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "何姐",
+      "expectedAmount": "2400",
+      "requireDueDate": true,
+      "notes": "商品款欠款"
+    }
+  },
+  {
+    "description": "041 应收 马总杯垫",
+    "vars": {
+      "category": "应收",
+      "question": "马总货款一共270，先记应收，三天后收",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "马总",
+      "expectedAmount": "270",
+      "requireDueDate": true,
+      "notes": "明确记应收"
+    }
+  },
+  {
+    "description": "042 应收 黄老板挂件",
+    "vars": {
+      "category": "应收",
+      "question": "黄老板这批挂件款4500，月底月结",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "黄老板",
+      "expectedAmount": "4500",
+      "requireDueDate": true,
+      "notes": "月底月结"
+    }
+  },
+  {
+    "description": "043 收款 刘总转款",
+    "vars": {
+      "category": "收款",
+      "question": "刘总刚转了3000，还剩2000",
+      "expectedIntent": "payment",
+      "expectedCustomer": "刘总",
+      "expectedPaymentAmount": "3000",
+      "expectedRemainingAmount": "2000",
+      "notes": "本次收款和剩余金额"
+    }
+  },
+  {
+    "description": "044 收款 老王还款",
+    "vars": {
+      "category": "收款",
+      "question": "老王还我4000，还剩2000没给",
+      "expectedIntent": "payment",
+      "expectedCustomer": "老王",
+      "expectedPaymentAmount": "4000",
+      "expectedRemainingAmount": "2000",
+      "notes": "还我"
+    }
+  },
+  {
+    "description": "045 收款 陈总微信",
+    "vars": {
+      "category": "收款",
+      "question": "陈总付了5000，微信转的",
+      "expectedIntent": "payment",
+      "expectedCustomer": "陈总",
+      "expectedPaymentAmount": "5000",
+      "notes": "支付方式在备注"
+    }
+  },
+  {
+    "description": "046 收款 王总结清",
+    "vars": {
+      "category": "收款",
+      "question": "王总那笔货款今天到账15000，结清了",
+      "expectedIntent": "payment",
+      "expectedCustomer": "王总",
+      "expectedPaymentAmount": "15000",
+      "requireDueDate": true,
+      "notes": "到账结清"
+    }
+  },
+  {
+    "description": "047 收款 老李先打",
+    "vars": {
+      "category": "收款",
+      "question": "老李先打1万，剩下月底",
+      "expectedIntent": "payment",
+      "expectedCustomer": "老李",
+      "expectedPaymentAmount": "10000",
+      "requireDueDate": true,
+      "notes": "剩下月底但未给剩余金额"
+    }
+  },
+  {
+    "description": "048 收款 周姐支付宝",
+    "vars": {
+      "category": "收款",
+      "question": "周姐支付宝转了1900，礼品盒那单",
+      "expectedIntent": "payment",
+      "expectedCustomer": "周姐",
+      "expectedPaymentAmount": "1900",
+      "notes": "支付宝转款"
+    }
+  },
+  {
+    "description": "049 收款 赵姐现金",
+    "vars": {
+      "category": "收款",
+      "question": "赵姐现金给了6800，杯子款结掉",
+      "expectedIntent": "payment",
+      "expectedCustomer": "赵姐",
+      "expectedPaymentAmount": "6800",
+      "notes": "现金结清"
+    }
+  },
+  {
+    "description": "050 收款 吴总扣子",
+    "vars": {
+      "category": "收款",
+      "question": "吴总付了500，扣子那批还剩550",
+      "expectedIntent": "payment",
+      "expectedCustomer": "吴总",
+      "expectedPaymentAmount": "500",
+      "expectedRemainingAmount": "550",
+      "notes": "商品线索和剩余"
+    }
+  },
+  {
+    "description": "051 收款 钱总包装袋",
+    "vars": {
+      "category": "收款",
+      "question": "钱总打款960，包装袋那单清了",
+      "expectedIntent": "payment",
+      "expectedCustomer": "钱总",
+      "expectedPaymentAmount": "960",
+      "notes": "打款清账"
+    }
+  },
+  {
+    "description": "052 收款 孙总部分付款",
+    "vars": {
+      "category": "收款",
+      "question": "孙总今天先付300，剩下660月底给",
+      "expectedIntent": "payment",
+      "expectedCustomer": "孙总",
+      "expectedPaymentAmount": "300",
+      "expectedRemainingAmount": "660",
+      "requireDueDate": true,
+      "notes": "部分付款和剩余日期"
+    }
+  },
+  {
+    "description": "053 收款 何姐文具款",
+    "vars": {
+      "category": "收款",
+      "question": "何姐转了1000，文具款还差1400",
+      "expectedIntent": "payment",
+      "expectedCustomer": "何姐",
+      "expectedPaymentAmount": "1000",
+      "expectedRemainingAmount": "1400",
+      "notes": "还差金额"
+    }
+  },
+  {
+    "description": "054 收款 马总到账",
+    "vars": {
+      "category": "收款",
+      "question": "马总270已经到账，杯垫订单结束",
+      "expectedIntent": "payment",
+      "expectedCustomer": "马总",
+      "expectedPaymentAmount": "270",
+      "notes": "金额在客户名后"
+    }
+  },
+  {
+    "description": "055 待办 周姐回报价",
+    "vars": {
+      "category": "待办",
+      "question": "明天提醒我给周姐回礼品盒报价",
+      "expectedIntent": "todo",
+      "expectedCustomer": "周姐",
+      "expectedProduct": "礼品盒",
+      "expectedTodoTitle": "周姐",
+      "requireDueDate": true,
+      "notes": "提醒回报价"
+    }
+  },
+  {
+    "description": "056 待办 催陈总货款",
+    "vars": {
+      "category": "待办",
+      "question": "今天下午记得催陈总一万五货款",
+      "expectedIntent": "todo",
+      "expectedCustomer": "陈总",
+      "expectedTodoTitle": "陈总",
+      "requireDueDate": true,
+      "notes": "催款待办"
+    }
+  },
+  {
+    "description": "057 待办 跟进王总样品",
+    "vars": {
+      "category": "待办",
+      "question": "后天跟进王总水杯样品",
+      "expectedIntent": "todo",
+      "expectedCustomer": "王总",
+      "expectedProduct": "水杯",
+      "expectedTodoTitle": "王总",
+      "requireDueDate": true,
+      "notes": "跟进样品"
+    }
+  },
+  {
+    "description": "058 待办 问赵姐款",
+    "vars": {
+      "category": "待办",
+      "question": "礼拜五提醒我问赵姐杯子款",
+      "expectedIntent": "todo",
+      "expectedCustomer": "赵姐",
+      "expectedTodoTitle": "赵姐",
+      "requireDueDate": true,
+      "notes": "问款待办"
+    }
+  },
+  {
+    "description": "059 待办 刘总对账单",
+    "vars": {
+      "category": "待办",
+      "question": "下周一给刘总发对账单",
+      "expectedIntent": "todo",
+      "expectedCustomer": "刘总",
+      "expectedTodoTitle": "刘总",
+      "requireDueDate": true,
+      "notes": "发对账单"
+    }
+  },
+  {
+    "description": "060 待办 马总交期",
+    "vars": {
+      "category": "待办",
+      "question": "晚上回一下马总杯垫交期",
+      "expectedIntent": "todo",
+      "expectedCustomer": "马总",
+      "expectedProduct": "杯垫",
+      "expectedTodoTitle": "马总",
+      "notes": "晚上没有明确日期时可低置信"
+    }
+  },
+  {
+    "description": "061 待办 催老李尾款",
+    "vars": {
+      "category": "待办",
+      "question": "明天上午催老李尾款2万3",
+      "expectedIntent": "todo",
+      "expectedCustomer": "老李",
+      "expectedTodoTitle": "老李",
+      "requireDueDate": true,
+      "notes": "催尾款"
+    }
+  },
+  {
+    "description": "062 待办 钱总尾款",
+    "vars": {
+      "category": "待办",
+      "question": "6月30号提醒我收钱总尾款",
+      "expectedIntent": "todo",
+      "expectedCustomer": "钱总",
+      "expectedTodoTitle": "钱总",
+      "requireDueDate": true,
+      "notes": "固定日期提醒"
+    }
+  },
+  {
+    "description": "063 待办 吴总颜色",
+    "vars": {
+      "category": "待办",
+      "question": "今天别忘了给吴总确认扣子颜色",
+      "expectedIntent": "todo",
+      "expectedCustomer": "吴总",
+      "expectedProduct": "扣子",
+      "expectedTodoTitle": "吴总",
+      "requireDueDate": true,
+      "notes": "确认颜色"
+    }
+  },
+  {
+    "description": "064 待办 何姐文具款",
+    "vars": {
+      "category": "待办",
+      "question": "下个月5号问何姐文具款到了没",
+      "expectedIntent": "todo",
+      "expectedCustomer": "何姐",
+      "expectedTodoTitle": "何姐",
+      "requireDueDate": true,
+      "notes": "款到没"
+    }
+  },
+  {
+    "description": "065 历史返单 老王杯垫",
+    "vars": {
+      "category": "历史/返单",
+      "question": "老王再来500个杯垫，按上次价格，三天后交",
+      "expectedIntent": "order",
+      "expectedCustomer": "老王",
+      "expectedProduct": "杯垫",
+      "expectedQuantity": "500",
+      "expectedLowIncludes": "unitPrice",
+      "requireDueDate": true,
+      "notes": "没有历史上下文时，不能编价格"
+    }
+  },
+  {
+    "description": "066 历史返单 李总卡通水杯",
+    "vars": {
+      "category": "历史/返单",
+      "question": "李总返单1000个卡通水杯，照旧价，月底出",
+      "expectedIntent": "order",
+      "expectedCustomer": "李总",
+      "expectedProduct": "卡通水杯",
+      "expectedQuantity": "1000",
+      "expectedLowIncludes": "unitPrice",
+      "requireDueDate": true,
+      "notes": "照旧价需要历史价"
+    }
+  },
+  {
+    "description": "067 历史返单 周姐礼品盒",
+    "vars": {
+      "category": "历史/返单",
+      "question": "周姐礼品盒再补200套，价格还是上次那个，明天发",
+      "expectedIntent": "order",
+      "expectedCustomer": "周姐",
+      "expectedProduct": "礼品盒",
+      "expectedQuantity": "200",
+      "expectedLowIncludes": "unitPrice",
+      "requireDueDate": true,
+      "notes": "价格还是上次那个"
+    }
+  },
+  {
+    "description": "068 历史返单 陈总钥匙扣",
+    "vars": {
+      "category": "历史/返单",
+      "question": "陈总上次那个钥匙扣再做3000个，交期礼拜五",
+      "expectedIntent": "order",
+      "expectedCustomer": "陈总",
+      "expectedProduct": "钥匙扣",
+      "expectedQuantity": "3000",
+      "expectedLowIncludes": "unitPrice",
+      "requireDueDate": true,
+      "notes": "上次那个缺价"
+    }
+  },
+  {
+    "description": "069 历史返单 刘总杯垫",
+    "vars": {
+      "category": "历史/返单",
+      "question": "刘总按老款报价再来一批杯垫，数量500，后天",
+      "expectedIntent": "order",
+      "expectedCustomer": "刘总",
+      "expectedProduct": "杯垫",
+      "expectedQuantity": "500",
+      "expectedLowIncludes": "unitPrice",
+      "requireDueDate": true,
+      "notes": "按老款报价"
+    }
+  },
+  {
+    "description": "070 历史返单 钱总包装袋",
+    "vars": {
+      "category": "历史/返单",
+      "question": "钱总包装袋加一万只，价格不变，明天出",
+      "expectedIntent": "order",
+      "expectedCustomer": "钱总",
+      "expectedProduct": "包装袋",
+      "expectedQuantity": "10000",
+      "expectedLowIncludes": "unitPrice",
+      "requireDueDate": true,
+      "notes": "价格不变需要历史价"
+    }
+  },
+  {
+    "description": "071 历史返单 孙总头绳",
+    "vars": {
+      "category": "历史/返单",
+      "question": "孙总头绳补5000条，还是三毛五，月底",
+      "expectedIntent": "order",
+      "expectedCustomer": "孙总",
+      "expectedProduct": "头绳",
+      "expectedQuantity": "5000",
+      "expectedUnitPrice": "0.35",
+      "expectedAmount": "1750",
+      "requireDueDate": true,
+      "notes": "明示价格可直接识别"
+    }
+  },
+  {
+    "description": "072 历史返单 赵姐杯子",
+    "vars": {
+      "category": "历史/返单",
+      "question": "赵姐杯子按上回6块，先做800个，下周三交",
+      "expectedIntent": "order",
+      "expectedCustomer": "赵姐",
+      "expectedProduct": "杯子",
+      "expectedQuantity": "800",
+      "expectedUnitPrice": "6",
+      "expectedAmount": "4800",
+      "requireDueDate": true,
+      "notes": "上回但明示6块"
+    }
+  },
+  {
+    "description": "073 历史返单 老李玩具车",
+    "vars": {
+      "category": "历史/返单",
+      "question": "老李玩具车按原价85，追加50箱，三天后出",
+      "expectedIntent": "order",
+      "expectedCustomer": "老李",
+      "expectedProduct": "玩具",
+      "expectedQuantity": "50",
+      "expectedUnitPrice": "85",
+      "expectedAmount": "4250",
+      "requireDueDate": true,
+      "notes": "原价但明示85"
+    }
+  },
+  {
+    "description": "074 历史返单 马总杯垫",
+    "vars": {
+      "category": "历史/返单",
+      "question": "马总杯垫还是9毛，今天补300个",
+      "expectedIntent": "order",
+      "expectedCustomer": "马总",
+      "expectedProduct": "杯垫",
+      "expectedQuantity": "300",
+      "expectedUnitPrice": "0.9",
+      "expectedAmount": "270",
+      "requireDueDate": true,
+      "notes": "今天补货"
+    }
+  },
+  {
+    "description": "075 修改 王总交期",
+    "vars": {
+      "category": "修改/补充",
+      "question": "刚才王总那单交期改成下周一",
+      "expectedIntent": "order",
+      "expectedOperation": "update_order",
+      "expectedCustomer": "王总",
+      "requireDueDate": true,
+      "notes": "修改已有订单交期"
+    }
+  },
+  {
+    "description": "076 修改 杯垫数量",
+    "vars": {
+      "category": "修改/补充",
+      "question": "上一笔杯垫数量改成500个",
+      "expectedIntent": "order",
+      "expectedOperation": "update_order",
+      "expectedProduct": "杯垫",
+      "expectedQuantity": "500",
+      "notes": "上一笔数量修改"
+    }
+  },
+  {
+    "description": "077 修改 陈总报价",
+    "vars": {
+      "category": "修改/补充",
+      "question": "陈总那笔报价价格改成一块三",
+      "expectedIntent": "quotation",
+      "expectedOperation": "update_quotation",
+      "expectedCustomer": "陈总",
+      "expectedUnitPrice": "1.3",
+      "notes": "修改报价单价"
+    }
+  },
+  {
+    "description": "078 修改 老李提前",
+    "vars": {
+      "category": "修改/补充",
+      "question": "老李玩具那单提前到明天发",
+      "expectedIntent": "order",
+      "expectedOperation": "update_order",
+      "expectedCustomer": "老李",
+      "expectedProduct": "玩具",
+      "requireDueDate": true,
+      "notes": "提前交期"
+    }
+  },
+  {
+    "description": "079 修改 钱总数量",
+    "vars": {
+      "category": "修改/补充",
+      "question": "钱总包装袋那单不要一万只了，改八千只",
+      "expectedIntent": "order",
+      "expectedOperation": "update_order",
+      "expectedCustomer": "钱总",
+      "expectedProduct": "包装袋",
+      "expectedQuantity": "8000",
+      "notes": "否定旧数量，保留新数量"
+    }
+  },
+  {
+    "description": "080 修改 周姐报价",
+    "vars": {
+      "category": "修改/补充",
+      "question": "周姐礼品盒报价补一下，单价改4块",
+      "expectedIntent": "quotation",
+      "expectedOperation": "update_quotation",
+      "expectedCustomer": "周姐",
+      "expectedProduct": "礼品盒",
+      "expectedUnitPrice": "4",
+      "notes": "补充报价字段"
+    }
+  },
+  {
+    "description": "081 修改 应收日期",
+    "vars": {
+      "category": "修改/补充",
+      "question": "刚才那笔应收日期改到月底",
+      "expectedIntent": "receivable",
+      "expectedOperation": "update_receivable",
+      "requireDueDate": true,
+      "notes": "修改应收到期日"
+    }
+  },
+  {
+    "description": "082 修改 刘总收款",
+    "vars": {
+      "category": "修改/补充",
+      "question": "刘总那笔收款写错了，是3500不是3000",
+      "expectedIntent": "payment",
+      "expectedOperation": "update_payment",
+      "expectedCustomer": "刘总",
+      "expectedPaymentAmount": "3500",
+      "notes": "纠错应取新金额"
+    }
+  },
+  {
+    "description": "083 修改 王总备注",
+    "vars": {
+      "category": "修改/补充",
+      "question": "王总那单备注加一下，客户要白色",
+      "expectedIntent": "order",
+      "expectedOperation": "update_order",
+      "expectedCustomer": "王总",
+      "notes": "补充备注"
+    }
+  },
+  {
+    "description": "084 修改 赵姐取消",
+    "vars": {
+      "category": "修改/补充",
+      "question": "赵姐杯子那单取消，先别做",
+      "expectedIntent": "order",
+      "expectedOperation": "cancel_order",
+      "expectedCustomer": "赵姐",
+      "expectedProduct": "杯子",
+      "notes": "取消订单"
+    }
+  },
+  {
+    "description": "085 缺字段 孙总欠款",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "孙总欠款一万五",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "孙总",
+      "expectedAmount": "15000",
+      "expectedMissingIncludes": "dueDate",
+      "notes": "缺到期时间"
+    }
+  },
+  {
+    "description": "086 缺字段 老王杯垫老价",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "老王要一批杯垫，按老价",
+      "expectedIntent": "order",
+      "expectedCustomer": "老王",
+      "expectedProduct": "杯垫",
+      "expectedMissingIncludes": "quantity|dueDate",
+      "expectedLowIncludes": "unitPrice",
+      "notes": "缺数量、交期、历史价"
+    }
+  },
+  {
+    "description": "087 缺字段 这个客户付款",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "这个客户今天付了3000",
+      "expectedIntent": "payment",
+      "expectedPaymentAmount": "3000",
+      "requireDueDate": true,
+      "expectedMissingIncludes": "customerName",
+      "notes": "缺客户名"
+    }
+  },
+  {
+    "description": "088 缺字段 泛订单待办",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "明天提醒我处理那个订单",
+      "expectedIntent": "todo",
+      "requireDueDate": true,
+      "notes": "任务较泛但仍可做待办"
+    }
+  },
+  {
+    "description": "089 缺字段 水杯报价",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "给客户报一下水杯",
+      "expectedIntent": "quotation",
+      "expectedProduct": "水杯",
+      "expectedMissingIncludes": "customerName|quantity|unitPrice",
+      "notes": "缺客户、数量、价格"
+    }
+  },
+  {
+    "description": "090 缺字段 礼品盒",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "那个礼品盒先记一下",
+      "expectedIntent": "unknown",
+      "expectedMissingIncludes": "intent",
+      "notes": "信息过少，应待整理"
+    }
+  },
+  {
+    "description": "091 缺字段 老客户补货",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "义乌那个老客户又要补货",
+      "expectedIntent": "unknown",
+      "expectedMissingIncludes": "intent",
+      "notes": "客户和商品不明确"
+    }
+  },
+  {
+    "description": "092 缺字段 收到一笔钱",
+    "vars": {
+      "category": "缺字段/待整理",
+      "question": "今天收到一笔钱，微信来的",
+      "expectedIntent": "payment",
+      "requireDueDate": true,
+      "expectedMissingIncludes": "customerName|paymentAmount",
+      "notes": "缺客户和金额"
+    }
+  },
+  {
+    "description": "093 粘贴 王总水杯",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "王总：水杯1000个还有没有？我：有，5块5。王总：月底给我发",
+      "source": "paste",
+      "expectedIntent": "order",
+      "expectedCustomer": "王总",
+      "expectedProduct": "水杯",
+      "expectedQuantity": "1000",
+      "expectedUnitPrice": "5.5",
+      "expectedAmount": "5500",
+      "requireDueDate": true,
+      "notes": "聊天粘贴转订单"
+    }
+  },
+  {
+    "description": "094 粘贴 周姐礼品盒",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "周姐说礼品盒500套先报3.8，明天记得回她",
+      "source": "paste",
+      "expectedIntent": "todo",
+      "expectedCustomer": "周姐",
+      "expectedProduct": "礼品盒",
+      "expectedQuantity": "500",
+      "expectedUnitPrice": "3.8",
+      "expectedAmount": "1900",
+      "requireDueDate": true,
+      "notes": "报价信息加回访待办"
+    }
+  },
+  {
+    "description": "095 粘贴 陈总记账",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "陈总刚发消息：一万五月底一起结，你先记账",
+      "source": "paste",
+      "expectedIntent": "receivable",
+      "expectedCustomer": "陈总",
+      "expectedAmount": "15000",
+      "requireDueDate": true,
+      "notes": "聊天粘贴应收"
+    }
+  },
+  {
+    "description": "096 粘贴 刘总部分付款",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "刘总：我先转3000，剩下2000月底给，你查下",
+      "source": "paste",
+      "expectedIntent": "payment",
+      "expectedCustomer": "刘总",
+      "expectedPaymentAmount": "3000",
+      "expectedRemainingAmount": "2000",
+      "requireDueDate": true,
+      "notes": "聊天粘贴收款"
+    }
+  },
+  {
+    "description": "097 粘贴 老李玩具",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "老李说玩具100箱按85做，三天后一定要出，不要拖",
+      "source": "paste",
+      "expectedIntent": "order",
+      "expectedCustomer": "老李",
+      "expectedProduct": "玩具",
+      "expectedQuantity": "100",
+      "expectedUnitPrice": "85",
+      "expectedAmount": "8500",
+      "requireDueDate": true,
+      "notes": "聊天粘贴订单"
+    }
+  },
+  {
+    "description": "098 粘贴 钱总包装袋多意图",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "钱总包装袋一万只8分，明天出货，款先挂账960",
+      "source": "paste",
+      "expectedIntent": "order",
+      "expectedCustomer": "钱总",
+      "expectedProduct": "包装袋",
+      "expectedQuantity": "10000",
+      "expectedUnitPrice": "0.08",
+      "expectedAmount": "800",
+      "requireDueDate": true,
+      "notes": "多意图且口述挂账金额与数量单价不一致，应暴露问题"
+    }
+  },
+  {
+    "description": "099 粘贴 赵姐杯子月结",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "赵姐杯子800个6块，下周三交，她说货到再结",
+      "source": "paste",
+      "expectedIntent": "order",
+      "expectedCustomer": "赵姐",
+      "expectedProduct": "杯子",
+      "expectedQuantity": "800",
+      "expectedUnitPrice": "6",
+      "expectedAmount": "4800",
+      "requireDueDate": true,
+      "notes": "订单加货到再结信息"
+    }
+  },
+  {
+    "description": "100 粘贴 吴总扣子收款",
+    "vars": {
+      "category": "粘贴聊天",
+      "question": "吴总扣子3000个三毛五周六拿，先收了500，剩下550",
+      "source": "paste",
+      "expectedIntent": "order",
+      "expectedCustomer": "吴总",
+      "expectedProduct": "扣子",
+      "expectedQuantity": "3000",
+      "expectedUnitPrice": "0.35",
+      "expectedAmount": "1050",
+      "expectedPaymentAmount": "500",
+      "expectedRemainingAmount": "550",
+      "requireDueDate": true,
+      "notes": "订单加收款，多意图能力边界"
+    }
+  }
+]

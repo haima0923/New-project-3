@@ -44,6 +44,14 @@ function groupTodos(state) {
   };
 }
 
+function refreshTabBarSelected(page) {
+  if (!page || typeof page.getTabBar !== 'function') return;
+  const tabBar = page.getTabBar();
+  if (tabBar && typeof tabBar.updateSelected === 'function') {
+    tabBar.updateSelected();
+  }
+}
+
 Page({
   data: {
     total: 0,
@@ -54,6 +62,7 @@ Page({
   },
 
   onShow() {
+    refreshTabBarSelected(this);
     this.load();
   },
 

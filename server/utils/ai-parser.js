@@ -1,6 +1,7 @@
 const { formatDate, parseChineseDate } = require('./date');
 const { parseInput } = require('./parser');
 const { getApiBaseUrl, requestJson } = require('./api-client');
+const { applyLocalParseSafety } = require('./parse-safety');
 
 const AI_PARSE_TIMEOUT_MS = 30000;
 const validIntents = ['quotation', 'order', 'receivable', 'payment', 'dunning', 'todo', 'query', 'unknown'];
@@ -28,6 +29,124 @@ function toStringArray(value) {
     })
     .map((item) => String(item || '').trim())
     .filter(Boolean);
+}
+
+function uniqueStrings(values) {
+  return toStringArray(values).filter((item, index, array) => array.indexOf(item) === index);
+}
+
+function getPayloadRawMessages(payload = {}) {
+  const pasteMeta = payload.pasteMeta || {};
+  const candidates = payload.rawMessages || pasteMeta.rawMessages || pasteMeta.messages || [];
+  if (!Array.isArray(candidates)) return [];
+  return candidates
+    .map((message, index) => ({
+      index: message.index !== undefined ? message.index : index,
+      speaker: String(message.speaker || '').trim(),
+      time: String(message.time || '').trim(),
+      content: String(message.content || message.text || '').trim()
+    }))
+    .filter((message) => message.content);
+}
+
+function isMultiMessagePaste(payload = {}) {
+  if (payload.source !== 'paste') return false;
+  const rawMessages = getPayloadRawMessages(payload);
+  const messageCount = rawMessages.length || Number((payload.pasteMeta && payload.pasteMeta.messageCount) || 0);
+  return messageCount > 1;
+}
+
+function parseMessageUnitPrice(content) {
+  const parsed = parseInput({
+    text: content,
+    source: 'typed',
+    context: 'home',
+    state: { customers: [] }
+  });
+  const value = parsed && parsed.fields ? parsed.fields.unitPrice : '';
+  return value ? String(value) : '';
+}
+
+function buildFieldConflict(field, values, rawMessages, label) {
+  const uniqueValues = uniqueStrings(values);
+  if (uniqueValues.length <= 1) return null;
+  return {
+    field,
+    values: uniqueValues,
+    message: `${label}出现多个候选：${uniqueValues.join('、')}，需要确认最终以哪一个为准。`,
+    evidence: rawMessages
+      .filter((message) => uniqueValues.some((value) => String(message.content || '').includes(value)))
+      .map((message) => ({
+        messageIndex: message.index,
+        speaker: message.speaker,
+        text: message.content
+      }))
+  };
+}
+
+function extractLocalFieldConflicts(payload) {
+  const rawMessages = getPayloadRawMessages(payload);
+  if (rawMessages.length <= 1) return [];
+  const unitPrices = rawMessages
+    .map((message) => parseMessageUnitPrice(message.content))
+    .filter(Boolean);
+  const priceConflict = buildFieldConflict('unitPrice', unitPrices, rawMessages, '单价');
+  return [priceConflict].filter(Boolean);
+}
+
+function extractRemarkItemsFromMessages(payload) {
+  const rawMessages = getPayloadRawMessages(payload);
+  if (!rawMessages.length) return [];
+  const requirementPattern = /(颜色|色差|深一点|浅一点|淡一点|不要太深|不要太浅|包装|外箱|内盒|贴纸|标签|logo|LOGO|图案|材质|尺寸|规格|加急|交期|唛头|印字|印刷|备注|要求)/i;
+  return rawMessages
+    .filter((message) => requirementPattern.test(message.content))
+    .map((message) => ({
+      messageIndex: message.index,
+      speaker: message.speaker,
+      text: message.content
+    }));
+}
+
+function buildRemarkFromItems(remarkItems) {
+  const items = (remarkItems || [])
+    .map((item) => String(item.text || item || '').trim())
+    .filter(Boolean);
+  if (!items.length) return '';
+  return `客户要求：${items.join('；')}`;
+}
+
+function attachConversationReview(localResult, payload) {
+  if (!isMultiMessagePaste(payload)) return localResult;
+  const fieldConflicts = extractLocalFieldConflicts(payload);
+  const remarkItems = extractRemarkItemsFromMessages(payload);
+  const conflictFields = fieldConflicts.map((item) => item.field).filter(Boolean);
+  const next = Object.assign({}, localResult, {
+    raw_messages: getPayloadRawMessages(payload),
+    field_conflicts: fieldConflicts,
+    remark_items: remarkItems,
+    low_confidence_fields: uniqueStrings([].concat(localResult.low_confidence_fields || [], conflictFields))
+  });
+  if (remarkItems.length && next.fields && !String(next.fields.remark || '').startsWith('客户要求：')) {
+    next.fields = Object.assign({}, next.fields, {
+      remark: [buildRemarkFromItems(remarkItems), next.fields.remark || next.original_text || ''].filter(Boolean).join('\n\n原始聊天：\n')
+    });
+  }
+  return next;
+}
+
+function markAiNeeded(localResult) {
+  return Object.assign({}, localResult, {
+    ai_fallback: Object.assign({}, localResult.ai_fallback || {}, {
+      needed: true
+    })
+  });
+}
+
+function shouldForceAi(payload, localResult) {
+  if (payload.source === 'paste' || payload.source === 'voice') return true;
+  if (isMultiMessagePaste(payload)) return true;
+  const source = String(payload.text || localResult.original_text || '');
+  return /(改成|算了|还是|就按|贵了|便宜|换成|确认价|最终|颜色|包装|logo|LOGO|特殊|要求|备注)/.test(source);
 }
 
 function getByPath(source, path) {
@@ -71,9 +190,11 @@ function normalizeFields(fields = {}) {
     unit: pickFirst(fields, ['unit', 'product.unit', 'item.unit']),
     unitPrice: pickFirst(fields, ['unitPrice', 'unit_price', 'price.unitPrice', 'price.unit_price', 'price.perUnit', 'price.per_unit', 'unitAmount']),
     paymentAmount: pickFirst(fields, ['paymentAmount', 'payment_amount', 'paidAmount', 'paid_amount', 'receivedAmount', 'received_amount', 'collectionAmount', 'collection_amount', 'payment.amount']),
+    depositAmount: pickFirst(fields, ['depositAmount', 'deposit_amount', 'deposit', 'deposit.amount', 'advanceAmount', 'advance_amount', 'prepaidAmount', 'prepaid_amount']),
     amount: pickFirst(fields, ['amount', 'totalAmount', 'total_amount', 'totalPrice', 'total_price', 'price.amount', 'price.totalAmount', 'money.amount', 'receivable.amount', 'payment.amount']),
     remainingAmount: pickFirst(fields, ['remainingAmount', 'remaining_amount', 'leftAmount', 'left_amount', 'unpaidAmount', 'unpaid_amount', 'balance', 'balanceAmount', 'balance_amount', 'payment.remainingAmount']),
     paymentMethod: pickFirst(fields, ['paymentMethod', 'payment_method', 'payment.method']),
+    paymentKind: pickFirst(fields, ['paymentKind', 'payment_kind', 'kind', 'payment.kind']),
     dueDate: normalizeDateValue(pickFirst(fields, ['dueDate', 'due_date', 'remindDate', 'remind_date', 'reminderDate', 'reminder_date', 'deliveryDate', 'delivery_date', 'requiredDeliveryDate', 'required_delivery_date', 'date.dueDate', 'date.remindDate', 'date.deliveryDate'])),
     quoteDate: normalizeDateValue(pickFirst(fields, ['quoteDate', 'quote_date', 'date.quoteDate'])),
     orderId: pickFirst(fields, ['orderId', 'order_id', 'order.id']),
@@ -137,11 +258,23 @@ function compactBusinessContext(state = {}) {
     dueDate: receivable.dueDate || '',
     status: receivable.status || ''
   }));
+  const recentPaymentRecords = (state.paymentRecords || []).slice(0, 30).map((payment) => ({
+    id: payment.id,
+    customerId: payment.customerId,
+    customerName: customerNameById[payment.customerId] || '',
+    orderId: payment.orderId || '',
+    receivableId: payment.receivableId || '',
+    kind: payment.kind || payment.paymentKind || '',
+    amount: payment.amount || '',
+    paidAt: payment.paidAt || '',
+    remark: payment.remark || ''
+  }));
   return {
     recentCustomers,
     recentQuotations,
     recentOrders,
-    recentReceivables
+    recentReceivables,
+    recentPaymentRecords
   };
 }
 
@@ -157,6 +290,7 @@ function getContextPolicy(text, localResult = {}) {
   ) {
     return 'none';
   }
+  if (/定金|订金|预付|预付款/.test(source) && (intent === 'payment' || fields.paymentKind === 'deposit' || fields.depositAmount)) return 'order_deposit';
   if (intent === 'payment' || /还我|还了|还剩|剩下|剩余|结清|到账|转了|付了|收了|未收|没收/.test(source)) return 'receivable_history';
 
   const needsHistoryPrice = /上次|原价|还是|按上次|照旧|老价/.test(source);
@@ -288,7 +422,9 @@ function findScopedHistory(state = {}, mentionedCustomerName, policy) {
     .map((payment) => ({
       id: payment.id,
       customerId: payment.customerId,
+      orderId: payment.orderId || '',
       receivableId: payment.receivableId || '',
+      kind: payment.kind || payment.paymentKind || '',
       amount: payment.amount || '',
       paidAt: payment.paidAt || '',
       remark: payment.remark || ''
@@ -298,7 +434,9 @@ function findScopedHistory(state = {}, mentionedCustomerName, policy) {
     ? Boolean(scopedQuotations.length || scopedOrders.length)
     : (policy === 'receivable_history'
       ? Boolean(scopedReceivables.length)
-      : (policy === 'record_update' ? Boolean(scopedQuotations.length || scopedOrders.length) : false));
+      : (policy === 'order_deposit'
+        ? Boolean(scopedOrders.length)
+        : (policy === 'record_update' ? Boolean(scopedQuotations.length || scopedOrders.length) : false)));
 
   return {
     mentionedCustomerName,
@@ -329,12 +467,16 @@ function buildHistoryWarning(policy, scopedHistory, localResult = {}) {
     }
     return `没有找到${name}未结清应收。请确认是新建应收并记录收款，还是先存到待整理。`;
   }
+  if (policy === 'order_deposit') {
+    return `没有找到${name}可关联的进行中订单。定金不能直接生成应收，建议先存到待整理或补充是哪一单。`;
+  }
   return `没有找到${name}可匹配的历史订单/报价，请补充更多信息或先存到待整理。`;
 }
 
 function getSuggestedOperation(policy, scopedHistory) {
   if (policy === 'customer_history' && !scopedHistory.found) return 'create_order';
   if (policy === 'receivable_history' && !scopedHistory.found) return 'create_receivable_with_payment';
+  if (policy === 'order_deposit') return scopedHistory.found ? 'record_order_deposit' : 'pending';
   if (policy === 'record_update' && !scopedHistory.found) return 'pending';
   return '';
 }
@@ -353,7 +495,23 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
   const requestPayload = {
     text: payload.text,
     source: payload.source,
-    context: payload.context
+    context: payload.context,
+    rawText: payload.rawText || localResult.original_text || '',
+    extractedText: payload.extractedText || payload.text || '',
+    rawMessages: getPayloadRawMessages(payload),
+    pasteMeta: payload.pasteMeta || null,
+    localDraft: {
+      intent: localResult.intent || 'unknown',
+      operation: localResult.operation || '',
+      fields: localResult.fields || {},
+      missing_fields: localResult.missing_fields || [],
+      low_confidence_fields: localResult.low_confidence_fields || [],
+      field_conflicts: localResult.field_conflicts || [],
+      remark_items: localResult.remark_items || [],
+      field_sources: localResult.field_sources || {},
+      local_parse_safety: localResult.local_parse_safety || null,
+      unsafe_reasons: localResult.unsafe_reasons || []
+    }
   };
   if (localResult.history_status === 'found') {
     requestPayload.customerCandidates = scopedHistory.customers;
@@ -427,6 +585,56 @@ function buildHistoryDefaultWarning(fields, defaultedFields) {
   return `已按${customerName}上次${productName}记录默认填入：${parts.join('、')}。请重点确认，不对可以直接修改。`;
 }
 
+function normalizeObject(value, fallback = {}) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+}
+
+function mergeRemarkItems(localItems, aiItems) {
+  const source = [].concat(toArray(aiItems), toArray(localItems));
+  const seen = {};
+  return source.filter((item) => {
+    const text = typeof item === 'string' ? item : String((item && item.text) || '').trim();
+    if (!text || seen[text]) return false;
+    seen[text] = true;
+    return true;
+  });
+}
+
+function getConflictFields(conflicts) {
+  return toArray(conflicts)
+    .map((item) => (typeof item === 'string' ? item : item && item.field))
+    .filter(Boolean);
+}
+
+function applyPostAiConsistency(result, normalized) {
+  const fields = Object.assign({}, result.fields || {});
+  const fieldSources = Object.assign({}, result.field_sources || {});
+  if (hasFieldValue(fields, 'quantity') && hasFieldValue(fields, 'unitPrice')) {
+    const amount = calculateAmount(fields.quantity, fields.unitPrice);
+    if (amount) {
+      fields.amount = amount;
+      fieldSources.amount = fieldSources.amount || 'computed:quantity*unitPrice';
+    }
+  }
+  if ((fields.paymentKind === 'deposit' || fields.depositAmount) && !fields.paymentAmount && fields.depositAmount) {
+    fields.paymentAmount = fields.depositAmount;
+    fieldSources.paymentAmount = fieldSources.paymentAmount || fieldSources.depositAmount || 'computed:depositAmount';
+  }
+  const hasAiConflicts = normalized.field_conflicts !== undefined || normalized.fieldConflicts !== undefined;
+  const supersededFacts = toArray(normalized.superseded_facts || normalized.supersededFacts || result.superseded_facts);
+  const fieldConflicts = hasAiConflicts
+    ? toArray(normalized.field_conflicts || normalized.fieldConflicts)
+    : (supersededFacts.length ? [] : toArray(result.field_conflicts));
+  const conflictFields = getConflictFields(fieldConflicts);
+  return Object.assign({}, result, {
+    fields,
+    field_sources: fieldSources,
+    field_conflicts: fieldConflicts,
+    superseded_facts: supersededFacts,
+    low_confidence_fields: uniqueStrings([].concat(result.low_confidence_fields || [], conflictFields))
+  });
+}
+
 function applyCustomerHistoryDefaults(localResult, policy, scopedHistory) {
   if (policy !== 'customer_history' || !scopedHistory.found) return localResult;
   const fields = Object.assign({}, localResult.fields || {});
@@ -479,6 +687,8 @@ function protectLocalFacts(localResult, fields) {
   const localFields = localResult.fields || {};
   const originalText = localResult.original_text || '';
   const aiCustomerName = nextFields.customerName;
+  const aiRemark = String(nextFields.remark || '').trim();
+  const localRequirementRemark = buildRemarkFromItems(localResult.remark_items || []);
 
   if (
     localFields.customerName
@@ -504,7 +714,7 @@ function protectLocalFacts(localResult, fields) {
     }
   }
 
-  nextFields.remark = originalText;
+  nextFields.remark = aiRemark || localRequirementRemark || localFields.remark || originalText;
   return nextFields;
 }
 
@@ -512,7 +722,7 @@ function normalizeAiResult(localResult, aiResult) {
   const normalized = unwrapAiResult(aiResult);
   const aiFields = normalizeFields(normalized.fields || normalized);
   const intent = validIntents.includes(normalized.intent) ? normalized.intent : localResult.intent;
-  const merged = Object.assign({}, localResult, normalized, {
+  let merged = Object.assign({}, localResult, normalized, {
     intent
   });
   merged.id = normalized.id || localResult.id;
@@ -530,6 +740,8 @@ function normalizeAiResult(localResult, aiResult) {
     localResult.field_sources,
     normalized.field_sources || normalized.fieldSources || {}
   );
+  merged.field_evidence = normalizeObject(normalized.field_evidence || normalized.fieldEvidence, localResult.field_evidence || {});
+  merged.remark_items = mergeRemarkItems(localResult.remark_items, normalized.remark_items || normalized.remarkItems);
   merged.intent_candidates = toStringArray(
     normalized.intent_candidates || normalized.intentCandidates || localResult.intent_candidates || intent
   );
@@ -546,6 +758,8 @@ function normalizeAiResult(localResult, aiResult) {
   merged.history_defaulted_fields = localResult.history_defaulted_fields || [];
   merged.history_default_warning_text = localResult.history_default_warning_text || '';
   merged.suggested_operation = localResult.suggested_operation || '';
+  merged.raw_messages = localResult.raw_messages || [];
+  merged = applyPostAiConsistency(merged, normalized);
   return merged;
 }
 
@@ -560,8 +774,17 @@ function parseHybridInput(payload) {
   const policy = getContextPolicy(payload.text, localParsedResult);
   const mentionedCustomerName = extractMentionedCustomerName(payload.text, localParsedResult);
   const scopedHistory = findScopedHistory(payload.state || {}, mentionedCustomerName, policy);
-  const localResult = attachHistoryInfo(localParsedResult, policy, scopedHistory);
-  if (policy === 'none' && (!localResult.ai_fallback || localResult.ai_fallback.needed === false)) {
+  const localReviewedResult = applyLocalParseSafety(
+    attachConversationReview(attachHistoryInfo(localParsedResult, policy, scopedHistory), payload),
+    {
+      normalizedText: payload.rawText || payload.text || localParsedResult.original_text || '',
+      originalText: payload.rawText || localParsedResult.original_text || '',
+      source: payload.source || localParsedResult.source
+    }
+  );
+  const forceAi = shouldForceAi(payload, localReviewedResult);
+  const localResult = forceAi ? markAiNeeded(localReviewedResult) : localReviewedResult;
+  if (!forceAi && policy === 'none' && (!localResult.ai_fallback || localResult.ai_fallback.needed === false)) {
     return Promise.resolve(withAiStatus(localResult, 'not_requested'));
   }
   if (typeof wx === 'undefined' || !getApiBaseUrl()) {

@@ -1,4 +1,4 @@
-const { decorateRecords, getDashboard } = require('./business');
+const { decorateRecords, getDashboard, getOrderDepositAmount, getOrderRemainingSettlement } = require('./business');
 const { diffDays, endOfMonth, today } = require('./date');
 
 function includesName(customer, keyword) {
@@ -23,6 +23,23 @@ function formatTodoLine(item) {
   const customer = item.customerDisplay ? `${item.customerDisplay}：` : '';
   const date = item.remindDate ? `，提醒 ${item.remindDate}` : '';
   return `${customer}${item.title || item.remark || '待办提醒'}${date}`;
+}
+
+function toMoneyText(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return '0';
+  return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)));
+}
+
+function getActiveOrders(state) {
+  return decorateRecords(state, state.orders || [])
+    .filter((item) => !['已完成', '已取消'].includes(item.status));
+}
+
+function getOrderMoneyLine(state, item) {
+  const deposit = getOrderDepositAmount(state, item.id);
+  const remaining = getOrderRemainingSettlement(state, item);
+  return `${item.customerDisplay}：${item.productName || '未填产品'}，订单${toMoneyText(item.totalAmount)}元，已收定金${toMoneyText(deposit)}元，待收尾款${toMoneyText(remaining)}元，状态 ${item.status}`;
 }
 
 function answerQuery(text, state) {
@@ -100,6 +117,34 @@ function answerQuery(text, state) {
     };
   }
 
+  if (/生产中|待结算/.test(source) && /尾款|没收|未收|待收|多少钱|多少/.test(source)) {
+    const orders = getActiveOrders(state)
+      .filter((item) => ['待生产', '生产中', '待发货', '已发货'].includes(item.status))
+      .filter((item) => !customer || item.customerId === customer.id);
+    const total = orders.reduce((sum, item) => sum + getOrderRemainingSettlement(state, item), 0);
+    return {
+      title: customer ? `${customer.name} 订单待结算尾款` : '生产中待结算尾款',
+      lines: orders.length
+        ? [`合计待收尾款 ${toMoneyText(total)} 元`].concat(orders.slice(0, 7).map((item) => getOrderMoneyLine(state, item)))
+        : ['当前没有生产中待结算订单。']
+    };
+  }
+
+  if (/定金|订金|预付/.test(source)) {
+    const orders = getActiveOrders(state)
+      .filter((item) => !customer || item.customerId === customer.id)
+      .map((item) => Object.assign({}, item, {
+        depositAmount: getOrderDepositAmount(state, item.id)
+      }))
+      .filter((item) => item.depositAmount > 0 || customer);
+    if (!orders.length) return { title: customer ? `${customer.name} 暂无定金记录` : '暂无定金记录', lines: [] };
+    const total = orders.reduce((sum, item) => sum + item.depositAmount, 0);
+    return {
+      title: customer ? `${customer.name} 定金记录` : `定金合计 ${toMoneyText(total)} 元`,
+      lines: orders.slice(0, 8).map((item) => getOrderMoneyLine(state, item))
+    };
+  }
+
   if (customer && /(?:单子|订单|货|进度).*(?:怎么样|咋样|现在|进展|状态)|(?:怎么样|咋样|现在).*(?:单子|订单|货)/.test(source)) {
     const orders = decorateRecords(state, state.orders)
       .filter((item) => item.customerId === customer.id)
@@ -108,7 +153,12 @@ function answerQuery(text, state) {
     if (!orders.length) return { title: `${customer.name} 暂无进行中订单`, lines: ['没有查到未完成订单。'] };
     return {
       title: `${customer.name} 进行中订单`,
-      lines: orders.slice(0, 8).map((item) => `${item.productName || '未填产品'}，${item.quantity || '-'}${item.unit || ''}，${item.requiredDeliveryDate || '-'} 交，状态 ${item.status}`)
+      lines: orders.slice(0, 8).map((item) => {
+        const deposit = getOrderDepositAmount(state, item.id);
+        const remaining = getOrderRemainingSettlement(state, item);
+        const money = deposit > 0 ? `，已收定金${toMoneyText(deposit)}元，待收尾款${toMoneyText(remaining)}元` : '';
+        return `${item.productName || '未填产品'}，${item.quantity || '-'}${item.unit || ''}，${item.requiredDeliveryDate || '-'} 交，状态 ${item.status}${money}`;
+      })
     };
   }
 

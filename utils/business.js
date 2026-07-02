@@ -2,6 +2,8 @@ const { addDays, diffDays, today } = require('./date');
 const { generateId, getCustomerDisplay, normalizeCustomer, simpleFingerprint } = require('./storage');
 
 const activeReceivableStatuses = ['待收', '部分收款'];
+const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
+const depositKinds = ['deposit'];
 
 function normalizeCustomerNameForMatch(name) {
   return String(name || '').trim().replace(/总$/, '');
@@ -23,6 +25,53 @@ function getReceivableRemaining(receivable) {
 
 function getPaymentAmount(fields) {
   return fields.paymentAmount || fields.amount || '';
+}
+
+function getPaymentKind(fields = {}, fallback = 'receivable_payment') {
+  return fields.paymentKind || fields.kind || fallback;
+}
+
+function getOrderDepositAmount(state, orderId) {
+  if (!orderId) return 0;
+  return (state.paymentRecords || [])
+    .filter((item) => item.orderId === orderId && depositKinds.includes(item.kind || item.paymentKind))
+    .reduce((sum, item) => sum + toMoney(item.amount), 0);
+}
+
+function getOrderRemainingSettlement(state, order) {
+  return Math.max(0, toMoney(order && order.totalAmount) - getOrderDepositAmount(state, order && order.id));
+}
+
+function createPaymentRecord(state, {
+  customerId,
+  orderId = '',
+  receivableId = '',
+  amount = '',
+  kind = 'receivable_payment',
+  remark = '',
+  paidAt = today()
+}) {
+  const payment = {
+    id: generateId('pay'),
+    userId: 'local-user',
+    customerId,
+    orderId,
+    receivableId,
+    kind,
+    amount: String(amount || ''),
+    paidAt,
+    remark,
+    createdAt: new Date().toISOString()
+  };
+  state.paymentRecords.unshift(payment);
+  return payment;
+}
+
+function getReceivableSourceFromDraft(parseResult) {
+  const fields = parseResult.fields || {};
+  if (fields.orderId) return 'order';
+  if (/以前|之前|老账|旧账|历史|原来|早就|去年|上个月/.test(parseResult.original_text || '')) return 'legacy';
+  return 'manual';
 }
 
 function getCustomerById(state, id) {
@@ -94,6 +143,61 @@ function findOrCreateCustomer(state, fields) {
   return created;
 }
 
+function orderMatchesProduct(order, productName) {
+  if (!productName) return true;
+  const source = String(productName || '').replace(/\s+/g, '');
+  const current = String(order.productName || '').replace(/\s+/g, '');
+  if (!source || !current) return true;
+  return source === current || source.includes(current) || current.includes(source);
+}
+
+function findOrderForDeposit(state, fields = {}, customer = null) {
+  const orders = state.orders || [];
+  if (fields.orderId) {
+    return orders.find((item) => item.id === fields.orderId && activeOrderStatuses.includes(item.status)) || null;
+  }
+  const customerId = fields.customerId || (customer && customer.id);
+  if (!customerId) return null;
+  const candidates = orders
+    .filter((item) => item.customerId === customerId && activeOrderStatuses.includes(item.status))
+    .filter((item) => orderMatchesProduct(item, fields.productName))
+    .filter((item) => !(state.receivables || []).some((receivable) => receivable.orderId === item.id));
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCustomer = null) {
+  const fields = parseResult.fields || {};
+  const paymentAmount = toMoney(getPaymentAmount(fields));
+  if (paymentAmount <= 0) return null;
+  let customer = explicitCustomer;
+  if (!customer && fields.customerId) customer = getCustomerById(state, fields.customerId);
+  if (!customer && fields.customerName) {
+    const matches = findCustomerMatches(state, fields);
+    if (matches.length === 1) customer = matches[0];
+  }
+  const order = explicitOrder || findOrderForDeposit(state, fields, customer);
+  if (!order) return null;
+  const payment = createPaymentRecord(state, {
+    customerId: order.customerId,
+    orderId: order.id,
+    receivableId: '',
+    amount: paymentAmount,
+    kind: 'deposit',
+    remark: fields.remark || parseResult.original_text || '订单定金'
+  });
+  order.paymentMethod = order.paymentMethod || '预付';
+  order.updatedAt = new Date().toISOString();
+  state.orderProgress.unshift({
+    id: generateId('prog'),
+    orderId: order.id,
+    status: order.status,
+    note: `记录定金 ${payment.amount} 元`,
+    createdAt: new Date().toISOString()
+  });
+  appendParseLog(state, parseResult, 'save_order_deposit');
+  return { order, payment };
+}
+
 function mergeCustomer(state, keepCustomerId, mergeCustomerId) {
   if (!keepCustomerId || !mergeCustomerId || keepCustomerId === mergeCustomerId) return null;
   const keep = getCustomerById(state, keepCustomerId);
@@ -123,7 +227,13 @@ function markDuplicateCustomerReviewed(state, customerId) {
 }
 
 function isFormalReady(parseResult) {
-  return !parseResult.missing_fields.length && !parseResult.low_confidence_fields.length && parseResult.intent !== 'unknown';
+  const missing = Array.isArray(parseResult.missing_fields) ? parseResult.missing_fields : [];
+  const low = Array.isArray(parseResult.low_confidence_fields) ? parseResult.low_confidence_fields : [];
+  const conflicts = Array.isArray(parseResult.field_conflicts) ? parseResult.field_conflicts : [];
+  return !missing.length
+    && !low.length
+    && !conflicts.length
+    && parseResult.intent !== 'unknown';
 }
 
 function savePendingNote(state, parseResult, reason = '信息不完整，需要稍后整理') {
@@ -135,6 +245,7 @@ function savePendingNote(state, parseResult, reason = '信息不完整，需要�
     guessedFields: parseResult.fields,
     missingFields: parseResult.missing_fields,
     lowConfidenceFields: parseResult.low_confidence_fields,
+    fieldConflicts: parseResult.field_conflicts || [],
     source: parseResult.source,
     reason,
     status: '待整理',
@@ -245,6 +356,14 @@ function saveOrder(state, parseResult) {
     note: '创建订单',
     createdAt: new Date().toISOString()
   });
+  if (toMoney(fields.depositAmount || fields.paymentAmount) > 0) {
+    saveOrderDeposit(state, Object.assign({}, parseResult, {
+      fields: Object.assign({}, fields, {
+        paymentAmount: fields.depositAmount || fields.paymentAmount,
+        paymentKind: 'deposit'
+      })
+    }), order, customer);
+  }
   appendParseLog(state, parseResult, 'save_order');
   return order;
 }
@@ -295,6 +414,7 @@ function saveReceivable(state, parseResult) {
     amount: fields.amount || '',
     dueDate: fields.dueDate || '',
     status: '待收',
+    source: getReceivableSourceFromDraft(parseResult),
     paidAmount: '0',
     dunningCount: 0,
     lastDunningDate: '',
@@ -321,6 +441,7 @@ function saveReceivableWithPayment(state, parseResult) {
     amount: fields.amount || '',
     dueDate: fields.dueDate || '',
     status: paymentAmount <= 0 ? '待收' : (paymentAmount >= totalAmount ? '已结清' : '部分收款'),
+    source: getReceivableSourceFromDraft(parseResult),
     paidAmount: String(paymentAmount),
     dunningCount: 0,
     lastDunningDate: '',
@@ -332,17 +453,14 @@ function saveReceivableWithPayment(state, parseResult) {
 
   let payment = null;
   if (paymentAmount > 0) {
-    payment = {
-      id: generateId('pay'),
-      userId: 'local-user',
+    payment = createPaymentRecord(state, {
       customerId: customer.id,
+      orderId: fields.orderId || '',
       receivableId: receivable.id,
-      amount: String(paymentAmount),
-      paidAt: today(),
-      remark: fields.remark || '由记一笔新建应收时记录',
-      createdAt: new Date().toISOString()
-    };
-    state.paymentRecords.unshift(payment);
+      amount: paymentAmount,
+      kind: getReceivableSourceFromDraft(parseResult) === 'legacy' ? 'legacy_payment' : getPaymentKind(fields, fields.orderId ? 'final_payment' : 'receivable_payment'),
+      remark: fields.remark || '由记一笔新建应收时记录'
+    });
   }
 
   appendParseLog(state, parseResult, 'save_receivable_with_payment');
@@ -356,17 +474,14 @@ function savePayment(state, parseResult) {
   ));
   if (!activeReceivable) return null;
   const paymentAmount = getPaymentAmount(fields);
-  const payment = {
-    id: generateId('pay'),
-    userId: 'local-user',
+  const payment = createPaymentRecord(state, {
     customerId: activeReceivable.customerId,
+    orderId: activeReceivable.orderId || '',
     receivableId: activeReceivable.id,
     amount: paymentAmount || '',
-    paidAt: today(),
-    remark: fields.remark || '',
-    createdAt: new Date().toISOString()
-  };
-  state.paymentRecords.unshift(payment);
+    kind: getPaymentKind(fields, activeReceivable.orderId ? 'final_payment' : 'receivable_payment'),
+    remark: fields.remark || ''
+  });
   const paid = toMoney(activeReceivable.paidAmount) + toMoney(paymentAmount);
   activeReceivable.paidAmount = String(paid);
   activeReceivable.status = paid >= toMoney(activeReceivable.amount) ? '已结清' : '部分收款';
@@ -429,6 +544,15 @@ function saveConfirmedDraft(state, parseResult) {
     const record = saveOrder(state, parseResult);
     if (record) return { type: 'order', record };
     return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+  }
+  if (parseResult.operation === 'record_order_deposit') {
+    const record = saveOrderDeposit(state, parseResult);
+    if (record) return { type: 'order_deposit', record };
+    const nextResult = Object.assign({}, parseResult, {
+      missing_fields: ['orderId']
+    });
+    appendParseLog(state, nextResult, 'save_pending');
+    return { type: 'pending', record: savePendingNote(state, nextResult, '没有找到可关联的唯一订单，先存到待整理') };
   }
   if (parseResult.intent === 'receivable') {
     const record = saveReceivable(state, parseResult);
@@ -518,6 +642,9 @@ function generateReceivableFromOrder(state, orderId) {
   if (!order) return null;
   const existing = state.receivables.find((item) => item.orderId === orderId);
   if (existing) return existing;
+  const depositAmount = getOrderDepositAmount(state, orderId);
+  const totalAmount = toMoney(order.totalAmount || '0');
+  const paidAmount = Math.min(depositAmount, totalAmount);
   const receivable = {
     id: generateId('rec'),
     userId: order.userId,
@@ -525,8 +652,9 @@ function generateReceivableFromOrder(state, orderId) {
     orderId: order.id,
     amount: order.totalAmount || '0',
     dueDate: order.requiredDeliveryDate || today(),
-    status: '待收',
-    paidAmount: '0',
+    status: paidAmount <= 0 ? '待收' : (paidAmount >= totalAmount ? '已结清' : '部分收款'),
+    source: 'order',
+    paidAmount: String(paidAmount),
     dunningCount: 0,
     lastDunningDate: '',
     remark: `由订单 ${order.id} 生成`,
@@ -534,6 +662,11 @@ function generateReceivableFromOrder(state, orderId) {
     updatedAt: new Date().toISOString()
   };
   state.receivables.unshift(receivable);
+  (state.paymentRecords || []).forEach((payment) => {
+    if (payment.orderId === orderId && depositKinds.includes(payment.kind || payment.paymentKind) && !payment.receivableId) {
+      payment.receivableId = receivable.id;
+    }
+  });
   return receivable;
 }
 
@@ -570,17 +703,13 @@ function recordPayment(state, receivableId, amount) {
   receivable.paidAmount = String(paid);
   receivable.status = paid >= Number(receivable.amount || 0) ? '已结清' : '部分收款';
   receivable.updatedAt = new Date().toISOString();
-  const payment = {
-    id: generateId('pay'),
-    userId: receivable.userId,
+  const payment = createPaymentRecord(state, {
     customerId: receivable.customerId,
+    orderId: receivable.orderId || '',
     receivableId: receivable.id,
-    amount: String(paymentAmount),
-    paidAt: today(),
-    remark: '',
-    createdAt: new Date().toISOString()
-  };
-  state.paymentRecords.unshift(payment);
+    amount: paymentAmount,
+    kind: receivable.orderId ? 'final_payment' : 'receivable_payment'
+  });
   return payment;
 }
 
@@ -671,5 +800,7 @@ module.exports = {
   recordPayment,
   saveConfirmedDraft,
   savePendingNote,
+  getOrderDepositAmount,
+  getOrderRemainingSettlement,
   updateOrderStatus
 };

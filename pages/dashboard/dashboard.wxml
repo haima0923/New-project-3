@@ -1,102 +1,247 @@
-<view class="page">
-  <view class="page-title">今天别漏这几件事</view>
-  <view class="page-subtitle">默认静默展示，只先给你看数量；点进去再看明细。</view>
-
-  <view wx:if="{{summary && summary.totalThings === 0}}" class="empty">
-    <view class="card-title">还没有要处理的事</view>
-    <view class="muted">说一句、打一段，或者粘贴微信聊天，先记第一笔。</view>
-    <button class="primary-button empty-button" bindtap="goInput">开始记第一笔</button>
-  </view>
-
-  <view wx:else class="card hero-card">
-    <view class="muted">今天有</view>
-    <text class="hero-number">{{summary.totalThings}}</text>
-    <view class="card-title">件事需要留意</view>
-  </view>
-
-  <view class="grid-2 dashboard-grid">
-    <view class="card stat-card" bindtap="goReceivables">
-      <text class="stat-number">{{summary.dueToday.length + summary.overdue.length}}</text>
-      <view class="card-title">款要处理</view>
-      <view class="muted">到期和逾期都在这里</view>
-    </view>
-    <view class="card stat-card" bindtap="goDeliverySoonOrders">
-      <text class="stat-number">{{summary.deliverySoon.length}}</text>
-      <view class="card-title">货快到期</view>
-      <view class="muted">3 天内或已逾期</view>
-    </view>
-    <view class="card stat-card" bindtap="goQuotations">
-      <text class="stat-number">{{summary.quoteFollowups.length}}</text>
-      <view class="card-title">报价待跟</view>
-      <view class="muted">超过 3 天未下单</view>
-    </view>
-    <view class="card stat-card" bindtap="goTodos">
-      <text class="stat-number">{{summary.todoActive.length}}</text>
-      <view class="card-title">待办提醒</view>
-      <view class="muted">未完成提醒都在这里</view>
-    </view>
-    <view class="card stat-card" bindtap="goPending">
-      <text class="stat-number">{{summary.pendingNotes.length}}</text>
-      <view class="card-title">待整理</view>
-      <view class="muted">AI 没听全也先记住</view>
-    </view>
-  </view>
-
-  <view class="card">
-    <view class="card-title">快速入口</view>
-    <view class="button-row">
-      <button class="primary-button" bindtap="goInput">记一笔</button>
-      <button class="secondary-button" bindtap="goQuery">问一句</button>
-    </view>
-  </view>
-
-  <view wx:if="{{overdue.length || dueToday.length}}" class="card">
-    <view class="row-between">
-      <view class="card-title">收款提醒</view>
-      <view class="small-action" bindtap="goReceivables">去处理</view>
-    </view>
-    <view class="muted">首页只展示摘要，金额和客户名进收款页再看。</view>
-  </view>
-
-  <view wx:if="{{deliverySoon.length}}" class="card">
-    <view class="row-between">
-      <view class="card-title">交期提醒</view>
-      <view class="small-action" bindtap="goDeliverySoonOrders">看订单</view>
-    </view>
-    <view class="muted">{{deliverySoon.length}} 批货需要尽快确认进度。</view>
-  </view>
-
-  <view wx:if="{{todoOverdue.length || todoDueToday.length}}" class="card">
-    <view class="row-between">
-      <view class="card-title">待办提醒</view>
-      <view class="small-action" bindtap="goTodos">查看全部</view>
-    </view>
-    <view class="muted">这些事到点了，处理完可以标记完成。</view>
-    <view wx:for="{{todoOverdue}}" wx:key="id" class="todo-line">
-      <view>
-        <view class="todo-title">{{item.title}}</view>
-        <view class="muted">已逾期 · {{item.remindDate || '-'}}</view>
+<view class="page home-page">
+  <view class="home-hero">
+    <view class="hero-main">
+      <view class="hero-copy">
+        <view class="hero-title">今天别漏事</view>
+        <view class="hero-subtitle">按住说一句，我来帮你记、查、提醒。</view>
       </view>
-      <view class="small-action" data-id="{{item.id}}" bindtap="completeTodo">完成</view>
-    </view>
-    <view wx:for="{{todoDueToday}}" wx:key="id" class="todo-line">
-      <view>
-        <view class="todo-title">{{item.title}}</view>
-        <view class="muted">今天 · {{item.customerDisplay || ''}}</view>
+      <view
+        class="hero-wave {{voiceRecording ? 'hero-wave-active' : ''}}"
+        bindtouchstart="startVoice"
+        bindtouchmove="moveVoice"
+        bindtouchend="stopVoice"
+        bindtouchcancel="cancelVoice"
+      >
+        <view class="voice-ripple voice-ripple-left"></view>
+        <view class="voice-ripple voice-ripple-right"></view>
+        <view class="hero-wave-core">
+          <view class="mic-symbol">
+            <view class="mic-body"></view>
+            <view class="mic-stem"></view>
+            <view class="mic-base"></view>
+          </view>
+        </view>
       </view>
-      <view class="small-action" data-id="{{item.id}}" bindtap="completeTodo">完成</view>
+    </view>
+
+    <view class="quick-row">
+      <view class="quick-button" bindtap="goInput">
+        <view class="quick-icon quick-icon-write"></view>
+        <text>记一笔</text>
+      </view>
+      <view class="quick-button" bindtap="goQuery">
+        <view class="quick-icon quick-icon-search"></view>
+        <text>查一下</text>
+      </view>
+      <view class="quick-button" bindtap="goReminder">
+        <view class="quick-icon quick-icon-bell"></view>
+        <text>提醒我</text>
+      </view>
     </view>
   </view>
 
-  <view wx:if="{{todoTomorrow.length}}" class="card">
-    <view class="row-between">
-      <view class="card-title">明日待办</view>
-      <view class="small-action" bindtap="goTodos">查看全部</view>
+  <view wx:if="{{voiceTip}}" class="voice-status {{voiceRecording ? 'voice-status-active' : ''}}">{{voiceTip}}</view>
+
+  <view wx:if="{{parseResult}}" class="confirm-modal">
+    <view class="card home-confirm-card confirm-modal-card">
+      <view class="row-between">
+        <view>
+          <view class="card-title">{{intentLabel}}</view>
+          <view class="muted">{{parseResult.confirm_message}}</view>
+        </view>
+        <view class="pill">{{sourceLabel}}</view>
+      </view>
+      <view wx:if="{{parseResult.extracted_text}}" class="confirm-original">
+        <view class="confirm-original-label">提取内容</view>
+        <view class="confirm-original-text">{{parseResult.extracted_text}}</view>
+      </view>
+      <view class="confirm-original">
+        <view class="confirm-original-label">{{parseResult.raw_text ? '原始聊天' : '原话'}}</view>
+        <view class="confirm-original-text">{{parseResult.original_text}}</view>
+      </view>
+      <view wx:if="{{showFieldConflicts}}" class="confirm-warning">
+        <view wx:for="{{fieldConflictLines}}" wx:key="*this">{{item}}</view>
+      </view>
+      <view wx:if="{{showSupersededFacts}}" class="confirm-conversation">
+        <view class="confirm-original-label">已被后续聊天覆盖</view>
+        <view wx:for="{{supersededFactLines}}" wx:key="*this" class="confirm-conversation-line">{{item}}</view>
+      </view>
+      <view wx:if="{{showRemarkItems}}" class="confirm-conversation">
+        <view class="confirm-original-label">客户特殊要求</view>
+        <view wx:for="{{remarkItemLines}}" wx:key="*this" class="confirm-conversation-line">{{item}}</view>
+      </view>
+      <view wx:if="{{confirmFields.length}}" class="confirm-fields">
+        <view wx:for="{{confirmFields}}" wx:key="field" class="confirm-edit-field {{item.warning ? 'confirm-field-warning' : ''}}">
+          <text class="confirm-label">{{item.label}}</text>
+          <picker
+            wx:if="{{item.kind === 'date'}}"
+            mode="date"
+            value="{{item.value}}"
+            start="2020-01-01"
+            end="2035-12-31"
+            data-field="{{item.field}}"
+            bindchange="changeConfirmDate"
+          >
+            <view class="confirm-input confirm-date-input">
+              <text wx:if="{{item.value}}">{{item.value}}</text>
+              <text wx:else class="confirm-placeholder">点击选择日期</text>
+              <text class="confirm-picker-arrow">选择</text>
+            </view>
+          </picker>
+          <textarea
+            wx:elif="{{item.kind === 'textarea'}}"
+            class="confirm-input confirm-textarea"
+            value="{{item.value}}"
+            maxlength="-1"
+            data-field="{{item.field}}"
+            bindinput="updateConfirmField"
+            placeholder="补充备注"
+          />
+          <input
+            wx:else
+            class="confirm-input"
+            value="{{item.value}}"
+            data-field="{{item.field}}"
+            type="{{item.inputType}}"
+            bindinput="updateConfirmField"
+            placeholder="请补充"
+          />
+          <view wx:if="{{item.warning}}" class="confirm-field-tip">{{item.warning}}</view>
+        </view>
+      </view>
+      <view wx:if="{{warningText}}" class="confirm-warning">{{warningText}}</view>
+      <view class="button-row">
+        <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePendingFromConfirm">待处理</button>
+        <button class="primary-button" disabled="{{disableQuickSave}}" bindtap="confirmQuickSave">{{quickSaveText}}</button>
+      </view>
     </view>
-    <view wx:for="{{todoTomorrow}}" wx:key="id" class="todo-line">
-      <view>
-        <view class="todo-title">{{item.title}}</view>
-        <view class="muted">明天 · {{item.customerDisplay || ''}}</view>
+  </view>
+
+  <view class="today-card">
+    <view class="today-card-head">
+      <view class="section-title">今天要处理</view>
+      <view class="section-count">{{taskTotal}}</view>
+      <view class="section-link" bindtap="goTodos">全部处理 ></view>
+    </view>
+
+    <view wx:if="{{!tasks.length}}" class="soft-empty">
+      <view class="soft-empty-title">今天暂时没有急事</view>
+      <view class="muted">有新报价、订单、收款或提醒，我会放到这里。</view>
+    </view>
+
+    <view wx:else class="task-list">
+      <view
+        wx:for="{{tasks}}"
+        wx:key="id"
+        wx:for-index="taskIndex"
+        class="task-row task-row-{{taskIndex}}"
+        data-type="{{item.type}}"
+        bindtap="handleTaskAction"
+      >
+        <view class="task-icon task-icon-index-{{taskIndex}} task-icon-type-{{item.type}}">{{item.icon}}</view>
+        <view class="task-main">
+          <view class="task-title-row">
+            <view class="task-title">{{item.title}}</view>
+            <view class="task-badge task-badge-{{item.tone}}">{{item.badge}}</view>
+          </view>
+          <view class="task-company">{{item.company}}</view>
+          <view class="task-detail">{{item.detail}}</view>
+        </view>
+        <view class="task-action">{{item.actionLabel}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="recent-card">
+    <view class="recent-card-head">
+      <view class="section-title">最近记下的</view>
+      <view class="section-link" bindtap="goRecords">全部记录 ></view>
+    </view>
+
+    <view wx:if="{{!recentRecords.length}}" class="recent-list recent-list-empty">
+      <view class="recent-line">
+        <view class="recent-icon-shell">
+          <view class="recent-mini-icon"></view>
+        </view>
+        <view class="recent-text">还没有记录，先从底部输入一句。</view>
+      </view>
+    </view>
+
+    <view wx:else class="recent-list">
+      <view wx:for="{{recentRecords}}" wx:key="id" class="recent-line" data-type="{{item.type}}" bindtap="openRecent">
+        <view class="recent-icon-shell recent-icon-type-{{item.type}}">
+          <view class="recent-mini-icon"></view>
+        </view>
+        <view class="recent-text">{{item.title}}</view>
+        <view class="recent-time">{{item.time}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="home-composer">
+    <view class="composer-input-shell">
+      <view class="composer-keyboard-icon">
+        <view class="keyboard-row keyboard-row-top">
+          <view></view>
+          <view></view>
+          <view></view>
+        </view>
+        <view class="keyboard-row keyboard-row-bottom">
+          <view></view>
+          <view></view>
+        </view>
+      </view>
+      <input
+        class="composer-input"
+        value="{{composerText}}"
+        maxlength="-1"
+        placeholder="打字 / 粘贴聊天记录..."
+        confirm-type="send"
+        bindinput="onComposerInput"
+        bindconfirm="submitComposer"
+      />
+      <button class="composer-plus" bindtap="pasteClipboard">+</button>
+    </view>
+  </view>
+
+  <view
+    class="home-mic-dock {{voiceRecording ? 'home-mic-active' : ''}}"
+    bindtouchstart="startVoice"
+    bindtouchmove="moveVoice"
+    bindtouchend="stopVoice"
+    bindtouchcancel="cancelVoice"
+  >
+    <view class="mic-symbol mic-symbol-large">
+      <view class="mic-body"></view>
+      <view class="mic-stem"></view>
+      <view class="mic-base"></view>
+    </view>
+  </view>
+
+  <view wx:if="{{voiceOverlayVisible}}" class="voice-overlay voice-overlay-{{voiceOverlayMode}} voice-gesture-{{voiceGesture}}">
+    <view class="voice-overlay-panel">
+      <view class="voice-overlay-title">{{voiceOverlayTitle}}</view>
+      <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-overlay-subtitle">{{voiceOverlaySubtitle}}</view>
+      <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-overlay-mic">
+        <view class="voice-overlay-wave voice-overlay-wave-left"></view>
+        <view class="voice-overlay-wave voice-overlay-wave-right"></view>
+        <view class="voice-overlay-mic-core">
+          <view class="mic-symbol mic-symbol-large">
+            <view class="mic-body"></view>
+            <view class="mic-stem"></view>
+            <view class="mic-base"></view>
+          </view>
+        </view>
+      </view>
+      <view wx:else class="voice-progress-box">
+        <view class="voice-progress-track">
+          <view class="voice-progress-line"></view>
+        </view>
+      </view>
+      <view wx:if="{{voiceOverlayMode === 'processing'}}" class="voice-processing-note">{{voiceOverlaySubtitle}}</view>
+      <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-slide-targets">
+        <view class="voice-slide-target voice-slide-cancel">取消输入</view>
+        <view class="voice-slide-target voice-slide-input">转到文字输入</view>
       </view>
     </view>
   </view>

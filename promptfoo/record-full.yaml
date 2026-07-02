@@ -1,0 +1,101 @@
+description: "Local mock 100-case regression tests for 记一笔"
+
+prompts:
+  - "{{question}}"
+
+providers:
+  - id: file://./providers/local-record.js
+    label: local-record-mock
+    config:
+      baseUrl: http://127.0.0.1:3001
+
+defaultTest:
+  assert:
+    - type: javascript
+      value: |
+        function list(value) {
+          if (Array.isArray(value)) return value;
+          if (typeof value === 'string') return value.split('|').map((item) => item.trim()).filter(Boolean);
+          return [];
+        }
+        function hasValue(value) {
+          return value !== undefined && value !== null && String(value).trim() !== '';
+        }
+        function sameNumber(actual, expected) {
+          const left = Number(actual);
+          const right = Number(expected);
+          return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) < 0.0001;
+        }
+        function fieldIncludes(fields, key, expected) {
+          if (!hasValue(expected)) return true;
+          return String(fields[key] || '').includes(String(expected));
+        }
+
+        const vars = context.vars || {};
+        let data;
+        try {
+          data = JSON.parse(output);
+        } catch (error) {
+          return { pass: false, score: 0, reason: `返回不是合法 JSON: ${error.message}` };
+        }
+
+        const errors = [];
+        const fields = data && typeof data === 'object' && data.fields && typeof data.fields === 'object' ? data.fields : {};
+        if (!data || typeof data !== 'object') errors.push('返回不是对象');
+        if (data.provider !== 'mock') errors.push(`provider 不是 mock: ${data.provider}`);
+        if (!hasValue(data.intent)) errors.push('缺少 intent');
+        if (!data.fields || typeof data.fields !== 'object') errors.push('缺少 fields 对象');
+
+        const expectedIntents = list(vars.expectedIntent);
+        if (expectedIntents.length && !expectedIntents.includes(data.intent)) {
+          errors.push(`意图应为 ${expectedIntents.join('/')}，实际为 ${data.intent || '空'}`);
+        }
+
+        if (hasValue(vars.expectedOperation) && data.operation !== vars.expectedOperation) {
+          errors.push(`操作应为 ${vars.expectedOperation}，实际为 ${data.operation || '空'}`);
+        }
+
+        [
+          ['customerName', 'expectedCustomer', '客户'],
+          ['productName', 'expectedProduct', '商品'],
+          ['todoTitle', 'expectedTodoTitle', '待办标题'],
+        ].forEach(([field, expectedKey, label]) => {
+          if (!fieldIncludes(fields, field, vars[expectedKey])) {
+            errors.push(`${label}应包含 ${vars[expectedKey]}，实际为 ${fields[field] || '空'}`);
+          }
+        });
+
+        [
+          ['quantity', 'expectedQuantity', '数量'],
+          ['unitPrice', 'expectedUnitPrice', '单价'],
+          ['amount', 'expectedAmount', '金额'],
+          ['paymentAmount', 'expectedPaymentAmount', '本次收款'],
+          ['remainingAmount', 'expectedRemainingAmount', '剩余金额'],
+        ].forEach(([field, expectedKey, label]) => {
+          if (hasValue(vars[expectedKey]) && !sameNumber(fields[field], vars[expectedKey])) {
+            errors.push(`${label}应为 ${vars[expectedKey]}，实际为 ${fields[field] || '空'}`);
+          }
+        });
+
+        if (vars.requireDueDate === true && !hasValue(fields.dueDate)) {
+          errors.push('应识别日期/交期/提醒日期，但 dueDate 为空');
+        }
+        if (hasValue(vars.expectedDueDate) && fields.dueDate !== vars.expectedDueDate) {
+          errors.push(`日期应为 ${vars.expectedDueDate}，实际为 ${fields.dueDate || '空'}`);
+        }
+
+        const missingFields = Array.isArray(data.missing_fields) ? data.missing_fields : [];
+        const lowFields = Array.isArray(data.low_confidence_fields) ? data.low_confidence_fields : [];
+        list(vars.expectedMissingIncludes).forEach((field) => {
+          if (!missingFields.includes(field)) errors.push(`missing_fields 应包含 ${field}`);
+        });
+        list(vars.expectedLowIncludes).forEach((field) => {
+          if (!lowFields.includes(field)) errors.push(`low_confidence_fields 应包含 ${field}`);
+        });
+
+        if (errors.length) {
+          return { pass: false, score: 0, reason: errors.join('；') };
+        }
+        return { pass: true, score: 1, reason: '通过' };
+
+tests: file://./record-cases-100.json
