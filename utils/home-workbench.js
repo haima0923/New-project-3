@@ -20,7 +20,7 @@ function shortText(value, maxLength) {
 const recordTypeMeta = {
   quotation: { label: '报价', icon: '报' },
   order: { label: '订单', icon: '单' },
-  receivable: { label: '应收', icon: '应' },
+  receivable: { label: '待收', icon: '待' },
   payment: { label: '收款', icon: '收' },
   todo: { label: '提醒', icon: '提' },
   pending: { label: '待整理', icon: '整' },
@@ -212,7 +212,7 @@ function buildRecordItem(type, item, state) {
     return withRecordTypeMeta({
       id: item.id,
       type,
-      title: `${shortCustomerName(decorated.customerDisplay)} · 应收 ¥${toMoneyText(item.amount)}`,
+      title: `${shortCustomerName(decorated.customerDisplay)} · 待收 ¥${toMoneyText(item.amount)}`,
       summary: `剩余 ¥${toMoneyText(Number(item.amount || 0) - Number(item.paidAmount || 0))}，到期 ${item.dueDate || '-'}`,
       time: formatDateTime(item.createdAt || item.dueDate),
       createdAt: item.createdAt || item.dueDate || ''

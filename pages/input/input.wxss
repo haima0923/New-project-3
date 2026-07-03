@@ -271,6 +271,41 @@
   min-height: 150rpx;
 }
 
+.item-list-field {
+  margin-bottom: 22rpx;
+}
+
+.confirm-item-card {
+  background: #f8fafc;
+  border: 1rpx solid #e4e7ec;
+  border-radius: 14rpx;
+  margin-top: 12rpx;
+  padding: 18rpx;
+}
+
+.confirm-item-head {
+  color: #101828;
+  font-size: 28rpx;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-bottom: 12rpx;
+}
+
+.item-field {
+  margin-bottom: 14rpx;
+}
+
+.confirm-item-card .grid-2:last-child .item-field {
+  margin-bottom: 0;
+}
+
+.item-meta-line {
+  color: #475467;
+  font-size: 24rpx;
+  line-height: 1.45;
+  margin-top: 10rpx;
+}
+
 .warning-box {
   background: #fff7e6;
   border-radius: 14rpx;

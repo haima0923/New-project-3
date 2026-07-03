@@ -1,7 +1,7 @@
 const INTENT_DRAFT_LABELS = {
   quotation: '报价草稿',
   order: '订单草稿',
-  receivable: '应收款草稿',
+  receivable: '待收款 / 欠款草稿',
   payment: '收款草稿',
   dunning: '催款草稿',
   todo: '待办提醒草稿',
@@ -22,7 +22,7 @@ const FIELD_LABELS = {
   paymentAmount: '本次收款',
   depositAmount: '定金金额',
   remainingAmount: '剩余金额',
-  dueDate: '交期/到期日',
+  dueDate: '日期',
   quoteDate: '报价日期',
   remark: '备注'
 };
@@ -120,7 +120,7 @@ function getPendingReasonText(note) {
   if (note.reason && !genericReasons.includes(note.reason)) return note.reason;
   if (note.guessedIntent === 'order') return '这条订单还缺关键信息，补齐后就能保存。';
   if (note.guessedIntent === 'quotation') return '这条报价还缺关键信息，补齐后就能保存。';
-  if (note.guessedIntent === 'receivable') return '这条应收款还缺关键信息，补齐后就能保存。';
+  if (note.guessedIntent === 'receivable') return '这条待收款 / 欠款还缺关键信息，补齐后就能保存。';
   if (note.guessedIntent === 'payment') return '这条收款还需要确认旧账或金额。';
   if (note.guessedIntent === 'todo') return '这条待办提醒还缺提醒日期或事项，补齐后就能保存。';
   return '信息还不完整，需要稍后整理。';
