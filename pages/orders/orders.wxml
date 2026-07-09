@@ -68,9 +68,22 @@
       <view class="card-title">{{item.customerDisplay || '临时客户'}}</view>
       <view class="pill {{item.urgent ? 'pill-danger' : ''}}">{{item.status}}</view>
     </view>
-    <view class="muted">{{item.productName || '未填产品'}}</view>
+    <view class="muted">{{item.itemsSummary || item.productName || '未填产品'}}</view>
     <view class="divider"></view>
-    <view class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
+    <view wx:if="{{item.hasMultipleItems}}" class="item-lines">
+      <view
+        wx:for="{{item.displayItems}}"
+        wx:for-item="lineItem"
+        wx:key="itemKey"
+        class="detail-line item-detail-line"
+      >
+        {{lineItem.productName || '未填产品'}}
+        <text wx:if="{{lineItem.quantity || lineItem.unit}}">：{{lineItem.quantity || '-'}}{{lineItem.unit || ''}}</text>
+        <text wx:if="{{lineItem.unitPrice}}">，单价{{lineItem.unitPrice}}</text>
+        <text wx:if="{{lineItem.totalAmount}}">，小计{{lineItem.totalAmount}}</text>
+      </view>
+    </view>
+    <view wx:else class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
     <view class="detail-line">总价：{{item.totalAmount || '-'}}</view>
     <view class="detail-line">要求交货：{{item.requiredDeliveryDate || '-'}}</view>
     <view class="detail-line">预计发货：{{item.expectedShipDate || '-'}}</view>

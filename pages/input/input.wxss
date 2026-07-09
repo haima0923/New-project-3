@@ -306,6 +306,37 @@
   margin-top: 10rpx;
 }
 
+.order-amount-summary {
+  background: #f8fafc;
+  border: 1rpx solid #e4e7ec;
+  border-radius: 14rpx;
+  margin: 14rpx 0 22rpx;
+  padding: 16rpx 18rpx;
+}
+
+.amount-summary-line {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  line-height: 1.5;
+  margin-top: 8rpx;
+}
+
+.amount-summary-line:first-child {
+  margin-top: 0;
+}
+
+.amount-summary-label {
+  color: #475467;
+  font-size: 26rpx;
+}
+
+.amount-summary-value {
+  color: #101828;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
 .warning-box {
   background: #fff7e6;
   border-radius: 14rpx;

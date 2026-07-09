@@ -1,4 +1,4 @@
-const { decorateRecords, getDashboard, getOrderDepositAmount, getOrderRemainingSettlement } = require('./business');
+const { decorateRecords, getDashboard, getItemsSummary, getOrderDepositAmount, getOrderRemainingSettlement } = require('./business');
 const { diffDays, today } = require('./date');
 
 function toMoneyText(value) {
@@ -81,6 +81,7 @@ function buildOrderTask(item, state) {
   const days = item.requiredDeliveryDate ? diffDays(item.requiredDeliveryDate, today()) : 0;
   const depositAmount = getOrderDepositAmount(state, item.id);
   const remainingSettlement = getOrderRemainingSettlement(state, item);
+  const itemsSummary = getItemsSummary(item);
   const detail = depositAmount > 0
     ? `待收尾款 ¥${toMoneyText(remainingSettlement)}`
     : `交货期：${item.requiredDeliveryDate || '-'}`;
@@ -91,7 +92,7 @@ function buildOrderTask(item, state) {
     priority: days < 0 ? 30 : 40 + days,
     icon: meta.icon,
     tone: days <= 0 ? 'warning' : 'blue',
-    title: `${item.productName || '订单'}交期`,
+    title: `${itemsSummary || item.productName || '订单'}交期`,
     badge: days < 0 ? `逾期${Math.abs(days)}天` : (days === 0 ? '今天交货' : `${days}天后到期`),
     company: shortCustomerName(item.customerDisplay),
     detail,
@@ -102,6 +103,7 @@ function buildOrderTask(item, state) {
 function buildQuotationTask(item) {
   const meta = getRecordTypeMeta('quotation');
   const days = item.quoteDate ? diffDays(today(), item.quoteDate) : 0;
+  const itemsSummary = getItemsSummary(item);
   return {
     id: `quotation-${item.id}`,
     sourceId: item.id,
@@ -112,7 +114,7 @@ function buildQuotationTask(item) {
     title: `${shortCustomerName(item.customerDisplay)}报价跟进`,
     badge: days > 0 ? `${days}天未跟进` : '待跟进',
     company: item.customer && item.customer.company ? item.customer.company : shortCustomerName(item.customerDisplay),
-    detail: `报价单：${item.productName || item.id}`,
+    detail: `报价单：${itemsSummary || item.productName || item.id}`,
     actionLabel: '去跟进'
   };
 }
@@ -182,10 +184,11 @@ function buildTodayTaskRecords(state) {
 function buildRecordItem(type, item, state) {
   if (type === 'quotation') {
     const decorated = decorateRecords(state, [item])[0];
+    const itemsSummary = getItemsSummary(item);
     return withRecordTypeMeta({
       id: item.id,
       type,
-      title: `${shortCustomerName(decorated.customerDisplay)} · ${item.productName || '未填产品'}`,
+      title: `${shortCustomerName(decorated.customerDisplay)} · ${itemsSummary || item.productName || '未填产品'}`,
       summary: `报价 ¥${toMoneyText(item.totalAmount)}，状态 ${item.status || '-'}`,
       time: formatDateTime(item.createdAt || item.quoteDate),
       createdAt: item.createdAt || item.quoteDate || ''
@@ -195,13 +198,14 @@ function buildRecordItem(type, item, state) {
     const decorated = decorateRecords(state, [item])[0];
     const depositAmount = getOrderDepositAmount(state, item.id);
     const remainingSettlement = getOrderRemainingSettlement(state, item);
+    const itemsSummary = getItemsSummary(item);
     const moneyPart = depositAmount > 0
       ? `已收定金 ¥${toMoneyText(depositAmount)}，待收尾款 ¥${toMoneyText(remainingSettlement)}`
       : `状态 ${item.status || '-'}`;
     return withRecordTypeMeta({
       id: item.id,
       type,
-      title: `${shortCustomerName(decorated.customerDisplay)} · ${item.productName || '未填产品'}`,
+      title: `${shortCustomerName(decorated.customerDisplay)} · ${itemsSummary || item.productName || '未填产品'}`,
       summary: `交期 ${item.requiredDeliveryDate || '-'}，${moneyPart}`,
       time: formatDateTime(item.createdAt || item.orderDate),
       createdAt: item.createdAt || item.orderDate || ''

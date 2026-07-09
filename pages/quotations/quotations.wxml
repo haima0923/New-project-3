@@ -66,19 +66,36 @@
   <view wx:for="{{quotations}}" wx:key="id" class="card">
     <view class="row-between">
       <view class="card-title">{{item.customerDisplay || '临时客户'}}</view>
-      <view class="pill {{item.needFollowup ? 'pill-warning' : ''}}">{{item.status}}</view>
+      <view class="pill {{item.needFollowup ? 'pill-warning' : ''}}">{{item.statusLabel || item.status}}</view>
     </view>
-    <view class="muted">{{item.productName || '未填产品'}}</view>
+    <view class="muted">{{item.itemsSummary || item.productName || '未填产品'}}</view>
     <view class="divider"></view>
-    <view class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
-    <view class="detail-line">单价：{{item.unitPrice || '-'}}</view>
+    <view wx:if="{{item.hasMultipleItems}}" class="item-lines">
+      <view
+        wx:for="{{item.displayItems}}"
+        wx:for-item="lineItem"
+        wx:key="itemKey"
+        class="detail-line item-detail-line"
+      >
+        {{lineItem.productName || '未填产品'}}
+        <text wx:if="{{lineItem.quantity || lineItem.unit}}">：{{lineItem.quantity || '-'}}{{lineItem.unit || ''}}</text>
+        <text wx:if="{{lineItem.unitPrice}}">，单价{{lineItem.unitPrice}}</text>
+        <text wx:if="{{lineItem.totalAmount}}">，小计{{lineItem.totalAmount}}</text>
+      </view>
+    </view>
+    <block wx:else>
+      <view class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
+      <view class="detail-line">单价：{{item.unitPrice || '-'}}</view>
+    </block>
     <view class="detail-line">总价：{{item.totalAmount || '-'}}</view>
     <view class="detail-line">报价日期：{{item.quoteDate || '-'}}</view>
     <view class="detail-line">跟进日期：{{item.followupDate || '-'}}</view>
+    <view wx:if="{{item.convertedOrderId}}" class="detail-line converted-line">关联订单：{{item.convertedOrderId}}</view>
     <view wx:if="{{item.needFollowup}}" class="followup-box">这个报价到了跟进时间，建议跟一下。</view>
     <view class="button-row">
       <button class="secondary-button" data-id="{{item.id}}" bindtap="copyFollowup">复制跟进话术</button>
-      <button class="primary-button" data-id="{{item.id}}" bindtap="convert">转订单</button>
+      <button wx:if="{{!item.isConverted}}" class="primary-button" data-id="{{item.id}}" bindtap="convert">转订单</button>
+      <button wx:else class="secondary-button converted-button" disabled>{{item.convertedText}}</button>
     </view>
   </view>
 </view>

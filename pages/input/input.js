@@ -255,18 +255,36 @@ function normalizeConfirmItems(fields = {}, options = {}) {
   return items;
 }
 
+function hasMoneyValue(value) {
+  if (!hasFieldValue({ value }, 'value')) return false;
+  return Number.isFinite(Number(value));
+}
+
+function formatMoneyValue(value) {
+  const number = toMoney(value);
+  return Number.isInteger(number) ? String(number) : String(number);
+}
+
+function calculateConfirmItemsTotalAmount(items = []) {
+  if (!items.length) return '';
+  if (!items.every((item) => hasMoneyValue(item.totalAmount))) return '';
+  return formatMoneyValue(items.reduce((sum, item) => sum + Number(item.totalAmount), 0));
+}
+
 function syncFirstItemToLegacyFields(fields = {}) {
   const next = Object.assign({}, fields);
   const items = normalizeConfirmItems(next, { ensureFirst: true });
   const first = items[0] || {};
+  const firstItemTotal = items.length <= 1 ? first.totalAmount : '';
+  const totalAmount = calculateConfirmItemsTotalAmount(items) || next.totalAmount || next.amount || firstItemTotal || '';
   next.items = items;
   next.productName = first.productName || '';
   next.spec = first.spec || '';
   next.quantity = first.quantity || '';
   next.unit = first.unit || '';
   next.unitPrice = first.unitPrice || '';
-  next.amount = first.totalAmount || '';
-  next.totalAmount = first.totalAmount || '';
+  next.amount = totalAmount;
+  next.totalAmount = totalAmount;
   return next;
 }
 
@@ -297,6 +315,30 @@ function toMoney(value) {
 function formatMoney(value) {
   const number = toMoney(value);
   return Number.isInteger(number) ? String(number) : String(number);
+}
+
+function buildOrderAmountSummary(fields = {}) {
+  const totalAmount = fields.totalAmount || fields.amount;
+  if (!hasMoneyValue(totalAmount)) return [];
+  const depositAmount = hasMoneyValue(fields.depositAmount)
+    ? fields.depositAmount
+    : (fields.paymentKind === 'deposit' && hasMoneyValue(fields.paymentAmount) ? fields.paymentAmount : '');
+  const itemCount = normalizeConfirmItems(fields).length;
+  const lines = [{
+    label: itemCount > 1 ? '商品合计' : '整单金额',
+    value: `${formatMoney(totalAmount)}元`
+  }];
+  if (hasMoneyValue(depositAmount)) {
+    lines.push({
+      label: '定金',
+      value: `${formatMoney(depositAmount)}元`
+    });
+    lines.push({
+      label: '待收尾款',
+      value: `${formatMoney(Math.max(0, toMoney(totalAmount) - toMoney(depositAmount)))}元`
+    });
+  }
+  return lines;
 }
 
 function getRemainingAmount(receivable) {
@@ -915,6 +957,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   const supersededFactLines = formatSupersededFacts(normalizedParseResult.superseded_facts || []);
   const remarkItemLines = formatRemarkItems(normalizedParseResult.remark_items || []);
   const confirmItems = ['quotation', 'order'].includes(intent) ? buildConfirmItemCards(nextFields, intent) : [];
+  const orderAmountSummaryLines = intent === 'order' ? buildOrderAmountSummary(nextFields) : [];
   const localParseSafetyLines = formatLocalParseSafety(normalizedParseResult.local_parse_safety);
   const canFormalSave = !missingFields.length
     && !lowConfidenceFields.length
@@ -945,6 +988,8 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showHistoryDefaultWarning: Boolean(normalizedParseResult.history_default_warning_text),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
+    orderAmountSummaryLines,
+    showOrderAmountSummary: Boolean(orderAmountSummaryLines.length),
     localParseSafetyLines,
     showLocalParseSafety: Boolean(localParseSafetyLines.length),
     supersededFactLines,
@@ -990,6 +1035,7 @@ function getEmptyConfirmationData() {
     showHistoryWarning: false,
     showHistoryDefaultWarning: false,
     showFieldConflicts: false,
+    showOrderAmountSummary: false,
     showLocalParseSafety: false,
     showSupersededFacts: false,
     showRemarkItems: false,
@@ -1016,6 +1062,7 @@ function getEmptyConfirmationData() {
     warningMissingText: '',
     warningLowText: '',
     fieldConflictLines: [],
+    orderAmountSummaryLines: [],
     localParseSafetyLines: [],
     supersededFactLines: [],
     remarkItemLines: [],
@@ -1104,6 +1151,7 @@ Page({
     showComputedTips: false,
     showHistoryWarning: false,
     showHistoryDefaultWarning: false,
+    showOrderAmountSummary: false,
     showWarning: false,
     showCustomerFields: false,
     showPhoneField: false,
@@ -1124,6 +1172,7 @@ Page({
     showReceivablePicker: false,
     warningMissingText: '',
     warningLowText: '',
+    orderAmountSummaryLines: [],
     historyWarningText: '',
     historyDefaultWarningText: '',
     historyDefaultFieldMap: {},

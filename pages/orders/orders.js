@@ -1,4 +1,10 @@
-const { decorateRecords, generateReceivableFromOrder, updateOrderStatus } = require('../../utils/business');
+const {
+  decorateRecords,
+  generateReceivableFromOrder,
+  getItemsSummary,
+  getRecordItems,
+  updateOrderStatus
+} = require('../../utils/business');
 const { ORDER_STATUS } = require('../../utils/constants');
 const { diffDays, today } = require('../../utils/date');
 const {
@@ -32,12 +38,36 @@ function hasAdvancedOrderFilters(filters) {
   return Boolean(filters.preset || filters.customer || filters.product || filters.orderDate || filters.dueDate);
 }
 
+function withDisplayItems(item) {
+  const displayItems = getRecordItems(item).map((lineItem, index) => Object.assign({}, lineItem, {
+    itemKey: `${item.id || 'order'}-${index}`
+  }));
+  return Object.assign({}, item, {
+    displayItems,
+    hasMultipleItems: displayItems.length > 1,
+    itemsSummary: getItemsSummary(item)
+  });
+}
+
+function getItemsSearchText(item) {
+  return (item.displayItems || getRecordItems(item))
+    .map((lineItem) => [
+      lineItem.productName,
+      lineItem.spec,
+      lineItem.quantity,
+      lineItem.unit,
+      lineItem.unitPrice,
+      lineItem.totalAmount
+    ].filter(Boolean).join(' '))
+    .join(' ');
+}
+
 function filterOrders(orders, filters) {
   const nextFilters = filters || {};
   return (orders || []).filter((item) => {
     if (nextFilters.preset === 'deliverySoon' && !isDeliverySoonOrder(item)) return false;
     const customerText = [item.customerDisplay, item.customer && item.customer.name].filter(Boolean).join(' ');
-    const productText = [item.productName, item.spec].filter(Boolean).join(' ');
+    const productText = [item.itemsSummary, item.productName, item.spec, getItemsSearchText(item)].filter(Boolean).join(' ');
     const searchableText = `${customerText} ${productText}`;
     return textIncludes(searchableText, nextFilters.keyword)
       && textIncludes(customerText, nextFilters.customer)
@@ -119,7 +149,7 @@ Page({
   load() {
     const state = getState();
     const allOrders = decorateRecords(state, state.orders).map((item) => ({
-      ...item,
+      ...withDisplayItems(item),
       statusIndex: ORDER_STATUS.indexOf(item.status),
       urgent: item.requiredDeliveryDate && diffDays(item.requiredDeliveryDate, today()) <= 3 && !['已完成', '已取消'].includes(item.status)
     }));

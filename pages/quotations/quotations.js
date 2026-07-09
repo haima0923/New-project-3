@@ -1,4 +1,4 @@
-const { convertQuotationToOrder, decorateRecords } = require('../../utils/business');
+const { convertQuotationToOrder, decorateRecords, getItemsSummary, getRecordItems } = require('../../utils/business');
 const { diffDays, today } = require('../../utils/date');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { getState, saveState } = require('../../utils/storage');
@@ -21,11 +21,40 @@ function hasAdvancedQuotationFilters(filters) {
   return Boolean(filters.customer || filters.product || filters.quoteDate || filters.dueDate);
 }
 
+function withDisplayItems(item) {
+  const displayItems = getRecordItems(item).map((lineItem, index) => Object.assign({}, lineItem, {
+    itemKey: `${item.id || 'quotation'}-${index}`
+  }));
+  const isConverted = Boolean(item.convertedOrderId)
+    || ['converted', 'ordered', '已转订单', '已下单'].includes(String(item.status || ''));
+  return Object.assign({}, item, {
+    displayItems,
+    hasMultipleItems: displayItems.length > 1,
+    itemsSummary: getItemsSummary(item),
+    isConverted,
+    statusLabel: isConverted ? '已转订单' : item.status,
+    convertedText: '已转订单'
+  });
+}
+
+function getItemsSearchText(item) {
+  return (item.displayItems || getRecordItems(item))
+    .map((lineItem) => [
+      lineItem.productName,
+      lineItem.spec,
+      lineItem.quantity,
+      lineItem.unit,
+      lineItem.unitPrice,
+      lineItem.totalAmount
+    ].filter(Boolean).join(' '))
+    .join(' ');
+}
+
 function filterQuotations(quotations, filters) {
   const nextFilters = filters || {};
   return (quotations || []).filter((item) => {
     const customerText = [item.customerDisplay, item.customer && item.customer.name].filter(Boolean).join(' ');
-    const productText = [item.productName, item.spec].filter(Boolean).join(' ');
+    const productText = [item.itemsSummary, item.productName, item.spec, getItemsSearchText(item)].filter(Boolean).join(' ');
     const searchableText = `${customerText} ${productText}`;
     return textIncludes(searchableText, nextFilters.keyword)
       && textIncludes(customerText, nextFilters.customer)
@@ -63,7 +92,7 @@ Page({
   load() {
     const state = getState();
     const allQuotations = decorateRecords(state, state.quotations).map((item) => ({
-      ...item,
+      ...withDisplayItems(item),
       followupDate: item.deliveryDate || '',
       needFollowup: isQuotationDueForFollowup(item)
     }));
@@ -125,7 +154,7 @@ Page({
     const quotation = this.data.quotations.find((item) => item.id === id);
     if (!quotation) return;
     const customerName = quotation.customer ? quotation.customer.name : '老板';
-    const message = `${customerName}好，上次${quotation.productName || '那个产品'}的报价您这边考虑得怎么样？要做的话我这边帮您安排。`;
+    const message = `${customerName}好，上次${quotation.itemsSummary || quotation.productName || '那个产品'}的报价您这边考虑得怎么样？要做的话我这边帮您安排。`;
     wx.setClipboardData({
       data: message,
       success: () => wx.showToast({ title: '跟进话术已复制', icon: 'success' })
@@ -134,6 +163,11 @@ Page({
 
   convert(event) {
     const id = event.currentTarget.dataset.id;
+    const quotation = this.data.quotations.find((item) => item.id === id);
+    if (quotation && quotation.isConverted) {
+      wx.showToast({ title: '已转订单', icon: 'none' });
+      return;
+    }
     const state = getState();
     const order = convertQuotationToOrder(state, id);
     saveState(state);

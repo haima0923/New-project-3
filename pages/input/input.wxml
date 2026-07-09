@@ -180,6 +180,12 @@
         <view wx:if="{{item.itemRemark}}" class="item-meta-line">备注：{{item.itemRemark}}</view>
       </view>
     </view>
+    <view wx:if="{{showOrderAmountSummary}}" class="order-amount-summary">
+      <view wx:for="{{orderAmountSummaryLines}}" wx:key="label" class="amount-summary-line">
+        <text class="amount-summary-label">{{item.label}}</text>
+        <text class="amount-summary-value">{{item.value}}</text>
+      </view>
+    </view>
     <view wx:if="{{showProductField}}" class="field">
       <text class="label">产品/规格</text>
       <input class="input" value="{{fields.productName}}" data-field="productName" bindinput="updateField" />

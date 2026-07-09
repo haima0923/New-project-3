@@ -19,6 +19,112 @@ function toMoney(value) {
   return Number(number.toFixed(2));
 }
 
+function hasValue(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function hasMoneyValue(value) {
+  if (!hasValue(value)) return false;
+  return Number.isFinite(Number(value));
+}
+
+function formatMoneyValue(value) {
+  const number = toMoney(value);
+  return Number.isInteger(number) ? String(number) : String(number);
+}
+
+function hasLineItemValue(item = {}) {
+  return ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'totalAmount', 'itemDeliveryDate', 'itemRemark']
+    .some((field) => hasValue(item[field]));
+}
+
+function normalizeLineItem(item = {}) {
+  const next = {
+    productName: item.productName || item.product_name || item.name || '',
+    spec: item.spec || '',
+    quantity: item.quantity || '',
+    unit: item.unit || '',
+    unitPrice: item.unitPrice || item.unit_price || '',
+    totalAmount: item.totalAmount || item.total_amount || item.amount || '',
+    itemDeliveryDate: item.itemDeliveryDate || item.item_delivery_date || item.deliveryDate || item.dueDate || '',
+    itemRemark: item.itemRemark || item.item_remark || item.remark || ''
+  };
+  if (!hasMoneyValue(next.totalAmount) && hasMoneyValue(next.quantity) && hasMoneyValue(next.unitPrice)) {
+    next.totalAmount = formatMoneyValue(Number(next.quantity) * Number(next.unitPrice));
+  }
+  return next;
+}
+
+function getLegacyItemFromRecord(record = {}) {
+  return normalizeLineItem({
+    productName: record.productName,
+    spec: record.spec,
+    quantity: record.quantity,
+    unit: record.unit,
+    unitPrice: record.unitPrice,
+    totalAmount: record.totalAmount,
+    itemDeliveryDate: record.itemDeliveryDate,
+    itemRemark: record.itemRemark
+  });
+}
+
+function getRecordItems(record = {}) {
+  const sourceItems = Array.isArray(record.items) ? record.items : [];
+  const items = sourceItems
+    .map(normalizeLineItem)
+    .filter(hasLineItemValue);
+  if (items.length) return items;
+  const legacyItem = getLegacyItemFromRecord(record);
+  return hasLineItemValue(legacyItem) ? [legacyItem] : [];
+}
+
+function normalizeLineItemsFromFields(fields = {}) {
+  const sourceItems = Array.isArray(fields.items) ? fields.items : [];
+  const items = sourceItems
+    .map(normalizeLineItem)
+    .filter(hasLineItemValue);
+  if (items.length) return items;
+  const legacyItem = getLegacyItemFromRecord(fields);
+  return hasLineItemValue(legacyItem) ? [legacyItem] : [];
+}
+
+function calculateItemsTotalAmount(items = []) {
+  if (!items.length) return '';
+  const normalizedItems = items.map(normalizeLineItem);
+  if (!normalizedItems.every((item) => hasMoneyValue(item.totalAmount))) return '';
+  return formatMoneyValue(normalizedItems.reduce((sum, item) => sum + Number(item.totalAmount), 0));
+}
+
+function buildLegacyFieldsFromFirstItem(items = [], fields = {}) {
+  const first = items[0] || {};
+  return {
+    productName: first.productName || fields.productName || '',
+    spec: first.spec || fields.spec || '',
+    quantity: first.quantity || fields.quantity || '',
+    unit: first.unit || fields.unit || '',
+    unitPrice: first.unitPrice || fields.unitPrice || ''
+  };
+}
+
+function getDraftTotalAmount(fields = {}, items = []) {
+  const firstItemTotal = items.length <= 1 && items[0] ? items[0].totalAmount : '';
+  return calculateItemsTotalAmount(items) || fields.totalAmount || fields.amount || firstItemTotal || '';
+}
+
+function getOriginalTextFromDraft(parseResult = {}) {
+  const fields = parseResult.fields || {};
+  return parseResult.original_text || fields.originalText || fields.original_text || '';
+}
+
+function getItemsSummary(record = {}) {
+  const items = getRecordItems(record);
+  const names = items.map((item) => item.productName).filter(Boolean);
+  if (!items.length) return record.productName || '未填产品';
+  if (items.length === 1) return names[0] || record.productName || '未填产品';
+  if (names.length >= items.length && names.length <= 3) return names.join('、');
+  return `${names[0] || record.productName || '多商品'}等${items.length}款`;
+}
+
 function getReceivableRemaining(receivable) {
   return Math.max(0, toMoney(receivable.amount) - toMoney(receivable.paidAmount));
 }
@@ -269,19 +375,23 @@ function appendParseLog(state, parseResult, action) {
 }
 
 function saveQuotation(state, parseResult) {
-  const fields = parseResult.fields;
+  const fields = parseResult.fields || {};
   const customer = findOrCreateCustomer(state, fields);
   if (!customer) return null;
+  const items = normalizeLineItemsFromFields(fields);
+  const legacyFields = buildLegacyFieldsFromFirstItem(items, fields);
   const quotation = {
     id: generateId('quo'),
     userId: 'local-user',
     customerId: customer.id,
-    productName: fields.productName,
-    spec: fields.spec || '',
-    quantity: fields.quantity || '',
-    unit: fields.unit || '',
-    unitPrice: fields.unitPrice || '',
-    totalAmount: fields.amount || '',
+    productName: legacyFields.productName,
+    spec: legacyFields.spec,
+    quantity: legacyFields.quantity,
+    unit: legacyFields.unit,
+    unitPrice: legacyFields.unitPrice,
+    totalAmount: getDraftTotalAmount(fields, items),
+    items,
+    originalText: getOriginalTextFromDraft(parseResult),
     paymentMethod: fields.paymentMethod || '',
     followupDays: fields.followupDays || '',
     deliveryDate: fields.dueDate || addDays(today(), 2),
@@ -306,37 +416,48 @@ function updateQuotationFromDraft(state, parseResult) {
     if (!customer) return null;
     quotation.customerId = customer.id;
   }
-  if (fields.productName) quotation.productName = fields.productName;
-  if (fields.spec) quotation.spec = fields.spec;
-  if (fields.quantity) quotation.quantity = fields.quantity;
-  if (fields.unit) quotation.unit = fields.unit;
-  if (fields.unitPrice) quotation.unitPrice = fields.unitPrice;
-  if (fields.amount) quotation.totalAmount = fields.amount;
+  if (Array.isArray(fields.items) || fields.productName || fields.quantity || fields.unit || fields.unitPrice || fields.amount || fields.totalAmount) {
+    const items = normalizeLineItemsFromFields(fields);
+    const legacyFields = buildLegacyFieldsFromFirstItem(items, fields);
+    if (items.length) quotation.items = items;
+    if (legacyFields.productName) quotation.productName = legacyFields.productName;
+    if (legacyFields.spec) quotation.spec = legacyFields.spec;
+    if (legacyFields.quantity) quotation.quantity = legacyFields.quantity;
+    if (legacyFields.unit) quotation.unit = legacyFields.unit;
+    if (legacyFields.unitPrice) quotation.unitPrice = legacyFields.unitPrice;
+    const totalAmount = getDraftTotalAmount(fields, items);
+    if (totalAmount) quotation.totalAmount = totalAmount;
+  }
   if (fields.paymentMethod) quotation.paymentMethod = fields.paymentMethod;
   if (fields.followupDays) quotation.followupDays = fields.followupDays;
   if (fields.dueDate) quotation.deliveryDate = fields.dueDate;
   if (fields.quoteDate) quotation.quoteDate = fields.quoteDate;
   if (fields.remark) quotation.remark = fields.remark;
+  if (getOriginalTextFromDraft(parseResult)) quotation.originalText = getOriginalTextFromDraft(parseResult);
   quotation.updatedAt = new Date().toISOString();
   appendParseLog(state, parseResult, 'update_quotation');
   return quotation;
 }
 
 function saveOrder(state, parseResult) {
-  const fields = parseResult.fields;
+  const fields = parseResult.fields || {};
   const customer = findOrCreateCustomer(state, fields);
   if (!customer) return null;
+  const items = normalizeLineItemsFromFields(fields);
+  const legacyFields = buildLegacyFieldsFromFirstItem(items, fields);
   const order = {
     id: generateId('ord'),
     userId: 'local-user',
     customerId: customer.id,
     quotationId: fields.quotationId || '',
-    productName: fields.productName,
-    spec: fields.spec || '',
-    quantity: fields.quantity || '',
-    unit: fields.unit || '',
-    unitPrice: fields.unitPrice || '',
-    totalAmount: fields.amount || '',
+    productName: legacyFields.productName,
+    spec: legacyFields.spec,
+    quantity: legacyFields.quantity,
+    unit: legacyFields.unit,
+    unitPrice: legacyFields.unitPrice,
+    totalAmount: getDraftTotalAmount(fields, items),
+    items,
+    originalText: getOriginalTextFromDraft(parseResult),
     paymentMethod: fields.paymentMethod || '',
     orderDate: today(),
     requiredDeliveryDate: fields.dueDate || '',
@@ -378,18 +499,25 @@ function updateOrderFromDraft(state, parseResult) {
     order.customerId = customer.id;
   }
   if (fields.quotationId) order.quotationId = fields.quotationId;
-  if (fields.productName) order.productName = fields.productName;
-  if (fields.spec) order.spec = fields.spec;
-  if (fields.quantity) order.quantity = fields.quantity;
-  if (fields.unit) order.unit = fields.unit;
-  if (fields.unitPrice) order.unitPrice = fields.unitPrice;
-  if (fields.amount) order.totalAmount = fields.amount;
+  if (Array.isArray(fields.items) || fields.productName || fields.quantity || fields.unit || fields.unitPrice || fields.amount || fields.totalAmount) {
+    const items = normalizeLineItemsFromFields(fields);
+    const legacyFields = buildLegacyFieldsFromFirstItem(items, fields);
+    if (items.length) order.items = items;
+    if (legacyFields.productName) order.productName = legacyFields.productName;
+    if (legacyFields.spec) order.spec = legacyFields.spec;
+    if (legacyFields.quantity) order.quantity = legacyFields.quantity;
+    if (legacyFields.unit) order.unit = legacyFields.unit;
+    if (legacyFields.unitPrice) order.unitPrice = legacyFields.unitPrice;
+    const totalAmount = getDraftTotalAmount(fields, items);
+    if (totalAmount) order.totalAmount = totalAmount;
+  }
   if (fields.paymentMethod) order.paymentMethod = fields.paymentMethod;
   if (fields.dueDate) {
     order.requiredDeliveryDate = fields.dueDate;
     order.expectedShipDate = fields.dueDate;
   }
   if (fields.remark) order.remark = fields.remark;
+  if (getOriginalTextFromDraft(parseResult)) order.originalText = getOriginalTextFromDraft(parseResult);
   order.updatedAt = new Date().toISOString();
   state.orderProgress.unshift({
     id: generateId('prog'),
@@ -599,20 +727,51 @@ function saveConfirmedDraft(state, parseResult) {
   return { type: 'pending', record: savePendingNote(state, parseResult) };
 }
 
+function isQuotationConverted(quotation = {}) {
+  return Boolean(quotation.convertedOrderId)
+    || ['converted', 'ordered', '已转订单', '已下单'].includes(String(quotation.status || ''));
+}
+
+function findConvertedOrder(state, quotation = {}) {
+  if (!quotation) return null;
+  return (state.orders || []).find((item) => (
+    (quotation.convertedOrderId && item.id === quotation.convertedOrderId)
+    || item.quotationId === quotation.id
+  )) || null;
+}
+
+function markQuotationConverted(quotation, order, convertedAt) {
+  if (!quotation || !order) return;
+  quotation.status = '已转订单';
+  quotation.convertedOrderId = order.id;
+  quotation.convertedAt = quotation.convertedAt || convertedAt;
+  quotation.updatedAt = convertedAt;
+}
+
 function convertQuotationToOrder(state, quotationId) {
   const quotation = state.quotations.find((item) => item.id === quotationId);
   if (!quotation) return null;
+  const existingOrder = findConvertedOrder(state, quotation);
+  const now = new Date().toISOString();
+  if (isQuotationConverted(quotation)) {
+    if (existingOrder) markQuotationConverted(quotation, existingOrder, now);
+    return existingOrder;
+  }
+  const items = getRecordItems(quotation);
+  const legacyFields = buildLegacyFieldsFromFirstItem(items, quotation);
   const order = {
     id: generateId('ord'),
     userId: quotation.userId,
     customerId: quotation.customerId,
     quotationId: quotation.id,
-    productName: quotation.productName,
-    spec: quotation.spec,
-    quantity: quotation.quantity,
-    unit: quotation.unit,
-    unitPrice: quotation.unitPrice,
+    productName: legacyFields.productName,
+    spec: legacyFields.spec,
+    quantity: legacyFields.quantity,
+    unit: legacyFields.unit,
+    unitPrice: legacyFields.unitPrice,
     totalAmount: quotation.totalAmount,
+    items,
+    originalText: quotation.originalText || '',
     paymentMethod: quotation.paymentMethod,
     orderDate: today(),
     requiredDeliveryDate: '',
@@ -621,18 +780,17 @@ function convertQuotationToOrder(state, quotationId) {
     status: '待生产',
     logisticsInfo: '',
     remark: `由报价 ${quotation.id} 转入`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    createdAt: now,
+    updatedAt: now
   };
-  quotation.status = '已下单';
-  quotation.updatedAt = new Date().toISOString();
   state.orders.unshift(order);
+  markQuotationConverted(quotation, order, now);
   state.orderProgress.unshift({
     id: generateId('prog'),
     orderId: order.id,
     status: order.status,
     note: '报价转订单',
-    createdAt: new Date().toISOString()
+    createdAt: now
   });
   return order;
 }
@@ -794,10 +952,12 @@ module.exports = {
   generateReceivableFromOrder,
   getCustomerById,
   getDashboard,
+  getItemsSummary,
   markDuplicateCustomerReviewed,
   mergeCustomer,
   recordDunning,
   recordPayment,
+  getRecordItems,
   saveConfirmedDraft,
   savePendingNote,
   getOrderDepositAmount,
