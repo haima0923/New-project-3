@@ -7,7 +7,7 @@ const filterOptions = [
   { type: 'workbench', label: '待处理' },
   { type: 'quotation', label: '报价' },
   { type: 'order', label: '订单' },
-  { type: 'receivable', label: '应收' },
+  { type: 'receivable', label: '待收' },
   { type: 'payment', label: '收款' },
   { type: 'todo', label: '提醒' },
   { type: 'pending', label: '待整理' }

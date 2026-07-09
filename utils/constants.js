@@ -1,7 +1,7 @@
 const INTENT_LABELS = {
   quotation: '报价',
   order: '订单',
-  receivable: '应收款',
+  receivable: '待收款 / 欠款',
   payment: '收款',
   dunning: '催款',
   todo: '待办提醒',

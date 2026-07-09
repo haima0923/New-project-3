@@ -75,8 +75,8 @@ const operationTitles = {
   create_order: '保存为订单',
   update_quotation: '更新报价',
   update_order: '更新订单',
-  create_receivable: '保存为应收款',
-  create_receivable_with_payment: '新建应收并记录已收',
+  create_receivable: '保存为待收款 / 欠款',
+  create_receivable_with_payment: '新建待收款并记录本次收款',
   record_payment: '记录收款',
   record_order_deposit: '记录订单定金',
   create_todo: '保存为待办提醒',
@@ -89,16 +89,16 @@ const fieldLabels = {
   todoTitle: '待办事项',
   orderId: '匹配订单',
   quotationId: '匹配报价',
-  receivableId: '匹配应收款',
+  receivableId: '匹配待收款 / 欠款',
   productName: '产品/规格',
   quantity: '数量',
   unit: '单位',
   unitPrice: '单价',
   amount: '金额/总价',
   depositAmount: '定金金额',
-  paymentAmount: '已收金额',
+  paymentAmount: '本次收款',
   remainingAmount: '剩余金额',
-  dueDate: '交期/到期日',
+  dueDate: '日期',
   remark: '备注'
 };
 
@@ -210,6 +210,74 @@ function formatRemarkItems(items) {
     .filter(Boolean);
 }
 
+function hasConfirmItemValue(item) {
+  return ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'totalAmount', 'itemDeliveryDate', 'itemRemark']
+    .some((field) => hasFieldValue(item, field));
+}
+
+function normalizeConfirmItem(item = {}) {
+  return {
+    productName: item.productName || item.product_name || item.name || '',
+    spec: item.spec || '',
+    quantity: item.quantity || '',
+    unit: item.unit || '',
+    unitPrice: item.unitPrice || item.unit_price || '',
+    totalAmount: item.totalAmount || item.total_amount || item.amount || '',
+    itemDeliveryDate: item.itemDeliveryDate || item.deliveryDate || item.dueDate || '',
+    itemRemark: item.itemRemark || item.remark || ''
+  };
+}
+
+function buildItemFromLegacyFields(fields = {}) {
+  const item = normalizeConfirmItem({
+    productName: fields.productName,
+    spec: fields.spec,
+    quantity: fields.quantity,
+    unit: fields.unit,
+    unitPrice: fields.unitPrice,
+    totalAmount: fields.totalAmount || fields.amount,
+    itemDeliveryDate: fields.itemDeliveryDate,
+    itemRemark: fields.itemRemark
+  });
+  return hasConfirmItemValue(item) ? item : null;
+}
+
+function normalizeConfirmItems(fields = {}, options = {}) {
+  const sourceItems = Array.isArray(fields.items) ? fields.items : [];
+  const items = sourceItems
+    .map(normalizeConfirmItem)
+    .filter(hasConfirmItemValue);
+  if (!items.length) {
+    const legacyItem = buildItemFromLegacyFields(fields);
+    if (legacyItem) items.push(legacyItem);
+  }
+  if (!items.length && options.ensureFirst) items.push(normalizeConfirmItem());
+  return items;
+}
+
+function syncFirstItemToLegacyFields(fields = {}) {
+  const next = Object.assign({}, fields);
+  const items = normalizeConfirmItems(next, { ensureFirst: true });
+  const first = items[0] || {};
+  next.items = items;
+  next.productName = first.productName || '';
+  next.spec = first.spec || '';
+  next.quantity = first.quantity || '';
+  next.unit = first.unit || '';
+  next.unitPrice = first.unitPrice || '';
+  next.amount = first.totalAmount || '';
+  next.totalAmount = first.totalAmount || '';
+  return next;
+}
+
+function buildConfirmItemCards(fields = {}, intent) {
+  return normalizeConfirmItems(fields, { ensureFirst: true }).map((item, index) => Object.assign({}, item, {
+    itemKey: `${index}-${item.productName || 'item'}`,
+    indexLabel: `商品${index + 1}`,
+    showItemDeliveryDate: intent === 'order' && Boolean(item.itemDeliveryDate)
+  }));
+}
+
 function formatLocalParseSafety(safety) {
   if (!safety || safety.status === 'SAFE_LOCAL') return [];
   const statusText = {
@@ -311,8 +379,8 @@ function getCustomerBusinessHistory(state, customerId, operation) {
   }
   if (operation === 'create_receivable' && receivables.length) {
     return {
-      title: `这个客户已有 ${receivables.length} 笔未结清应收`,
-      lines: receivables.slice(0, 3).map((item) => `应收 ${item.amount || '-'}元，到期 ${item.dueDate || '-'}`),
+      title: `这个客户已有 ${receivables.length} 笔未结清待收款 / 欠款`,
+      lines: receivables.slice(0, 3).map((item) => `待收 ${item.amount || '-'}元，到期 ${item.dueDate || '-'}`),
       requiresConfirm: true
     };
   }
@@ -486,7 +554,7 @@ function ensureQuotationFollowupFields(fields, operation) {
 }
 
 function formatReceivableOption(receivable) {
-  return `应收${formatMoney(receivable.amount)}元，剩余${formatMoney(receivable.remainingAmount)}元，到期${receivable.dueDate || '-'}`;
+  return `待收${formatMoney(receivable.amount)}元，剩余${formatMoney(receivable.remainingAmount)}元，到期${receivable.dueDate || '-'}`;
 }
 
 function productMatches(inputProduct, orderProduct) {
@@ -519,10 +587,11 @@ function getFieldVisibility(intent, operation, fields = {}) {
     showPhoneField: ['create_quotation', 'create_order', 'update_quotation', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment', 'record_order_deposit'].includes(operation),
     showTodoTitleField: todo,
     showFollowupDaysField: quoteOperation,
-    showProductField: quoteOrOrder || recordOrderDeposit || todoHasProductInfo,
-    showQuantityFields: quoteOrOrder || (todo && Boolean(fields.quantity || fields.unit)),
-    showPriceFields: quoteOrOrder || (todo && Boolean(fields.unitPrice || fields.amount)),
-    showAmountField: quoteOrOrder || createReceivable || createReceivableWithPayment,
+    showItemList: quoteOrOrder,
+    showProductField: recordOrderDeposit || todoHasProductInfo,
+    showQuantityFields: todo && Boolean(fields.quantity || fields.unit),
+    showPriceFields: todo && Boolean(fields.unitPrice || fields.amount),
+    showAmountField: createReceivable || createReceivableWithPayment,
     showPaymentAmountField: recordPayment || createReceivableWithPayment || recordOrderDeposit || (intent === 'order' && Boolean(fields.paymentAmount || fields.depositAmount)),
     showRemainingAmountField: createReceivableWithPayment,
     showDueDateField: ['create_order', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'create_todo'].includes(operation),
@@ -683,19 +752,19 @@ function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields) 
     const totalAmount = toMoney(nextFields.amount);
     const remainingAfter = Math.max(0, toMoney(totalAmount - paymentAmount));
     const statusAfter = totalAmount > 0 && remainingAfter <= 0 ? '已结清' : '部分收款';
-    newReceivablePreview.push('没有匹配到旧应收款，将按一笔新的应收款处理。');
-    if (totalAmount > 0) newReceivablePreview.push(`应收总额：${formatMoney(totalAmount)}元`);
-    if (paymentAmount > 0) newReceivablePreview.push(`已收金额：${formatMoney(paymentAmount)}元`);
+    newReceivablePreview.push('没有匹配到旧待收款 / 欠款，将按一笔新的待收款处理。');
+    if (totalAmount > 0) newReceivablePreview.push(`待收总额：${formatMoney(totalAmount)}元`);
+    if (paymentAmount > 0) newReceivablePreview.push(`本次收款：${formatMoney(paymentAmount)}元`);
     if (totalAmount > 0 || hasFieldValue(nextFields, 'remainingAmount')) {
       newReceivablePreview.push(`保存后剩余：${formatMoney(hasFieldValue(nextFields, 'remainingAmount') ? nextFields.remainingAmount : remainingAfter)}元`);
     }
     if (nextFields.dueDate) newReceivablePreview.push(`到期日：${nextFields.dueDate}`);
     if (totalAmount > 0 || paymentAmount > 0) newReceivablePreview.push(`保存后状态：${statusAfter}`);
-    newReceivableWarningText = '这不是直接改旧账，请补齐应收总额和到期日后再确认。';
+    newReceivableWarningText = '这不是直接改旧账，请补齐待收总额和到期日后再确认。';
 
     if (totalAmount > 0 && paymentAmount > totalAmount) {
       low.push('paymentAmount');
-      newReceivableWarningText = '已收金额大于应收总额，请确认金额是否录错。';
+      newReceivableWarningText = '本次收款大于待收总额，请确认金额是否录错。';
     }
 
     if (hasFieldValue(nextFields, 'remainingAmount') && totalAmount > 0) {
@@ -706,14 +775,14 @@ function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields) 
       }
     }
   } else if (!selected) {
-    paymentWarningText = '这个客户有多笔未结清应收款，请先选择本次收的是哪一笔。';
+    paymentWarningText = '这个客户有多笔未结清待收款 / 欠款，请先选择本次收的是哪一笔。';
   } else {
     const paidBefore = toMoney(selected.paidAmount);
     const remainingBefore = getRemainingAmount(selected);
     const paidAfter = toMoney(paidBefore + paymentAmount);
     const remainingAfter = Math.max(0, toMoney(toMoney(selected.amount) - paidAfter));
     const statusAfter = remainingAfter <= 0 ? '已结清' : '部分收款';
-    paymentPreview.push(`匹配应收款：应收${formatMoney(selected.amount)}元，到期${selected.dueDate || '-'}`);
+    paymentPreview.push(`匹配待收款：待收${formatMoney(selected.amount)}元，到期${selected.dueDate || '-'}`);
     paymentPreview.push(`收款前：已收${formatMoney(paidBefore)}元，剩余${formatMoney(remainingBefore)}元`);
     paymentPreview.push(`本次收款：${formatMoney(paymentAmount)}元`);
     paymentPreview.push(`收款后：已收${formatMoney(paidAfter)}元，剩余${formatMoney(remainingAfter)}元`);
@@ -797,6 +866,10 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     }
   }
 
+  if (['quotation', 'order'].includes(intent)) {
+    nextFields = syncFirstItemToLegacyFields(nextFields);
+  }
+
   const isOrderDeposit = parseResult.operation === 'record_order_deposit'
     || nextFields.paymentKind === 'deposit'
     || nextFields.depositAmount;
@@ -841,6 +914,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   const fieldConflictLines = formatFieldConflicts(normalizedParseResult.field_conflicts || []);
   const supersededFactLines = formatSupersededFacts(normalizedParseResult.superseded_facts || []);
   const remarkItemLines = formatRemarkItems(normalizedParseResult.remark_items || []);
+  const confirmItems = ['quotation', 'order'].includes(intent) ? buildConfirmItemCards(nextFields, intent) : [];
   const localParseSafetyLines = formatLocalParseSafety(normalizedParseResult.local_parse_safety);
   const canFormalSave = !missingFields.length
     && !lowConfidenceFields.length
@@ -852,13 +926,14 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   return Object.assign({
     parseResult: normalizedParseResult,
     fields: nextFields,
+    confirmItems,
     operation,
     operationTitle: operationTitles[operation],
-    amountLabel: operation === 'create_receivable_with_payment' ? '应收总额' : (intent === 'receivable' ? '应收金额' : '金额/总价'),
+    amountLabel: operation === 'create_receivable_with_payment' ? '待收总额' : (intent === 'receivable' ? '待收金额' : '金额/总价'),
     paymentAmountLabel: operation === 'record_order_deposit'
       ? '本次定金'
-      : (intent === 'order' && (nextFields.depositAmount || nextFields.paymentKind === 'deposit') ? '定金金额' : (operation === 'record_payment' ? '本次收款' : '已收金额')),
-    dueDateLabel: intent === 'todo' ? '提醒日期' : (['receivable', 'payment'].includes(intent) ? '到期日' : (intent === 'quotation' ? '跟进日期' : '交期/到期日')),
+      : (intent === 'order' && (nextFields.depositAmount || nextFields.paymentKind === 'deposit') ? '定金金额' : '本次收款'),
+    dueDateLabel: intent === 'todo' ? '提醒日期' : (['receivable', 'payment'].includes(intent) ? '到期日' : (intent === 'quotation' ? '跟进日期' : '交期')),
     selectedFollowupDayIndex: getFollowupDayIndex(nextFields.followupDays),
     followupWarningText: ['create_quotation', 'update_quotation'].includes(operation)
       ? `默认 ${nextFields.followupDays || DEFAULT_QUOTATION_FOLLOWUP_DAYS} 天后跟进，日期 ${nextFields.dueDate}。请确认这个提醒时间。`
@@ -903,12 +978,13 @@ function getEmptyConfirmationData() {
     text: '',
     parseResult: null,
     fields: {},
+    confirmItems: [],
     intent: 'unknown',
     operation: 'pending',
     operationTitle: operationTitles.pending,
     amountLabel: '金额/总价',
-    paymentAmountLabel: '已收金额',
-    dueDateLabel: '交期/到期日',
+    paymentAmountLabel: '本次收款',
+    dueDateLabel: '日期',
     intentLabel: INTENT_LABELS.unknown,
     showComputedTips: false,
     showHistoryWarning: false,
@@ -922,6 +998,7 @@ function getEmptyConfirmationData() {
     showPhoneField: false,
     showTodoTitleField: false,
     showFollowupDaysField: false,
+    showItemList: false,
     showProductField: false,
     showQuantityFields: false,
     showPriceFields: false,
@@ -998,12 +1075,13 @@ Page({
     text: '',
     parseResult: null,
     fields: {},
+    confirmItems: [],
     intent: 'unknown',
     operation: 'pending',
     operationTitle: operationTitles.pending,
     amountLabel: '金额/总价',
-    paymentAmountLabel: '已收金额',
-    dueDateLabel: '交期/到期日',
+    paymentAmountLabel: '本次收款',
+    dueDateLabel: '日期',
     intentOptions,
     intentRange,
     intentLabel: INTENT_LABELS.unknown,
@@ -1031,6 +1109,7 @@ Page({
     showPhoneField: false,
     showTodoTitleField: false,
     showFollowupDaysField: false,
+    showItemList: false,
     showProductField: false,
     showQuantityFields: false,
     showPriceFields: false,
@@ -1399,6 +1478,28 @@ Page({
       Object.assign(patch, buildConfirmationState(state, baseResult, this.data.intent, nextFields));
     }
     this.setData(patch);
+  },
+
+  updateItemField(event) {
+    if (!this.data.parseResult) return;
+    const index = Number(event.currentTarget.dataset.index || 0);
+    const field = event.currentTarget.dataset.field;
+    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    if (!items[index] || !field) return;
+    items[index] = Object.assign({}, items[index], {
+      [field]: event.detail.value
+    });
+    const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, {
+      items
+    }));
+    if (field === 'productName') delete fields.orderId;
+    const baseResult = Object.assign({}, this.data.parseResult, {
+      missing_fields: [],
+      low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
+        .filter((item) => item !== field)
+    });
+    const state = getState();
+    this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
 
   changeFollowupDays(event) {

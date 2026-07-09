@@ -46,6 +46,10 @@
     </view>
     <view class="muted">{{parseResult.confirm_message}}</view>
     <view wx:if="{{parseAssistText}}" class="assist-box">{{parseAssistText}}</view>
+    <view wx:if="{{parseResult.original_text && !parseResult.raw_text && !parseResult.extracted_text && !showGenericDraft}}" class="draft-box">
+      <view class="label">原始内容</view>
+      <view class="note-text">{{parseResult.original_text}}</view>
+    </view>
     <view wx:if="{{showLocalParseSafety}}" class="warning-box">
       <view class="card-title">解析安全判断</view>
       <view wx:for="{{localParseSafetyLines}}" wx:key="*this" class="warning-line">{{item}}</view>
@@ -140,6 +144,42 @@
       </view>
       <view wx:if="{{customerMatchWarningText}}" class="payment-warning">{{customerMatchWarningText}}</view>
     </view>
+    <view wx:if="{{showItemList}}" class="item-list-field">
+      <view class="label">商品明细</view>
+      <view wx:for="{{confirmItems}}" wx:for-item="item" wx:for-index="itemIndex" wx:key="itemKey" class="confirm-item-card">
+        <view class="confirm-item-head">{{item.indexLabel}}</view>
+        <view class="field item-field">
+          <text class="label">商品</text>
+          <input class="input" value="{{item.productName}}" data-index="{{itemIndex}}" data-field="productName" bindinput="updateItemField" placeholder="例如：保温杯" />
+        </view>
+        <view wx:if="{{item.spec}}" class="field item-field">
+          <text class="label">规格</text>
+          <input class="input" value="{{item.spec}}" data-index="{{itemIndex}}" data-field="spec" bindinput="updateItemField" />
+        </view>
+        <view class="grid-2">
+          <view class="field item-field">
+            <text class="label">数量</text>
+            <input class="input" value="{{item.quantity}}" data-index="{{itemIndex}}" data-field="quantity" bindinput="updateItemField" type="digit" />
+          </view>
+          <view class="field item-field">
+            <text class="label">单位</text>
+            <input class="input" value="{{item.unit}}" data-index="{{itemIndex}}" data-field="unit" bindinput="updateItemField" />
+          </view>
+        </view>
+        <view class="grid-2">
+          <view class="field item-field">
+            <text class="label">单价</text>
+            <input class="input" value="{{item.unitPrice}}" data-index="{{itemIndex}}" data-field="unitPrice" bindinput="updateItemField" type="digit" />
+          </view>
+          <view class="field item-field">
+            <text class="label">金额</text>
+            <input class="input" value="{{item.totalAmount}}" data-index="{{itemIndex}}" data-field="totalAmount" bindinput="updateItemField" type="digit" />
+          </view>
+        </view>
+        <view wx:if="{{item.showItemDeliveryDate}}" class="item-meta-line">单项交期：{{item.itemDeliveryDate}}</view>
+        <view wx:if="{{item.itemRemark}}" class="item-meta-line">备注：{{item.itemRemark}}</view>
+      </view>
+    </view>
     <view wx:if="{{showProductField}}" class="field">
       <text class="label">产品/规格</text>
       <input class="input" value="{{fields.productName}}" data-field="productName" bindinput="updateField" />
@@ -182,7 +222,7 @@
     <view wx:if="{{showFollowupDaysField}}" class="field followup-card">
       <view class="followup-card-head">
         <view>
-          <view class="followup-title">跟进时间</view>
+          <view class="followup-title">跟进日期</view>
           <view class="followup-subtitle">报价后提醒客户确认</view>
         </view>
         <view class="followup-default-pill">默认 2 天</view>
@@ -210,7 +250,7 @@
       <view wx:if="{{showReceivablePicker}}" class="field">
         <text class="label">选择本次收哪一笔</text>
         <picker mode="selector" range="{{receivableRange}}" value="{{selectedReceivableIndex}}" bindchange="changeReceivable">
-          <view class="input">{{selectedReceivableLabel || '请选择应收款'}}</view>
+          <view class="input">{{selectedReceivableLabel || '请选择待收款 / 欠款'}}</view>
         </picker>
       </view>
       <view wx:if="{{paymentPreview.length}}" class="payment-preview">
