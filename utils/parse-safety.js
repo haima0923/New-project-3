@@ -13,8 +13,8 @@ const CUSTOMER_BAD_PREFIX = /^(?:报给|报价给|发给|卖给|转给|给|帮|�
 const CUSTOMER_BAD_INSIDE = /(?:报给|报价|报架|下单|订单|货款|欠款|尾款|定金|订金|预付|单价|价格|数量|产品|客户说|说要|说下|问价|问下)/;
 const CUSTOMER_GENERIC = /^(?:客户|老客户|这个客户|那个客户|今天|明天|后天|刚才|刚刚|义乌|那笔|上一笔|这单|那单)$/;
 const PRODUCT_PRICE_LIKE = /^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬]+)\s*(?:块|元|毛|角|分|钱)/;
-const PRODUCT_BAD_PATTERN = /(?:价格|单价|报价|报架|多少钱|贵了|便宜|上次|上回|之前|原价|老价|照旧|颜色|色差|包装|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|尽快|月底|月末|明天|后天|下周|交期|到期)/;
-const SEMANTIC_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回)/i;
+const PRODUCT_BAD_PATTERN = /(?:价格|单价|报价|报架|多少钱|贵了|便宜|上次|上回|之前|原价|老价|照旧|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|尽快|月底|月末|明天|后天|下周|交期|到期)/;
+const SEMANTIC_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回)/i;
 
 function compact(value) {
   return String(value || '').replace(/\s+/g, '').trim();
@@ -31,8 +31,18 @@ function hasFieldValue(fields, field) {
   return fields[field] !== undefined && fields[field] !== null && fields[field] !== '';
 }
 
+function getItems(fields) {
+  return Array.isArray(fields.items)
+    ? fields.items.filter((item) => item && typeof item === 'object')
+    : [];
+}
+
 function addIssue(issues, field, message, type = 'invalid') {
   issues.push({ field, message, type });
+}
+
+function isPackagingProductName(product) {
+  return /(?:包装袋|包装盒|礼品盒|收纳盒|饰品盒|文具套装|箱包|箱子)$/.test(product);
 }
 
 function validateCustomerName(fields, sourceText, issues) {
@@ -62,7 +72,7 @@ function validateProductName(fields, issues) {
   if (PRODUCT_PRICE_LIKE.test(product) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
     addIssue(issues, 'productName', `产品“${product}”看起来是价格`);
   }
-  if (PRODUCT_BAD_PATTERN.test(product)) {
+  if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
     addIssue(issues, 'productName', `产品“${product}”疑似备注、价格或时间信息`);
   }
   if (customer && product.includes(customer)) {
@@ -71,6 +81,44 @@ function validateProductName(fields, issues) {
   if (/(?:总|老板|经理|姐|哥|先生|女士)/.test(product) && product.length > 3) {
     addIssue(issues, 'productName', `产品“${product}”疑似混入客户称呼`);
   }
+}
+
+function validateItems(fields, issues) {
+  const items = getItems(fields);
+  if (!items.length) return;
+  items.forEach((item, index) => {
+    const product = compact(item.productName);
+    const label = `商品${index + 1}`;
+    if (!product) {
+      addIssue(issues, 'productName', `${label}缺少商品名`, 'missing');
+    } else {
+      if (PRODUCT_PRICE_LIKE.test(product) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
+        addIssue(issues, 'productName', `${label}“${product}”看起来是价格`);
+      }
+      if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
+        addIssue(issues, 'productName', `${label}“${product}”疑似备注、价格或时间信息`);
+      }
+    }
+
+    if (!hasFieldValue(item, 'quantity')) {
+      addIssue(issues, 'quantity', `${label}缺少数量`, 'missing');
+    } else {
+      const quantity = Number(item.quantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        addIssue(issues, 'quantity', `${label}数量“${item.quantity}”不是有效正数`);
+      }
+    }
+
+    if (hasFieldValue(item, 'unitPrice')) {
+      const unitPrice = Number(item.unitPrice);
+      if (!Number.isFinite(unitPrice) || unitPrice <= 0) {
+        addIssue(issues, 'unitPrice', `${label}单价“${item.unitPrice}”不是有效正数`);
+      }
+      if (Number.isFinite(unitPrice) && unitPrice >= 10000) {
+        addIssue(issues, 'unitPrice', `${label}单价“${item.unitPrice}”异常偏大`, 'low_confidence');
+      }
+    }
+  });
 }
 
 function validateQuantity(fields, issues) {
@@ -129,16 +177,21 @@ function evaluateLocalParseSafety(result, options = {}) {
 
   validateCustomerName(fields, sourceText, issues);
   validateProductName(fields, issues);
+  validateItems(fields, issues);
   validateQuantity(fields, issues);
   validateUnitPrice(fields, issues);
+
+  const items = getItems(fields);
+  const hasProductItem = items.some((item) => hasFieldValue(item, 'productName'));
+  const hasQuantityItem = items.some((item) => hasFieldValue(item, 'quantity'));
 
   if (CUSTOMER_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'customerName')) {
     addIssue(issues, 'customerName', '缺少客户称呼', 'missing');
   }
-  if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'productName')) {
+  if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'productName') && !hasProductItem) {
     addIssue(issues, 'productName', '缺少产品/规格', 'missing');
   }
-  if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'quantity')) {
+  if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'quantity') && !hasQuantityItem) {
     addIssue(issues, 'quantity', '缺少数量', 'missing');
   }
   if (AMOUNT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'amount')) {

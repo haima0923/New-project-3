@@ -41,6 +41,8 @@ const TODO_ACTION_WORDS = '回|回复|答复|跟进|问|催|联系|提醒|确认
 const DEPOSIT_PATTERN = /定金|订金|预付|预付款/;
 const DEPOSIT_PAYMENT_PATTERN = /定金|订金|预付|预付款|先付|先打|先转/;
 const DECIMAL_DIGIT = '\\d|[零一二两三四五六七八九]';
+const ITEM_BAD_PRODUCT_PATTERN = /(?:价格|单价|报价|多少钱|颜色|色差|包装|外箱|内盒|logo|特殊|要求|备注|交期|交货|发货|到期|明天|后天|下周|月底|月末|定金|订金|预付|尾款|货款)/i;
+const ITEM_EXACT_BAD_PRODUCT_PATTERN = /^(?:块|元|毛|角|分|钱|一个|每个|单价|价格|报价|老板|客户|我|对方|客服|买家|卖家|厂家|工厂|业务员)$/;
 
 function normalizeText(text) {
   return normalizeBusinessText(text)
@@ -74,6 +76,10 @@ function toCleanNumber(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '';
   return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(4)));
+}
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function extractPhone(text) {
@@ -572,6 +578,217 @@ function extractMultiProductNames(text) {
   return [];
 }
 
+function cleanItemProductName(value, customerName = '') {
+  let cleaned = String(value || '')
+    .replace(/[：:，,。；;\s]/g, '')
+    .trim();
+  if (!cleaned) return '';
+
+  if (customerName) {
+    const customer = escapeRegExp(customerName);
+    const shortCustomer = escapeRegExp(customerName.replace(/(?:总|老板|经理|姐|哥|先生|女士)$/, ''));
+    cleaned = cleaned
+      .replace(new RegExp(`^${customer}`), '')
+      .replace(new RegExp(`^${shortCustomer}`), '');
+  }
+
+  const hadTrailingAction = /(?:那边|这边|说|问|要|订|定|定了|下单|先下|先做|做|补|发|出|拿)$/.test(cleaned);
+  cleaned = cleaned
+    .replace(/^(?:给|帮|找|问|报给|报价给|发给|卖给|转给|先问|再问|另外|还有|先下|先做|下单|下|做|要|订|定了|定|买|补|追加|发|出|拿|记一下|记下|客户|那个|这个|这边|那边)+/, '')
+    .replace(/(?:那边|这边|说|问|要|订|定|定了|下单|先下|先做|做|补|发|出|拿)$/, '')
+    .trim();
+  if (customerName) {
+    const customer = escapeRegExp(customerName);
+    const shortCustomer = escapeRegExp(customerName.replace(/(?:总|老板|经理|姐|哥|先生|女士)$/, ''));
+    cleaned = cleaned
+      .replace(new RegExp(`^${customer}`), '')
+      .replace(new RegExp(`^${shortCustomer}`), '')
+      .trim();
+  }
+
+  const known = KNOWN_PRODUCTS
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .find((item) => cleaned.includes(item));
+  if (known) return known;
+
+  if (hadTrailingAction && cleaned.length <= 4) return '';
+  if (!cleaned || cleaned.length > 12) return '';
+  if (ITEM_EXACT_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
+  if (/^(?:定|订|要|问|报|报价|做|发|下|补|货|客户|产品|这个|那个|先|再|还有|另外)$/.test(cleaned)) return '';
+  if (ITEM_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
+  if (/^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分|钱)?$/.test(cleaned)) return '';
+  return cleaned;
+}
+
+function cleanCustomerCandidateName(value) {
+  let name = cleanCustomerName(value);
+  name = name
+    .replace(/^(?:我|帮我|提醒我|请我)?(?:催|问|联系|找|提醒)/, '')
+    .replace(/^(?:我|帮我|给我|请我|提醒我)/, '')
+    .replace(/(?:刚刚|刚|已经|已|又|还|定金|订金|货款|尾款|欠款|款)$/g, '')
+    .trim();
+  return cleanCustomerName(name);
+}
+
+function parseQuantityWithUnit(rawNumber, rawUnit) {
+  const unit = String(rawUnit || '');
+  const unitHasWan = unit.startsWith('万');
+  const parsed = parseChineseNumber(rawNumber) * (unitHasWan ? 10000 : 1);
+  if (!Number.isFinite(parsed) || parsed <= 0) return { quantity: '', unit: '' };
+  return {
+    quantity: toCleanNumber(parsed),
+    unit: unit.replace(/^万/, '')
+  };
+}
+
+function compactItemCandidates(candidates) {
+  return candidates
+    .sort((left, right) => left.index - right.index || right.end - left.end)
+    .reduce((list, candidate) => {
+      const overlapIndex = list.findIndex((item) => candidate.index < item.end && candidate.end > item.index);
+      if (overlapIndex < 0) {
+        list.push(candidate);
+        return list;
+      }
+      const current = list[overlapIndex];
+      if (candidate.productName.length > current.productName.length) list[overlapIndex] = candidate;
+      return list;
+    }, []);
+}
+
+function extractItemCandidates(text, customerName = '') {
+  const source = String(text || '');
+  const candidates = [];
+  const quantityFirst = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})\\s*([\\u4e00-\\u9fa5A-Za-z]{1,16})`, 'g');
+  const productFirst = new RegExp(`([\\u4e00-\\u9fa5A-Za-z]{1,20})\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g');
+
+  const pushCandidate = (match, rawProduct, rawQuantity, rawUnit, sourceName) => {
+    const productName = cleanItemProductName(rawProduct, customerName);
+    const quantity = parseQuantityWithUnit(rawQuantity, rawUnit);
+    if (!productName || !quantity.quantity) return;
+    candidates.push({
+      index: match.index,
+      end: match.index + match[0].length,
+      productName,
+      quantity: quantity.quantity,
+      unit: quantity.unit,
+      source: sourceName
+    });
+  };
+
+  let match;
+  while ((match = quantityFirst.exec(source)) !== null) {
+    pushCandidate(match, match[3], match[1], match[2], 'rule:item_quantity_product');
+  }
+  while ((match = productFirst.exec(source)) !== null) {
+    pushCandidate(match, match[1], match[2], match[3], 'rule:item_product_quantity');
+  }
+
+  return compactItemCandidates(candidates);
+}
+
+function normalizeItem(item = {}) {
+  const productName = cleanItemProductName(item.productName || item.product_name || item.name || '');
+  const quantity = item.quantity ? toCleanNumber(item.quantity) : '';
+  const unitPrice = item.unitPrice || item.unit_price ? toCleanNumber(item.unitPrice || item.unit_price) : '';
+  const totalAmount = item.totalAmount || item.total_amount || item.amount
+    ? toCleanNumber(item.totalAmount || item.total_amount || item.amount)
+    : calculateAmount(quantity, unitPrice);
+  return {
+    productName,
+    spec: item.spec || '',
+    quantity,
+    unit: item.unit || '',
+    unitPrice,
+    totalAmount,
+    itemDeliveryDate: item.itemDeliveryDate || item.deliveryDate || item.dueDate || '',
+    itemRemark: item.itemRemark || item.remark || ''
+  };
+}
+
+function hasItemValue(item) {
+  return Boolean(item && (item.productName || item.quantity || item.unitPrice || item.totalAmount));
+}
+
+function normalizeItems(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .map(normalizeItem)
+    .filter(hasItemValue);
+}
+
+function extractItems(text, customerName = '') {
+  const candidates = extractItemCandidates(text, customerName);
+  return candidates.map((candidate, index) => {
+    const next = candidates[index + 1];
+    const itemText = text.slice(candidate.index, next ? next.index : text.length);
+    const unitPrice = extractUnitPrice(itemText);
+    const totalAmount = calculateAmount(candidate.quantity, unitPrice.value);
+    return normalizeItem(Object.assign({}, candidate, {
+      unitPrice: unitPrice.value,
+      totalAmount,
+      itemRemark: '',
+      source: [candidate.source, unitPrice.source].filter(Boolean).join('+')
+    }));
+  });
+}
+
+function buildLegacyItem(fields = {}) {
+  return normalizeItem({
+    productName: fields.productName,
+    spec: fields.spec,
+    quantity: fields.quantity,
+    unit: fields.unit,
+    unitPrice: fields.unitPrice,
+    totalAmount: fields.totalAmount || fields.amount
+  });
+}
+
+function getItemsTotal(items = []) {
+  if (!items.length || items.some((item) => !item.totalAmount)) return '';
+  const total = items.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
+  return toCleanNumber(total);
+}
+
+function sameMoney(left, right) {
+  const leftNumber = Number(left);
+  const rightNumber = Number(right);
+  return Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && Math.abs(leftNumber - rightNumber) < 0.0001;
+}
+
+function countQuantityUnitPairs(text) {
+  return Array.from(String(text || '').matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')))
+    .filter((match) => {
+      const unit = match[2].replace(/^万/, '');
+      const parsed = parseChineseNumber(match[1]) * (match[2].startsWith('万') ? 10000 : 1);
+      const prefix = text.slice(Math.max(0, match.index - 8), match.index);
+      if (!Number.isFinite(parsed) || parsed <= 0) return false;
+      if (parsed === 1 && /(?:块|元|毛|角|分|钱|单价|价格|报价|\d+\.\d+|\d)$/.test(prefix)) return false;
+      return /^(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台)$/.test(unit);
+    })
+    .length;
+}
+
+function extractCustomerNameCandidates(text) {
+  const source = String(text || '');
+  const names = [];
+  const titled = source.match(/[\u4e00-\u9fa5A-Za-z]{1,8}(?:总|老板|经理|姐|哥|先生|女士)/g) || [];
+  titled.forEach((name) => names.push(cleanCustomerCandidateName(name)));
+
+  const actionPattern = new RegExp(`([\\u4e00-\\u9fa5]{1,4})(?:${CUSTOMER_ACTION_PATTERN})`, 'g');
+  let match;
+  while ((match = actionPattern.exec(source)) !== null) {
+    names.push(cleanCustomerCandidateName(match[1]));
+  }
+
+  return names
+    .map((name) => String(name || '').trim())
+    .filter(Boolean)
+    .filter((name) => !/^(先|再|另外|还有|都|客户|产品|这个|那个)$/.test(name))
+    .filter((name) => !KNOWN_PRODUCTS.some((product) => name.includes(product) || product.includes(name)))
+    .filter((name, index, array) => array.indexOf(name) === index);
+}
+
 function extractTodoTitle(text, fields = {}) {
   const customerName = fields.customerName || '';
   const customerShort = customerName ? customerName.replace(/总$/, '') : '';
@@ -754,6 +971,12 @@ function buildMissingFields(intent, fields, operation = '') {
   (requiredByIntent[intent] || []).forEach((field) => {
     if (!fields[field]) missing.push(field);
   });
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  if (['quotation', 'order'].includes(intent) && items.length) {
+    if (items.some((item) => !item.productName) && !missing.includes('productName')) missing.push('productName');
+    if (items.some((item) => !item.quantity) && !missing.includes('quantity')) missing.push('quantity');
+    if (intent === 'quotation' && items.some((item) => !item.unitPrice) && !missing.includes('unitPrice')) missing.push('unitPrice');
+  }
   return missing;
 }
 
@@ -828,32 +1051,38 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const normalized = normalizeText(recognitionText);
   const structuredDraft = source === 'paste' ? getPasteStructuredDraft(pasteMeta) : null;
   const scoredIntent = scoreIntent(normalized, context);
+  const customer = extractCustomerName(normalized);
+  const chatCustomerName = source === 'paste' ? getPasteCustomerName(pasteMeta) : '';
+  const customerName = chooseCustomerName(chatCustomerName, customer.value, normalized);
+  const structuredItems = normalizeItems(structuredDraft && structuredDraft.items);
+  const extractedItems = extractItems(normalized, customerName);
+  const itemDrafts = structuredItems.length ? structuredItems : extractedItems;
   const multiProductNames = extractMultiProductNames(normalized);
-  const hasMultiProductDraft = multiProductNames.length > 1;
+  const hasMultiProductDraft = multiProductNames.length > 1 || itemDrafts.length > 1;
   const intent = hasMultiProductDraft
     ? (scoredIntent.intent === 'quotation' ? 'quotation' : 'order')
     : ((structuredDraft && structuredDraft.intent) || scoredIntent.intent);
   const quantity = extractQuantity(normalized);
   const productNumberQuantity = quantity.quantity ? { quantity: '', unit: '', source: '' } : extractQuantityAfterKnownProduct(normalized);
-  const customer = extractCustomerName(normalized);
-  const chatCustomerName = source === 'paste' ? getPasteCustomerName(pasteMeta) : '';
-  const customerName = chooseCustomerName(chatCustomerName, customer.value, normalized);
   const unitPrice = extractUnitPrice(normalized);
   const explicitAmount = extractAmount(normalized);
   const depositAmount = extractDepositAmount(normalized);
   const remainingAmount = extractRemainingAmount(normalized);
   const product = extractProduct(normalized);
-  const quantityValue = (structuredDraft && structuredDraft.quantity) || quantity.quantity || productNumberQuantity.quantity;
-  const unitValue = (structuredDraft && structuredDraft.unit) || quantity.unit || productNumberQuantity.unit;
-  const unitPriceValue = (structuredDraft && structuredDraft.unitPrice) || unitPrice.value;
+  const useItems = ['quotation', 'order'].includes(intent);
+  const singleItemDraft = useItems && itemDrafts.length ? itemDrafts[0] : null;
+  const quantityValue = (singleItemDraft && singleItemDraft.quantity) || (structuredDraft && structuredDraft.quantity) || quantity.quantity || productNumberQuantity.quantity;
+  const unitValue = (singleItemDraft && singleItemDraft.unit) || (structuredDraft && structuredDraft.unit) || quantity.unit || productNumberQuantity.unit;
+  const unitPriceValue = (singleItemDraft && singleItemDraft.unitPrice) || (structuredDraft && structuredDraft.unitPrice) || unitPrice.value;
   const computedAmount = calculateAmount(quantityValue, unitPriceValue);
+  const itemTotalAmount = useItems ? getItemsTotal(itemDrafts) : '';
   const hasDepositSignal = DEPOSIT_PAYMENT_PATTERN.test(normalized);
   const paymentAmount = (intent === 'payment' || /先收|收了|已收|先付|已付|先转|已转|定金|订金|预付|预付款/.test(normalized)) ? (depositAmount.value || explicitAmount.value) : '';
   const receivableAmount = explicitAmount.value || (intent === 'receivable' ? remainingAmount.value : '');
   const explicitAmountIsDeposit = hasDepositSignal && depositAmount.value && explicitAmount.value === depositAmount.value;
-  const amount = computedAmount || (intent === 'payment' ? '' : (explicitAmountIsDeposit ? '' : receivableAmount));
+  const amount = itemTotalAmount || computedAmount || (intent === 'payment' ? '' : (explicitAmountIsDeposit ? '' : receivableAmount));
   const productName = ['quotation', 'order', 'todo'].includes(intent)
-    ? (hasMultiProductDraft ? multiProductNames.join('、') : ((structuredDraft && structuredDraft.productName) || product.value))
+    ? ((singleItemDraft && singleItemDraft.productName) || (hasMultiProductDraft ? multiProductNames.join('、') : ((structuredDraft && structuredDraft.productName) || product.value)))
     : '';
   const date = parseChineseDate((structuredDraft && structuredDraft.dueText) || normalized);
   const todoTitle = intent === 'todo' ? extractTodoTitle(normalized, {
@@ -869,6 +1098,7 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     quantity: quantityValue,
     unit: unitValue,
     unitPrice: unitPriceValue,
+    totalAmount: amount,
     paymentAmount,
     depositAmount: hasDepositSignal ? (depositAmount.value || paymentAmount) : '',
     paymentKind: hasDepositSignal ? 'deposit' : '',
@@ -879,6 +1109,17 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     quoteDate: today(),
     remark: buildRemarkText(originalText)
   };
+  if (useItems) {
+    const items = itemDrafts.length ? itemDrafts : [buildLegacyItem(fields)].filter(hasItemValue);
+    if (items.length) {
+      fields.items = items;
+      const itemsTotal = getItemsTotal(items);
+      if (itemsTotal) {
+        fields.amount = itemsTotal;
+        fields.totalAmount = itemsTotal;
+      }
+    }
+  }
   if (remainingAmount.value && !String(fields.remark || '').includes(`剩余${remainingAmount.value}`)) {
     fields.remark = [fields.remark, `剩余${remainingAmount.value}`].filter(Boolean).join('\n');
   }
@@ -886,9 +1127,37 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   if (intent === 'payment' && hasDepositSignal) operation = 'record_order_deposit';
   const missingFields = buildMissingFields(intent, fields, operation);
   const customerCandidates = findCustomerCandidates(state, fields.customerName, fields.phone);
+  const fieldConflicts = [];
+  const customerNameCandidates = extractCustomerNameCandidates(normalized);
+  if (customerNameCandidates.length > 1) {
+    fieldConflicts.push({
+      field: 'customerName',
+      values: customerNameCandidates,
+      message: `一句话里出现多个客户：${customerNameCandidates.join('、')}，请拆开记录。`
+    });
+  }
+  const itemsTotal = getItemsTotal(fields.items || []);
+  if (itemsTotal && explicitAmount.value && !sameMoney(itemsTotal, explicitAmount.value)) {
+    fieldConflicts.push({
+      field: 'amount',
+      values: [itemsTotal, explicitAmount.value],
+      message: `商品明细合计${itemsTotal}元，原文总金额${explicitAmount.value}元，不一致，请确认。`
+    });
+  }
+  const hasUnclearMultiItem = useItems
+    && countQuantityUnitPairs(normalized) >= 2
+    && (!fields.items || fields.items.length < 2);
+  if (hasUnclearMultiItem || (multiProductNames.length > 1 && (!fields.items || fields.items.length < multiProductNames.length))) {
+    fieldConflicts.push({
+      field: 'productName',
+      values: multiProductNames.length ? multiProductNames : [],
+      message: '这句话像是多个商品，但商品、数量、单价没有稳定对应，请先确认。'
+    });
+  }
   const lowConfidenceFields = [];
   if (customerCandidates.length > 1) lowConfidenceFields.push('customerName');
-  if (hasMultiProductDraft) lowConfidenceFields.push('productName');
+  if (customerNameCandidates.length > 1) lowConfidenceFields.push('customerName');
+  if (hasUnclearMultiItem) lowConfidenceFields.push('productName', 'quantity', 'unitPrice');
   if (!fields.dueDate && /月底|明天|今天|后|下周|下个月|号|日|交|结|到期/.test(normalized)) lowConfidenceFields.push('dueDate');
   if (!fields.unitPrice && /上次|上图|原价|老价|老款报价|旧价|照旧|价格不变|按上回|还是|按上次/.test(normalized)) lowConfidenceFields.push('unitPrice');
 
@@ -916,6 +1185,7 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     fields,
     missing_fields: missingFields,
     low_confidence_fields: lowConfidenceFields,
+    field_conflicts: fieldConflicts,
     customer_candidates: customerCandidates,
     confidence: finalConfidence,
     confirm_message: buildConfirmMessage(intent, missingFields),
@@ -930,6 +1200,7 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
       quantity: getDraftFieldSource(structuredDraft, 'quantity', quantity.source || productNumberQuantity.source),
       unit: getDraftFieldSource(structuredDraft, 'unit', quantity.source || productNumberQuantity.source),
       unitPrice: getDraftFieldSource(structuredDraft, 'unitPrice', unitPrice.source),
+      items: fields.items && fields.items.length ? (structuredItems.length ? 'paste_meta:structuredDraft.items' : 'rule:item_details') : '',
       paymentAmount: paymentAmount ? explicitAmount.source : '',
       depositAmount: hasDepositSignal && (depositAmount.value || paymentAmount) ? (depositAmount.source || explicitAmount.source) : '',
       paymentKind: hasDepositSignal ? 'rule:deposit_keyword' : '',

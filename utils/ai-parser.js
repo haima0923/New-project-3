@@ -299,6 +299,40 @@ function pickFirst(source, paths) {
   return '';
 }
 
+function normalizeAiItem(item = {}) {
+  if (!item || typeof item !== 'object') return null;
+  const quantity = pickFirst(item, ['quantity', 'qty', 'product.quantity', 'item.quantity']);
+  const unitPrice = pickFirst(item, ['unitPrice', 'unit_price', 'price.unitPrice', 'price.unit_price', 'price.perUnit', 'price.per_unit', 'unitAmount']);
+  const mapped = {
+    productName: pickFirst(item, ['productName', 'product_name', 'product.name', 'product', 'itemName', 'item_name', 'item.name', 'goodsName', 'goods_name', 'name']),
+    spec: pickFirst(item, ['spec', 'specification', 'product.spec', 'product.specification']),
+    quantity,
+    unit: pickFirst(item, ['unit', 'product.unit', 'item.unit']),
+    unitPrice,
+    totalAmount: pickFirst(item, ['totalAmount', 'total_amount', 'amount', 'price.amount', 'price.totalAmount']),
+    itemDeliveryDate: normalizeDateValue(pickFirst(item, ['itemDeliveryDate', 'item_delivery_date', 'deliveryDate', 'delivery_date', 'dueDate', 'due_date'])),
+    itemRemark: pickFirst(item, ['itemRemark', 'item_remark', 'remark', 'note', 'memo'])
+  };
+  if (!mapped.totalAmount && quantity && unitPrice) mapped.totalAmount = calculateAmount(quantity, unitPrice);
+  const compact = {};
+  Object.keys(mapped).forEach((key) => {
+    if (mapped[key] !== undefined && mapped[key] !== null && mapped[key] !== '') compact[key] = mapped[key];
+  });
+  return compact.productName || compact.quantity || compact.unitPrice || compact.totalAmount ? compact : null;
+}
+
+function normalizeAiItems(value) {
+  return (Array.isArray(value) ? value : [])
+    .map(normalizeAiItem)
+    .filter(Boolean);
+}
+
+function getItemsTotal(items = []) {
+  if (!items.length || items.some((item) => !item.totalAmount)) return '';
+  const total = items.reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
+  return toCleanNumber(total);
+}
+
 function normalizeDateValue(value) {
   if (!value) return '';
   const source = String(value).trim();
@@ -311,6 +345,7 @@ function normalizeDateValue(value) {
 }
 
 function normalizeFields(fields = {}) {
+  const items = normalizeAiItems(fields.items || fields.lineItems || fields.line_items || fields.products || fields.goods);
   const mapped = {
     customerId: pickFirst(fields, ['customerId', 'customer_id', 'customer.id', 'client.id']),
     customerName: pickFirst(fields, ['customerName', 'customer_name', 'customer.name', 'customer', 'clientName', 'client_name', 'client.name']),
@@ -327,6 +362,7 @@ function normalizeFields(fields = {}) {
     paymentAmount: pickFirst(fields, ['paymentAmount', 'payment_amount', 'paidAmount', 'paid_amount', 'receivedAmount', 'received_amount', 'collectionAmount', 'collection_amount', 'payment.amount']),
     depositAmount: pickFirst(fields, ['depositAmount', 'deposit_amount', 'deposit', 'deposit.amount', 'advanceAmount', 'advance_amount', 'prepaidAmount', 'prepaid_amount']),
     amount: pickFirst(fields, ['amount', 'totalAmount', 'total_amount', 'totalPrice', 'total_price', 'price.amount', 'price.totalAmount', 'money.amount', 'receivable.amount', 'payment.amount']),
+    totalAmount: pickFirst(fields, ['totalAmount', 'total_amount', 'totalPrice', 'total_price', 'price.totalAmount']),
     remainingAmount: pickFirst(fields, ['remainingAmount', 'remaining_amount', 'leftAmount', 'left_amount', 'unpaidAmount', 'unpaid_amount', 'balance', 'balanceAmount', 'balance_amount', 'payment.remainingAmount']),
     paymentMethod: pickFirst(fields, ['paymentMethod', 'payment_method', 'payment.method']),
     paymentKind: pickFirst(fields, ['paymentKind', 'payment_kind', 'kind', 'payment.kind']),
@@ -336,6 +372,18 @@ function normalizeFields(fields = {}) {
     quotationId: pickFirst(fields, ['quotationId', 'quotation_id', 'quotation.id']),
     remark: pickFirst(fields, ['remark', 'note', 'memo'])
   };
+  if (items.length) {
+    const first = items[0] || {};
+    const itemsTotal = getItemsTotal(items);
+    mapped.items = items;
+    mapped.productName = mapped.productName || first.productName || '';
+    mapped.spec = mapped.spec || first.spec || '';
+    mapped.quantity = mapped.quantity || first.quantity || '';
+    mapped.unit = mapped.unit || first.unit || '';
+    mapped.unitPrice = mapped.unitPrice || first.unitPrice || '';
+    mapped.amount = mapped.amount || itemsTotal || first.totalAmount || '';
+    mapped.totalAmount = mapped.totalAmount || itemsTotal || mapped.amount || '';
+  }
   const compact = {};
   Object.keys(mapped).forEach((key) => {
     if (mapped[key] !== undefined && mapped[key] !== null && mapped[key] !== '') compact[key] = mapped[key];
@@ -744,10 +792,17 @@ function getConflictFields(conflicts) {
 function applyPostAiConsistency(result, normalized) {
   const fields = Object.assign({}, result.fields || {});
   const fieldSources = Object.assign({}, result.field_sources || {});
-  if (hasFieldValue(fields, 'quantity') && hasFieldValue(fields, 'unitPrice')) {
+  const itemsTotal = getItemsTotal(fields.items || []);
+  if (itemsTotal) {
+    fields.amount = itemsTotal;
+    fields.totalAmount = itemsTotal;
+    fieldSources.amount = fieldSources.amount || 'computed:items_total';
+    fieldSources.totalAmount = fieldSources.totalAmount || fieldSources.amount;
+  } else if (hasFieldValue(fields, 'quantity') && hasFieldValue(fields, 'unitPrice')) {
     const amount = calculateAmount(fields.quantity, fields.unitPrice);
     if (amount) {
       fields.amount = amount;
+      fields.totalAmount = fields.totalAmount || amount;
       fieldSources.amount = fieldSources.amount || 'computed:quantity*unitPrice';
     }
   }
