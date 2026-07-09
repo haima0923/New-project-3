@@ -41,7 +41,7 @@ const TODO_ACTION_WORDS = '回|回复|答复|跟进|问|催|联系|提醒|确认
 const DEPOSIT_PATTERN = /定金|订金|预付|预付款/;
 const DEPOSIT_PAYMENT_PATTERN = /定金|订金|预付|预付款|先付|先打|先转/;
 const DECIMAL_DIGIT = '\\d|[零一二两三四五六七八九]';
-const ITEM_BAD_PRODUCT_PATTERN = /(?:价格|单价|报价|多少钱|颜色|色差|包装|外箱|内盒|logo|特殊|要求|备注|交期|交货|发货|到期|明天|后天|下周|月底|月末|定金|订金|预付|尾款|货款)/i;
+const ITEM_BAD_PRODUCT_PATTERN = /(?:价格|单价|报价|多少钱|颜色|色差|包装(?!袋|盒|纸)|外箱|内盒|logo|特殊|要求|备注|交期|交货|发货|到期|明天|后天|下周|月底|月末|定金|订金|预付|尾款|货款)/i;
 const ITEM_EXACT_BAD_PRODUCT_PATTERN = /^(?:块|元|毛|角|分|钱|一个|每个|单价|价格|报价|老板|客户|我|对方|客服|买家|卖家|厂家|工厂|业务员)$/;
 
 function normalizeText(text) {
@@ -603,6 +603,7 @@ function cleanItemProductName(value, customerName = '') {
     cleaned = cleaned
       .replace(new RegExp(`^${customer}`), '')
       .replace(new RegExp(`^${shortCustomer}`), '')
+      .replace(/^(?:报给|报价给|报价|报架|报)+/, '')
       .trim();
   }
 
@@ -877,7 +878,9 @@ function scoreIntent(text, context) {
   const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text);
   const hasTodoSignal = new RegExp(`提醒我|提醒|别忘了|待会|等下|记得|发.*?对账单|回一下|(?:今天|明天|明日|后天|大后天|上午|中午|下午|晚上|今晚|月底|月末|下周|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\\d{1,2}号|\\d{1,2}日).*?(?:${TODO_ACTION_WORDS})|给(?:他|她|客户|[\\u4e00-\\u9fa5]{1,4}(?:总|姐|哥|老板|经理))?(?:回|回复)|(?:回|回复)(?:他|她|客户)`).test(text);
   const hasDeliverySignal = /交货|发货|要发|要货|月底交|月末交|给我发|今天.*发|明天.*发|后天.*发|下午发|交|拿|出/.test(text) || /给(?:他|她)(?!回|回复)/.test(text);
-  const hasPriceSignal = /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)|(?:一|每)(?:个|件|只|条|套|双|张|本|箱)|单价/.test(text);
+  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台|月|号|日))`).test(text);
+  const hasPriceSignal = /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)|(?:一|每)(?:个|件|只|条|套|双|张|本|箱)|单价/.test(text)
+    || hasBareUnitPrice;
   const hasStrongQuotationSignal = /报价|报架|报个价|问价|多少钱|问.*(?:价格|价|多少钱)/.test(text);
 
   if (hasTodoSignal) scores.todo += 7;
@@ -1044,6 +1047,15 @@ function getDraftFieldSource(draft, field, fallback) {
   return draft && draft[field] ? `paste_meta:structuredDraft.${field}` : fallback;
 }
 
+function hasExplicitQuotationSignal(text) {
+  const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text);
+  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台|月|号|日))`).test(text);
+  const hasPrice = /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)|(?:一|每)(?:个|件|只|条|套|双|张|本|箱)|单价/.test(text)
+    || hasBareUnitPrice;
+  return /报价|报架|报个价|问价|多少钱|要个价格|先报|一起报|报给客户/.test(text)
+    || (/报/.test(text) && hasQuantity && hasPrice);
+}
+
 function parseInput({ text, source = 'typed', context = 'home', state, rawText = '', extractedText = '', pasteMeta = null }) {
   const recognitionText = extractedText || text;
   const originalText = normalizeOriginalText(rawText || text);
@@ -1059,8 +1071,9 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const itemDrafts = structuredItems.length ? structuredItems : extractedItems;
   const multiProductNames = extractMultiProductNames(normalized);
   const hasMultiProductDraft = multiProductNames.length > 1 || itemDrafts.length > 1;
+  const explicitQuotationSignal = hasExplicitQuotationSignal(normalized);
   const intent = hasMultiProductDraft
-    ? (scoredIntent.intent === 'quotation' ? 'quotation' : 'order')
+    ? (scoredIntent.intent === 'quotation' || explicitQuotationSignal ? 'quotation' : 'order')
     : ((structuredDraft && structuredDraft.intent) || scoredIntent.intent);
   const quantity = extractQuantity(normalized);
   const productNumberQuantity = quantity.quantity ? { quantity: '', unit: '', source: '' } : extractQuantityAfterKnownProduct(normalized);
@@ -1137,7 +1150,7 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     });
   }
   const itemsTotal = getItemsTotal(fields.items || []);
-  if (itemsTotal && explicitAmount.value && !sameMoney(itemsTotal, explicitAmount.value)) {
+  if (itemsTotal && explicitAmount.value && !explicitAmountIsDeposit && !sameMoney(itemsTotal, explicitAmount.value)) {
     fieldConflicts.push({
       field: 'amount',
       values: [itemsTotal, explicitAmount.value],

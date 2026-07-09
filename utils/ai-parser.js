@@ -277,11 +277,17 @@ function markAiNeeded(localResult) {
   });
 }
 
+function hasPackagingRequirementSignal(source) {
+  const text = String(source || '');
+  return /包装(?!袋|盒|纸)|包装[^，,。；;\n]{0,12}(?:改成|改为|改|换成|怎么|如何|做|要求|确认|彩盒|外箱|内盒)|客户问[^，,。；;\n]{0,12}包装/.test(text);
+}
+
 function shouldForceAi(payload, localResult) {
   if (payload.source === 'paste' || payload.source === 'voice') return true;
   if (isMultiMessagePaste(payload)) return true;
   const source = String(payload.text || localResult.original_text || '');
-  return /(改成|算了|还是|就按|贵了|便宜|换成|确认价|最终|颜色|包装|logo|LOGO|特殊|要求|备注)/.test(source);
+  return /(改成|算了|还是|就按|贵了|便宜|换成|确认价|最终|颜色|logo|LOGO|特殊|要求|备注)/.test(source)
+    || hasPackagingRequirementSignal(source);
 }
 
 function getByPath(source, path) {
@@ -465,6 +471,11 @@ function getContextPolicy(text, localResult = {}) {
   const source = String(text || localResult.original_text || '');
   const intent = localResult.intent || 'unknown';
   const fields = localResult.fields || {};
+  const hasLineItems = Array.isArray(fields.items) && fields.items.length > 0;
+  const hasNewOrderProductInfo = Boolean(fields.productName && (fields.quantity || fields.unitPrice || fields.dueDate || fields.totalAmount || fields.amount));
+  const isNewOrderWithDeposit = /定金|订金|预付|预付款/.test(source)
+    && intent === 'order'
+    && (hasLineItems || hasNewOrderProductInfo);
   if (/改|改成|延期|提前|那单|那笔|上次那笔|改价|改数量/.test(source)) return 'record_update';
   if (
     intent === 'receivable'
@@ -473,6 +484,7 @@ function getContextPolicy(text, localResult = {}) {
   ) {
     return 'none';
   }
+  if (isNewOrderWithDeposit) return 'none';
   if (/定金|订金|预付|预付款/.test(source) && (intent === 'payment' || fields.paymentKind === 'deposit' || fields.depositAmount)) return 'order_deposit';
   if (intent === 'payment' || /还我|还了|还剩|剩下|剩余|结清|到账|转了|付了|收了|未收|没收/.test(source)) return 'receivable_history';
 
@@ -783,6 +795,41 @@ function mergeRemarkItems(localItems, aiItems) {
   });
 }
 
+function hasExplicitQuotationSignal(source) {
+  const text = String(source || '');
+  return /报价|报架|报个价|报一下价|报下价|问价|要个价格|先报|一起报|报给客户/.test(text)
+    || /给[^，,。；;\n]{1,16}报(?!销)/.test(text)
+    || /报(?!销)[^，,。；;\n]{0,12}(?:\d|一|二|两|三|四|五|六|七|八|九|十|百|千|万|w|W)/.test(text);
+}
+
+function hasClearProductFields(fields = {}) {
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  return items.some((item) => item && (item.productName || item.quantity || item.unitPrice))
+    || Boolean(fields.productName && (fields.quantity || fields.unitPrice || fields.amount || fields.totalAmount));
+}
+
+function hasNoLocalFieldRisk(localResult) {
+  return !toArray(localResult.missing_fields).length
+    && !toArray(localResult.low_confidence_fields).length
+    && !toArray(localResult.field_conflicts).length;
+}
+
+function shouldProtectLocalQuotationIntent(localResult) {
+  if (!localResult || localResult.intent !== 'quotation') return false;
+  const safety = localResult.local_parse_safety || {};
+  const localIntentIsSafe = safety.status === 'SAFE_LOCAL'
+    || (safety.status === 'NEEDS_AI' && hasNoLocalFieldRisk(localResult));
+  if (!localIntentIsSafe) return false;
+  const text = localResult.original_text || '';
+  return hasExplicitQuotationSignal(text) && hasClearProductFields(localResult.fields || {});
+}
+
+function mergeAiIntent(localResult, normalized) {
+  const aiIntent = validIntents.includes(normalized.intent) ? normalized.intent : '';
+  if (aiIntent && !(shouldProtectLocalQuotationIntent(localResult) && aiIntent !== localResult.intent)) return aiIntent;
+  return localResult.intent;
+}
+
 function getConflictFields(conflicts) {
   return toArray(conflicts)
     .map((item) => (typeof item === 'string' ? item : item && item.field))
@@ -911,7 +958,7 @@ function protectLocalFacts(localResult, fields) {
 function normalizeAiResult(localResult, aiResult) {
   const normalized = unwrapAiResult(aiResult);
   const aiFields = normalizeFields(normalized.fields || normalized);
-  const intent = validIntents.includes(normalized.intent) ? normalized.intent : localResult.intent;
+  const intent = mergeAiIntent(localResult, normalized);
   let merged = Object.assign({}, localResult, normalized, {
     intent
   });
