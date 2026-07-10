@@ -87,6 +87,13 @@
     <view class="detail-line">总价：{{item.totalAmount || '-'}}</view>
     <view class="detail-line">要求交货：{{item.requiredDeliveryDate || '-'}}</view>
     <view class="detail-line">预计发货：{{item.expectedShipDate || '-'}}</view>
+    <view wx:if="{{item.hasOriginalText}}" class="original-text-box">
+      <view class="original-text-toggle" data-id="{{item.id}}" bindtap="toggleOriginalText">
+        <text class="original-text-title">原始内容</text>
+        <text class="original-text-action">{{item.showOriginalText ? '收起' : '查看'}}</text>
+      </view>
+      <view wx:if="{{item.showOriginalText}}" class="original-text-content">{{item.originalTextForDisplay}}</view>
+    </view>
     <picker mode="selector" range="{{orderStatuses}}" value="{{item.statusIndex}}" data-id="{{item.id}}" bindchange="changeStatus">
       <view class="input status-picker">更新进度：{{item.status}}</view>
     </picker>

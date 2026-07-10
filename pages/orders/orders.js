@@ -38,14 +38,22 @@ function hasAdvancedOrderFilters(filters) {
   return Boolean(filters.preset || filters.customer || filters.product || filters.orderDate || filters.dueDate);
 }
 
-function withDisplayItems(item) {
+function normalizeOriginalText(value) {
+  return String(value || '').trim();
+}
+
+function withDisplayItems(item, expandedOriginalTextMap = {}) {
   const displayItems = getRecordItems(item).map((lineItem, index) => Object.assign({}, lineItem, {
     itemKey: `${item.id || 'order'}-${index}`
   }));
+  const originalTextForDisplay = normalizeOriginalText(item.originalText || item.original_text);
   return Object.assign({}, item, {
     displayItems,
     hasMultipleItems: displayItems.length > 1,
-    itemsSummary: getItemsSummary(item)
+    itemsSummary: getItemsSummary(item),
+    originalTextForDisplay,
+    hasOriginalText: Boolean(originalTextForDisplay),
+    showOriginalText: Boolean(originalTextForDisplay && expandedOriginalTextMap[item.id])
   });
 }
 
@@ -91,7 +99,8 @@ Page({
     presetFilterLabel: '',
     hasActiveFilters: false,
     hasAdvancedFilters: false,
-    showFilters: false
+    showFilters: false,
+    expandedOriginalTextMap: {}
   },
 
   onShow() {
@@ -148,8 +157,9 @@ Page({
 
   load() {
     const state = getState();
+    const expandedOriginalTextMap = this.data.expandedOriginalTextMap || {};
     const allOrders = decorateRecords(state, state.orders).map((item) => ({
-      ...withDisplayItems(item),
+      ...withDisplayItems(item, expandedOriginalTextMap),
       statusIndex: ORDER_STATUS.indexOf(item.status),
       urgent: item.requiredDeliveryDate && diffDays(item.requiredDeliveryDate, today()) <= 3 && !['已完成', '已取消'].includes(item.status)
     }));
@@ -233,6 +243,14 @@ Page({
     saveState(state);
     wx.showToast({ title: '进度已更新', icon: 'success' });
     this.load();
+  },
+
+  toggleOriginalText(event) {
+    const id = event.currentTarget.dataset.id;
+    if (!id) return;
+    const expandedOriginalTextMap = Object.assign({}, this.data.expandedOriginalTextMap || {});
+    expandedOriginalTextMap[id] = !expandedOriginalTextMap[id];
+    this.setData({ expandedOriginalTextMap }, () => this.load());
   },
 
   createReceivable(event) {
