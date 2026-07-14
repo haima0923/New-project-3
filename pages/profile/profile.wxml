@@ -3,8 +3,8 @@
   <view class="page-subtitle">先把状态讲清楚，少放复杂设置。</view>
 
   <view class="profile-card">
-    <view class="profile-name">义乌老板 AI 小助理</view>
-    <view class="profile-subtitle">你的生意事务，语音来帮你搞定</view>
+    <view class="profile-name">货小玲</view>
+    <view class="profile-subtitle">你的生意事务，随手记下来、整理出来。</view>
   </view>
 
   <view class="card">
@@ -20,7 +20,7 @@
       </view>
       <view class="profile-stat">
         <view class="profile-number">{{stats.receivables}}</view>
-        <view class="profile-label">应收</view>
+        <view class="profile-label">待收</view>
       </view>
       <view class="profile-stat">
         <view class="profile-number">{{stats.todos}}</view>
@@ -44,6 +44,6 @@
 
   <view class="card">
     <view class="card-title">版本说明</view>
-    <view class="muted">当前是本地测试版，重点验证“记一笔 / 查一下 / 提醒我”的日常流程。</view>
+    <view class="muted">当前记录保存在这台设备；换手机或清理小程序数据前请谨慎。</view>
   </view>
 </view>

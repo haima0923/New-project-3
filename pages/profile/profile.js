@@ -38,7 +38,7 @@ Page({
         receivables: countActive(state.receivables, (item) => !['已结清', '坏账'].includes(item.status)),
         todos: countActive(state.todos, (item) => item.status !== '已完成')
       },
-      parseStatus: globalData.aiParseEndpoint ? '已配置' : '本地规则',
+      parseStatus: globalData.aiParseEndpoint ? (globalData.aiAuthEnabled ? '需微信登录' : '已配置') : '本地规则',
       voiceStatus: isVoiceRecognitionAvailable() ? '微信语音已接入' : '未配置',
       voiceStatusClass: isVoiceRecognitionAvailable() ? 'status-pill' : 'status-pill status-muted'
     });

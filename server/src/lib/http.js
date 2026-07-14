@@ -1,10 +1,11 @@
 function sendJson(res, statusCode, payload, origin) {
-  res.writeHead(statusCode, {
+  const headers = {
     'content-type': 'application/json; charset=utf-8',
-    'access-control-allow-origin': origin || '*',
     'access-control-allow-methods': 'GET,POST,OPTIONS',
     'access-control-allow-headers': 'content-type,authorization'
-  });
+  };
+  if (origin) headers['access-control-allow-origin'] = origin;
+  res.writeHead(statusCode, headers);
   res.end(JSON.stringify(payload));
 }
 
@@ -34,10 +35,11 @@ function readJsonBody(req) {
 }
 
 function getAllowedOrigin(req, allowedOrigins) {
-  if (!allowedOrigins || allowedOrigins === '*') return '*';
+  if (!allowedOrigins) return '';
+  if (allowedOrigins === '*') return '*';
   const origin = req.headers.origin || '';
   const list = allowedOrigins.split(',').map((item) => item.trim()).filter(Boolean);
-  return list.includes(origin) ? origin : list[0] || '*';
+  return list.includes(origin) ? origin : '';
 }
 
 module.exports = {

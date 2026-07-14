@@ -22,7 +22,7 @@ const FIELD_LABELS = {
   paymentAmount: '本次收款',
   depositAmount: '定金金额',
   remainingAmount: '剩余金额',
-  dueDate: '日期',
+  dueDate: '交期/到期日',
   quoteDate: '报价日期',
   remark: '备注'
 };

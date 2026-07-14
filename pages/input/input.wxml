@@ -231,11 +231,12 @@
           <view class="followup-title">跟进日期</view>
           <view class="followup-subtitle">报价后提醒客户确认</view>
         </view>
-        <view class="followup-default-pill">默认 2 天</view>
+        <view class="followup-default-pill">可不填</view>
       </view>
       <picker mode="selector" range="{{followupDayRange}}" value="{{selectedFollowupDayIndex}}" bindchange="changeFollowupDays">
         <view class="followup-picker">
-          <text>报价后 {{fields.followupDays || '2'}} 天</text>
+          <text wx:if="{{fields.followupDays}}">报价后 {{fields.followupDays}} 天</text>
+          <text wx:else>选择跟进天数</text>
           <text class="picker-arrow">选择</text>
         </view>
       </picker>
@@ -298,6 +299,7 @@
     </view>
 
     <view class="button-row">
+      <button class="secondary-button" bindtap="returnToInput">返回修改</button>
       <button class="secondary-button" bindtap="savePending">存到待整理</button>
       <button class="primary-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
     </view>

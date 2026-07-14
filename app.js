@@ -7,7 +7,8 @@ App({
   },
   globalData: {
     userId: 'local-user',
-    apiBaseUrl: 'https://39.105.7.48',
+    apiBaseUrl: 'https://api.baizeji.com',
+    aiAuthEnabled: true,
     aiParseEndpoint: '/api/ai/parse',
     aiTranscribeEndpoint: ''
   }

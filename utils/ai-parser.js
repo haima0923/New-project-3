@@ -955,6 +955,20 @@ function protectLocalFacts(localResult, fields) {
   return nextFields;
 }
 
+function applyAiCustomerEvidenceSafety(result) {
+  const fields = Object.assign({}, result.fields || {});
+  const originalText = result.original_text || '';
+  const lowConfidenceFields = uniqueStrings(result.low_confidence_fields || []);
+  if (fields.customerName && !originalContainsName(originalText, fields.customerName)) {
+    delete fields.customerId;
+    lowConfidenceFields.push('customerName');
+  }
+  return Object.assign({}, result, {
+    fields,
+    low_confidence_fields: uniqueStrings(lowConfidenceFields)
+  });
+}
+
 function normalizeAiResult(localResult, aiResult) {
   const normalized = unwrapAiResult(aiResult);
   const aiFields = normalizeFields(normalized.fields || normalized);
@@ -997,7 +1011,7 @@ function normalizeAiResult(localResult, aiResult) {
   merged.suggested_operation = localResult.suggested_operation || '';
   merged.raw_messages = localResult.raw_messages || [];
   merged = applyPostAiConsistency(merged, normalized);
-  return merged;
+  return applyAiCustomerEvidenceSafety(merged);
 }
 
 function withAiStatus(localResult, status) {

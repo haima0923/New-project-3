@@ -13,15 +13,21 @@ const KNOWN_PRODUCTS = [
   '五金挂件',
   '文具套装',
   '包装袋',
+  '手提袋',
+  '笔袋',
+  '纸袋',
   '收纳盒',
   '小夜灯',
   '饰品盒',
   '玩具车',
   '钥匙扣',
   '礼品盒',
+  '饭盒',
+  '发夹',
   '水杯',
   '杯垫',
   '杯子',
+  '勺子',
   '箱子',
   '扣子',
   '头绳',
@@ -117,7 +123,12 @@ function extractCustomerName(text) {
     const name = cleanCustomerName(oldPrefix[1]);
     if (name) return { value: name, source: 'rule:customer_old_prefix' };
   }
-  const direct = text.match(/(?:报价给|报给|发给|卖给|转给|给|帮|找|客户|那个|问|报)?([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
+  const directed = text.match(/(?:报价给|报给|发给|卖给|转给|给|帮|找)\s*([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
+  if (directed) {
+    const name = cleanCustomerName(directed[1]);
+    if (name) return { value: name, source: 'rule:customer_directed_title' };
+  }
+  const direct = text.match(/([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
   if (direct) {
     const name = cleanCustomerName(direct[1]);
     if (name) return { value: name, source: 'rule:customer_title' };
@@ -592,6 +603,12 @@ function cleanItemProductName(value, customerName = '') {
       .replace(new RegExp(`^${shortCustomer}`), '');
   }
 
+  const originalKnown = KNOWN_PRODUCTS
+    .slice()
+    .sort((left, right) => right.length - left.length)
+    .find((item) => cleaned.includes(item));
+  if (originalKnown) return originalKnown;
+
   const hadTrailingAction = /(?:那边|这边|说|问|要|订|定|定了|下单|先下|先做|做|补|发|出|拿)$/.test(cleaned);
   cleaned = cleaned
     .replace(/^(?:给|帮|找|问|报给|报价给|发给|卖给|转给|先问|再问|另外|还有|先下|先做|下单|下|做|要|订|定了|定|买|补|追加|发|出|拿|记一下|记下|客户|那个|这个|这边|那边)+/, '')
@@ -625,9 +642,10 @@ function cleanItemProductName(value, customerName = '') {
 function cleanCustomerCandidateName(value) {
   let name = cleanCustomerName(value);
   name = name
+    .replace(/^.*(?:报价给|报给|发给|卖给|转给|给|帮|找)/, '')
     .replace(/^(?:我|帮我|提醒我|请我)?(?:催|问|联系|找|提醒)/, '')
     .replace(/^(?:我|帮我|给我|请我|提醒我)/, '')
-    .replace(/(?:刚刚|刚|已经|已|又|还|定金|订金|货款|尾款|欠款|款)$/g, '')
+    .replace(/(?:刚刚|刚|已经|已|又|还|定金|订金|货款|尾款|欠款|款|下单|下|要|问|报|报价|订|定|做|收|付|转|打款)$/g, '')
     .trim();
   return cleanCustomerName(name);
 }
@@ -785,7 +803,9 @@ function extractCustomerNameCandidates(text) {
   return names
     .map((name) => String(name || '').trim())
     .filter(Boolean)
-    .filter((name) => !/^(先|再|另外|还有|都|客户|产品|这个|那个)$/.test(name))
+    .filter((name) => !/^(先|先付|已付|刚付|再|另外|还有|都|客户|产品|这个|那个|正式|确认|这单|那单|订单|单|到|个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台)$/.test(name))
+    .filter((name) => !/(?:这单|那单|订单|下单|定金|订金|尾款|货款|礼品|品盒)$/.test(name))
+    .filter((name) => !/(?:以前|之前|原来|过去|历史|老账|旧账|去年|上个月)$/.test(name))
     .filter((name) => !KNOWN_PRODUCTS.some((product) => name.includes(product) || product.includes(name)))
     .filter((name, index, array) => array.indexOf(name) === index);
 }
@@ -927,9 +947,11 @@ function scoreIntent(text, context) {
   const candidates = Object.keys(scores)
     .filter((key) => key !== 'unknown' && scores[key] > 0)
     .sort((left, right) => scores[right] - scores[left]);
+  const isDunning = scores.dunning > 0
+    && /(?:(?:催|要款|提醒).*?(?:款|货款|尾款|欠款|应收)|(?:款|货款|尾款|欠款|应收).*?(?:催|要款))/.test(text);
 
   return {
-    intent: candidates[0] || 'unknown',
+    intent: isDunning ? 'dunning' : (candidates[0] || 'unknown'),
     candidates: candidates.length ? candidates : ['unknown']
   };
 }
@@ -964,7 +986,7 @@ function buildMissingFields(intent, fields, operation = '') {
   const requiredByIntent = {
     quotation: ['customerName', 'productName', 'quantity', 'unitPrice'],
     order: ['customerName', 'productName', 'quantity', 'dueDate'],
-    receivable: ['customerName', 'amount', 'dueDate'],
+    receivable: ['customerName', 'amount'],
     payment: ['customerName', 'paymentAmount'],
     dunning: ['customerName'],
     todo: ['todoTitle', 'dueDate'],
@@ -978,7 +1000,16 @@ function buildMissingFields(intent, fields, operation = '') {
   if (['quotation', 'order'].includes(intent) && items.length) {
     if (items.some((item) => !item.productName) && !missing.includes('productName')) missing.push('productName');
     if (items.some((item) => !item.quantity) && !missing.includes('quantity')) missing.push('quantity');
+    const hasPriceInfo = fields.unitPrice
+      || fields.totalAmount
+      || fields.amount
+      || fields.depositAmount
+      || fields.paymentAmount
+      || items.every((item) => item.unitPrice || item.totalAmount || item.amount);
     if (intent === 'quotation' && items.some((item) => !item.unitPrice) && !missing.includes('unitPrice')) missing.push('unitPrice');
+    if (intent === 'order' && !hasPriceInfo && !fields.unitPrice && !fields.totalAmount && !fields.amount && !missing.includes('unitPrice')) missing.push('unitPrice');
+  } else if (intent === 'order' && !fields.unitPrice && !fields.totalAmount && !fields.amount && !missing.includes('unitPrice')) {
+    missing.push('unitPrice');
   }
   return missing;
 }
@@ -1072,7 +1103,10 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const multiProductNames = extractMultiProductNames(normalized);
   const hasMultiProductDraft = multiProductNames.length > 1 || itemDrafts.length > 1;
   const explicitQuotationSignal = hasExplicitQuotationSignal(normalized);
-  const intent = hasMultiProductDraft
+  const structuredIntent = structuredDraft && structuredDraft.intent;
+  const intent = structuredIntent
+    ? structuredIntent
+    : hasMultiProductDraft
     ? (scoredIntent.intent === 'quotation' || explicitQuotationSignal ? 'quotation' : 'order')
     : ((structuredDraft && structuredDraft.intent) || scoredIntent.intent);
   const quantity = extractQuantity(normalized);
@@ -1094,11 +1128,11 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const receivableAmount = explicitAmount.value || (intent === 'receivable' ? remainingAmount.value : '');
   const explicitAmountIsDeposit = hasDepositSignal && depositAmount.value && explicitAmount.value === depositAmount.value;
   const amount = itemTotalAmount || computedAmount || (intent === 'payment' ? '' : (explicitAmountIsDeposit ? '' : receivableAmount));
-  const productName = ['quotation', 'order', 'todo'].includes(intent)
+  const productName = ['quotation', 'order', 'todo', 'dunning'].includes(intent)
     ? ((singleItemDraft && singleItemDraft.productName) || (hasMultiProductDraft ? multiProductNames.join('、') : ((structuredDraft && structuredDraft.productName) || product.value)))
     : '';
   const date = parseChineseDate((structuredDraft && structuredDraft.dueText) || normalized);
-  const todoTitle = intent === 'todo' ? extractTodoTitle(normalized, {
+  const todoTitle = ['todo', 'dunning'].includes(intent) ? extractTodoTitle(normalized, {
     customerName,
     productName
   }) : { value: '', source: '' };

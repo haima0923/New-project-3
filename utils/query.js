@@ -1,4 +1,10 @@
-const { decorateRecords, getDashboard, getOrderDepositAmount, getOrderRemainingSettlement } = require('./business');
+const {
+  decorateRecords,
+  getDashboard,
+  getItemsSummary,
+  getOrderDepositAmount,
+  getOrderRemainingSettlement
+} = require('./business');
 const { diffDays, endOfMonth, today } = require('./date');
 
 function includesName(customer, keyword) {
@@ -39,7 +45,7 @@ function getActiveOrders(state) {
 function getOrderMoneyLine(state, item) {
   const deposit = getOrderDepositAmount(state, item.id);
   const remaining = getOrderRemainingSettlement(state, item);
-  return `${item.customerDisplay}：${item.productName || '未填产品'}，订单${toMoneyText(item.totalAmount)}元，已收定金${toMoneyText(deposit)}元，待收尾款${toMoneyText(remaining)}元，状态 ${item.status}`;
+  return `${item.customerDisplay}：${getItemsSummary(item) || item.productName || '未填产品'}，订单${toMoneyText(item.totalAmount)}元，已收定金${toMoneyText(deposit)}元，待收尾款${toMoneyText(remaining)}元，状态 ${item.status}`;
 }
 
 function answerQuery(text, state) {
@@ -110,7 +116,7 @@ function answerQuery(text, state) {
     return {
       title: `${customer.name} 上次报价`,
       lines: [
-        `${quotation.productName || '未填产品'}，数量 ${quotation.quantity || '-'}${quotation.unit || ''}`,
+        `${getItemsSummary(quotation) || quotation.productName || '未填产品'}，数量 ${quotation.quantity || '-'}${quotation.unit || ''}`,
         `单价 ${quotation.unitPrice || '-'}，总价 ${quotation.totalAmount || '-'}`,
         `报价日期 ${quotation.quoteDate || '-'}，状态 ${quotation.status}`
       ]
@@ -157,7 +163,7 @@ function answerQuery(text, state) {
         const deposit = getOrderDepositAmount(state, item.id);
         const remaining = getOrderRemainingSettlement(state, item);
         const money = deposit > 0 ? `，已收定金${toMoneyText(deposit)}元，待收尾款${toMoneyText(remaining)}元` : '';
-        return `${item.productName || '未填产品'}，${item.quantity || '-'}${item.unit || ''}，${item.requiredDeliveryDate || '-'} 交，状态 ${item.status}${money}`;
+        return `${getItemsSummary(item) || item.productName || '未填产品'}，${item.quantity || '-'}${item.unit || ''}，${item.requiredDeliveryDate || '-'} 交，状态 ${item.status}${money}`;
       })
     };
   }
@@ -202,7 +208,7 @@ function answerQuery(text, state) {
     return {
       title: '待跟进报价',
       lines: quotations.length
-        ? quotations.slice(0, 8).map((item) => `${item.customerDisplay}：${item.productName}，报价 ${item.totalAmount || '-'}元，跟进 ${item.deliveryDate || '-'}`)
+        ? quotations.slice(0, 8).map((item) => `${item.customerDisplay}：${getItemsSummary(item) || item.productName || '未填产品'}，报价 ${item.totalAmount || '-'}元，跟进 ${item.deliveryDate || '-'}`)
         : ['暂时没有到跟进时间的报价。']
     };
   }
@@ -214,7 +220,7 @@ function answerQuery(text, state) {
     return {
       title: '近期要交的货',
       lines: orders.length
-        ? orders.slice(0, 8).map((item) => `${item.customerDisplay}：${item.productName}，${item.requiredDeliveryDate} 交，状态 ${item.status}`)
+        ? orders.slice(0, 8).map((item) => `${item.customerDisplay}：${getItemsSummary(item) || item.productName || '未填产品'}，${item.requiredDeliveryDate} 交，状态 ${item.status}`)
         : ['最近 7 天没有临近交期订单。']
     };
   }
