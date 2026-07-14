@@ -111,6 +111,7 @@
       </view>
       <view wx:if="{{warningText}}" class="confirm-warning">{{warningText}}</view>
       <view class="button-row">
+        <button wx:if="{{showContinueInput}}" class="secondary-button" bindtap="continueInput">到完整记一笔确认</button>
         <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePendingFromConfirm">待处理</button>
         <button class="primary-button" disabled="{{disableQuickSave}}" bindtap="confirmQuickSave">{{quickSaveText}}</button>
       </view>

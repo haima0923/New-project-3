@@ -13,7 +13,9 @@ const CUSTOMER_BAD_PREFIX = /^(?:报给|报价给|发给|卖给|转给|给|帮|�
 const CUSTOMER_BAD_INSIDE = /(?:报给|报价|报架|下单|订单|货款|欠款|尾款|定金|订金|预付|单价|价格|数量|产品|客户说|说要|说下|问价|问下)/;
 const CUSTOMER_GENERIC = /^(?:客户|老客户|这个客户|那个客户|今天|明天|后天|刚才|刚刚|义乌|那笔|上一笔|这单|那单)$/;
 const PRODUCT_PRICE_LIKE = /^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬]+)\s*(?:块|元|毛|角|分|钱)/;
-const PRODUCT_BAD_PATTERN = /(?:价格|单价|报价|报架|多少钱|贵了|便宜|上次|上回|之前|原价|老价|照旧|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|尽快|月底|月末|明天|后天|下周|交期|到期)/;
+const PRODUCT_BAD_PATTERN = /(?:价格|单价|报价|报架|多少钱|贵了|便宜|上次|上回|之前|原价|老价|照旧|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|尽快|月底|月末|明天|后天|明早|本周|下周|上周|周[一二三四五六日天]|星期[一二三四五六日天]|交期|到期|交$)/;
+const OPTIONAL_CONFIRM_FIELDS = ['phone'];
+const FINAL_RECHECK_CLEARABLE_LOW_FIELDS = ['customerName', 'productName', 'quantity', 'unitPrice', 'dueDate'];
 const SEMANTIC_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回)/i;
 
 function compact(value) {
@@ -100,9 +102,7 @@ function validateItems(fields, issues) {
       }
     }
 
-    if (!hasFieldValue(item, 'quantity')) {
-      addIssue(issues, 'quantity', `${label}缺少数量`, 'missing');
-    } else {
+    if (hasFieldValue(item, 'quantity')) {
       const quantity = Number(item.quantity);
       if (!Number.isFinite(quantity) || quantity <= 0) {
         addIssue(issues, 'quantity', `${label}数量“${item.quantity}”不是有效正数`);
@@ -164,7 +164,9 @@ function buildReasonText(issue) {
 function evaluateLocalParseSafety(result, options = {}) {
   const fields = result.fields || {};
   const source = options.source || result.source || 'typed';
-  const sourceText = options.normalizedText || result.original_text || '';
+  const sourceText = Object.prototype.hasOwnProperty.call(options, 'normalizedText')
+    ? options.normalizedText
+    : (result.original_text || '');
   const issues = [];
   const missingFields = uniqueStrings(result.missing_fields || []);
   const lowFields = uniqueStrings(result.low_confidence_fields || []);
@@ -183,16 +185,12 @@ function evaluateLocalParseSafety(result, options = {}) {
 
   const items = getItems(fields);
   const hasProductItem = items.some((item) => hasFieldValue(item, 'productName'));
-  const hasQuantityItem = items.some((item) => hasFieldValue(item, 'quantity'));
 
   if (CUSTOMER_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'customerName')) {
     addIssue(issues, 'customerName', '缺少客户称呼', 'missing');
   }
   if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'productName') && !hasProductItem) {
     addIssue(issues, 'productName', '缺少产品/规格', 'missing');
-  }
-  if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'quantity') && !hasQuantityItem) {
-    addIssue(issues, 'quantity', '缺少数量', 'missing');
   }
   if (AMOUNT_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'amount')) {
     addIssue(issues, 'amount', '缺少应收金额', 'missing');
@@ -267,11 +265,100 @@ function applyLocalParseSafety(result, options = {}) {
   return next;
 }
 
+function getFinalFieldSafety(result) {
+  const manualFields = result.manual_fields || [];
+  const shouldVerifyCustomerAgainstOriginal = !manualFields.includes('customerName');
+  return evaluateLocalParseSafety(Object.assign({}, result, {
+    missing_fields: [],
+    low_confidence_fields: []
+  }), {
+    source: 'typed',
+    normalizedText: shouldVerifyCustomerAgainstOriginal ? (result.original_text || '') : ''
+  });
+}
+
+function isStaleCustomerConflictValue(value, currentCustomerName) {
+  const valueText = compact(value);
+  const current = compact(currentCustomerName);
+  if (!valueText) return true;
+  if (current && valueText === current) return true;
+  if (/^(?:就这样|可以|好的|行|嗯|客户|今天|明天|后天|元|个|套|块|钱)$/.test(valueText)) return true;
+  if (/^(?:礼品盒|饭盒|包装袋|手提袋|笔袋|纸袋|收纳盒|饰品盒|钥匙扣|卡通杯|水杯|杯垫|杯子|拖鞋|发夹|勺子|玩具车|挂件|贴纸|头绳|箱子|扣子|饰品|玩具|文具|日用品|家电)$/.test(valueText)) {
+    return true;
+  }
+  if (!/(?:总|老板|经理|姐|哥|先生|女士)$/.test(valueText) && /(?:盒|杯|袋|鞋|扣|车|夹|垫|绳|纸|勺|笔)$/.test(valueText)) {
+    return true;
+  }
+  if (current && valueText.includes(current) && /(?:今天|明天|后天|刚|已经|已|付|付款|转|打款|到账|下单|说|问|确认|可以|这样)$/.test(valueText)) {
+    return true;
+  }
+  return false;
+}
+
+function filterFinalFieldConflicts(conflicts, fields, finalMissing, finalLow) {
+  return (conflicts || []).filter((conflict) => {
+    if (!conflict || conflict.field !== 'customerName') return true;
+    if (finalMissing.includes('customerName') || finalLow.includes('customerName')) return true;
+    if (!hasFieldValue(fields, 'customerName')) return true;
+    const values = Array.isArray(conflict.values) ? conflict.values : [];
+    if (!values.length) return true;
+    return !values.every((value) => isStaleCustomerConflictValue(value, fields.customerName));
+  });
+}
+
+function applyFinalParseSafety(result) {
+  let fields = Object.assign({}, result.fields || {});
+  const manualFields = uniqueStrings(result.manual_fields || []);
+  let safety = getFinalFieldSafety(Object.assign({}, result, { fields }));
+  const invalidFields = (((safety.field_validations || {}).invalid_fields) || []);
+  if (invalidFields.includes('customerName')) {
+    delete fields.customerName;
+    delete fields.customerId;
+    delete fields.receivableId;
+    delete fields.orderId;
+  }
+  if (invalidFields.includes('productName')) {
+    delete fields.productName;
+    delete fields.orderId;
+  }
+  if (fields !== result.fields) {
+    safety = getFinalFieldSafety(Object.assign({}, result, { fields }));
+  }
+  const finalMissing = uniqueStrings(safety.missing_fields || []);
+  const conflictFields = uniqueStrings(((safety.field_validations || {}).conflict_fields) || []);
+  const rawFinalLow = uniqueStrings(safety.low_confidence_fields || []);
+  const nonConflictFinalLow = rawFinalLow.filter((field) => !conflictFields.includes(field));
+  const fieldConflicts = filterFinalFieldConflicts(result.field_conflicts || [], fields, finalMissing, nonConflictFinalLow)
+    .filter((conflict) => !manualFields.includes(conflict && conflict.field));
+  const keptConflictFields = uniqueStrings(fieldConflicts.map((conflict) => conflict && conflict.field));
+  const finalLow = rawFinalLow
+    .filter((field) => !conflictFields.includes(field) || keptConflictFields.includes(field))
+    .filter((field) => !manualFields.includes(field));
+  const missingFields = uniqueStrings([]
+    .concat(result.missing_fields || [])
+    .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
+    .concat(finalMissing.filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))));
+  const lowConfidenceFields = uniqueStrings([]
+    .concat(result.low_confidence_fields || [])
+    .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
+    .filter((field) => !(FINAL_RECHECK_CLEARABLE_LOW_FIELDS.includes(field) && !finalLow.includes(field)))
+    .concat(finalLow.filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))));
+
+  return Object.assign({}, result, {
+    fields,
+    missing_fields: missingFields,
+    low_confidence_fields: lowConfidenceFields,
+    field_conflicts: fieldConflicts,
+    final_parse_safety: safety
+  });
+}
+
 module.exports = {
   NEEDS_AI,
   NEEDS_USER_CONFIRM,
   NO_RECORD,
   SAFE_LOCAL,
+  applyFinalParseSafety,
   applyLocalParseSafety,
   evaluateLocalParseSafety
 };

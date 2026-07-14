@@ -15,25 +15,46 @@ function isTimeLine(line) {
   return /^\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}$/.test(String(line || '').trim());
 }
 
+function parseInlineChatHeader(line) {
+  const source = normalizeBusinessText(line).trim();
+  if (!source || isTimeLine(source)) return null;
+  const match = source.match(/^(.{1,24}?)\s+((?:\d{4}年\d{1,2}月\d{1,2}日\s+)?\d{1,2}:\d{2})$/);
+  if (!match) return null;
+  const speaker = match[1].trim();
+  if (!speaker || /[，。！？；,.!?;:：]/.test(speaker)) return null;
+  return {
+    speaker,
+    time: match[2].trim()
+  };
+}
+
+function isChatHeaderLine(line) {
+  return isTimeLine(line) || Boolean(parseInlineChatHeader(line));
+}
+
 function countTimelineRows(text) {
   return normalizeClipboardText(text)
     .split('\n')
-    .filter(isTimeLine)
+    .filter(isChatHeaderLine)
     .length;
 }
 
 function isTrivialLine(line) {
   const source = String(line || '').trim();
   if (!source) return true;
-  if (isTimeLine(source)) return true;
+  if (isChatHeaderLine(source)) return true;
   return /^(好|好的|嗯|哦|OK|ok|收到|谢谢|再试试|好用了|震动吗|有波纹吗|没感觉|就是长按可以|不长按也可以|右上滑跳转了吗|左上滑|右上滑|跳转了吗|测试|试一下)$/.test(source);
 }
 
 const PRODUCT_WORDS = [
   '卡通水杯',
+  '卡通杯',
   '老款杯垫',
   '五金挂件',
   '文具套装',
+  '手提袋',
+  '笔袋',
+  '纸袋',
   '包装袋',
   '收纳盒',
   '小夜灯',
@@ -41,9 +62,13 @@ const PRODUCT_WORDS = [
   '玩具车',
   '钥匙扣',
   '礼品盒',
+  '饭盒',
   '水杯',
   '杯垫',
   '杯子',
+  '拖鞋',
+  '发夹',
+  '勺子',
   '箱包',
   '箱子',
   '扣子',
@@ -339,32 +364,51 @@ function getPreviousNonEmptyIndex(lines, startIndex) {
 function parseWechatMessages(rawText) {
   const raw = normalizeClipboardText(rawText);
   const lines = raw.split('\n');
-  const timeIndexes = [];
+  const headers = [];
   lines.forEach((line, index) => {
-    if (isTimeLine(line)) timeIndexes.push(index);
+    const inlineHeader = parseInlineChatHeader(line);
+    if (inlineHeader) {
+      headers.push({
+        index,
+        speakerLineIndex: -1,
+        contentStart: index + 1,
+        speaker: inlineHeader.speaker,
+        time: inlineHeader.time
+      });
+    } else if (isTimeLine(line)) {
+      const speakerIndex = getPreviousNonEmptyIndex(lines, index - 1);
+      headers.push({
+        index,
+        speakerLineIndex: speakerIndex,
+        contentStart: index + 1,
+        speaker: speakerIndex >= 0 ? lines[speakerIndex].trim() : '',
+        time: line.trim()
+      });
+    }
   });
 
-  if (!timeIndexes.length) {
+  if (!headers.length) {
     return lines
       .map((line, index) => ({ speaker: '', time: '', content: line.trim(), index }))
       .filter((item) => item.content);
   }
 
-  return timeIndexes.map((timeIndex, index) => {
-    const speakerIndex = getPreviousNonEmptyIndex(lines, timeIndex - 1);
-    const nextTimeIndex = timeIndexes[index + 1] === undefined ? lines.length : timeIndexes[index + 1];
-    const nextSpeakerIndex = index + 1 < timeIndexes.length
-      ? getPreviousNonEmptyIndex(lines, nextTimeIndex - 1)
+  return headers.map((header, index) => {
+    const nextHeader = headers[index + 1];
+    const nextSpeakerIndex = nextHeader && nextHeader.speakerLineIndex > header.index
+      ? nextHeader.speakerLineIndex
       : -1;
-    const contentEnd = nextSpeakerIndex > timeIndex ? nextSpeakerIndex : nextTimeIndex;
+    const contentEnd = nextHeader
+      ? (nextSpeakerIndex >= 0 ? nextSpeakerIndex : nextHeader.index)
+      : lines.length;
     const content = lines
-      .slice(timeIndex + 1, contentEnd)
+      .slice(header.contentStart, contentEnd)
       .map((line) => line.trim())
       .filter(Boolean)
       .join('\n');
     return {
-      speaker: speakerIndex >= 0 ? lines[speakerIndex].trim() : '',
-      time: lines[timeIndex].trim(),
+      speaker: header.speaker,
+      time: header.time,
       content,
       index
     };
@@ -451,9 +495,17 @@ function buildStructuredDraft(context, score, selectedMessages) {
   const price = parsePriceSignal(context.price);
   const intent = inferDraftIntent(context);
   const customerName = cleanSpeakerName(context.customer);
+  const productName = context.product || '';
+  const item = {
+    productName,
+    quantity: quantity.quantity,
+    unit: quantity.unit || price.priceUnit || '',
+    unitPrice: price.unitPrice,
+    itemDeliveryDate: context.due || ''
+  };
   const filledCount = [
     customerName,
-    context.product,
+    productName,
     quantity.quantity,
     quantity.unit,
     price.unitPrice,
@@ -465,11 +517,12 @@ function buildStructuredDraft(context, score, selectedMessages) {
     intent,
     customerName,
     customerNameFromChat: customerName,
-    productName: context.product || '',
+    productName,
     quantity: quantity.quantity,
     unit: quantity.unit || price.priceUnit || '',
     unitPrice: price.unitPrice,
     dueText: context.due || '',
+    items: productName ? [item] : [],
     extractionConfidence: toCleanNumber(extractionConfidence),
     extractionReason: selectedMessages.map((item) => item.content).filter(Boolean).join(' / ')
   };

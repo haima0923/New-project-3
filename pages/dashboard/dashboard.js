@@ -3,6 +3,7 @@ const { INPUT_SOURCE_LABELS, INTENT_LABELS } = require('../../utils/constants');
 const { parseHybridInput } = require('../../utils/ai-parser');
 const { buildRecentRecords, buildTodayTasks } = require('../../utils/home-workbench');
 const { requestOrderFilterReset, setNextOrderFilter, setNextRecordFilter } = require('../../utils/navigation-state');
+const { applyFinalParseSafety } = require('../../utils/parse-safety');
 const { getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
 const { getFieldLabel, isVisibleField } = require('../../utils/display');
@@ -38,38 +39,127 @@ const editableFieldsByIntent = {
   order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'amount', 'depositAmount', 'paymentAmount', 'dueDate', 'remark'],
   receivable: ['customerName', 'amount', 'dueDate', 'remark'],
   payment: ['customerName', 'paymentAmount', 'depositAmount', 'remainingAmount', 'amount', 'dueDate', 'remark'],
+  dunning: ['todoTitle', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'amount', 'dueDate', 'remark'],
   todo: ['todoTitle', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'amount', 'dueDate', 'remark'],
   unknown: ['remark']
 };
 
 const requiredFieldsByIntent = {
   quotation: ['customerName', 'productName'],
-  order: ['customerName', 'productName', 'dueDate'],
-  receivable: ['customerName', 'amount', 'dueDate'],
-  payment: ['customerName', 'paymentAmount', 'receivableId'],
+  order: ['customerName', 'productName'],
+  receivable: ['customerName', 'amount'],
+  payment: ['customerName', 'paymentAmount'],
+  dunning: ['customerName', 'dueDate'],
   todo: ['todoTitle', 'dueDate']
 };
 
 const requiredFieldsByOperation = {
   create_quotation: ['customerName', 'productName'],
-  create_order: ['customerName', 'productName', 'dueDate'],
-  create_receivable: ['customerName', 'amount', 'dueDate'],
-  create_receivable_with_payment: ['customerName', 'amount', 'paymentAmount', 'dueDate'],
-  record_payment: ['customerName', 'paymentAmount', 'receivableId'],
-  record_order_deposit: ['customerName', 'paymentAmount', 'orderId'],
+  create_order: ['customerName', 'productName'],
+  create_receivable: ['customerName', 'amount'],
+  create_receivable_with_payment: ['customerName', 'amount', 'paymentAmount'],
+  record_payment: ['customerName', 'paymentAmount'],
+  record_order_deposit: ['customerName', 'paymentAmount'],
   create_todo: ['todoTitle', 'dueDate']
 };
 
 const digitFields = ['quantity', 'unitPrice', 'amount', 'depositAmount', 'paymentAmount', 'remainingAmount'];
 const dateFields = ['dueDate'];
 const VOICE_HOLD_DELAY_MS = 260;
+const resolvedAiFallbackStatuses = ['used'];
+const activeReceivableStatuses = ['待收', '部分收款'];
+const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
 
 function uniqueFields(fields) {
   return (fields || []).filter((field, index, array) => field && array.indexOf(field) === index);
 }
 
+function markManualField(parseResult, field) {
+  return Object.assign({}, parseResult, {
+    manual_fields: uniqueFields([].concat(parseResult.manual_fields || [], field))
+  });
+}
+
 function hasFieldValue(fields, field) {
   return fields && fields[field] !== undefined && fields[field] !== null && fields[field] !== '';
+}
+
+function toMoney(value) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return 0;
+  return Number(number.toFixed(2));
+}
+
+function getReceivableRemaining(receivable = {}) {
+  return Math.max(0, toMoney(receivable.amount) - toMoney(receivable.paidAmount));
+}
+
+function includesCustomerName(customer, keyword) {
+  if (!customer || !keyword) return false;
+  const customerName = String(customer.name || '');
+  const source = String(keyword || '');
+  return customerName.includes(source)
+    || source.includes(customerName)
+    || source.includes(customerName.replace(/总$/, ''));
+}
+
+function findQuickCustomer(state, fields = {}) {
+  const customers = state.customers || [];
+  if (fields.customerId) {
+    const byId = customers.find((customer) => customer.id === fields.customerId);
+    if (byId && (!fields.customerName || includesCustomerName(byId, fields.customerName))) return byId;
+  }
+  if (!fields.customerName) return null;
+  return customers.find((customer) => includesCustomerName(customer, fields.customerName)) || null;
+}
+
+function hydrateQuickPaymentResult(parseResult) {
+  if (!parseResult || parseResult.intent !== 'payment') return parseResult;
+  const state = getState();
+  const fields = Object.assign({}, parseResult.fields || {});
+  if (!hasFieldValue(fields, 'paymentAmount') && hasFieldValue(fields, 'amount')) {
+    fields.paymentAmount = fields.amount;
+  }
+  const customer = findQuickCustomer(state, fields);
+  if (!customer) return Object.assign({}, parseResult, { fields });
+  fields.customerId = customer.id;
+  const sourceText = `${parseResult.original_text || ''}\n${fields.remark || ''}`;
+  const isDepositPayment = fields.paymentKind === 'deposit'
+    || hasFieldValue(fields, 'depositAmount')
+    || /定金|订金|预付/.test(sourceText);
+  if (isDepositPayment) {
+    if (!hasFieldValue(fields, 'depositAmount') && hasFieldValue(fields, 'paymentAmount')) fields.depositAmount = fields.paymentAmount;
+    if (!hasFieldValue(fields, 'paymentAmount') && hasFieldValue(fields, 'depositAmount')) fields.paymentAmount = fields.depositAmount;
+    fields.paymentKind = 'deposit';
+    const orders = (state.orders || [])
+      .filter((item) => item.customerId === customer.id && activeOrderStatuses.includes(item.status || ''))
+      .filter((item) => {
+        if (!fields.productName && !sourceText) return true;
+        const product = String(item.productName || '');
+        return !product || String(fields.productName || '').includes(product) || sourceText.includes(product);
+      });
+    if (!fields.orderId && orders.length === 1) {
+      fields.orderId = orders[0].id;
+    }
+    return Object.assign({}, parseResult, {
+      operation: 'record_order_deposit',
+      fields
+    });
+  }
+  const receivables = (state.receivables || [])
+    .filter((item) => item.customerId === customer.id && activeReceivableStatuses.includes(item.status));
+  const low = uniqueFields(parseResult.low_confidence_fields || []);
+  if (!fields.receivableId && receivables.length === 1) {
+    fields.receivableId = receivables[0].id;
+  }
+  const selected = receivables.find((item) => item.id === fields.receivableId);
+  if (selected && toMoney(fields.paymentAmount) > getReceivableRemaining(selected)) {
+    low.push('paymentAmount');
+  }
+  return Object.assign({}, parseResult, {
+    fields,
+    low_confidence_fields: uniqueFields(low)
+  });
 }
 
 function sortEditableFields(fields) {
@@ -95,17 +185,29 @@ function getEditableFields(parseResult) {
 }
 
 function normalizeEditableParseResult(parseResult) {
-  const fields = parseResult.fields || {};
-  const requiredFields = requiredFieldsByOperation[parseResult.operation] || requiredFieldsByIntent[parseResult.intent] || [];
-  const missingFields = uniqueFields([]
-    .concat(parseResult.missing_fields || [])
-    .concat(requiredFields))
-    .filter((field) => (isVisibleField(field) ? !hasFieldValue(fields, field) : true));
-  return Object.assign({}, parseResult, {
+  parseResult = hydrateQuickPaymentResult(parseResult);
+  let fields = parseResult.fields || {};
+  if (parseResult.intent === 'dunning') {
+    fields = Object.assign({}, fields, {
+      todoType: 'dunning',
+      todoTitle: fields.todoTitle || (fields.customerName ? `催${fields.customerName}款` : '')
+    });
+    parseResult = Object.assign({}, parseResult, {
+      operation: 'create_todo',
+      fields
+    });
+  }
+  const requiredFields = parseResult.intent === 'dunning'
+    ? (requiredFieldsByIntent.dunning || [])
+    : (requiredFieldsByOperation[parseResult.operation] || requiredFieldsByIntent[parseResult.intent] || []);
+  const missingFields = uniqueFields(requiredFields)
+    .filter((field) => !hasFieldValue(fields, field))
+    .filter((field) => isVisibleField(field) || requiredFields.includes(field));
+  return applyFinalParseSafety(Object.assign({}, parseResult, {
     fields,
     missing_fields: missingFields,
     low_confidence_fields: uniqueFields(parseResult.low_confidence_fields || [])
-  });
+  }));
 }
 
 function buildConfirmFields(parseResult) {
@@ -133,17 +235,40 @@ function buildWarningText(parseResult) {
   const missing = parseResult && Array.isArray(parseResult.missing_fields) ? parseResult.missing_fields : [];
   const low = parseResult && Array.isArray(parseResult.low_confidence_fields) ? parseResult.low_confidence_fields : [];
   const conflicts = parseResult && Array.isArray(parseResult.field_conflicts) ? parseResult.field_conflicts : [];
+  const safetyBlockText = getQuickSaveSafetyBlockText(parseResult);
+  if (safetyBlockText) return safetyBlockText;
   if (conflicts.length) return '聊天里有互相覆盖或冲突的信息，请先确认最终字段。';
   if (!missing.length && !low.length) return '';
   if (missing.length) return '有信息还没补齐，可以先补字段，也可以点“待处理”。';
   return '有信息不太确定，请改一下字段后再保存。';
 }
 
+function getQuickSaveSafetyBlockText(parseResult = {}) {
+  const safety = parseResult.local_parse_safety || {};
+  const aiFallback = parseResult.ai_fallback || {};
+  const aiStatus = aiFallback.status || 'not_requested';
+  const hasFinalFieldIssue = Boolean(
+    (parseResult.missing_fields || []).length
+    || (parseResult.low_confidence_fields || []).length
+    || (parseResult.field_conflicts || []).length
+  );
+  const sourceNeedsAiResult = ['paste', 'voice'].includes(parseResult.source);
+  if (safety.status === 'NEEDS_AI' && !resolvedAiFallbackStatuses.includes(aiStatus)) {
+    if (!sourceNeedsAiResult && !hasFinalFieldIssue) return '';
+    if (aiStatus === 'failed') return 'AI 解析暂不可用，这条先点“待处理”更安全。';
+    if (aiStatus === 'skipped_no_endpoint') return '这条需要 AI 判断，当前没有可用 AI 结果，先点“待处理”。';
+    return '这条需要 AI 或人工重点核对，先点“待处理”。';
+  }
+  if (safety.status === 'NO_RECORD') return '没有识别到可直接保存的业务记录。';
+  return '';
+}
+
 function canQuickSave(parseResult) {
   if (!parseResult || parseResult.intent === 'unknown') return false;
   return !(parseResult.missing_fields || []).length
     && !(parseResult.low_confidence_fields || []).length
-    && !(parseResult.field_conflicts || []).length;
+    && !(parseResult.field_conflicts || []).length
+    && !getQuickSaveSafetyBlockText(parseResult);
 }
 
 function getMetaText(item) {
@@ -180,9 +305,18 @@ function formatRemarkItems(items) {
   return (items || []).map(getMetaText).filter(Boolean);
 }
 
+function needsFullInputConfirmation(parseResult = {}) {
+  const fields = parseResult.fields || {};
+  return ['quotation', 'order'].includes(parseResult.intent)
+    && Array.isArray(fields.items)
+    && fields.items.filter((item) => item && typeof item === 'object').length > 1;
+}
+
 function buildHomeConfirmState(parseResult) {
   const normalized = normalizeEditableParseResult(parseResult);
-  const quickReady = canQuickSave(normalized);
+  const needsFullInput = needsFullInputConfirmation(normalized);
+  const quickReady = canQuickSave(normalized) && !needsFullInput;
+  const safetyBlockText = getQuickSaveSafetyBlockText(normalized);
   const fieldConflictLines = formatFieldConflicts(normalized.field_conflicts || []);
   const supersededFactLines = formatSupersededFacts(normalized.superseded_facts || []);
   const remarkItemLines = formatRemarkItems(normalized.remark_items || []);
@@ -191,7 +325,7 @@ function buildHomeConfirmState(parseResult) {
     confirmFields: buildConfirmFields(normalized),
     intentLabel: INTENT_LABELS[normalized.intent] || '待确认',
     sourceLabel: INPUT_SOURCE_LABELS[normalized.source] || '输入',
-    warningText: buildWarningText(normalized),
+    warningText: needsFullInput ? '这笔包含多件商品，请到完整“记一笔”逐项确认，首页不会只保存第一件。' : buildWarningText(normalized),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
     supersededFactLines,
@@ -200,7 +334,8 @@ function buildHomeConfirmState(parseResult) {
     showRemarkItems: Boolean(remarkItemLines.length),
     quickSaveText: quickReady ? '确认保存' : '补齐后保存',
     disableQuickSave: !quickReady,
-    showPendingButton: Boolean((normalized.missing_fields || []).length || (normalized.low_confidence_fields || []).length || fieldConflictLines.length)
+    showPendingButton: Boolean(needsFullInput || safetyBlockText || (normalized.missing_fields || []).length || (normalized.low_confidence_fields || []).length || fieldConflictLines.length),
+    showContinueInput: needsFullInput
   };
 }
 
@@ -249,7 +384,8 @@ Page({
     showRemarkItems: false,
     quickSaveText: '确认保存',
     disableQuickSave: false,
-    showPendingButton: false
+    showPendingButton: false,
+    showContinueInput: false
   },
 
   onShow() {
@@ -585,7 +721,7 @@ Page({
       delete nextFields.customerId;
       delete nextFields.receivableId;
     }
-    const nextResult = Object.assign({}, this.data.parseResult, {
+    const nextResult = Object.assign({}, markManualField(this.data.parseResult, field), {
       fields: nextFields,
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || []).filter((item) => item !== field),
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || []).filter((item) => item !== field)
@@ -599,7 +735,7 @@ Page({
     const nextFields = Object.assign({}, this.data.parseResult.fields, {
       [field]: event.detail.value
     });
-    const nextResult = Object.assign({}, this.data.parseResult, {
+    const nextResult = Object.assign({}, markManualField(this.data.parseResult, field), {
       fields: nextFields,
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || []).filter((item) => item !== field),
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || []).filter((item) => item !== field)
@@ -635,7 +771,8 @@ Page({
       showRemarkItems: false,
       quickSaveText: '确认保存',
       disableQuickSave: false,
-      showPendingButton: false
+      showPendingButton: false,
+      showContinueInput: false
     });
     this.load();
   },
@@ -660,7 +797,8 @@ Page({
       showRemarkItems: false,
       quickSaveText: '确认保存',
       disableQuickSave: false,
-      showPendingButton: false
+      showPendingButton: false,
+      showContinueInput: false
     });
     this.load();
   },

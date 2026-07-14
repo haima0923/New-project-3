@@ -345,6 +345,9 @@ function runParseTests() {
     { text: '张总要一千个杯子五块五月底交', intent: 'order', customer: '张总', product: '杯子', quantity: 1000, unitPrice: 5.5, amount: 5500, dueDateRequired: true },
     { text: '赵总要订二千个挂件，一块五，礼拜五出', intent: 'order', customer: '赵总', product: '挂件', quantity: 2000, unitPrice: 1.5, amount: 3000, dueDateRequired: true },
     { text: '钱总报架，水杯500个，6块一个', intent: 'quotation', customer: '钱总', product: '水杯', quantity: 500, unitPrice: 6, amount: 3000 },
+    { text: '给钱总报收纳盒1200个，1.2元一个', intent: 'quotation', customer: '钱总', product: '收纳盒', quantity: 1200, unitPrice: 1.2, amount: 1440 },
+    { text: '收纳盒1200个报给钱总，单价1.2元', intent: 'quotation', customer: '钱总', product: '收纳盒', quantity: 1200, unitPrice: 1.2, amount: 1440 },
+    { text: '钱总问收纳盒1200个多少钱，报1.2元一个', intent: 'quotation', customer: '钱总', product: '收纳盒', quantity: 1200, unitPrice: 1.2, amount: 1440 },
     { text: '孙总欠款一玩五，月底节', intent: 'receivable', customer: '孙总', amountBlank: true, dueDateRequired: true, missingIncludes: ['amount'] },
     { text: '吴总定了3000个扣子，三毛五，周六拿', intent: 'order', customer: '吴总', product: '扣子', quantity: 3000, unitPrice: 0.35, amount: 1050, dueDateRequired: true },
     { text: '郑总说按上次那个价格，先做500个', intent: 'order', customer: '郑总', quantity: 500, unitPriceBlank: true, lowIncludes: ['unitPrice'], missingIncludes: ['productName', 'dueDate'] }
@@ -625,7 +628,25 @@ function runQueryTests() {
     { question: '有没有待整理的记录？', includes: ['有 1 条待整理记录', '孙总欠款一玩五'] }
   ];
   cases.forEach((item, index) => runQueryCase(state, item, index));
-  console.log(`问一句核心样例通过：${cases.length} 条`);
+  state.orders.push({
+    id: 'ord_wang_multi',
+    customerId: 'cus_wang',
+    productName: '礼品盒',
+    quantity: '500',
+    unit: '套',
+    totalAmount: '4364.6',
+    items: [
+      { productName: '礼品盒', quantity: '500', unit: '套', unitPrice: '3.8', totalAmount: '1900' },
+      { productName: '饭盒', quantity: '300', unit: '个', unitPrice: '8.2', totalAmount: '2460' }
+    ],
+    requiredDeliveryDate: addDays(today(), 3),
+    status: '待生产'
+  });
+  const multiOrderAnswer = answerQuery('王总的订单现在怎么样？', state);
+  const multiOrderText = `${multiOrderAnswer.title}\n${multiOrderAnswer.lines.join('\n')}`;
+  assertIncludes(multiOrderText, '礼品盒', 'multi-item order query should include the first item');
+  assertIncludes(multiOrderText, '饭盒', 'multi-item order query should include every saved item');
+  console.log(`问一句核心样例通过：${cases.length + 2} 条`);
 }
 
 function buildRequestForTest(text, state) {
@@ -741,6 +762,88 @@ function runTodoSaveTests() {
   const dashboardAfterComplete = getDashboard(state);
   assert(dashboardAfterComplete.todoActive.length === 0, `completed todo should leave active list, got ${dashboardAfterComplete.todoActive.length}`);
   console.log('待办提醒保存测试通过：8 条');
+}
+
+function runSafeBusinessSaveTests() {
+  const wrongAiState = buildEmptyBusinessState();
+  const originalText = '周老板下周一要发2000个钥匙扣一块二一个';
+  const weakLocalResult = parseInput({
+    text: originalText,
+    source: 'typed',
+    context: 'home',
+    state: wrongAiState
+  });
+  weakLocalResult.fields.customerName = '';
+  weakLocalResult.fields.customerId = '';
+  const wrongAiResult = normalizeAiResult(weakLocalResult, {
+    provider: 'server',
+    intent: 'order',
+    fields: {
+      customerName: '老王',
+      customerId: 'cus_old_wang',
+      productName: '钥匙扣',
+      quantity: '2000',
+      unit: '个',
+      unitPrice: '1.2',
+      amount: '2400'
+    },
+    missing_fields: [],
+    low_confidence_fields: []
+  });
+  assert(wrongAiResult.low_confidence_fields.includes('customerName'), 'AI customer absent from original text must be marked low confidence');
+  assert(!wrongAiResult.fields.customerId, 'AI customer id absent from original text must be removed');
+  const wrongAiSaved = saveConfirmedDraft(wrongAiState, wrongAiResult);
+  assert(wrongAiSaved.type === 'pending', `wrong AI customer must not save formally, got ${wrongAiSaved.type}`);
+  assert(wrongAiState.orders.length === 0, 'wrong AI customer must not create an order');
+  assert(!wrongAiState.customers.some((item) => item.name === '老王'), 'wrong AI customer must not create a customer');
+
+  const paymentState = buildEmptyBusinessState();
+  const unlinkedPayment = saveConfirmedDraft(paymentState, {
+    intent: 'payment',
+    operation: 'record_payment',
+    source: 'typed',
+    original_text: '周总今天付了2000元',
+    fields: { customerName: '周总', paymentAmount: '2000' },
+    missing_fields: [],
+    low_confidence_fields: []
+  });
+  assert(unlinkedPayment.type === 'payment', `unlinked payment should still be saved, got ${unlinkedPayment.type}`);
+  assert(paymentState.paymentRecords.length === 1, 'unlinked payment should create exactly one payment record');
+  assert(paymentState.paymentRecords[0].kind === 'unlinked_payment', `unlinked payment kind should be explicit, got ${paymentState.paymentRecords[0].kind}`);
+  assert(!paymentState.paymentRecords[0].receivableId, 'unlinked payment must not auto-write off a receivable');
+  assert(paymentState.receivables.length === 0, 'unlinked payment must not create a receivable');
+  assert(paymentState.paymentRecords[0].originalText === '周总今天付了2000元', 'unlinked payment must retain the original text');
+
+  const depositState = buildEmptyBusinessState();
+  const unlinkedDeposit = saveConfirmedDraft(depositState, {
+    intent: 'payment',
+    operation: 'record_order_deposit',
+    source: 'typed',
+    original_text: '陈姐收到定金500元',
+    fields: { customerName: '陈姐', paymentAmount: '500', depositAmount: '500', paymentKind: 'deposit' },
+    missing_fields: [],
+    low_confidence_fields: []
+  });
+  assert(unlinkedDeposit.type === 'order_deposit', `unlinked deposit should still be saved, got ${unlinkedDeposit.type}`);
+  assert(depositState.paymentRecords.length === 1, 'unlinked deposit should create exactly one payment record');
+  assert(depositState.paymentRecords[0].kind === 'unlinked_deposit', `unlinked deposit kind should be explicit, got ${depositState.paymentRecords[0].kind}`);
+  assert(!depositState.paymentRecords[0].orderId, 'unlinked deposit must not attach to an order automatically');
+  assert(depositState.paymentRecords[0].originalText === '陈姐收到定金500元', 'unlinked deposit must retain the original text');
+
+  const dunningState = buildEmptyBusinessState();
+  const dunningDraft = parseInput({
+    text: '王总欠5000明天催款',
+    source: 'typed',
+    context: 'home',
+    state: dunningState
+  });
+  const dunningSaved = saveConfirmedDraft(dunningState, dunningDraft);
+  assert(dunningDraft.intent === 'dunning', `dunning text should be recognized as dunning, got ${dunningDraft.intent}`);
+  assert(dunningSaved.type === 'todo', `dunning should save as a todo reminder, got ${dunningSaved.type}`);
+  assert(dunningState.todos[0].todoType === 'dunning', `dunning todo should retain its type, got ${dunningState.todos[0].todoType}`);
+  assert(dunningState.todos[0].remindDate, 'dunning todo should retain the reminder date');
+  assert(dunningState.todos[0].originalText === '王总欠5000明天催款', 'dunning todo must retain the original text');
+  console.log('安全保存与催款提醒测试通过：19 条');
 }
 
 function runCustomerIdentityTests() {
@@ -879,10 +982,9 @@ function runQuotationFollowupTests() {
   assert(confirmation.parseResult.intent === 'quotation', `quotation followup should keep quotation intent, got ${confirmation.parseResult.intent}`);
   assert(confirmation.showFollowupDaysField, 'quotation confirmation should show followup days field');
   assert(!confirmation.showDueDateField, 'quotation confirmation should not show generic due date field');
-  assert(confirmation.fields.followupDays === '2', `quotation followup default should be 2 days, got ${confirmation.fields.followupDays}`);
-  assert(confirmation.selectedFollowupDayIndex === 1, `quotation followup picker should select 2 days, got ${confirmation.selectedFollowupDayIndex}`);
-  assert(confirmation.fields.dueDate === addDays(today(), 2), `quotation followup date should default to 2 days later, got ${confirmation.fields.dueDate}`);
-  assertIncludes(confirmation.followupWarningText, '默认 2 天后跟进');
+  assert(!confirmation.fields.followupDays, `quotation followup should stay empty until the user chooses it, got ${confirmation.fields.followupDays}`);
+  assert(!confirmation.fields.dueDate, `quotation followup date must not be fabricated, got ${confirmation.fields.dueDate}`);
+  assertIncludes(confirmation.followupWarningText, '可选；未填写时不会自动补日期');
 
   const changed = buildConfirmationStateForTest(state, parseResult, parseResult.intent, Object.assign({}, confirmation.fields, {
     followupDays: '5'
@@ -892,9 +994,9 @@ function runQuotationFollowupTests() {
 
   const saved = saveConfirmedDraft(state, confirmation.parseResult);
   assert(saved.type === 'quotation', `quotation followup should save quotation, got ${saved.type}`);
-  assert(state.quotations[0].followupDays === '2', `saved quotation should keep followupDays, got ${state.quotations[0].followupDays}`);
-  assert(state.quotations[0].deliveryDate === addDays(today(), 2), `saved quotation should keep followup date, got ${state.quotations[0].deliveryDate}`);
-  console.log('报价跟进时间测试通过：10 条');
+  assert(!state.quotations[0].followupDays, `saved quotation should not invent followupDays, got ${state.quotations[0].followupDays}`);
+  assert(!state.quotations[0].deliveryDate, `saved quotation should not invent a followup date, got ${state.quotations[0].deliveryDate}`);
+  console.log('报价跟进时间测试通过：9 条');
 }
 
 function runListFilterTests() {
@@ -1408,6 +1510,7 @@ async function main() {
   runContextPolicyTests();
   runDisplayTextTests();
   runTodoSaveTests();
+  runSafeBusinessSaveTests();
   runCustomerIdentityTests();
   runInputCustomerHistoryTests();
   runQuotationFollowupTests();
