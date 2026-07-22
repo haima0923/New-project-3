@@ -2,6 +2,10 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
+> 当前候选分支：`snapshot/record-ai-test-worktree-20260722`。运行时快照提交：
+> `e0fff05`；测试源码与 fixture 快照提交：`ebff81e`。状态为 **P0 OPEN / NOT
+> RELEASE**，不是发布基线。候选 tag 仅用于恢复当前事实状态。
+
 ## 1. 新对话必读
 
 每次新开 Codex 对话，建议先读取：
@@ -37,11 +41,14 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | --- | --- |
 | `docs/CODE_MAP.md` | 项目结构、页面、utils、后端、测试、高风险文件 |
 | `docs/PRODUCT_AUDIT.md` | 产品定位、品牌、文案、UI 风险盘点 |
+| `docs/XIAOLING_CHARACTER_GUIDE.md` | 小玲角色母版、固定特征、生成流程和验收标准 |
 | `docs/PARSER_AI_AUDIT.md` | 记一笔 parser / AI 链路审计 |
 | `docs/BUSINESS_FLOW_AUDIT.md` | 报价、订单、待收款、收款、定金、催款业务流转 |
 | `docs/TEST_AUDIT.md` | 当前测试能力、可运行脚本、缺口和回归建议 |
 | `docs/CONFIG_RELEASE_AUDIT.md` | app.js、app.json、小程序发布配置风险 |
 | `docs/RECORD_CONFIRM_CARD_SPEC.md` | 记一笔确认卡字段标准和多商品阶段规则 |
+| `docs/RELEASE_TEST_SYSTEM_V2.md` | 当前测试证据边界、P0 状态和后续发布门禁 |
+| `docs/体验版真机测试清单.md` | 体验版人工验收步骤；P0 修复前不能作为发布批准 |
 
 ## 4. 后端 / 数据 / 部署文档
 
@@ -67,6 +74,7 @@ docs/wechat-local-rules-ultra-evaluation.*
 注意：
 
 - 历史报告不一定代表当前代码。
+- 自动生成报告不进入 Git 源代码候选快照；需要时由固定提交重新生成。
 - 运行相关测试脚本可能会重新生成报告文件。
 - 如果本轮不希望修改报告文件，不要运行会写报告的脚本。
 
@@ -85,6 +93,7 @@ docs/PARSER_AI_AUDIT.md
 docs/BUSINESS_FLOW_AUDIT.md
 docs/TEST_AUDIT.md
 docs/CODE_MAP.md
+docs/RELEASE_TEST_SYSTEM_V2.md
 ```
 
 重点检查：
@@ -149,6 +158,7 @@ docs/CODE_MAP.md
 docs/PRODUCT_RULES.md
 docs/PRODUCT_AUDIT.md
 docs/CODE_MAP.md
+docs/XIAOLING_CHARACTER_GUIDE.md（涉及小玲形象时）
 ```
 
 重点：

@@ -2,6 +2,11 @@
 
 No npm dependencies are required for the mock test server.
 
+> Candidate snapshot status (2026-07-22): **P0 OPEN / NOT RELEASE**. The live
+> AI flow gate is paused as release evidence, and valid empty business JSON can
+> currently be treated as a successful AI result. This server snapshot preserves
+> that known state; it does not fix either blocker.
+
 ## Local Run
 
 ```bash
@@ -29,9 +34,31 @@ AI_PROVIDER=openai-compatible
 AI_API_KEY=your-key
 AI_BASE_URL=https://your-provider.example/v1
 AI_MODEL=your-model
+# Optional. Simple, complete voice / single-message records use this faster model.
+# Complex chats, historical records and payment/receivable records still use AI_MODEL.
+AI_FAST_MODEL=qwen3.6-flash
+AI_FAST_REQUEST_TIMEOUT_MS=5200
+AI_QUALITY_REQUEST_TIMEOUT_MS=20000
 ```
 
 Then restart the server.
+
+For Qwen structured extraction, the server explicitly disables the model's
+thinking mode and requests JSON. This keeps the confirmation-card response
+focused on fields instead of a long reasoning process. A standard request uses
+the fast model once. If it fails or returns an uncertain result, the current
+code returns a failure and does **not** automatically retry with `AI_MODEL`.
+The quality model is used only for an explicit deep-review request.
+
+The server caps the fast model at 5.2 seconds and the quality model at 20
+seconds. The Mini Program's total wait limits are 8 seconds for standard and 25
+seconds for deep review. Blocking an unsafe save is the intended behavior, but
+the two open P0 issues mean timeout/empty-result reports cannot yet be used as
+release proof.
+
+Production standard/deep prompts are defined in `src/ai/model.js`. Prompts in
+`../scripts/lib/real-ai-comparison-prompts.js` are experimental evaluation
+prompts and are not production prompts.
 
 ## Before public release
 

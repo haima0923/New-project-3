@@ -27,7 +27,7 @@
 ## 本地打开
 
 1. 打开微信开发者工具。
-2. 导入当前目录：`C:\Users\Administrator\Documents\New project 3`。
+2. 导入当前仓库根目录。
 3. AppID 可先使用测试号或保留 `touristappid` 体验页面。
 4. 编译后从“开始使用”进入，选择或跳过行业，再开始记第一笔。
 
