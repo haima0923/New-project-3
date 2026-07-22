@@ -2,9 +2,11 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前候选分支：`snapshot/record-ai-test-worktree-20260722`。运行时快照提交：
-> `e0fff05`；测试源码与 fixture 快照提交：`ebff81e`。状态为 **P0 OPEN / NOT
-> RELEASE**，不是发布基线。候选 tag 仅用于恢复当前事实状态。
+> 当前合同候选分支：`fix/p0-ai-result-integrity`。合同所依据的代码提交：
+> `c1818817353b91d4d9cd53eb47bc4a01c8c046d0`；动态验证候选 tag：
+> `candidate-record-ai-tests-v1-p0-dynamic-passed`。状态为 **P0 TARGETED
+> DYNAMIC TESTS PASSED / REAL AI NOT TESTED / WECHAT RUNTIME NOT TESTED /
+> NOT RELEASE**，不是发布基线。
 
 ## 1. 新对话必读
 
@@ -42,13 +44,25 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/CODE_MAP.md` | 项目结构、页面、utils、后端、测试、高风险文件 |
 | `docs/PRODUCT_AUDIT.md` | 产品定位、品牌、文案、UI 风险盘点 |
 | `docs/XIAOLING_CHARACTER_GUIDE.md` | 小玲角色母版、固定特征、生成流程和验收标准 |
+| `docs/RECORD_SHARED_CORE_CONTRACT.md` | 记一笔共享核心输入、模式、AI adapter、状态、trace、确认态、savePlan 和适配边界的权威合同 |
+| `docs/RECORD_TEST_CONTRACT_V1.md` | 第一阶段测试题、fixture、五层评分、零容忍门禁、报告和 canary 的权威合同 |
 | `docs/PARSER_AI_AUDIT.md` | 记一笔 parser / AI 链路审计 |
 | `docs/BUSINESS_FLOW_AUDIT.md` | 报价、订单、待收款、收款、定金、催款业务流转 |
 | `docs/TEST_AUDIT.md` | 当前测试能力、可运行脚本、缺口和回归建议 |
 | `docs/CONFIG_RELEASE_AUDIT.md` | app.js、app.json、小程序发布配置风险 |
 | `docs/RECORD_CONFIRM_CARD_SPEC.md` | 记一笔确认卡字段标准和多商品阶段规则 |
 | `docs/RELEASE_TEST_SYSTEM_V2.md` | 当前测试证据边界、P0 状态和后续发布门禁 |
-| `docs/体验版真机测试清单.md` | 体验版人工验收步骤；P0 修复前不能作为发布批准 |
+| `docs/体验版真机测试清单.md` | 体验版人工验收步骤；Node P0 已验证，但仍不能代替微信运行时发布批准 |
+
+权威关系：
+
+- `AGENTS.md` 是项目和产品最高规则。
+- `docs/RECORD_CONFIRM_CARD_SPEC.md` 管用户可见字段和确认卡产品语义。
+- `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
+- `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
+- `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；
+  审计中的历史结论不覆盖较新的合同和当前代码。
+- 合同尚未实现。合同描述的目标能力不能写成当前已上线能力。
 
 ## 4. 后端 / 数据 / 部署文档
 
@@ -89,6 +103,8 @@ AGENTS.md
 docs/DOC_INDEX.md
 docs/MULTI_AGENT_OPERATING_GUIDE.md
 docs/RECORD_CONFIRM_CARD_SPEC.md
+docs/RECORD_SHARED_CORE_CONTRACT.md
+docs/RECORD_TEST_CONTRACT_V1.md
 docs/PARSER_AI_AUDIT.md
 docs/BUSINESS_FLOW_AUDIT.md
 docs/TEST_AUDIT.md
@@ -114,6 +130,8 @@ docs/RELEASE_TEST_SYSTEM_V2.md
 ```text
 docs/PARSER_AI_AUDIT.md
 docs/RECORD_CONFIRM_CARD_SPEC.md
+docs/RECORD_SHARED_CORE_CONTRACT.md
+docs/RECORD_TEST_CONTRACT_V1.md
 docs/TEST_AUDIT.md
 docs/CODE_MAP.md
 ```
@@ -138,6 +156,8 @@ scripts/
 docs/BUSINESS_FLOW_AUDIT.md
 docs/TEST_AUDIT.md
 docs/CODE_MAP.md
+docs/RECORD_SHARED_CORE_CONTRACT.md
+docs/RECORD_TEST_CONTRACT_V1.md
 ```
 
 适用问题：
@@ -158,6 +178,9 @@ docs/CODE_MAP.md
 docs/PRODUCT_RULES.md
 docs/PRODUCT_AUDIT.md
 docs/CODE_MAP.md
+docs/RECORD_CONFIRM_CARD_SPEC.md（涉及记一笔确认卡时）
+docs/RECORD_SHARED_CORE_CONTRACT.md（涉及记一笔页面判断时）
+docs/RECORD_TEST_CONTRACT_V1.md（涉及记一笔页面验收时）
 docs/XIAOLING_CHARACTER_GUIDE.md（涉及小玲形象时）
 ```
 
@@ -175,10 +198,13 @@ docs/XIAOLING_CHARACTER_GUIDE.md（涉及小玲形象时）
 ```text
 docs/TEST_AUDIT.md
 docs/CODE_MAP.md
+docs/RECORD_SHARED_CORE_CONTRACT.md
+docs/RECORD_TEST_CONTRACT_V1.md
 ```
 
 注意：
 
+- 旧审计用于了解当前和历史事实；新共享核心/测试实现与验收以两份合同为准。
 - 部分测试会生成报告文件。
 - 如果本轮不允许修改 docs/reports/temp，不要运行生成报告的脚本。
 

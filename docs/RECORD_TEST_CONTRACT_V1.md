@@ -1,0 +1,600 @@
+# 记一笔第一阶段测试合同（V1）
+
+> 状态：**合同已定稿，测试运行器和共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+>
+> 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
+
+## 1. 权威范围
+
+本文件是记一笔第一阶段自动测试的权威合同，定义：
+
+- 每条测试题和历史 fixture 的结构；
+- 从严格原文到 MemoryStore `stateDiff` 的执行方式；
+- 三种模式、AI 异常模拟和保存副作用断言；
+- 五层评分、错误归属、零容忍门禁和质量指标；
+- 报告、真实 AI canary、环境隔离和后续测试边界。
+
+它不替代生产代码，也不允许测试运行器自行复制 parser、路由、合并、安全或保存逻辑。
+
+## 2. 第一阶段范围
+
+### 2.1 必须覆盖
+
+```text
+严格原始文字
+  ↓
+共享输入/聊天提取
+  ↓
+真实本地 parser
+  ↓
+真实 route 决策
+  ↓
+fake/mock AI（按测试场景）
+  ↓
+真实 AI 标准化与合并函数
+  ↓
+真实安全规则
+  ↓
+共享领域 confirmation
+  ↓
+真实 savePlan 生成
+  ↓
+MemoryStore commit
+  ↓
+stateBefore / stateAfter / stateDiff
+```
+
+每条主链题必须从 `originalText` 开始。允许单独的纯函数单元测试补充边界，但单元测试不能代替主链门禁，也不能只构造 `parseResult` 或 `fields` 就声称“完整记一笔通过”。
+
+### 2.2 第一阶段暂不包含
+
+- 真实 AI 大规模正确率；
+- 微信开发者工具自动化；
+- WXML 真实渲染；
+- 真机语音、输入法、权限和弱网；
+- 网页测试台；
+- 生产数据、真实客户资料或生产写入。
+
+真实 AI 只预留受控 canary，不作为每次开发门禁。Node 通过不等于微信体验版或发布通过。
+
+## 3. 测试原则
+
+1. **同核**：运行器只调用共享核心，不复制业务逻辑。
+2. **从原文开始**：主链题不得跳过 parser、route 或 confirmation。
+3. **逐层记录**：AI 原始、标准化、合并、确认、保存分别评分。
+4. **副作用可见**：不仅看状态字符串，还看客户和业务记录是否实际创建、更新或未变化。
+5. **确定性**：fake、clock、ID、初始状态和业务时区固定。
+6. **题间隔离**：每题新 MemoryStore，不能依赖执行顺序。
+7. **危险优先**：零容忍错误不能被整体平均正确率掩盖。
+8. **身份真实**：REAL/MOCK/FAKE/REPLAY 分开统计，replay 不冒充模型成绩。
+9. **报告可追溯**：代码、题库、prompt、模型和脏工作区都要记录。
+10. **报告与源码分离**：运行产物放忽略目录，不进入 Git。
+
+## 4. 测试题合同
+
+### 4.1 RecordTestCase
+
+| 字段 | 类型 | 必填 | 规则 |
+| --- | --- | --- | --- |
+| `caseId` | string | 是 | 题库内唯一，发布后不复用旧 ID |
+| `title` | string | 是 | 老板看得懂的场景名 |
+| `category` | 枚举 | 是 | 见第 8 节 |
+| `inputSource` | 枚举 | 是 | `typed` / `voice` / `chat` / `imported` / `test` |
+| `originalText` | string | 是 | 严格原文；不能放归一化结果 |
+| `businessDate` | `YYYY-MM-DD` | 是 | 相对日期唯一基准 |
+| `businessTimezone` | string | 是 | V1 固定 `Asia/Shanghai` |
+| `nowInstant` | ISO instant | 是 | 冻结完整时刻，和业务日期一致 |
+| `mode` | 枚举 | 是 | `LOCAL_ONLY` / `AI_ONLY` / `PRODUCTION_ROUTING` |
+| `reviewMode` | 枚举 | 是 | `standard` / `deep` |
+| `context` | 枚举 | 是 | 当前等价复刻用 `home`；目标平台中立值见共享合同 |
+| `initialStateFixture` | string 或对象 | 是 | fixture ID；允许小范围显式 override |
+| `aiScenario` | 对象 | 条件必填 | fake/mock/replay/real canary 行为；LOCAL_ONLY 为 `none` |
+| `steps` | TestStep[] | 是 | 至少含 `RUN_PARSE`；保存题必须含明确请求保存和提交步骤 |
+| `expectedRoute` | 对象 | 是 | 同时断言 `productionRoute` 与 `executionPath` |
+| `expectedAiCall` | 枚举 | 是 | `MUST_CALL` / `MUST_NOT_CALL` / `MAY_CALL` |
+| `expectedAiOutcome` | 枚举/集合 | 是 | 共享核心规范 AI outcome |
+| `expectedResult` | 断言对象 | 是 | intent、operation、字段、items、风险和来源 |
+| `expectedConfirmation` | 断言对象 | 是 | 展示/编辑/必填/按钮/候选/深度核对 |
+| `expectedSavePlan` | 断言对象 | 是 | 正式或待整理计划与写入集合 |
+| `expectedStateDiff` | 对象 | 是 | 明确分为 `businessDiff` 与 `fullDiff`，并可列 `mustRemainUnchanged[]` |
+| `commitExpectation` | 对象 | 是 | `action: DO_NOT_COMMIT / COMMIT_MEMORY`、`planType: FORMAL / PENDING / NONE`、`expectedCommitStatus` |
+| `riskLevel` | 枚举 | 是 | `NORMAL` / `IMPORTANT` / `DANGEROUS` / `ZERO_TOLERANCE` |
+| `repeatCount` | 正整数 | 是 | 确定性题默认 1；稳定性/canary 可大于 1 |
+| `tags` | string[] | 是 | 业务类型、语言特征、历史、回归号等 |
+| `contractVersion` | string | 是 | `record-test-case-v1` |
+
+### 4.2 示例
+
+```json
+{
+  "contractVersion": "record-test-case-v1",
+  "caseId": "local-order-001",
+  "title": "简单单商品订单不调用AI",
+  "category": "SIMPLE_LOCAL",
+  "inputSource": "typed",
+  "originalText": "王总礼品盒500套，3块8一套，明天交",
+  "businessDate": "2026-07-22",
+  "businessTimezone": "Asia/Shanghai",
+  "nowInstant": "2026-07-22T02:00:00.000Z",
+  "mode": "PRODUCTION_ROUTING",
+  "reviewMode": "standard",
+  "context": "home",
+  "initialStateFixture": "blank-v1",
+  "aiScenario": { "kind": "none" },
+  "steps": ["RUN_PARSE", "REQUEST_FORMAL_SAVE", "COMMIT_MEMORY"],
+  "expectedRoute": { "productionRoute": "local", "executionPath": "production_local" },
+  "expectedAiCall": "MUST_NOT_CALL",
+  "expectedAiOutcome": { "assert": "EXACT", "value": "NOT_REQUESTED" },
+  "expectedResult": {
+    "intent": { "assert": "EXACT", "value": "order" },
+    "fields.quantity": { "assert": "NUMERIC", "value": 500 },
+    "fields.unitPrice": { "assert": "NUMERIC", "value": 3.8 },
+    "items": { "assert": "ITEMS_MATCH", "count": 1 }
+  },
+  "expectedConfirmation": { "canSaveFormal": true, "needsDeepReview": false },
+  "expectedSavePlan": { "formal": true, "ordersToCreate": 1, "customersToCreate": 1 },
+  "expectedStateDiff": {
+    "businessDiff": { "customers.added": 1, "orders.added": 1, "pendingNotes.added": 0 },
+    "fullDiff": { "orders.added": 1, "orderProgress.added": 1, "aiParseLogs.added": 1 },
+    "mustRemainUnchanged": ["quotations", "receivables", "paymentRecords"]
+  },
+  "commitExpectation": { "action": "COMMIT_MEMORY", "planType": "FORMAL", "expectedCommitStatus": "SUCCEEDED" },
+  "riskLevel": "IMPORTANT",
+  "repeatCount": 1,
+  "tags": ["order", "local", "no-ai", "original-text"]
+}
+```
+
+示例只说明结构；实际期望仍以当前产品必填和安全规则为准。
+
+### 4.3 expectedAiCall
+
+- `MUST_CALL`：必须恰好按合同调用；零调用或额外调用都失败。
+- `MUST_NOT_CALL`：调用次数必须为 0；用于 LOCAL_ONLY、简单 local、pending 未点深度核对。
+- `MAY_CALL`：只用于确有允许分支的非门禁探索题，必须记录实际 route；不得用于掩盖尚未决定的产品规则。
+
+`expectedRoute.productionRoute` 使用 `local / pending / ai_standard / ai_deep`；
+`expectedRoute.executionPath` 使用 `local_only / ai_only_standard / ai_only_deep /
+production_local / production_pending / production_standard / production_deep`。AI 分流指标只统计 `PRODUCTION_ROUTING` 的 productionRoute。
+
+`expectedRoute` 与 `expectedAiCall` 必须同时存在。只断言结果、不写预期路线的题不得进入正式题库。
+
+### 4.4 steps
+
+TestStep 至少支持：`RUN_PARSE`、`REQUEST_DEEP_REVIEW`、`EDIT_FIELD`、
+`CHANGE_INTENT`、`SELECT_CUSTOMER`、`SELECT_ORDER`、`SELECT_RECEIVABLE`、
+`CONFIRM_FIELD`、`PREPARE_SAVE_PLAN`、`REQUEST_FORMAL_SAVE`、
+`REQUEST_PENDING_SAVE`、`COMMIT_MEMORY`。每一步可带输入和对 result revision、
+confirmation、savePlan、commitStatus、stateDiff 的断言。
+
+所有正式保存题必须先证明：用户未请求保存时 `commitStatus=NOT_ATTEMPTED` 且 stateDiff 为空；明确请求后才提交。必须有编辑后旧确认/旧 plan 失效、重复点击同一 plan 不重复写的回归题。
+
+## 5. 断言合同
+
+每个期望字段使用显式断言，不能依赖整段 JSON 文本完全相同。
+
+| 断言 | 用途 |
+| --- | --- |
+| `EXACT` | intent、route、枚举、字符串严格相等 |
+| `NUMERIC` | 金额/数量数值相等，忽略 `"500"` 与 `500` 表示差异 |
+| `DATE` | 规范业务日期相等 |
+| `SET_EQUALS` | 缺失字段、冲突字段等集合相等，忽略顺序 |
+| `ONE_OF` | 允许合同明确列出的多个候选之一 |
+| `ALIAS` | 客户/单位等允许的受控别名；别名表版本化 |
+| `EMPTY` | 必须为空或不存在 |
+| `NOT_CONTAINS` | 禁止编造客户、商品、金额、ID 或字段 |
+| `CANDIDATES` | 候选集合及是否必须用户选择 |
+| `REQUIRES_CONFIRMATION` | 必须阻止正式保存并要求用户确认 |
+| `ITEMS_MATCH` | `items[]` 数量、逐项字段、顺序或集合语义 |
+| `FIELD_FACT` | value/source/evidence/confidence/userConfirmed 联合断言 |
+| `SAVE_PLAN` | 计划中的 create/update/link/precondition 断言 |
+| `STATE_DIFF` | 新增、更新、删除及路径值变化 |
+| `NO_SIDE_EFFECT` | 指定业务集合完全不变 |
+
+不允许宽泛的 `contains` 把“客户王总”误判成“王老板也行”，除非题目明确声明 `ALIAS`。危险金额、方向、关联 ID 不允许近似匹配。
+
+为保持题目可读，裸字符串、布尔或数字是 `EXACT` 的语法糖；数组和对象不是隐式模糊匹配，必须使用表中的断言或逐路径声明。危险字段建议始终写完整断言对象。
+
+## 6. 时间、时区和 ID
+
+- 所有 V1 业务题固定 `businessTimezone: Asia/Shanghai`。
+- `nowInstant` 是绝对事实；`businessDate` 必须等于它按 `Asia/Shanghai` 投影后的日期，否则 case 无效。
+- runner 注入 `FrozenClock.nowInstant()` 处理业务时间和 createdAt，另用可控 `monotonicMs()` 处理耗时和截止时间；共享核心不得读取机器本地 `new Date()` 改变答案。
+- runner 注入顺序 ID，例如 `customer-case001-001`、`order-case001-001`；不得使用 `Date.now()+Math.random()`。
+- 相对日期期望统一写绝对 `YYYY-MM-DD`，同时保留原文证据。
+- 必须有跨午夜、月末、年末、闰年和“本周/下周”边界题。
+- 中国业务时区无夏令时；服务器或测试机位于其他时区仍不得改变业务日期。
+
+## 7. Fixture 合同
+
+### 7.1 结构
+
+正式 fixture 必须是合成、最小、可读且版本化的 DomainState，并从固定 `empty-domain-v1` 全量底座构造：
+
+```text
+{
+  fixtureVersion,
+  fixtureId,
+  description,
+  customers,
+  quotations,
+  orders,
+  receivables,
+  paymentRecords,
+  dunningRecords,
+  todos,
+  orderProgress,
+  pendingNotes,
+  aiParseLogs,
+  operationLogs,
+  productCatalog,
+  dunningTemplates,
+  deletedRecords,
+  meta
+}
+```
+
+规则：
+
+- 只放本场景需要的记录；
+- 使用固定、有人类含义的 ID；
+- 名称、手机号、微信聊天和金额必须为合成数据；
+- 每题深拷贝，禁止共享可变对象；
+- 可以通过小型 `fixtureOverrides` 改日期或金额，但 override 必须写进 case hash；
+- 保存前后使用结构化 diff，忽略无业务意义的对象键顺序，不忽略 ID、金额、关联和 originalText。
+- 未写出的集合由 `empty-domain-v1` 补固定空数组；禁止调用读取实时 clock/随机 ID 的 `createInitialState()` 作为 fixture 默认值。
+- 报告同时输出 `businessDiff` 与 `fullDiff`；后者包含进度、解析日志、操作日志和商品目录，是等价迁移与无意副作用的门禁依据。
+- `expectedStateDiff` 中显式列出的路径必须匹配；`mustRemainUnchanged[]` 的路径必须不变；未列出且未禁止的路径表示“不参与本题断言”，但仍受全局零容忍和 schema 不变量约束。
+
+### 7.2 第一版历史 fixture 矩阵
+
+| ID/场景 | 初始最小状态 | 示例输入 | 预期匹配 | 自动正式保存 | 用户确认 |
+| --- | --- | --- | --- | --- | --- |
+| `blank-v1` 空白 | 无客户、报价、订单、待收、收款、提醒 | “还是上次价格做500个” | 无历史可匹配；价格留空 | 否 | 必须补充或待整理 |
+| `single-customer-order-v1` 唯一客户和订单 | 客户 `c-wang`；订单 `o-wang-cup-1` | “王总那单月底交” | 唯一订单 | 仅当前产品安全条件全满足时 | 更新目标与日期需确认 |
+| `same-customer-multi-order-v1` 同客户多订单 | `c-wang`；两个未完成订单，商品/日期不同 | “王总那批货月底交” | 候选不唯一 | 否 | 必须选订单 |
+| `similar-customer-v1` 重名/相似称呼 | 王总、王老板、王先生三个客户 | “王老板还欠5000” | 只能按确切称呼或列候选 | 未唯一匹配时否 | 必须选客户 |
+| `last-quotation-v1` 有上次报价 | 同客户同商品唯一最新报价，价格和日期明确 | “王总礼品盒还是上次价格做500套” | 匹配该报价，来源 `HISTORY` | 依当前订单必填与确认规则 | 历史证据可见 |
+| `no-last-quotation-v1` 无上次报价 | 有客户，无同商品报价 | 同上 | 不得编价格 | 否 | 补价格/待整理 |
+| `partial-payment-v1` 部分收款 | 待收总额、已收、剩余及一条收款记录一致 | “王总剩下的钱今天付了” | 唯一待收，金额可由剩余派生并标 `DERIVED` | 高风险，按产品确认规则 | 至少确认收款方向和目标 |
+| `multi-receivable-v1` 多待收 | 同客户两笔活跃待收 | “王总今天付了3000” | 候选不唯一 | 否 | 必须选待收或明确不关联 |
+| `settled-order-v1` 已结清 | 订单与待收均已结清 | “王总这单尾款又收了1000” | 不能继续核销已结清记录 | 否 | 解释冲突/待整理 |
+| `quotation-converted-v1` 报价已转单 | 报价含 convertedOrderId，订单已存在 | “把上次报价转订单” | 识别已有转换 | 否，不能重复创建 | 展示已有订单 |
+| `multi-item-history-v1` 历史多商品订单 | 单订单含两项商品及逐项规格/金额 | “那单再做一批” | 历史 items 必须全部保留 | 取决于数量/日期是否明确 | 多商品逐项确认 |
+| `history-conflict-v1` 历史冲突 | 同客户同商品两份同日报价价格不同，或关联断裂 | “还是上次价格” | 明确冲突，不能静默选 | 否 | 必须选择/补充 |
+
+每个正式 fixture 文件还必须列出初始客户、报价、订单、待收款、收款、提醒的完整最小数组；上表是合同，不是替代数据文件。
+
+## 8. 第一阶段题库分类
+
+### 8.1 `SIMPLE_LOCAL`
+
+至少覆盖简单订单、报价、提醒、待收款、收款和定金。目标是本地正确、生产 route 不做不必要 AI 调用、安全情况下能生成正确 savePlan 和 state diff。
+
+涉及收款或定金的“简单”只表示句式简单，不降低金融安全级别。
+
+### 8.2 `COMPLEX_AI`
+
+至少覆盖多商品、多事项、微信聊天、语音长句、历史引用、指代、收款/欠款/定金混合和字段冲突。必须分别有：
+
+- 当前默认 `pending`、展示深度核对且不自动调用的题；
+- 用户选择 `reviewMode: deep` 后必须调用的题；
+- standard route 的有效题。
+
+不能提前把所有复杂题的 `expectedAiCall` 写成 MUST_CALL；要服从当前生产规则。
+
+### 8.3 `INSUFFICIENT_INFORMATION`
+
+缺客户、金额、数量、日期或类型不确定。目标：不编造、不危险保存、正确列出缺失/冲突，允许待整理或用户确认。
+
+### 8.4 `AI_FAILURE`
+
+fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JSON、空业务 JSON、mock、replay。必须断言请求次数、AI outcome、采用状态、按钮、savePlan 和所有正式业务集合无副作用。
+
+### 8.5 `HISTORY`
+
+逐一覆盖第 7.2 节 12 个 fixture，重点看同客户隔离、唯一性、历史来源、已结清/已转换保护和多商品完整性。
+
+### 8.6 `SAVE_SIDE_EFFECT`
+
+覆盖客户创建/匹配、报价、订单、待收、收款、定金、提醒、待整理、originalText、items[]、重复记录和组合事务回滚。
+
+该类主链题必须设置 `commitExpectation.action=COMMIT_MEMORY`，并断言当前运行时已有的 orderProgress、aiParseLogs、operationLogs、productCatalog 等派生/审计副作用。幂等题需对同一 plan 提交两次，第二次不得新增或重复更新。
+
+## 9. AI 场景与 adapter
+
+### 9.1 Fake 场景
+
+`aiScenario` 至少支持：
+
+- `success_standard`
+- `success_deep_multi_item`
+- `returned_uncertain`
+- `no_record`
+- `missing_fields`
+- `http_401` / `http_403` / `http_500`
+- `network_error`
+- `timeout`
+- `empty_response`
+- `non_json`
+- `empty_business_json`
+- `metadata_only`
+- `mock_provider`
+- `replay_response`
+
+每个 fake 返回固定响应、固定延迟、固定 requestId，并记录调用次数和请求体摘要。成功场景必须带一个本地 parser 不会产生的独特字段，以证明未被本地 stub 覆盖。
+
+### 9.2 身份与统计
+
+- `FAKE` 用于确定性门禁，不计模型正确率和费用；可生成 `MEMORY_ONLY` 的成功 savePlan 来检查完整副作用，但不能写真实存储。
+- `MOCK` 验证模拟身份和安全阻断，不计真实 AI 成功。
+- `REPLAY` 可测标准化/合并/页面和 `MEMORY_ONLY` 保存模拟，不计模型正确率、当轮延迟、稳定性和费用。
+- `REAL` 只允许 canary runner，并与所有离线报告分开。
+
+## 10. 主链执行合同
+
+每题按以下步骤执行：
+
+1. 校验 case schema、版本、日期和 fixture。
+2. 深拷贝 fixture，生成 `stateBefore`。
+3. 创建 FrozenClock、固定 IdGenerator、计数 AI adapter 和 MemoryStore。
+4. 用 `originalText` 调用唯一共享核心入口。
+5. 校验 AI 请求次数和请求身份。
+6. 依次断言 local、productionRoute、executionPath、AI raw、AI normalized、merge、safety。
+7. 断言领域 confirmation，不读取页面 `setData`。
+8. 断言 savePlan；严格按 `steps` 和 `commitExpectation` 决定不提交或提交 MemoryStore，禁止 runner 自行猜测。
+9. 比较 `stateAfter`、`businessDiff` 和 `fullDiff`；检查禁止副作用、幂等和 `commitStatus`。
+10. 校验 `originalText`、items[]、字段来源与 trace 完整性。
+11. 记录五层分数、failedLayer 和 errorOwner。
+
+如果早期层失败，runner 仍应在安全允许的情况下收集后续诊断；但不得为了拿完整报告而绕过正式保存安全。
+
+## 11. 五层评分
+
+| 层级 | 输入 | 输出 | 责任边界 | 主要错误 | 评分方式 |
+| --- | --- | --- | --- | --- | --- |
+| 1. AI 原始结果 | AI request + 原文/历史 | `rawModelContent` + `parsedBusinessResult` | 模型、生产 prompt、provider/transport | 意图错、编造、空/非JSON、漏商品、错误历史引用、未安全拒绝 | 仅 REAL 当轮响应计模型分；按危险字段和普通字段分别评分 |
+| 2. AI 标准化 | parsedBusinessResult | `aiNormalizedResult` | 解包、业务有效性、字段名、金额、日期、items | 金额转换错、字段丢失、validator接受空业务、日期变坏 | 与 raw 基准和 expected 比；不反算模型错误 |
+| 3. 合并结果 | local + normalized AI | `mergeResult` | 合并、冲突、证据和来源 | 正确 AI 被本地覆盖、错误 AI 盲用、items 折叠 | 字段级与冲突级评分，记录 adoption |
+| 4. 最终确认态 | merge + final safety + history | `confirmation` | 领域确认逻辑 | 隐藏商品、缺风险、按钮误开、候选错误 | 字段可见/可改/必填/警告/按钮逐项断言 |
+| 5. 最终保存 | confirmation + savePlan + state | `businessResult/stateDiff` | savePlan、持久化、原子性 | 错客户、金额方向错、第二商品丢失、半保存 | 记录级和 diff 级精确断言；危险副作用零容忍 |
+
+### 11.1 错误归属规则
+
+- AI raw 正确，标准化后金额错：`AI_NORMALIZER`，不算模型错。
+- AI 正确，本地合并覆盖成错误客户：`MERGER`。
+- 合并正确，confirmation 隐藏第二件商品：`CONFIRMATION`。
+- confirmation 正确，savePlan 丢第二件商品：`SAVE_PLAN`。
+- 原文不足，AI 明确拒绝猜测：正确安全结果，不算错误。
+- 原文不足，AI 编造金额：高风险 `AI_MODEL` 错误。
+- REAL 模型原始内容为空、非 JSON 或只有元数据：第一层 `AI_MODEL` 输出合同错误；若 transport 丢失内容则归 `AI_TRANSPORT`。
+- 原始内容有有效业务而解析/标准化后变空：`AI_NORMALIZER`；validator 接受空业务：`AI_VALIDATOR`。
+- 401/403/429/5xx 属于 `AI_PROVIDER`，网络中断或超时属于 `AI_TRANSPORT`，不算模型业务错误。
+- expected 合同与产品规则不一致：`TEST_CONTRACT`，不能硬改生产代码迎合题目。
+- 时区、adapter 或运行依赖错误：`ENVIRONMENT`。
+
+### 11.2 errorOwner 枚举
+
+`INPUT_PROCESSOR`、`LOCAL_PARSER`、`HISTORY_RESOLVER`、`AI_PROVIDER`、
+`AI_TRANSPORT`、`AI_MODEL`、`AI_VALIDATOR`、`AI_NORMALIZER`、`ROUTER`、
+`MERGER`、`PROVENANCE`、`SAFETY`、`CONFIRMATION`、`SAVE_PLAN`、`PERSISTENCE`、
+`TEST_CONTRACT`、`ENVIRONMENT`。
+
+一题可有一个 primary owner 和多个 contributing owners；报告不能把所有失败都记给 AI。
+
+## 12. 字段评分层级
+
+### 12.1 零容忍危险字段
+
+- 客户归属和关联 ID；
+- 收款/欠款方向；
+- 金额、数量、定金、已收和剩余待收；
+- 订单、报价、待收关联；
+- 是否允许正式保存；
+- 多商品项数和逐项金额；
+- originalText。
+
+危险字段按字段和记录双重计数。任一错误进入正式保存即触发零容忍失败，不能被备注等普通字段拉高平均分。
+
+### 12.2 可人工修正普通字段
+
+- 商品简称；
+- 备注措辞；
+- 非关键规格表达；
+- 客户称呼显示格式。
+
+普通字段仍报告准确率，但必须与危险字段分栏。若普通字段变化导致错配客户、金额或商品项数，它立即升级为危险错误。
+
+## 13. 零容忍门禁
+
+下列每项必须为 **0**：
+
+- 危险错误正式保存；
+- mock/fake/replay 冒充真实 AI；
+- AI 失败、超时、空响应或空业务结果后错误正式保存；
+- 收款识别成欠款或欠款识别成收款并保存；
+- 错客户自动创建或错误关联；
+- 金额、数量、定金、剩余金额错误并保存；
+- 多商品保存丢失；
+- originalText 丢失或被归一化文本替换；
+- 无原文/历史证据的 AI 危险字段被正式采用；
+- 应更新旧记录却错误新建正式记录；
+- 组合保存失败后留下半笔数据。
+
+任何零容忍失败都使整轮门禁失败，即使其他 99.9% 题通过。
+
+## 14. 确定性硬门禁与质量指标
+
+### 14.1 第一阶段必须 100% 通过
+
+- 三种 mode 的调用隔离；
+- local/standard/deep/mock/fake/replay 状态合同；
+- AI 失败和空业务结果安全闸门；
+- confirmation 与 finalSafety 不矛盾；
+- savePlan 结构和前置条件；
+- MemoryStore state diff 与事务回滚；
+- originalText 保留；
+- 多商品结构与保存；
+- 固定日期、时区和 ID；
+- 所有 `ZERO_TOLERANCE` 题。
+
+这些是安全合同，不按概率放宽。
+
+### 14.2 项目建议门槛
+
+以下数字是货小玲第一阶段的**项目建议**，不是行业标准；先用 V1 题库跑出基线，再由老板和 AI 产品经理确认是否成为硬门禁：
+
+| 指标 | 建议门槛 | 当前阶段处理 |
+| --- | --- | --- |
+| 简单本地题危险字段正确率 | ≥ 98% | 第一轮先记录基线；零容忍保存错误仍必须为 0 |
+| AI 分流正确率 | ≥ 95% | 基线后转硬门槛；未决产品策略题单独统计 |
+| 不必要 AI 调用率 | ≤ 10% | 仅对已标 `MUST_NOT_CALL` 的简单题统计；这部分错误当前即失败 |
+| 复杂题应调用未调用率 | 总体 ≤ 2%，危险题 0 | 只按当前生产 route 计算，不把 pending 算漏调 |
+| 多事项拆分完整率 | ≥ 95% | 确定性已定义题中的危险丢项仍零容忍 |
+| 日期正确率 | ≥ 98% | 明确日期的危险错误保存仍零容忍 |
+
+### 14.3 先记录基线、不设硬门槛
+
+- AI 原始正确率（没有真实 AI canary 前不能给）；
+- AI 多次运行稳定性；
+- 用户手工修正后可保存率（产品规则尚未决定）；
+- 真实 AI 平均/p95 响应时间和费用；
+- 语音转写后的真实正确率；
+- 老板完成确认所需步骤和时间。
+
+真实 AI canary 后再决定模型正确率、稳定性、延迟和成本门槛；微信运行时验证后再决定真实交互门槛。
+
+## 15. 指标定义
+
+- **本地解析正确率**：LOCAL_ONLY 的字段层分数。
+- **AI 原始正确率**：REAL AI_ONLY 的 raw 层分数。
+- **AI 标准化正确率**：AI_ONLY normalized 层分数。
+- **AI 分流正确率**：只统计 PRODUCTION_ROUTING 的 productionRoute/真实调用与 expected 比。
+- **最终系统正确率**：第五层通过题 / 可评分题。
+- **危险放行率**：危险错误且 `canSaveFormal=true` 或产生正式 state diff 的题 / 危险题。
+- **错误阻止率**：本应可正式保存却被阻断 / 应保存题。
+- **应调未调率**：`MUST_CALL` 且调用数为 0 / MUST_CALL 题。
+- **不必要调用率**：`MUST_NOT_CALL` 且调用数 > 0 / MUST_NOT_CALL 题。
+- **正确 AI 被合并改坏率**：raw/normalized 对、merge 错 / AI normalized 正确题。
+- **错误 AI 被盲用率**：raw 错且被 ADOPTED、未阻断 / AI raw 错题。
+- **失败安全回退率**：AI 异常且无正式危险副作用 / AI 异常题。
+- **多商品完整率**：最终逐项正确项数 / 期望项数，并另报整题全对率。
+- **多事项完整率**：正确拆分事项数 / 期望事项数。
+- **originalText 保留率**：quotation、order、receivable、payment、todo、pending 等 source-bearing 记录中，严格等于输入原文的记录 / 应携带原文的记录。客户、商品目录和纯进度/审计记录不进入分母。
+
+## 16. 测试报告合同
+
+### 16.1 TestRunReport
+
+每次运行必须记录：
+
+- `testRunId`、`startedAt`、`finishedAt`；
+- `codeHead`、`worktreeDirty`；
+- `coreContractVersion`、`testContractVersion`；
+- `caseSetVersion`、`caseSetHash`；
+- `mode` 或各 mode 分布；
+- `businessDate`、`businessTimezone`；
+- `providerKind`、`provider`、`model`、`modelTier`；
+- `promptVersion`、`promptHash`；
+- `totalCases`、`passed`、`failed`、`dangerousFailures`；
+- `aiCalls`、`unnecessaryAiCalls`、`requiredAiMisses`；
+- `averageLatency`、`p95Latency`、`estimatedCost`；
+- 五层分数、危险字段分数、普通字段分数；
+- `environment`：Node/平台版本与 runner 版本；
+- `realAiCalled` 与 `productionDataAccessed` 布尔值。
+
+`worktreeDirty=true` 的报告可以调试，但不能作为候选基线门禁证据。
+
+混合报告必须按 `mode + providerKind + provider + model + modelTier + promptVersion + promptHash` 分组输出正确率、延迟和费用；任一字段不同就是独立统计组，不能用一个总平均混在一起。FAKE/MOCK/REPLAY 的 `estimatedCost` 为 `not_applicable`，且不进入真实性能统计。
+
+`caseSetHash` 对规范化后的 case 内容、实际 fixture 内容和 override、别名表、断言规则版本、fake/replay payload、测试合同/schema 版本一起计算。对象键排序、数组语义和数字规范化算法必须版本化，任何一项变化都产生新 hash。
+
+### 16.2 失败题记录
+
+每条失败至少包含：
+
+- `caseId`、`originalText`；
+- `expected`、`actual`；
+- `failedLayer`、`failedFields`；
+- `productionRoute`、`executionPath`、`aiOutcome`、`adoptionStatus`；
+- `saveAllowed`、`saveBlockedReasons`；
+- `savePlan` 摘要、`commitExpectation`、`commitStatus`、`businessDiff`、`fullDiff`；
+- `errorOwner`、`contributingOwners`；
+- `traceRef`；
+- 是否零容忍、是否阻断整轮。
+
+报告不得包含 API key、Token、Cookie、完整真实手机号或生产客户资料。
+
+### 16.3 产物位置
+
+结构化 JSON、HTML、Markdown、截图和 AI 原始运行结果写入统一被忽略的报告目录；Git 只保存 runner 源码、匿名题库、固定 fixture、手写合同和必要示例配置。
+
+## 17. 真实 AI canary
+
+### 17.1 数据和环境
+
+- 只用完全合成或严格匿名化题目；客户用“王总/李姐”等虚构称呼，手机号使用明显测试号段或不提供。
+- 微信聊天去掉头像、微信号、群名、地址、手机号和可识别订单号。
+- 金额可保留语义所需数量级，但不能带真实交易组合；商品名仅在无法反推客户时保留，否则泛化。
+- 真实失败案例转回归题前，重新写成等价合成场景并人工复核不含身份信息。
+- 使用独立测试账号、独立 API key、独立日志空间和只读/无生产存储权限。
+- 每请求带 `testRunId`、`caseId`、codeHead、promptVersion；禁止写生产业务数据。
+
+### 17.2 运行规则
+
+- REAL canary 必须使用生产同合同的 adapter、真实生产 prompt 内容和明确 prompt hash。
+- standard 与 deep 分开统计；题目按 expected route 选择，不人为提高 deep 成绩。
+- 题量、重复次数和每轮费用上限由老板确认；runner 在预计或已用成本达到上限时停止新请求。
+- 记录 token、延迟、失败、provider、model、tier、费用估算和每次原始结果。
+- 缓存/replay 只能用于 UI、标准化和合并开发；不能计模型正确率、稳定性、真实延迟或当轮费用。
+- canary 报告与确定性门禁分开，真实 AI 波动不能掩盖安全门禁失败。
+
+## 18. 现有测试资产迁移原则
+
+| 当前资产 | 可复用内容 | 不能直接当 V1 完整门禁的原因 |
+| --- | --- | --- |
+| `scripts/ai-safety-regression-tests.js` | 两个 P0、standard/deep、页面 VM、business 副作用 | 函数级拼装较多，尚无统一 case/trace/stateDiff schema |
+| `scripts/parse-route-observability-tests.js` | 四 route、耗时、失败状态和保存阻断 | 依赖 fake wx，未走统一 adapter/confirmation/savePlan |
+| `scripts/core-feature-tests.js` | parser、业务、历史、页面函数和查询的大量回归 | 大型脚本、不同层混在一起，失败归属不统一 |
+| `scripts/five-step-user-tests.js` | 原文、确认结构、保存和查询链路 | 部分确认通过 VM 提取，尚非共享领域 confirmation |
+| `scripts/release-parse-corpus-v2.js` | 大量本地/route 题与失败保护 | 会生成报告；题结构较旧；主要测 local/route，不是五层完整链 |
+| `test-fixtures/boss-spoken-v1.json` | 匿名口语输入和字段期望 | 缺 mode、route、初始 state、savePlan/stateDiff 合同 |
+| `test-fixtures/real-ai-comparison-v1.json` | 合成 AI 比较题和参考日期 | prompt/模型报告必须与生产绑定；旧成绩不自动代表当前生产 |
+| `test-fixtures/release-parse-corpus-v2.js` | 路由和场景生成素材 | 动态依赖机器日期；需 FrozenClock 和规范 case hash |
+
+迁移应写 adapter 将旧 fixture 转成 V1 case，逐步淘汰旧 runner；不得复制 parser 或一次性重写全部题库。
+
+## 19. 第一阶段验收标准
+
+第一阶段完成必须同时满足：
+
+1. 一个 runner 可执行三种 mode，并从原文走到 state diff。
+2. LOCAL_ONLY 任何 AI 调用都会失败。
+3. AI_ONLY 可独立评分 raw 与 normalized，本地结果不覆盖模型层。
+4. PRODUCTION_ROUTING 与当前 local/pending/standard/deep 规则等价。
+5. 所有零容忍和确定性硬门禁 100% 通过。
+6. 首页和完整页使用的领域 confirmation/savePlan 在核心层只有一份。
+7. 每种业务保存副作用和组合回滚都有 MemoryStore 题。
+8. SAVE_SIDE_EFFECT 主链题必须 `COMMIT_MEMORY`；同一 plan 重复提交不得产生重复记录。
+9. 报告包含代码、题库、mode、provider、prompt、五层结果和 errorOwner。
+10. 运行不访问真实 AI、生产数据或微信存储；canary 是独立命令和独立报告。
+11. 现有两个已修 P0 的动态回归保持通过。
+
+## 20. 后续四层边界
+
+| 层级 | 目的 | V1 是否实现 |
+| --- | --- | --- |
+| 第一层：共享核心 Node 自动测试 | 解析、路由、fake AI、合并、安全、confirmation、savePlan、MemoryStore | 本合同范围 |
+| 第二层：网页可视化全链路 | 展示同一 trace、批量对比、定位 failedLayer | 后续；只消费核心，不复制逻辑 |
+| 第三层：微信开发者工具自动化 | 真实页面输入、按钮、跳转和本地保存 | 后续；验证 WXML/微信运行时 |
+| 第四层：真机人工验收 | 录音、权限、网络、输入法、等待感受和老板习惯 | 后续少量人工 |
+
+## 21. 仍需老板决定
+
+1. 复杂输入最终是否自动调用 AI，还是保留用户点深度核对。
+2. 深度核对是长期入口还是过渡措施。
+3. AI 失败后用户明确修正全部危险字段，是否允许正式保存。
+4. 哪些危险字段必须额外明确确认。
+5. 第一阶段真实 AI canary 的题量、重复次数和每轮成本上限。
+
+上述未决项必须通过 case 标签或策略版本隔离；未决定前，确定性门禁以当前产品事实为准，不能让题库偷偷改变产品。

@@ -1,0 +1,831 @@
+# 记一笔共享核心合同（候选 V1）
+
+> 状态：**合同已定稿，尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+>
+> 本合同以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
+> 的真实代码为事实基线。实现不得借合同之名改变当前 AI 分流产品规则。
+
+## 1. 权威范围
+
+本文件是“记一笔共享核心”的权威接口合同，回答共享核心接收什么、按什么顺序处理、输出什么，以及微信小程序、网页测试台、Node 测试怎样共用一套业务逻辑。
+
+本文件不取代：
+
+- `AGENTS.md` 的产品最高规则；
+- `docs/RECORD_CONFIRM_CARD_SPEC.md` 的用户字段和文案规范；
+- `docs/RECORD_TEST_CONTRACT_V1.md` 的测试题、评分和门禁合同；
+- 当前生产代码。合同落地前，当前代码仍是运行事实。
+
+## 2. 目标与非目标
+
+### 2.1 目标
+
+共享核心必须把同一条原文从解析一直处理到可检查的保存结果：
+
+```text
+严格原文
+  ↓
+输入标准化与聊天提取
+  ↓
+真实本地 parser
+  ↓
+本地安全检查与生产 route
+  ↓
+按模式决定是否调用 AI adapter
+  ↓
+AI 业务有效性检查、标准化、合并与冲突处理
+  ↓
+最终安全检查
+  ↓
+领域确认态
+  ↓
+savePlan（不写数据）
+  ↓
+MemoryStore 或真实存储适配器提交
+  ↓
+state diff 与完整 trace
+```
+
+微信、Web、Node 必须调用同一个平台无关编排入口，不能复制 parser、路由、合并、安全、确认态或保存转换代码。
+
+### 2.2 非目标
+
+本合同不决定、不实现：
+
+- 复杂内容是否改为自动调用 AI；
+- “深度核对”是否长期保留；
+- AI 失败后，用户全部手工修正是否一定允许正式保存；
+- 哪些危险字段需要额外二次确认；
+- 网页测试台、微信自动化或真机录音；
+- 真实 AI 的模型质量和成本结论；
+- 数据库、云端账号或生产迁移。
+
+## 3. 当前产品事实与兼容原则
+
+当前真实流程是：本地 parser 先执行，`getParseRouteDecision()` 决定
+`local`、`pending`、`ai_standard`、`ai_deep`。涉及历史、账款、多轮聊天、多商品、冲突或复杂语义的内容，默认常先进入 `pending`；只有用户明确选择 `reviewMode: 'deep'` 才走深度 AI。共享核心的 `PRODUCTION_ROUTING` 必须先原样复刻这套规则。
+
+当前完整页和首页都传 `context: 'home'`，都调用 `parseHybridInput()` 和 `saveConfirmedDraft()`，但分别在 `pages/input/input.js` 与 `pages/dashboard/dashboard.js` 计算确认态。当前保存由 `utils/business.js` 直接修改 `utils/storage.js` 的状态，尚无 savePlan、事务或 MemoryStore。
+
+兼容原则：第一阶段抽取必须先做“等价迁移”。任何路由、必填字段、保存准入或业务副作用变化，都必须另立产品任务和回归，不得藏在平台解耦中。
+
+## 4. 共享核心边界
+
+```text
+微信页面 ─┐
+          ├─ Platform Adapter ─ Record Shared Core ─ AI Adapter
+Web 测试台 ┤                                      ├─ History/Query Adapter
+Node 测试 ─┘                                      └─ Storage Adapter / MemoryStore
+```
+
+共享核心负责：原文保护、标准化、本地解析、安全、路由、AI 编排、有效性检查、标准化、合并、来源与证据、确认态、savePlan、内存态提交结果和 trace。
+
+平台层只负责：采集输入、显示等待、控件与样式、用户点击、录音和剪贴板权限、页面跳转、网络与真实存储适配。平台层不得重新判断 AI 是否可信、不得另写保存闸门、不得生成另一套 savePlan。
+
+## 5. 版本与入口
+
+建议唯一入口：
+
+```text
+runRecordFlow(input) -> Promise<RecordFlowOutput>
+```
+
+合同版本写入每次输出：
+
+- `coreContractVersion`: `record-shared-core-v1`
+- `traceSchemaVersion`: `record-trace-v1`
+- `savePlanVersion`: `record-save-plan-v1`
+
+版本升级必须向后兼容已有测试题，或提供显式迁移器；不能静默改变同名字段语义。
+
+## 6. 输入合同
+
+### 6.1 RecordFlowInput
+
+| 字段 | 类型 | 必填 | 默认/允许值 | 提供者 | 核心能否修改 | 测试注入 | 生产来源 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `mode` | 枚举 | 是 | `LOCAL_ONLY` / `AI_ONLY` / `PRODUCTION_ROUTING` | 调用方 | 否 | 每题固定 | 生产固定为 `PRODUCTION_ROUTING` |
+| `originalText` | string | 是 | 非空；严格原文 | 输入适配器 | **否** | fixture 原文 | 输入框、语音转写原文或剪贴板原文 |
+| `inputSource` | 枚举 | 是 | `typed` / `voice` / `chat` / `imported` / `test` | 输入适配器 | 否 | 每题固定 | 页面输入方式；旧 `paste` 映射为 `chat` |
+| `businessDate` | `YYYY-MM-DD` | 是 | 无隐式默认 | 调用方/clock | 否 | 固定日期 | `clock` 按上海时区计算 |
+| `businessTimezone` | string | 是 | V1 只允许 `Asia/Shanghai` | 调用方 | 否 | 固定值 | 应用公共配置 |
+| `nowInstant` | ISO-8601 instant | 是 | 含时区或 `Z` | clock | 否 | 冻结时间 | clock 当前时刻 |
+| `reviewMode` | 枚举 | 否 | `standard`；允许 `standard` / `deep` | 用户动作/测试题 | 否 | 每题固定 | 页面“深度核对”动作 |
+| `context` | 枚举 | 否 | 兼容期默认 `home`；允许 `home` / `record` | 平台适配器 | 否 | 生产复刻用 `home` | 当前两页均为 `home`；`record` 为平台中立目标值 |
+| `initialState` | DomainState | 否 | 空白业务状态 | 调用方/存储适配器 | 否；必须深拷贝 | fixture | 真实存储快照 |
+| `userEdits` | UserEdit[] | 否 | `[]` | 页面/测试 | 否 | 显式步骤 | 用户对字段或关联对象的修改 |
+| `userConfirmedFields` | string[] | 否 | `[]`；仅作派生摘要 | 页面/测试 | 否 | 显式步骤 | 兼容显示，不是保存授权依据 |
+| `userFieldConfirmations` | UserFieldConfirmation[] | 否 | `[]` | 页面/测试 | 否 | 绑定值和 revision 的确认步骤 | 用户明确确认的危险字段及当时值 |
+| `aiAdapter` | AiAdapter | 条件必填 | AI 模式需要；本地模式可用拒绝调用 adapter | 组合根 | 否 | fake/mock/replay/real canary | 微信网络适配器 |
+| `storageAdapter` | StorageAdapter | 否 | 仅生成计划时可省略 | 组合根 | 否 | MemoryStore | wxStorage adapter |
+| `clock` | Clock | 是 | `nowInstant()`、`businessDate(timezone)`、`monotonicMs()` | 组合根 | 否 | FrozenClock | 微信/服务运行时 clock |
+| `idGenerator` | IdGenerator | 是 | `next(entityType)` | 组合根 | 否 | SequenceIdGenerator | 安全随机或现有兼容生成器 |
+| `traceOptions` | TraceOptions | 否 | 见 6.4 | 调用方 | 否 | 全量、可重放 | 生产默认脱敏 |
+| `runId` | string | 否 | 缺失时由 `idGenerator` 生成 | 测试运行器/核心 | 仅可补一次 | 固定或运行级 ID | 应用生成 |
+| `caseId` | string | 否 | 无 | 测试运行器 | 否 | 题目 ID | 生产为空 |
+
+`mode` 只能影响顶层编排，不得让 parser、合并器、安全函数读取环境变量或测试标志。`context` 不能作为“微信/Web/Node”的暗开关；从 `home` 迁移到 `record` 前必须先用特征测试证明结果等价。
+
+`nowInstant` 是绝对事实；`businessDate` 必须等于它按 `businessTimezone` 投影后的日期，并与 clock 一致，否则返回 `INPUT_INVALID`。业务日期和 createdAt 使用 `nowInstant()`，耗时和截止使用 `monotonicMs()`，不得混用墙上时钟。生产输入适配器先从同一个 clock 生成三者，测试由 FrozenClock 生成。
+
+对外和 trace 使用 `inputSource: chat`；兼容 facade 调当前遗留代码时必须执行
+`chat -> paste`，遗留结果返回时执行 `paste -> chat`。该双向映射是等价迁移要求，否则当前多轮聊天和 fast/deep 判定会改变。
+
+### 6.2 原文与派生文本
+
+必须分开保存：
+
+| 字段 | 含义 | 规则 |
+| --- | --- | --- |
+| `originalText` | 用户实际提交的严格原文 | 不 trim、不改空格、不改换行、不纠错；全链路只读 |
+| `normalizedText` | 为 parser 统一字符、空格、数字表达后的文本 | 由核心派生；不能覆盖原文 |
+| `extractedText` | 从聊天或导入内容中选出的业务文本 | 由输入提取阶段派生 |
+| `rawMessages` | 解析后的原始消息对象数组 | 保留顺序、说话人标签与原句；不得替代严格原文 |
+| `selectedMessages` | 本次被纳入解析的消息索引或 ID | 必须可追溯到 `rawMessages` |
+
+当前 `utils/parser.js` 的 `original_text` 会做一定归一化，`utils/clipboard-chat.js` 已能区分
+`rawText`、`extractedText` 和消息。目标实现必须新增严格原文槽位，并对旧字段做兼容映射，不能立即改坏历史页面。
+
+### 6.3 UserEdit
+
+每次修改是事件，不是只传最终对象：
+
+```json
+{
+  "fieldPath": "items[1].quantity",
+  "oldValue": "",
+  "newValue": "200",
+  "editedAt": "2026-07-22T02:00:00.000Z",
+  "confirmed": true
+}
+```
+
+核心按顺序应用编辑，然后重新执行字段来源更新、关联候选检查、最终安全、确认态和 savePlan。不能只删除当前字段的 warning 就视为所有风险已解除。
+
+`UserFieldConfirmation` 至少包含 `fieldPath`、`valueHash`、`resultRevision`、
+`confirmedAt`。字段值、来源、关联候选、intent 或 operation 变化后，相关确认立即失效；多商品确认绑定稳定 itemId 和字段路径，不能只用 `items` 一个名字笼统确认。`userConfirmedFields` 只能由仍有效的确认事件派生。
+
+### 6.4 TraceOptions
+
+至少支持：
+
+- `level`: `minimal` / `full`；
+- `includeRawAi`: 是否保存 AI 原始结构；
+- `includeStateSnapshots`: 是否记录 stateBefore/stateAfter；
+- `redaction`: `production` / `synthetic_test`；
+- `maxTextLength` 与 `maxHistoryRecords`。
+
+生产 trace 默认脱敏；真实密钥、授权头、Cookie 永远不得进入 trace。
+
+## 7. 三种运行模式
+
+| 能力 | `LOCAL_ONLY` | `AI_ONLY` | `PRODUCTION_ROUTING` |
+| --- | --- | --- | --- |
+| 真实本地 parser | 必须执行 | 必须以影子方式执行，仅生成 productionRoute/trace | 必须执行 |
+| 本地结果能否决定最终字段 | 是 | **否** | 按真实合并规则 |
+| 生产 route 判断 | 记录但不发 AI | 不作为 AI 调用条件 | 必须执行并服从 |
+| AI adapter | 严禁调用 | 必须调用 | 仅 route 为 AI 时调用 |
+| AI 业务有效性检查 | 不适用 | 必须 | 调用后必须 |
+| 最终安全 | 必须 | 必须 | 必须 |
+| confirmation/savePlan | 必须 | 必须 | 必须 |
+| MemoryStore 提交 | 可选且显式 | 仅测试可选且显式 | 可选且显式 |
+
+### 7.1 LOCAL_ONLY
+
+- 使用真实本地 parser 和本地安全检查。
+- 注入的 AI adapter 应为 `FailOnCallAiAdapter`；任何调用都以
+  `AI_CALLED_IN_LOCAL_ONLY` 使测试失败。
+- 即使真实 route 认为需要 AI，也不发请求；trace 必须同时记录“生产 route 本应是什么”和“本模式禁止 AI”。
+- 继续生成最终安全、确认态、savePlan；只有安全允许时才可提交 MemoryStore。
+- 用于测量本地正确率、错误高置信、危险放行与简单输入完整保存。
+
+### 7.2 AI_ONLY
+
+- 原文直接交给与生产相同输入/输出合同的 AI adapter。
+- 必须运行本地 parser 和 route 生成只写 trace 的 `shadowLocalResult` 与 `productionRoute`，便于同题观察分流；但它们不得进入 AI 请求、prompt、标准化输入或最终 AI_ONLY 字段。AI_ONLY 请求必须省略 `localDraft`（或显式 `localDraftPolicy: OMIT`）；否则不能称为模型/prompt 单独评分。
+- AI 仍必须经过业务有效性检查、原文/历史证据检查和最终保存安全；“只测模型”不等于允许绕过安全。
+- 历史数据只来自 `initialState` 的明确 fixture。找不到或不唯一时，AI 应返回缺失/冲突/需确认，不得编历史价格或 ID。
+- 可以生成 savePlan；仅当测试显式设置执行步骤、最终安全通过且 providerKind 符合规则时，才可提交 MemoryStore。生产页面不暴露 AI_ONLY。
+- 模型评分只读取 `rawModelContent` 与 `parsedBusinessResult`；标准化、确认态、保存层错误不能反算成模型错误。
+
+### 7.3 PRODUCTION_ROUTING
+
+严格复刻当前产品：
+
+```text
+本地 parser → 本地安全 → getParseRouteDecision 等价实现
+  ├─ local：不调用 AI
+  ├─ pending：不调用 AI，显示补充/深度核对
+  ├─ ai_standard：调用 standard adapter
+  └─ ai_deep：仅 reviewMode=deep 等当前条件成立时调用 deep adapter
+→ 标准化 → 合并 → 最终安全 → confirmation → savePlan → 可选提交
+```
+
+该模式用于统计真实分流、合并、危险放行、不必要调用和失败回退。测试模式不得把 `pending` 偷改成自动 AI。
+
+## 8. AI Adapter 合同
+
+### 8.1 接口
+
+```text
+aiAdapter.parse(AiParseRequest) -> Promise<AiParseResponse>
+```
+
+核心不得直接使用 `wx.request`、HTTP 地址、provider SDK 或环境变量。网络认证、HTTP 与模型调用都在 adapter 外层。
+
+每个 adapter 在组合根注册不可变 `descriptor`：`adapterId`、`providerKind`、
+`provider`、允许的 modelTier 和是否可访问网络。providerKind 的权威来源是 descriptor，不能来自模型业务 JSON，也不能被 AiParseResponse 覆盖；core 必须校验响应身份和 descriptor 一致。
+
+### 8.2 AiParseRequest
+
+| 字段 | 说明 |
+| --- | --- |
+| `requestId` | 本次唯一请求 ID |
+| `mode` | 只作为 trace 元数据；adapter 不得据此改变 prompt、model 或 output shape |
+| `reviewMode` | `standard` / `deep` |
+| `originalText` / `normalizedText` | 严格原文与归一化文本 |
+| `inputSource` | 规范输入来源 |
+| `businessDate` / `businessTimezone` | 模型解释相对日期的唯一基准 |
+| `localDraft` | 仅 PRODUCTION_ROUTING 传生产本地草稿；AI_ONLY 必须省略或为空 |
+| `businessContext` | 已按客户和策略缩小范围的历史数据；空即无可用历史 |
+| `rawMessages` / `selectedMessages` | 聊天证据与顺序 |
+| `requiredOutputShape` | 生产 standard/deep 对应的结构合同 |
+| `deadlineMs` | 基于 `clock.monotonicMs()` 的绝对单调截止点，不是 epoch 时间 |
+| `traceContext` | `runId`、`caseId`，不含密钥和业务写权限 |
+
+### 8.3 AiParseResponse
+
+| 字段 | 类型/规则 |
+| --- | --- |
+| `providerKind` | 从 adapter descriptor 复制的 `NONE` / `REAL` / `MOCK` / `FAKE` / `REPLAY` |
+| `provider` | 供应商标识，不含账号或密钥 |
+| `model` | 实际模型标识 |
+| `modelTier` | `fast` / `quality` / 其他显式枚举 |
+| `promptVersion` | 人工版本号；生产 prompt 变更必须更新 |
+| `promptHash` | 规范化 system+user 模板的内容哈希 |
+| `requestId` | 与请求一致；服务端可附 `serverRequestId` |
+| `startedAt` / `finishedAt` / `latencyMs` | adapter 实际调用时间 |
+| `rawProviderResponse` | provider 包装的安全摘要或测试全量；生产按脱敏规则保存 |
+| `rawModelContent` | 模型原始字符串；空/非 JSON 的第一层评分依据 |
+| `parsedBusinessResult` | 对原始模型内容完成 JSON 提取后的业务对象，尚未字段标准化 |
+| `usage` | input/output/total token 与可得的计费元数据 |
+| `error` | `{code,message,retryable,httpStatus}`；不含响应密钥或敏感头 |
+
+`REAL` 只代表真实 provider 确实被请求，不代表结果正确；`MOCK`、`FAKE`、`REPLAY` 永远不能记为真实模型成功。确定性测试可以让 `FAKE`/`REPLAY` 的业务内容经过 confirmation、savePlan 和 MemoryStore，以验证成功路径，但 trace 必须保留其身份，且真实存储 adapter 必须拒绝这种计划。
+
+### 8.4 失败返回规则
+
+AiParseResponse 是判别联合：成功返回 `ok: true`，预期的 provider/网络/格式失败返回
+`ok: false` 和结构化 `error`。adapter 不得在失败时填入本地字段。即使第三方 SDK 以 reject/throw 报错，core 也必须捕获、映射并返回带原文和完整 trace 的安全 output；只有输入合同或核心编程错误可以终止整次调用。
+
+| 场景 | adapter调用/网络开始/收到响应 | `aiRequestState` | `aiOutcome` | 最低错误码 |
+| --- | --- | --- | --- | --- |
+| route 需要 AI 但无 endpoint | 否 / 否 / 否 | `SKIPPED` | `SKIPPED_NO_ENDPOINT` | `AI_ENDPOINT_MISSING` |
+| 401 | 是 / 是 / 是 | `FAILED` | `FAILED` | `AUTH_REQUIRED` |
+| 403 | 是 / 是 / 是 | `FAILED` | `FAILED` | `AUTH_FORBIDDEN` |
+| 429 | 是 / 是 / 是 | `FAILED` | `FAILED` | `RATE_LIMITED` |
+| 5xx | 是 / 是 / 是 | `FAILED` | `FAILED` | `AI_PROVIDER_FAILED` |
+| 网络错误 | 是 / 是 / 否 | `FAILED` | `FAILED` | `AI_NETWORK_ERROR` |
+| 超时 | 是 / 是 / 否或迟到丢弃 | `TIMED_OUT` | `TIMED_OUT` | `AI_TIMEOUT` |
+| 空响应/非 JSON | 是 / 是 / 是 | `SUCCEEDED` | `INVALID_RESPONSE` | `AI_RESPONSE_INVALID` |
+| 合法空业务 JSON | 是 / 是 / 是 | `SUCCEEDED` | `EMPTY_BUSINESS_RESULT` | `AI_RESPONSE_EMPTY_BUSINESS` |
+
+任何失败映射都必须令 `blocksFormalSave=true`（纯 local route 不适用），并保持本地草稿只是草稿，不能包装成 `USED`。
+
+## 9. 状态合同
+
+### 9.1 ProviderKind
+
+- `NONE`：没有 provider；
+- `REAL`：真实模型网络调用；
+- `MOCK`：产品模拟 provider；
+- `FAKE`：确定性测试 adapter；
+- `REPLAY`：读取已保存响应。
+
+REPLAY 可用于页面开发和标准化回归，不能计入模型正确率、真实延迟、稳定性或当轮成本。
+
+### 9.2 AI 请求/结果状态
+
+`aiOutcome` 是本次 AI 工作的结果，不表达最终是否采用：
+
+- `NOT_REQUESTED`
+- `REQUESTING`（只用于事件流/进行中快照）
+- `USED`
+- `RETURNED_UNCERTAIN`
+- `FAILED`
+- `TIMED_OUT`
+- `MOCK_USED`
+- `INVALID_RESPONSE`
+- `EMPTY_BUSINESS_RESULT`
+- `SKIPPED_NO_ENDPOINT`
+
+必须同时保留低层 `aiRequestState`：`NOT_REQUESTED`、`DECIDED`、`REQUESTING`、`SUCCEEDED`、`FAILED`、`TIMED_OUT`、`SKIPPED`。HTTP 200 只可使 requestState 成为 `SUCCEEDED`，不能直接得到 `USED`。
+
+### 9.3 采用状态
+
+请求状态与字段采用必须分开：
+
+- `NOT_APPLICABLE`：未请求 AI；
+- `ADOPTED`：有效 AI 结果成为主要最终结果；
+- `PARTIALLY_ADOPTED`：只采用部分 AI 字段；
+- `NOT_ADOPTED`：AI 返回但因冲突、无证据、mock、用户覆盖或安全拒绝而未采用。
+
+AI 成功返回但最终未采用必须记录 `aiOutcome: USED` 与
+`adoptionStatus: NOT_ADOPTED`，不能改写成失败，也不能假装 AI 贡献了字段。
+
+### 9.4 当前状态映射
+
+| 当前 `ai_fallback.status` | V1 `aiOutcome` | 备注 |
+| --- | --- | --- |
+| `not_requested` | `NOT_REQUESTED` | 含 local/pending 未请求 |
+| `requested` | `REQUESTING` | 当前也被用于请求前草稿；目标应拆 request state |
+| `used` | `USED` | 还须 `business_result_valid=true` |
+| `returned_uncertain` | `RETURNED_UNCERTAIN` | 空业务错误目前也映射到此，目标要独立码 |
+| `failed` | `FAILED` | 保留具体 error code |
+| `timed_out` | `TIMED_OUT` | 保留 fast/deep/总等待超时码 |
+| `mock_used` | `MOCK_USED` | 正式保存必须阻断 |
+| `skipped_no_endpoint` | `SKIPPED_NO_ENDPOINT` | 没有环境或 endpoint |
+
+### 9.5 核心错误码
+
+至少定义：`INPUT_INVALID`、`MODE_INVALID`、`AI_ADAPTER_REQUIRED`、
+`AI_CALLED_IN_LOCAL_ONLY`、`AI_RESPONSE_INVALID`、
+`AI_RESPONSE_EMPTY_BUSINESS`、`AI_TIMEOUT`、`AI_PROVIDER_FAILED`、
+`AI_ENDPOINT_MISSING`、`AI_NETWORK_ERROR`、`AUTH_REQUIRED`、`AUTH_FORBIDDEN`、
+`RATE_LIMITED`、`MOCK_NOT_TRUSTED`、`HISTORY_NOT_FOUND`、`HISTORY_AMBIGUOUS`、
+`ROUTE_CONTRACT_VIOLATION`、`SAFETY_BLOCKED`、`SAVE_PLAN_INVALID`、
+`STORAGE_COMMIT_FAILED`、`STORAGE_ROLLBACK_FAILED`、`STATE_DIFF_MISMATCH`。
+
+错误对象必须带 `stage`、`code`、`message`、`retryable`、`blocksFormalSave`；用户文案由页面适配器映射，核心不返回平台 Toast。
+
+## 10. AI 业务结果有效性
+
+### 10.1 无效结果
+
+以下结果必须得到 `EMPTY_BUSINESS_RESULT` 或 `INVALID_RESPONSE`，不得标记 `USED`：
+
+- `{}`；
+- `{ "fields": {} }`；
+- 空 `intent`；
+- `intent: "unknown"` 且没有具体业务判断；
+- `items: []` 且无其他业务结论；
+- 只有空的 missing/low/conflict 数组；
+- 只有 provider、model、requestId、timing、token、status、metadata；
+- 业务字段全部为空白；
+- 结构合法但没有业务结论。
+
+### 10.2 有效安全结论
+
+以下不是“空结果”，但通常仍会阻止正式保存：
+
+- 明确信息不足并列出缺失字段；
+- 明确要求用户确认并说明原因；
+- 明确存在冲突或历史匹配不唯一；
+- 明确不能可靠形成业务记录；
+- 明确是 `NO_RECORD`；
+- 明确不能引用不存在的历史价格或订单。
+
+### 10.3 有效业务结论
+
+至少满足一项：
+
+1. 有明确且受支持的 intent；
+2. 至少一个有原文或历史证据的业务字段；
+3. 有明确、具体的不确定/冲突/缺失结论；
+4. 有明确 `NO_RECORD` 或需用户确认结论；
+5. 有结构正确且有证据的 `items[]`、多事项或历史关联结果。
+
+### 10.4 五层防护
+
+有效性检查必须在以下边界存在，且共享同一规则包：
+
+1. 服务端收到模型结构后；
+2. 客户端/核心标准化前；
+3. 合并前；
+4. confirmation 计算前；
+5. 正式保存闸门。
+
+当前 P0 已在服务端、客户端和 business 闸门修复并有 Node 针对性回归；合同将其固化为不可回退规则，而不是把 P0 重新标成未修。
+
+## 11. 输出合同
+
+### 11.1 RecordFlowOutput
+
+```text
+{
+  coreContractVersion,
+  result,
+  trace,
+  confirmation,
+  savePlan,
+  businessResult,
+  metrics,
+  errors
+}
+```
+
+当正式保存被阻断时也必须返回完整 output；不得用 throw 丢失原文、route、确认态或待整理计划。adapter reject/合同违例也应先映射为安全 output 和错误；只有输入合同损坏或无法继续的核心编程异常才终止。
+
+### 11.2 result
+
+至少包含：
+
+- `intent`、`operation`；
+- `fields`、`items`；
+- `drafts[]`：多事项的候选业务草稿；当前生产规则未允许自动拆分保存时必须保持阻断；
+- `missingFields`、`lowConfidenceFields`、`fieldConflicts`；
+- `confidence`；
+- `formalSaveBlocked`；
+- `originalText`、`normalizedText`、`extractedText`；
+- `fieldSources`、`fieldEvidence`；
+- `finalSource`: `local` / `ai` / `mixed` / `user` / `pending` / `no_record`。
+
+规范输出使用 camelCase；兼容层负责映射当前 snake_case，页面和测试不得各自再写映射。
+
+### 11.3 trace
+
+至少包含：
+
+- 身份：`runId`、`caseId`、`mode`、`inputSource`；
+- 原文：`originalText`、`normalizedText`、`extractedText`；
+- 本地：`localResult`、`localSafety`、`localConfidence`、`localWarnings`；
+- 路由：`productionRoute`、`executionPath`、`routeReasons`、`deepReviewAvailable`；
+- AI：`aiRequiredByRoute`、`aiAdapterInvoked`、`aiRequestStarted`、
+  `aiResponseReceived`、`aiRequestState`、`aiOutcome`、`providerKind`、
+  `provider`、`model`、`modelTier`、`promptVersion`、`promptHash`、
+  `rawProviderResponse`、`rawModelContent`、`parsedBusinessResult`、
+  `aiNormalizedResult`、`aiError`；
+- 合并：`mergeResult`、`mergeConflicts`、`fieldSources`、`fieldEvidence`、
+  `adoptionStatus`；
+- 最终：`finalSafety`、`saveAllowed`、`saveBlockedReasons`、`finalSource`；
+- 时间：`startedAt`、`finishedAt`、`localLatencyMs`、`aiLatencyMs`、
+  `totalLatencyMs`；
+- 保存：`savePlanSummary`、`businessResultSummary`。
+
+trace 是事件事实，不是用户文案。任何阶段不得修改上一步 trace；只能追加新 stage。
+
+上述 raw 与 state 字段是逻辑 trace 能力，不等于生产日志必须持久化全量内容。`traceOptions` 为 full synthetic test 时保存合成全量；生产可返回/持久化 `redacted`、hash 或安全引用，并明确 `redacted=true`，不得保存完整客户 state 或敏感模型原文。
+
+`productionRoute` 记录同一输入按当前产品规则本应得到的 `local`、`pending`、
+`ai_standard` 或 `ai_deep`；`executionPath` 记录本模式实际执行的
+`local_only`、`ai_only_standard`、`ai_only_deep`、`production_local`、
+`production_pending`、`production_standard` 或 `production_deep`。AI
+分流正确率只按 `productionRoute` 计算，不能把 LOCAL_ONLY 的禁止调用或 AI_ONLY
+的强制调用误算成生产分流错误。
+
+`SKIPPED_NO_ENDPOINT` 必须记录 `aiRequiredByRoute=true`，但
+`aiAdapterInvoked=false`、`aiRequestStarted=false`、`aiResponseReceived=false`。
+这些事件字段不能从 route 或最终 outcome 反推，必须按真实发生过程记录。
+
+### 11.4 confirmation
+
+平台无关领域确认态至少包含：
+
+- `businessType`、`operation`；
+- 只读 `originalText`；完整页和首页都必须可查看，首页可折叠但不能删除；
+- `visibleFields`、`mustDisplayFields`、`editableFields`、`requiredFields`、`recommendedFields`、`optionalFields`；
+- `warnings`、`fieldConflicts`、`fieldEvidence`；
+- `customerCandidates`、`orderCandidates`、`receivableCandidates`；
+- `domainCanSaveFormal`（兼容别名 `canSaveFormal`）、`canSavePending`；
+- `canCommitToRealStorage`（非 REAL 的 AI 模拟成功路径必须为 false）；
+- `formalSaveDisabledReason`；
+- `needsUserConfirmation`、`needsDeepReview`、`requiresFullPage`；
+- `requiredSurfaceCapabilities`；
+- 完整 `items[]` 的逐项确认状态；
+- `confirmationVersion`。
+
+该对象表达业务事实，不包含 `setData` 字段、CSS class、按钮位置、折叠状态或 Toast 文案。
+
+### 11.5 savePlan
+
+savePlan 只描述“准备怎样写”，不能修改状态：
+
+- `planId`、`version`、`intent`、`operation`；
+- `customersToCreate`、`customersToUpdate`；
+- `quotationsToCreateOrUpdate`；
+- `ordersToCreateOrUpdate`；
+- `receivablesToCreateOrUpdate`；
+- `paymentsToCreate`；
+- `todosToCreateOrUpdate`；
+- `pendingNotesToCreate`；
+- `recordLinks`；
+- `writes[]`（所有主记录、派生记录和审计写入的单一权威列表）；
+- `originalText`；
+- `preconditions`；
+- `expectedStateDelta`；
+- `formal` 与 `blockedReasons`；
+- `commitTargetPolicy`: `REAL_OR_MEMORY` / `MEMORY_ONLY` / `BLOCKED`。
+
+`prepareSavePlan()` 必须是纯函数。若正式保存不安全，可以输出 pending 计划，但必须令 `formal=false`，不得同时准备正式客户或正式业务写入。FAKE/REPLAY 的有效成功场景可以生成 `formal=true`、`commitTargetPolicy=MEMORY_ONLY` 的模拟计划；它只能提交 MemoryStore，不能提交 wxStorage 或任何真实数据库。MOCK 仍按不可信结果阻断正式计划。
+
+每条 `WriteOperation` 至少包含：
+
+```text
+{
+  writeId,
+  entityType,
+  action,             // CREATE / UPDATE / DELETE
+  recordId,
+  dataOrPatch,
+  dependsOn[],
+  preconditions[],
+  expectedRevision,
+  idempotencyKey,
+  requiresOriginalText
+}
+```
+
+上面的分类数组是方便阅读的投影，必须可由 `writes[]` 唯一推导，不能形成第二套计划。`writes[]` 还必须表达当前运行时的 `orderProgress`、`aiParseLogs`、`operationLogs`、`productCatalog` 和兼容 `dunningRecords` 等派生/审计写入；等价迁移时不能只保存主记录、静默丢掉当前副作用。
+
+### 11.6 businessResult
+
+提交后至少包含：
+
+- `createdRecords`、`updatedRecords`、`deletedRecords`；
+- `stateBefore`、`stateAfter`、`stateDiff`；
+- `commitSucceeded`、`commitErrors`；
+- `commitStatus`: `NOT_ATTEMPTED` / `BLOCKED` / `SUCCEEDED` / `FAILED` / `ROLLED_BACK`；
+- `rolledBack`；
+- `appliedPlanId`；
+- `idempotentReplay`、`originalCommitResultRef`。
+
+`NOT_ATTEMPTED` 时 stateAfter 必须等于 stateBefore 且 stateDiff 为空；`BLOCKED` 表示计划、授权或目标存储不允许提交；`FAILED` 只能出现在尚未产生可见写入时；发生部分内部写入后必须回滚并返回 `ROLLED_BACK`；只有全部写入和后置校验通过才是 `SUCCEEDED`。
+
+合成测试可返回完整 stateBefore/stateAfter；生产 trace/日志默认只返回 revision、diff 摘要和受控 record references，不持久化整份客户状态。
+
+### 11.7 metrics 与 errors
+
+`metrics` 至少包含本地、AI、合并、安全、计划和提交各阶段耗时、AI 请求次数、是否发生重试、处理的消息/商品/事项数量。REAL adapter 可附 token 和费用估算；FAKE/MOCK/REPLAY 的费用必须为 `not_applicable`，并保留 providerKind。
+
+`errors[]` 必须保留全部结构化错误，至少含 `stage`、`code`、`message`、`retryable`、`blocksFormalSave`、`fieldPaths`。一个早期错误被安全回退处理后仍要留在 errors 和 trace，不能因最终生成待整理而被抹掉。
+
+## 12. 字段来源与证据
+
+### 12.1 来源枚举
+
+- `LOCAL`
+- `AI`
+- `HISTORY`
+- `USER`
+- `DERIVED`
+- `DEFAULT`
+- `UNKNOWN`
+
+### 12.2 FieldFact
+
+每个最终字段以及 `items[n].*`、关联 ID 必须使用同一语义记录：
+
+```text
+{
+  value,
+  source,
+  evidence[],
+  confidence,
+  confirmedByUser,
+  lastUpdatedStage
+}
+```
+
+至少覆盖 `customerName`、`productName`、`quantity`、`unit`、`unitPrice`、
+`totalAmount`、`paymentAmount`、`receivableAmount`、`depositAmount`、
+`remainingAmount`、所有日期、`items[]` 与 customer/order/quotation/receivable ID。
+
+规则：
+
+- 用户修改后来源立即变为 `USER`；
+- 计算剩余金额为 `DERIVED`，并记录公式和输入字段；
+- “上次价格”只有成功匹配历史记录时为 `HISTORY`，证据带记录 ID；
+- 默认值为 `DEFAULT`，不能冒充原文事实；
+- AI 危险字段没有证据时不得正式采用；
+- 值被覆盖时来源和证据必须一起更新，不能保留旧 AI 来源；
+- 多商品逐项记录，不能只给整个 `items` 一个模糊来源。
+
+当前 `field_sources` 只做浅合并，`manual_fields` 也未可靠更新最终来源。这是已知 P1 差距，本轮不修。
+
+## 13. 三层安全合同
+
+### 13.1 本地解析安全
+
+输出当前四态：
+
+- `SAFE_LOCAL`
+- `NEEDS_AI`
+- `NEEDS_USER_CONFIRM`
+- `NO_RECORD`
+
+必须记录缺失、低置信、冲突、证据不足、语义风险和原文依据。该层不能决定真实保存，只决定本地草稿风险。
+
+### 13.2 AI 与合并安全
+
+必须检查：
+
+- AI 业务结果有效性；
+- AI 字段是否有原文/历史证据；
+- 本地与 AI 的字段、intent 和关联冲突；
+- 历史引用是否唯一且属于同一客户；
+- 多商品是否丢失、折叠或拼进单字段；
+- 客户是否被背景数据错误覆盖；
+- AI 返回的安全拒绝是否被错误当成空结果。
+
+输出 `SAFE_TO_CONFIRM`、`NEEDS_USER_CONFIRM`、`BLOCKED_FOR_FORMAL_SAVE` 或
+`NO_RECORD`，以及可追溯原因。
+
+### 13.3 正式保存安全
+
+在页面按钮和存储提交前都执行同一规则：
+
+- 必填字段、低置信、冲突；
+- 客户身份与重名；
+- 收款/欠款方向与金额；
+- 订单、报价、待收关联及目标是否唯一；
+- AI outcome、providerKind、adoptionStatus；
+- 用户确认的危险字段；
+- savePlan 的前置条件和内部金额一致性；
+- originalText 与 items[] 完整性。
+
+### 13.4 零容忍阻断
+
+以下任一存在时不得正式保存：
+
+- 收款和欠款方向不确定；
+- 客户归属不确定或重名未选；
+- 金额、数量、定金或剩余金额冲突；
+- 当 `aiRequiredByRoute=true` 或 AI 字段实际进入候选结果时，AI 为空、失败、无证据或未被采用；纯 local 的 `NOT_APPLICABLE` 不构成 AI 阻断；
+- 多商品被丢失或压成一项；
+- 历史记录匹配不唯一；
+- 本应更新旧记录却未选择目标；
+- providerKind 为 `MOCK` 的结果；或 `FAKE`、`REPLAY` 计划试图提交真实存储；
+- 在老板另行决定并发布版本化策略前，任何 AI 路线失败；
+- 多事项未拆分或未经确认。
+
+## 14. 领域确认态与页面边界
+
+共享核心是 `domainCanSaveFormal`、`canSavePending`、必填、风险、候选关联和深度核对需求的唯一权威。`requiredFields` 才能阻断正式保存；`recommendedFields` 只能提示且不得自动编造。
+
+页面负责：样式、展开收起、控件、按钮布局、跳转、等待提示和文案展示形式。
+
+首页可以少显示字段、遇复杂场景跳完整页、不提供完整编辑能力。页面可依据核心给出的 `requiredSurfaceCapabilities` 计算
+`canSubmitHere = domainCanSaveFormal && surfaceCapabilitiesSatisfied`；页面只能收紧，不能放宽。页面能力不足记为 `SURFACE_CAPABILITY`，不冒充领域安全失败。首页还不得：
+
+- 使用另一套保存安全规则；
+- 独立判断 AI 是否可信；
+- 独立生成 savePlan；
+- 对同一最终字段得出不同正式保存结论。
+
+用户修改后，核心必须从编辑事件重新计算字段来源、缺失、低置信、冲突、候选关联、AI 未解决状态、confirmation 和 savePlan，并使旧 revision、旧计划和旧确认失效。当前“AI 失败后全部手工修正是否允许保存”仍待产品决定；在老板决定前，AI 路线失败仍按当前规则阻断正式保存。用户修改必须被记录和重算，但不得单凭字段已经补齐就解除 AI 未解决状态。将来若开放，必须通过版本化策略和独立回归，不得只删除一个 warning。
+
+## 15. 保存计划、MemoryStore 与原子性
+
+### 15.1 分离原则
+
+```text
+prepareSavePlan(result, confirmation, stateSnapshot)
+  → 只生成计划，不改数据
+
+commitSavePlan(plan, commitAuthorization, storageAdapter)
+  → 校验前置条件，原子应用或完整回滚
+```
+
+`runRecordFlow()` 默认只运行到 savePlan，绝不自动写真实存储。只有用户明确点击“正式保存”或“待整理”后，平台才能调用 `commitSavePlan()`。页面不能直接调用“创建客户再创建订单”等分散函数。微信真实存储与 MemoryStore 必须消费同一 savePlan。
+
+`commitAuthorization` 至少绑定 `planId`、`planHash`、`confirmationRevision`、
+`action`（`formal` / `pending`）、`userInitiated: true` 和授权时间。任何字段、来源、候选关联、风险、intent 或 operation 改变后，旧 confirmation、savePlan 和授权全部失效。真实存储 adapter 必须拒绝缺少用户动作、revision 过期或 hash 不匹配的提交；MemoryStore 测试也必须显式给出模拟授权，不能因计划安全就自动 commit。
+
+### 15.2 MemoryStore
+
+第一阶段 MemoryStore 必须：
+
+- 从 `initialState` 深拷贝开始；
+- 每题新实例，禁止跨题污染；
+- 支持客户、报价、订单、待收、收款、提醒、待整理及关联查询；
+- 使用 FrozenClock 与固定 IdGenerator；
+- 先校验所有 preconditions，再应用 writes；
+- 任一步失败恢复 stateBefore；
+- 输出稳定、可比较的 state diff；
+- 不调用 `wx`、网络或真实数据库。
+- 用 `planId + idempotencyKey` 防重复：同一计划重复提交不新增第二份记录；本次返回 `idempotentReplay=true`、`originalCommitResultRef`，并令本次 stateBefore=stateAfter、diff/created/updated 为空。
+
+V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quotations`、
+`orders`、`receivables`、`paymentRecords`、`dunningRecords`、`todos`、
+`orderProgress`、`pendingNotes`、`aiParseLogs`、`operationLogs`、`productCatalog`、
+`dunningTemplates` 和兼容的删除/归档集合。若未来改名为通用 `templates`，必须提供显式双向兼容映射；缺少集合时由版本化纯迁移器补固定默认值，不能调用当前时间或随机 ID。
+
+### 15.3 必须原子处理的组合
+
+- 创建客户 + 创建报价/订单/待收/提醒；
+- 订单 + 定金；
+- 收款记录 + 待收余额/状态更新；
+- 报价转订单 + 报价状态/关联更新；
+- 新建待收 + 同时记录已收款。
+
+中间失败时不得留下半个客户、孤立付款或只更新一边的关联。`stateDiff` 必须为空或显示完整回滚。
+
+### 15.4 StorageAdapter
+
+统一存储适配器至少提供：
+
+- `kind`: `MEMORY` / `WX_STORAGE` / 未来显式类型；
+- `snapshot()`：返回带 revision 的深拷贝状态；
+- `query(snapshot, querySpec)`：只读查询客户和业务记录；
+- `commit(plan, commitAuthorization, expectedRevision)`：校验授权、版本和全部前置条件后原子提交；
+- `rollback(transactionId)`：仅分步 adapter 使用；transactionId 由失败的 commit result 返回；整状态单写的 wxStorage 声明 `supportsAtomicReplace=true` 且无需外部 rollback；
+- `capabilities`：是否可写真实数据、是否支持事务和最大状态大小。
+
+核心不能直接调用 `wx.getStorageSync`/`wx.setStorageSync`。wxStorage adapter 可继续使用当前“读完整 state、写完整 state”的兼容方式，但必须先在内存应用并校验完整计划，最后只做一次正式替换；revision 冲突时不得覆盖较新状态。
+
+同一 `planId + idempotencyKey` 再次提交时，adapter 必须返回幂等重放引用且不重复写，不能把第一次的非空 diff 冒充本次写入。不同计划若违反业务唯一性前置条件（例如同一报价重复转订单），必须返回 `BLOCKED`，不能只依赖页面防重。
+
+## 16. 三端适配边界
+
+| 能力 | 共享核心 | 微信适配层 | Web 测试台 | Node 测试器 |
+| --- | --- | --- | --- | --- |
+| parser/route/merge/safety | 唯一实现 | 调用 | 调用 | 调用 |
+| 输入采集 | 否 | 输入框、语音、剪贴板权限 | 文本/批量上传 | fixture |
+| AI 网络 | 只认 adapter | `wx.request` adapter | 测试环境 HTTP adapter | fake/mock/replay/canary adapter |
+| confirmation | 领域状态 | WXML 显示 | trace 面板 | 结构断言 |
+| savePlan | 唯一实现 | 提交前展示/确认 | 只读展示或 MemoryStore | MemoryStore 断言 |
+| 存储 | 只认 adapter | wxStorage adapter | MemoryStore | MemoryStore |
+| 页面跳转 | 否 | 是 | 否 | 否 |
+| 报告 | 输出结构化数据 | 可选诊断 | 可视化 | 独立报告器 |
+
+## 17. 不变量
+
+任何实现都必须满足：
+
+1. `originalText` 从入口到业务记录逐字不变；
+2. `LOCAL_ONLY` 的 AI 请求次数永远为 0；
+3. HTTP/JSON 成功不能直接等于 AI 业务成功；
+4. mock/fake/replay 不能冒充 real；FAKE/REPLAY 只能在 `MEMORY_ONLY` 计划中模拟成功路径；
+5. 请求成功与结果采用是两个状态；
+6. 同一最终字段的 value、source、evidence 同步变化；
+7. confirmation 不能比 finalSafety 更宽松；
+8. savePlan 不能比 confirmation 更宽松；
+9. commit 不能执行未通过的 formal 计划；
+10. 首页与完整页对同一领域状态给出相同保存结论；
+11. 失败仍返回 trace 和可安全待整理的原文；
+12. mode 和 adapter 不得通过环境变量偷偷改变 parser 或安全规则。
+13. source-bearing 业务记录必须逐字保存 `originalText`；客户、商品目录和纯进度/审计记录不强制复制原文。
+
+## 18. 当前代码差距
+
+这里的 P0/P1/P2 是“共享核心落地优先级”，不是重新打开已经修复的两个 AI 完整性 P0。
+
+| 合同能力 | 当前是否已有 | 当前文件 | 主要差距 | 优先级 |
+| --- | --- | --- | --- | --- |
+| 三种 mode | 否 | `utils/ai-parser.js`、现有脚本 | 只有生产式混合入口；AI_ONLY/LOCAL_ONLY靠脚本拼接 | P0 |
+| 不可变严格原文 | 部分 | `utils/parser.js`、`utils/clipboard-chat.js`、`utils/business.js` | `original_text` 有归一化；聊天字段未形成统一合同 | P0 |
+| 固定业务日期/时区 | 部分 | `utils/date.js`、parser/business/server model | 多处 `new Date()`；服务器用 UTC 切日；未注入上海业务时区 | P0 |
+| clock/idGenerator | 否 | `utils/storage.js`、`utils/business.js`、页面/服务端 | `Date.now()`、`Math.random()`、`new Date()` 分散 | P0 |
+| AI adapter | 否 | `utils/ai-parser.js`、`server/src/ai/model.js` | 前端直接依赖 `wx`/endpoint；provider 元数据不完整 | P0 |
+| AI 空业务多层保护 | 是 | client/server AI + business | 两个 P0 已修并通过针对性 Node 动态测试；迁移时须保留 | P0 回归不变量 |
+| 完整 trace | 部分 | `utils/ai-parser.js`、`utils/parse-evidence.js` | 有耗时/route 草稿，缺 raw AI、prompt hash、采用状态和 state diff | P0 |
+| raw/normalized AI 分层 | 部分 | `server/src/ai/model.js`、`utils/ai-parser.js` | 当前响应很快进入 normalize/merge；模型层评分不独立 | P0 |
+| promptVersion/hash | 否 | `server/src/ai/model.js` | 生产 prompt 在函数内，无正式版本/哈希回传 | P1 |
+| 字段来源 | 部分 | parser/AI merge | 浅合并；用户编辑、逐项商品、derived/history 不可靠 | P1 |
+| 统一 confirmation | 否 | `pages/input/input.js`、`pages/dashboard/dashboard.js` | 两页各自计算字段与按钮状态 | P1 |
+| 确认 revision 与提交授权 | 否 | 两页点击处理函数 | 当前只有页面事件，没有 plan hash/revision，无法拒绝旧计划 | P0 |
+| savePlan | 否 | `utils/business.js` | 保存函数直接改 state | P0 |
+| MemoryStore | 否 | 测试中的零散空 state | 无事务、rollback、统一 query/commit 合同 | P0 |
+| state diff | 否 | 无统一实现 | 测试多为手写副作用断言 | P0 |
+| 自动报告 | 部分 | `scripts/release-parse-corpus-v2.js` 等 | 会生成独立报告，但 schema、版本和五层归责不统一 | P2 |
+| 真实 AI canary | 部分实验 | real-ai 脚本/promptfoo | prompt 与生产可能分叉，环境/成本合同未统一 | Later |
+| 微信自动化 | 否 | 人工清单 | 现有 VM 测试不等于 WXML/开发者工具运行 | Later |
+
+## 19. 实现阶段建议
+
+| 阶段 | 修改范围 | 主要风险 | 完成标准 | 生产影响/测试迁移 |
+| --- | --- | --- | --- | --- |
+| 1. 统一状态枚举、trace 与平台无关门面 | 新增纯合同模块和兼容 facade；现有函数只接入记录 | 状态映射改变页面判断 | 特征测试证明 route、按钮、保存结果不变；P0 回归全过 | 低；现有测试先接 trace，不改业务断言 |
+| 2. 注入 clock、businessDate、timezone、idGenerator | date/parser/business/storage 的参数边界 | 日期、历史 ID 和旧数据兼容 | 冻结时间下全部相对日期和 ID 稳定；上海时区一致 | 中；需要日期 golden 迁移 |
+| 3. 注入 AI adapter 并实现三种 mode | AI 编排从 `wx` 解耦；服务端合同元数据 | 误改生产 route、mock 身份 | 三模式同一入口；LOCAL_ONLY 零请求；生产模式与当前一致 | 高；先用 fake characterization |
+| 4. 统一领域 confirmation | 抽取两页共有字段/安全计算、revision 和 surface capability | 首页体验变重、按钮分叉或旧确认复用 | 同输入同领域保存结论；首页只收紧；编辑使旧确认失效 | 高；页面 VM 与人工检查都要迁移 |
+| 5. 拆 prepareSavePlan/commit 与 MemoryStore | business 写入改为计划、用户提交授权和 adapter | 金融关联、半保存、重复点击、历史兼容 | 全业务与审计副作用可表达；旧计划拒绝；幂等；原子回滚；state diff 稳定 | 高；保留 wxStorage 兼容适配器 |
+| 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
+| 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |
+| 8. 微信开发者工具自动化 | 页面机器人与测试账号 | 工具和登录不稳定 | 两入口输入、卡片、按钮、保存、跳转可验 | 中；独立环境 |
+| 9. 真实 AI canary | REAL adapter、合成题、成本阈值 | 隐私、费用、prompt 分叉 | 版本/成本/模型/五层评分完整 | 受控；不作每次开发门禁 |
+| 10. 少量真机验收 | 录音、输入法、权限、弱网、老板体验 | 自动化不能覆盖体验 | 人工清单通过且未改写技术结果 | 必须但不是核心代码门禁 |
+
+阶段 1～6 构成第一阶段自动测试能力。每阶段都必须保持旧入口可运行，不允许一次性大改 parser、business 和页面。
+
+## 20. 仍需老板决定
+
+1. 复杂、低可信或冲突输入最终是否自动调用 AI，还是继续先让老板点“深度核对”。
+2. “深度核对”是长期功能还是过渡措施。
+3. AI 失败后，用户手工修正并明确确认所有危险字段时是否允许正式保存。
+4. 客户归属、收/欠方向、金额、定金、关联订单中，哪些必须额外明确确认。
+5. 第一阶段真实 AI canary 每轮允许的成本上限。
+
+这些决定不阻断合同和确定性核心的实现；在决定前，`PRODUCTION_ROUTING` 必须保持当前规则，相关状态必须可追踪。
+
+## 21. 共享核心实现验收
+
+只有同时满足下列条件，才可称“共享核心 V1 已实现”：
+
+- 微信、Web、Node 使用同一个编排入口；
+- 三种 mode 符合本合同且不污染生产；
+- trace 能区分本地、AI 原始、标准化、合并、确认、savePlan、commit；
+- 两个页面消费同一领域 confirmation 与 savePlan；
+- MemoryStore 能从原文跑到 state diff，所有组合写入可回滚；
+- 两个已修 P0 和零容忍门禁保持通过；
+- 没有把真实 AI 或微信真机尚未验证写成已通过。
