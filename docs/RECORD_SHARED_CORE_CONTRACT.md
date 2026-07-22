@@ -1,6 +1,6 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.1 已通过离线回归；纯 SavePlan、MemoryStore 原子 Commit 和 State Diff 已实现并完成记一笔保存入口的隔离等价对照；生产 business 和页面尚未迁移；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1E.2A 已通过离线回归；微信旧 Storage 的只读投影、Preview Commit 和隔离影子等价已实现；共享生产 Commit 仍禁用，legacy 保存仍生效；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
 > 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
@@ -96,6 +96,28 @@ Phase 1E.1 在不迁移页面、不切换生产 `saveConfirmedDraft()` / `savePe
 - `scripts/record-shared-core-phase1e1-tests.js` 20/20 通过：包含22个记一笔 legacy `saveConfirmedDraft` / `savePendingNote` 等价场景、6类失败注入、幂等/碰撞/过期计划、LINK合同、金融关系、授权/schema fail-closed、多商品、严格原文、目录回填、日志截断和 diff 审计。Phase 1A～1D、领域预检、P0、路由、五步用户、核心/金融生命周期和服务端 fake 回归同时通过。
 
 “记一笔关联报价创建订单”已按当前 `saveConfirmedDraft(create_order + quotationId)` 对照；报价页直接 `convertQuotationToOrder()` 与订单页直接 `generateReceivableFromOrder()` 是独立页面生命周期入口，本轮只做边界回归，未伪装成 Confirmation SavePlan，也未迁移。Phase 1E.2 才负责让生产记一笔 business 入口消费共享计划与 Commit；直接页面生命周期若未来纳入计划，必须另有明确 action 合同。
+
+### 1.6 Phase 1E.2A 当前实现状态（2026-07-22）
+
+Phase 1E.2A 只建立存储边界和影子证据，不切换生产写入：
+
+- 当前业务数据由 `utils/storage.js` 以单一 bundle key `yiwu_boss_ai_assistant_v1` 整体读取/替换；身份 key `huoxiaoling_ai_auth_session_v1` 以及 `pending_to_edit`、`record_to_edit`、`force_text_input`、`draft_to_input`、`finance_segment` 五个页面交接/偏好 key 不属于 DomainState，适配器不得读入或覆盖其内容。
+- bundle 内已分类 `meta`、客户、报价、订单、待收、收款、提醒、待整理、订单进度、AI/操作日志、产品目录、催款记录/模板和删除记录；不存在单独持久化的 `records` 索引。`productCatalog` 同时含自动学习和人工维护内容，不得视为可随时重建的纯缓存；未知顶层和记录字段在投影/反投影中保留。
+- `utils/record-storage-state-projector.js` 把旧 key-value 快照投影为完整 DomainState，并生成覆盖全部业务、日志、目录、进度和兼容字段的 fingerprint；反投影只提出一个业务 bundle 写入，不物化原本不存在且未变化的可选空集合。
+- `utils/record-storage-adapters.js` 提供受保护 gateway/adapter 身份、只读 snapshot 和 `previewCommit()`。Preview 在 MemoryStore 工作区执行共享 Commit，返回 diff 与 proposedWrites，但对 gateway 的写入/删除恒为 0；外部普通对象不能注册成 WX gateway，调用方伪造、跨 adapter 或已过期 snapshot 会被拒绝。
+- 当前原子性只能描述为 `SINGLE_BUNDLE_REPLACE_UNVERIFIED`：应用代码确实只调用一次 `wx.setStorageSync` 替换整包，但仓库无法证明崩溃、配额、序列化或设备异常时的持久化原子性。现有 Storage 也没有持久化 revision/CAS、写后读回、journal、恢复协议或幂等 receipt；`app.js` 启动时还会读后立即整包写回。因此真实共享 Commit 继续返回 `SHARED_PRODUCTION_COMMIT_DISABLED`。
+- `scripts/record-shared-core-phase1e2a-tests.js` 13/13 通过：22 个 Phase 1E.1 代表场景分别经 legacy fake-wx 保存/重载和共享 Storage 投影/Preview/反投影，完整业务 bundle 等价；未知兼容字段、可信身份、snapshot 新鲜度、fullDiff 和零写入同时受检。23 个生产整包写入调用已按文件、调用种类和文件内序号逐点绑定到生命周期；6 个非业务 key 同时登记并静态核对生产者/消费者。
+
+当前真实 Storage 拓扑：
+
+| key / 状态 | 类别 | 当前写入边界 | 是否进入 DomainState |
+| --- | --- | --- | --- |
+| `yiwu_boss_ai_assistant_v1` | 业务总状态 | `saveState()` 单次整包替换 | 是，唯一业务 key |
+| `huoxiaoling_ai_auth_session_v1` | 登录/鉴权 | `utils/api-client.js` 独立写入 | 否 |
+| `pending_to_edit` / `record_to_edit` | 页面跳转交接 | 页面独立写入 | 否 |
+| `force_text_input` / `draft_to_input` / `finance_segment` | 页面偏好/草稿交接 | 页面独立写入 | 否 |
+
+页面仍直接调用 legacy business；`saveConfirmedDraft()` / `savePendingNote()` 未接入共享 Commit，WXML/WXSS 未修改。报价转单、订单生成待收、直接收款/催款、订单状态/交期、提醒完成、待整理处理、软删除/撤销、客户合并/复核、目录维护、onboarding 和 app 启动已分类，但除代表性边界外未宣称 SavePlan 等价或完成迁移。Phase 1E.2B 只有在持久化 revision/CAS、写后读回、恢复/回退协议以及所有旧 writer 协调方案明确后才可切换。
 
 ## 2. 目标与非目标
 
@@ -810,10 +832,12 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 - `snapshot()`：返回带 revision 的深拷贝状态；
 - `query(snapshot, querySpec)`：只读查询客户和业务记录；
 - `commit(plan, commitAuthorization, expectedRevision)`：校验授权、版本和全部前置条件后原子提交；
-- `rollback(transactionId)`：仅分步 adapter 使用；transactionId 由失败的 commit result 返回；整状态单写的 wxStorage 声明 `supportsAtomicReplace=true` 且无需外部 rollback；
+- `rollback(transactionId)`：仅在 adapter 有可验证事务/恢复协议时提供；不能仅因整状态调用一次 `setStorageSync` 就声明 `supportsAtomicReplace=true`；
 - `capabilities`：是否可写真实数据、是否支持事务和最大状态大小。
 
-核心不能直接调用 `wx.getStorageSync`/`wx.setStorageSync`。wxStorage adapter 可继续使用当前“读完整 state、写完整 state”的兼容方式，但必须先在内存应用并校验完整计划，最后只做一次正式替换；revision 冲突时不得覆盖较新状态。
+核心不能直接调用 `wx.getStorageSync`/`wx.setStorageSync`。wxStorage adapter 可继续使用当前“读完整 state、写完整 state”的兼容方式，但必须先在内存应用并校验完整计划，最后只做一次正式替换；revision 冲突时不得覆盖较新状态。Phase 1E.2A 的 legacy adapter 只开放可信读取和 Preview，`commit()` 固定禁用；当前单 bundle 的写入原子性标记为 `SINGLE_BUNDLE_REPLACE_UNVERIFIED`，不是已验证事务。
+
+Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`、`getFingerprint()`、`previewCommit()`、`commit()` 和 `getCommitReceipt()`。其中逻辑 version 只表示旧 bundle 是否存在，`storageStateVersionResolved=false`，不能承担 CAS；真实可写 adapter 必须新增持久化 revision、写前比较、写后读回及崩溃恢复，普通调用方传入的 `targetKind` 或 gateway 外形不得提升为可信生产身份。
 
 同一 `planId + idempotencyKey` 再次提交时，adapter 必须返回幂等重放引用且不重复写，不能把第一次的非空 diff 冒充本次写入。不同计划若违反业务唯一性前置条件（例如同一报价重复转订单），必须返回 `BLOCKED`，不能只依赖页面防重。
 
@@ -868,7 +892,8 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | 统一保存前领域预检 | 是 | `utils/record-domain-preflight.js`、Confirmation、两页、`utils/business.js` | 客户/历史/金融/AI/mode/save gate 已统一并有副作用回归；用户编辑后重算和服务端正式部署适配尚未完成 | P0 回归不变量 |
 | 确认 revision 与提交授权 | 是（MemoryStore链） | `utils/record-confirmation-builder.js`、`utils/record-save-plan-builder.js`、`utils/record-save-commit.js` | 已绑定confirmation revision/contentHash、preflight、planId/hash和state；页面真实点击授权尚未接入 | P0 后续集成 |
 | savePlan | 是（未迁移生产） | `utils/record-save-plan-contract.js`、`utils/record-save-plan-builder.js` | Phase 1E.1已表达记一笔主保存与必要副作用；生产business及直接页面生命周期尚未消费 | P0 后续集成 |
-| MemoryStore | 是 | `utils/record-memory-store.js`、`utils/record-save-commit.js` | 原子、回滚、幂等、失败注入已验证；尚无微信Storage adapter | P0 后续集成 |
+| MemoryStore | 是 | `utils/record-memory-store.js`、`utils/record-save-commit.js` | 原子、回滚、幂等、失败注入已验证；微信旧Storage目前只通过只读adapter投影到MemoryStore Preview，尚无可写事务adapter | P0 后续集成 |
+| Storage adapter / shadow preview | 是（只读） | `utils/record-storage-adapter-contract.js`、`utils/record-storage-state-projector.js`、`utils/record-storage-adapters.js`、`utils/record-save-shadow.js` | Phase 1E.2A 已完成旧单bundle投影、可信snapshot、零写入preview和22题完整bundle影子等价；真实revision/CAS/读回/恢复未实现，生产commit固定禁用 | P0 后续集成 |
 | state diff | 是 | `utils/record-state-diff.js` | business/full diff已稳定；尚未进入统一五层报告和页面 | P1 |
 | 自动报告 | 部分 | `scripts/release-parse-corpus-v2.js` 等 | 会生成独立报告，但 schema、版本和五层归责不统一 | P2 |
 | 真实 AI canary | 部分实验 | real-ai 脚本/promptfoo | prompt 与生产可能分叉，环境/成本合同未统一 | Later |
@@ -883,7 +908,8 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | 1C. 完成可注入 AI adapter 与三种 mode | **已实现本阶段范围**；三模式、可信 adapter、AI_ONLY 独立标准化、resultScope 和模式资格已接入共享门面 | 页面尚未接入；REAL provider 和微信运行时未验证；生产采用状态缺逐字段证据 | 16 组 Phase 1C、Phase 1A/1B、P0、route、五步用户、核心、模型和服务端 mock 回归通过 | 中；未改页面、生产 route 或保存逻辑 |
 | 1D. 统一领域 confirmation 与保存前预检 | **已实现本阶段范围**；Confirmation、领域预检、domain/surface、revision/hash及两页/business有限安全接入 | 页面字段展示和主解析未迁移；用户编辑重算、savePlan绑定、真实微信运行时未验证 | 16组Confirmation、20组preflight及旧全套离线回归通过；preflight/Confirmation/完整页/首页/business五方结论/指纹与阻断零副作用已验证 | 中高；旧错误快捷放行收紧，未改布局、route或保存数据结构 |
 | 1E.1. 纯 SavePlan、Commit 与 MemoryStore | **已实现本阶段范围**；共享计划、MemoryStore事务、receipt和双层diff，不切换生产business | 过渡期保存变换暂与legacy并存；直接页面生命周期不在Confirmation计划范围 | 20组专项、22个记一笔等价场景、6类失败注入、幂等/过期/金融/P0及旧全套回归通过 | 中；页面和生产business未切换 |
-| 1E.2. 生产business接入 | 让现有记一笔保存入口消费共享SavePlan与Commit，增加微信Storage adapter | 历史兼容、真实wx事务模拟、重复点击 | 页面调用方式与最终数据不变；旧分散变换删除或退役；微信失败不半保存 | 高；必须先做微信运行时回归 |
+| 1E.2A. Storage适配与影子对照 | **已实现本阶段范围**；旧单bundle投影、可信适配器、零写入Preview、22题完整bundle影子等价和全部writer分类 | 微信写入原子性未证明；无持久化revision/CAS/读回/journal；生命周期入口多数仅分类 | 13组专项、22题Storage层等价、可信snapshot/兼容字段/零写入及旧全套回归通过 | 中；生产始终LEGACY_ONLY，共享commit禁用 |
+| 1E.2B. 生产business接入 | 在一键回退到LEGACY_ONLY前提下，让现有记一笔保存入口消费共享SavePlan与事务Commit | 持久化revision、旧writer协调、崩溃恢复、重复点击和微信运行时 | 页面调用方式与最终数据不变；CAS、写后读回、恢复/回退和真实微信故障测试通过 | 高；当前被Storage原子性证据阻断 |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
 | 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |
 | 8. 微信开发者工具自动化 | 页面机器人与测试账号 | 工具和登录不稳定 | 两入口输入、卡片、按钮、保存、跳转可验 | 中；独立环境 |
