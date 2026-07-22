@@ -1,6 +1,6 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A、1B 与 1C（三种隔离模式和统一 AI adapter）已通过离线回归；完整共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1D 已通过离线回归；统一 Confirmation 与保存前领域预检已实现，页面仅有限接入安全结论；savePlan/MemoryStore 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
 > 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
@@ -65,6 +65,23 @@ Phase 1C 在不迁移页面和保存逻辑、不改变生产 route 的前提下�
 - `scripts/record-shared-core-phase1c-tests.js` 的 16 组专项测试全部通过；Phase 1A 25/25、Phase 1B 24/24、两个 P0、route、五步用户、核心功能、模型路由和服务端 standard/deep mock 回归同时通过。
 
 Phase 1C 仍不是完整 V1：页面尚未调用共享入口，统一 confirmation、字段来源、savePlan、MemoryStore、state diff、promptVersion/hash 和完整报告均未实现；本轮没有调用真实 AI、生产 endpoint 或生产数据，也没有验证微信运行时。
+
+### 1.4 Phase 1D 当前实现状态（2026-07-22）
+
+Phase 1D 在不迁移页面主解析流程、不改变 AI route 和不实现 savePlan 的前提下完成：
+
+- `utils/record-confirmation-contract.js` 与 `utils/record-confirmation-builder.js` 提供平台无关、可 JSON 序列化的 Confirmation；领域保存资格与 FULL_PAGE/HOME_QUICK/HEADLESS_TEST 的界面能力分开表达，兼容 `confirmationSummary` 只从完整 Confirmation 派生。
+- `utils/record-domain-preflight.js` 成为保存前领域安全的唯一权威纯规则，统一客户、报价、订单、待收、收款、定金、金额、更新目标、候选选择、AI 完整性和非生产 mode 的正式保存限制，并生成稳定 `preflightFingerprint`。
+- operation 只能携带保存层会消费的关系 ID；近似客户称呼需明确选择，跨客户/失效待收催款、订单与待收选择冲突、未知收款类型、待收汇总与付款明细冲突、订单结算历史无法对账均 fail closed。收款记录的 kind 由 operation 与实际关联派生，不相信输入中的任意字符串。
+- `runRecordFlow()`、Confirmation、完整页、首页与根目录 `business.saveConfirmedDraft()` 共同消费同一预检；首页只额外施加 surface 能力限制。页面 WXML/WXSS、解析/AI 主流程和保存数据结构均未迁移。
+- AI 参与采用 fail-closed：只有明确完成、业务有效且身份可信的 REAL 结果才可能取得生产资格；共享结果携带由受信 adapter 注册表生成的 mode/resultScope/provider 身份，模型 JSON 不能把 FAKE/MOCK/REPLAY 提升为 REAL。LOCAL_ONLY、AI_ONLY 和非真实 provider 的结果交给 business 仍会在写入前被阻断。
+- AI JSON 中伪造的 `parse_route`、`record_flow_context`、本地/最终安全和 trace 控制字段在标准化层被丢弃，不能把 mock 或失败结果伪装成 REAL/USED/local 路径。
+- 阻断发生在任何客户或正式业务记录变更之前；专项测试同时断言客户、报价、订单、待收、收款和提醒的正式增量为 0，并验证允许的多商品订单、部分/结清收款、严格原文保存。
+- Confirmation 的 revision/contentHash 已实现；用户编辑后的完整重算、字段来源/evidence 完整体系仍未实现。
+
+专项动态结果：`record-shared-core-phase1d-tests.js` 16/16、`record-domain-preflight-tests.js` 20/20；Phase 1A/1B/1C、AI P0、route、五步用户、核心功能、金融生命周期、模型路由和服务端 mock 回归同时通过。根目录与 server business 镜像均验证正常报价转订单的双向关系。全程清除 AI 环境变量，没有调用真实 AI、外网或生产数据。
+
+服务端当前没有正式业务保存路由；`server/utils/business.js` 仅为离线镜像。仓库完整运行时复用根目录权威预检，若只部署 `server/` 而缺少该共享模块则镜像保存入口 fail closed，不会降级到另一套保存规则。后续若服务端正式承接保存，部署包必须显式包含共享核心，而不是复制规则。
 
 ## 2. 目标与非目标
 
@@ -823,7 +840,7 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | 合同能力 | 当前是否已有 | 当前文件 | 主要差距 | 优先级 |
 | --- | --- | --- | --- | --- |
 | 三种 mode | 是（核心解析阶段） | `utils/record-flow-contract.js`、`utils/record-flow-core.js` | Phase 1C 已完成隔离执行；页面、confirmation/savePlan/MemoryStore 尚未迁移，故还不是完整第一阶段 runner | P0 后续集成 |
-| 不可变严格原文 | 部分 | `utils/record-flow-core.js`、`utils/record-flow-trace.js`、遗留 parser/business | 新门面和 trace 已逐字保护；旧保存入口仍读取 `original_text`，最终持久化未迁移 | P0 |
+| 不可变严格原文 | 部分 | `utils/record-flow-core.js`、`utils/record-flow-trace.js`、`utils/business.js` | 新门面/trace逐字保护；正式记录与待整理已兼容 `original_text`、`fields.originalText`；页面主流程和完整持久化合同仍未迁移 | P0 |
 | 固定业务日期/时区 | 部分 | `utils/record-flow-runtime.js`、parser/safety/AI adapter、`server/src/ai/model.js` | Phase 1B 已统一共享入口、旧 hybrid 入口和 standard/deep prompt 的上海业务日期；正式保存时间及部分遗留测试仍动态取时 | P0 |
 | clock/idGenerator | 部分 | `utils/record-flow-runtime.js`、`utils/record-flow-core.js`、`utils/record-flow-trace.js`、`utils/ai-parser.js`、`server/src/ai/model.js` | Phase 1B 已统一业务日期、trace clock 及 run/trace/AI request ID；monotonic deadline、parser 元数据和正式业务/存储 ID 尚未注入 | P0 |
 | AI adapter | 是（核心合同） | `utils/record-flow-core.js`、`utils/record-flow-ai-adapters.js`、`utils/ai-parser.js` | Phase 1C 已统一身份、能力、请求、事件和离线 adapter；页面未接入，REAL provider 未验证 | P0 后续集成 |
@@ -832,8 +849,9 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | raw/normalized AI 分层 | 部分 | `utils/record-flow-core.js`、`utils/ai-parser.js` | AI_ONLY 已独立记录 raw/parsed/normalized 且不合并；生产路径仍沿用现有标准化+合并结果，缺逐字段采用证据 | P0 |
 | promptVersion/hash | 否 | `server/src/ai/model.js` | 生产 prompt 在函数内，无正式版本/哈希回传 | P1 |
 | 字段来源 | 部分 | parser/AI merge | 浅合并；用户编辑、逐项商品、derived/history 不可靠 | P1 |
-| 统一 confirmation | 否 | `pages/input/input.js`、`pages/dashboard/dashboard.js` | 两页各自计算字段与按钮状态 | P1 |
-| 确认 revision 与提交授权 | 否 | 两页点击处理函数 | 当前只有页面事件，没有 plan hash/revision，无法拒绝旧计划 | P0 |
+| 统一 confirmation | 是（领域模型） | `utils/record-confirmation-contract.js`、`utils/record-confirmation-builder.js`、`utils/record-domain-preflight.js` | Phase 1D 已统一领域安全、surface、候选、actions、revision/hash；两页只有限接入安全结论，字段展示和主解析尚未迁移 | P0 后续集成 |
+| 统一保存前领域预检 | 是 | `utils/record-domain-preflight.js`、Confirmation、两页、`utils/business.js` | 客户/历史/金融/AI/mode/save gate 已统一并有副作用回归；用户编辑后重算和服务端正式部署适配尚未完成 | P0 回归不变量 |
+| 确认 revision 与提交授权 | 部分 | `utils/record-confirmation-builder.js`、两页点击处理函数 | revision/contentHash 已有；尚无 savePlan 绑定和旧计划失效执行 | P0 |
 | savePlan | 否 | `utils/business.js` | 保存函数直接改 state | P0 |
 | MemoryStore | 否 | 测试中的零散空 state | 无事务、rollback、统一 query/commit 合同 | P0 |
 | state diff | 否 | 无统一实现 | 测试多为手写副作用断言 | P0 |
@@ -848,7 +866,7 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | 1A. 统一状态枚举、trace 与平台无关门面 | **已实现**；新增纯合同/trace/core/adapter 模块，现有函数只做可复用阶段导出 | 页面尚未接入；trace 仍含业务内容；AI normalized 尚未分层 | 25 组专项离线测试、11 类起始 HEAD 金样本和既有 P0/核心回归通过 | 低；未改页面、分流和保存行为 |
 | 1B. 注入业务 clock、businessDate、timezone 与测试 ID | **已实现本阶段范围**；共享入口、旧 hybrid 入口、parser 日期、安全、AI adapter/prompt 与 trace 已贯通 | 仅支持上海时区；parser 元数据、monotonic deadline 和业务记录 ID 留待后续 | 24 组 Phase 1B 专项及 Phase 1A/P0/route/核心/服务端离线回归通过 | 中低；未改页面和保存，服务端请求新增兼容时间字段 |
 | 1C. 完成可注入 AI adapter 与三种 mode | **已实现本阶段范围**；三模式、可信 adapter、AI_ONLY 独立标准化、resultScope 和模式资格已接入共享门面 | 页面尚未接入；REAL provider 和微信运行时未验证；生产采用状态缺逐字段证据 | 16 组 Phase 1C、Phase 1A/1B、P0、route、五步用户、核心、模型和服务端 mock 回归通过 | 中；未改页面、生产 route 或保存逻辑 |
-| 4. 统一领域 confirmation | 抽取两页共有字段/安全计算、revision 和 surface capability | 首页体验变重、按钮分叉或旧确认复用 | 同输入同领域保存结论；首页只收紧；编辑使旧确认失效 | 高；页面 VM 与人工检查都要迁移 |
+| 1D. 统一领域 confirmation 与保存前预检 | **已实现本阶段范围**；Confirmation、领域预检、domain/surface、revision/hash及两页/business有限安全接入 | 页面字段展示和主解析未迁移；用户编辑重算、savePlan绑定、真实微信运行时未验证 | 16组Confirmation、20组preflight及旧全套离线回归通过；preflight/Confirmation/完整页/首页/business五方结论/指纹与阻断零副作用已验证 | 中高；旧错误快捷放行收紧，未改布局、route或保存数据结构 |
 | 5. 拆 prepareSavePlan/commit 与 MemoryStore | business 写入改为计划、用户提交授权和 adapter | 金融关联、半保存、重复点击、历史兼容 | 全业务与审计副作用可表达；旧计划拒绝；幂等；原子回滚；state diff 稳定 | 高；保留 wxStorage 兼容适配器 |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
 | 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |

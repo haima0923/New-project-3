@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A、1B 与 1C（三种隔离模式）专项运行器已通过离线回归；完整第一阶段 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1D 专项运行器已通过离线回归；统一 Confirmation 和保存前领域预检已具备确定性门禁；savePlan/MemoryStore/state diff 通用 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -68,6 +68,24 @@ Phase 1B 的确定性范围是业务日期、共享 trace 计时和 `runId/trace
 同轮通过 Phase 1A 25/25、Phase 1B 24/24、P0 AI 安全、route/等待、五步用户 28/28、核心功能、AI 模型路由和服务端 standard/deep mock 回归。所有命令显式清除 AI 环境变量；只使用 fake/mock/replay/内存数据及本机回环 fake 服务，没有调用真实 AI、生产 endpoint 或生产数据。
 
 这仍不是完整 V1 runner：尚无共享领域 confirmation、savePlan、MemoryStore、state diff、五层统一报告、页面接入或真实业务保存副作用；AI_ONLY 的资格仅用于模式评分，不能冒充生产正式保存结论。REAL provider、真实 AI 质量、微信运行时和真机均未验证。
+
+### 1.4 Phase 1D 动态验证状态（2026-07-22）
+
+Phase 1D 新增两组离线确定性门禁：
+
+- `scripts/record-shared-core-phase1d-tests.js`：16/16，覆盖 Confirmation schema、业务字段、缺失/冲突、危险字段、多商品、AI状态、三种mode、domain/surface、候选、revision/hash、兼容summary、页面事实对照和无存储副作用。
+- `scripts/record-domain-preflight-tests.js`：20/20，覆盖28类关系/金额/目标矩阵，以及未知operation、pending、未完成AI、未知provider、LOCAL_ONLY/AI_ONLY/FAKE/MOCK/REPLAY进入business、近似/重名客户、强制新建、关系ID消费白名单、催款与待收关联、收款方向、待收/订单金融历史对账、作废/重复报价、精确重放收款/定金、AI控制字段伪造、报价转订单双向关系、五方一致性和正式副作用零增量。
+
+专项测试明确检查：
+
+- 同一规范草稿的 preflight、Confirmation、完整页、首页和 business 五方领域布尔值及 `preflightFingerprint` 一致；首页只允许因 surface 能力进一步禁用按钮。
+- 阻断在正式写入前发生，客户、报价、订单、待收、收款和提醒增量均为0；待整理保留严格原文。
+- 允许场景保存的类型、客户/关系、`originalText` 与完整 `items[]` 正确；部分收款和正好结清按选中待收更新，报价转订单在根目录/server 镜像中均保持双向关系。
+- Confirmation 不信任调用方伪造的 preflight，而会把当前 result/state 重新绑定到权威纯规则；模型返回的provider标签不能自证REAL。
+
+同轮 Phase 1A 25/25、Phase 1B 24/24、Phase 1C 16/16、AI P0、route、五步用户28/28、核心功能、金融生命周期、模型路由和服务端standard/deep mock回归均通过。未调用真实AI、外网或生产存储。
+
+Phase 1D仍不是完整第一阶段runner：当前副作用回归直接使用隔离的普通内存state，并非通用MemoryStore/stateDiff框架；页面只有限接入领域安全布尔值，尚未迁移共享解析与完整Confirmation展示；用户编辑后的重算、savePlan、事务回滚和五层报告仍待后续实现。
 
 ## 2. 第一阶段范围
 
@@ -606,6 +624,8 @@ fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JS
 
 | 当前资产 | 可复用内容 | 不能直接当 V1 完整门禁的原因 |
 | --- | --- | --- |
+| `scripts/record-shared-core-phase1d-tests.js` | 统一Confirmation、domain/surface、三mode、多商品、AI状态、revision/hash和页面事实对照 | 尚非WXML运行；用户编辑重算和savePlan未实现 |
+| `scripts/record-domain-preflight-tests.js` | 客户/历史/金融/目标/AI/mode统一预检、四方一致性和正式副作用零增量 | 部分关系边界使用合成parseResult；通用MemoryStore/stateDiff尚未实现 |
 | `scripts/ai-safety-regression-tests.js` | 两个 P0、standard/deep、页面 VM、business 副作用 | 函数级拼装较多，尚无统一 case/trace/stateDiff schema |
 | `scripts/parse-route-observability-tests.js` | 四 route、耗时、失败状态和保存阻断 | 依赖 fake wx，未走统一 adapter/confirmation/savePlan |
 | `scripts/core-feature-tests.js` | parser、业务、历史、页面函数和查询的大量回归 | 大型脚本、不同层混在一起，失败归属不统一 |
