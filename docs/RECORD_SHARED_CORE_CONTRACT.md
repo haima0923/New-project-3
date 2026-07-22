@@ -1,6 +1,6 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A 与 Phase 1B（业务日期、时区、编排 clock 和 trace/AI 请求 ID）已通过离线回归；完整共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A、1B 与 1C（三种隔离模式和统一 AI adapter）已通过离线回归；完整共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
 > 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
@@ -26,7 +26,7 @@ Phase 1A 已新增：
 - `utils/record-flow-ai-adapters.js`：现有微信 AI 请求的兼容 adapter；fake/mock/replay/no-AI 由核心固定工厂提供，通用调用方不能把任意函数注册成 `REAL`。
 - `scripts/record-shared-core-phase1a-tests.js`：从原文执行真实 parser/route 的离线特征测试，并用 Phase 1A 起始 HEAD 的冻结金样本检查关键结果等价。
 
-当前只正式支持 `PRODUCTION_ROUTING`。`LOCAL_ONLY` 和 `AI_ONLY` 已有枚举，但会明确返回 `MODE_INVALID`，不会偷换成生产模式。页面尚未切换到新门面；`savePlan`、MemoryStore、state diff、完整 confirmation、字段来源、独立 AI normalized 层均未实现。
+Phase 1A 当时只正式支持 `PRODUCTION_ROUTING`；`LOCAL_ONLY` 和 `AI_ONLY` 只定义枚举并明确拒绝，不会偷换成生产模式。该限制已由 Phase 1C 按本合同解除。页面尚未切换到新门面；`savePlan`、MemoryStore、state diff、完整 confirmation 和字段来源仍未实现。
 
 Phase 1A trace 被标记为 `MEMORY_ONLY`，包含业务原文和解析内容；在完整 `TraceOptions.redaction` 落地前不得直接持久化。当前兼容 normalizer 仍把“AI 标准化+合并”作为一个遗留步骤，所以 `ai.rawResult` 已可记录，而 `ai.normalizedResult=null`、`normalizationAvailable=false`，不能据此宣称第二层评分已实现。
 
@@ -48,6 +48,23 @@ Phase 1B 在不迁移页面和保存逻辑的前提下新增并验证：
 - 1,490 题 fixture 和正式 runner 已固定并接线传递业务日期与时区；专项测试验证了题数、fixture 字段和 runner 接线，但本轮没有生成报告或全量重跑 1,490 题。其他专项覆盖系统时区差异、上海午夜、跨年、下周五、月底、非法输入、倒退 clock、固定/重复 ID、旧调用兼容和 server 独立部署加载。
 
 本阶段没有完成整个合同中的时间/ID改造：`clock.monotonicMs()`、deadline、parser 自身的兼容 `parse_*` ID/`createdAt`、正式业务记录 ID、保存时间和存储 ID 均未迁移；现有 provider 响应 ID 也尚未进入 trace。页面未切换到 `runRecordFlow()`，保存逻辑未修改，真实 AI 与微信运行时仍未验证。
+
+### 1.3 Phase 1C 当前实现状态（2026-07-22）
+
+对应代码与测试提交：`c5821efe5ac4af4a1414f102928472a11f5186ad`。
+
+Phase 1C 在不迁移页面和保存逻辑、不改变生产 route 的前提下新增并验证：
+
+- `runRecordFlow()` 已正式启用 `LOCAL_ONLY`、`AI_ONLY`、`PRODUCTION_ROUTING`；未传 mode 兼容默认生产模式，显式非法 mode fail closed。
+- `LOCAL_ONLY` 仍运行真实 parser、安全和生产 route，但执行路径固定为 `LOCAL_ONLY`，任何 productionRoute 下 AI adapter 调用数均为 0；其保存资格只代表本模式评估，不能冒充完整生产结果。
+- `AI_ONLY` 的本地解析是只写 trace 的影子阶段；standard/deep 只由显式 `reviewMode` 决定。adapter 请求中的 `localDraft` 和 `productionRoute` 均为空，本地客户、商品、数量、金额、缺失项和 route 不得进入 AI_ONLY 最终结果或确认摘要；影子本地失败也不会阻止 AI 执行。
+- AI_ONLY 复用 `utils/ai-parser.js` 的同一业务有效性与标准化规则，但不调用本地+AI 合并；trace 明确 `local.shadowOnly=true`、`merge.performed=false`，并保留 raw、parsed 和 normalized AI 层。
+- adapter 统一提供受信身份、能力和 `parse(request, hooks)`。REAL 身份继续由私有注册机制保护；FAKE、MOCK、REPLAY、NONE 不能被模型返回 JSON 伪造成 REAL，transport 事件也不能由业务结果伪造。
+- REPLAY 仅用于合成固定结果，真实延迟、成本和真实 AI 调用统计均标记不适用；MOCK/FAKE/REPLAY 不具有真实存储提交资格。
+- 输出和 trace 增加 `resultScope`、每次运行的 adapter 调用事实、模式/生产保存资格及其可解析状态。由于生产合并尚无逐字段来源证据，成功调用不猜测为完整采用，`adoptionStatusResolved=false`。
+- `scripts/record-shared-core-phase1c-tests.js` 的 16 组专项测试全部通过；Phase 1A 25/25、Phase 1B 24/24、两个 P0、route、五步用户、核心功能、模型路由和服务端 standard/deep mock 回归同时通过。
+
+Phase 1C 仍不是完整 V1：页面尚未调用共享入口，统一 confirmation、字段来源、savePlan、MemoryStore、state diff、promptVersion/hash 和完整报告均未实现；本轮没有调用真实 AI、生产 endpoint 或生产数据，也没有验证微信运行时。
 
 ## 2. 目标与非目标
 
@@ -805,14 +822,14 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 
 | 合同能力 | 当前是否已有 | 当前文件 | 主要差距 | 优先级 |
 | --- | --- | --- | --- | --- |
-| 三种 mode | 部分 | `utils/record-flow-contract.js`、`utils/record-flow-core.js` | Phase 1A 仅启用 PRODUCTION_ROUTING；另两种明确拒绝，未实现完整执行 | P0 |
+| 三种 mode | 是（核心解析阶段） | `utils/record-flow-contract.js`、`utils/record-flow-core.js` | Phase 1C 已完成隔离执行；页面、confirmation/savePlan/MemoryStore 尚未迁移，故还不是完整第一阶段 runner | P0 后续集成 |
 | 不可变严格原文 | 部分 | `utils/record-flow-core.js`、`utils/record-flow-trace.js`、遗留 parser/business | 新门面和 trace 已逐字保护；旧保存入口仍读取 `original_text`，最终持久化未迁移 | P0 |
 | 固定业务日期/时区 | 部分 | `utils/record-flow-runtime.js`、parser/safety/AI adapter、`server/src/ai/model.js` | Phase 1B 已统一共享入口、旧 hybrid 入口和 standard/deep prompt 的上海业务日期；正式保存时间及部分遗留测试仍动态取时 | P0 |
 | clock/idGenerator | 部分 | `utils/record-flow-runtime.js`、`utils/record-flow-core.js`、`utils/record-flow-trace.js`、`utils/ai-parser.js`、`server/src/ai/model.js` | Phase 1B 已统一业务日期、trace clock 及 run/trace/AI request ID；monotonic deadline、parser 元数据和正式业务/存储 ID 尚未注入 | P0 |
-| AI adapter | 部分 | `utils/record-flow-core.js`、`utils/record-flow-ai-adapters.js`、`utils/ai-parser.js` | 核心已注入 adapter，微信兼容层已隔离；页面未接入，真实 provider 未验证 | P0 |
+| AI adapter | 是（核心合同） | `utils/record-flow-core.js`、`utils/record-flow-ai-adapters.js`、`utils/ai-parser.js` | Phase 1C 已统一身份、能力、请求、事件和离线 adapter；页面未接入，REAL provider 未验证 | P0 后续集成 |
 | AI 空业务多层保护 | 是 | client/server AI + business | 两个 P0 已修并通过针对性 Node 动态测试；迁移时须保留 | P0 回归不变量 |
-| 完整 trace | 部分 | `utils/record-flow-trace.js`、`utils/record-flow-core.js` | Phase 1A 已有输入/local/route/AI/merge/final/确认摘要、事件、耗时和采用状态；缺 prompt hash、字段来源、savePlan/state diff 及生产脱敏策略 | P0 |
-| raw/normalized AI 分层 | 部分 | `utils/record-flow-core.js`、`utils/ai-parser.js` | raw 已独立记录；遗留 normalizer 仍与 merge 合并，故 normalized 明确标未提供 | P0 |
+| 完整 trace | 部分 | `utils/record-flow-trace.js`、`utils/record-flow-core.js` | 已有模式、resultScope、输入/local/route/adapter/AI/merge/final/确认摘要、事件、耗时和资格；缺 prompt hash、字段来源、savePlan/state diff 及完整生产脱敏策略 | P0 |
+| raw/normalized AI 分层 | 部分 | `utils/record-flow-core.js`、`utils/ai-parser.js` | AI_ONLY 已独立记录 raw/parsed/normalized 且不合并；生产路径仍沿用现有标准化+合并结果，缺逐字段采用证据 | P0 |
 | promptVersion/hash | 否 | `server/src/ai/model.js` | 生产 prompt 在函数内，无正式版本/哈希回传 | P1 |
 | 字段来源 | 部分 | parser/AI merge | 浅合并；用户编辑、逐项商品、derived/history 不可靠 | P1 |
 | 统一 confirmation | 否 | `pages/input/input.js`、`pages/dashboard/dashboard.js` | 两页各自计算字段与按钮状态 | P1 |
@@ -830,7 +847,7 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | --- | --- | --- | --- | --- |
 | 1A. 统一状态枚举、trace 与平台无关门面 | **已实现**；新增纯合同/trace/core/adapter 模块，现有函数只做可复用阶段导出 | 页面尚未接入；trace 仍含业务内容；AI normalized 尚未分层 | 25 组专项离线测试、11 类起始 HEAD 金样本和既有 P0/核心回归通过 | 低；未改页面、分流和保存行为 |
 | 1B. 注入业务 clock、businessDate、timezone 与测试 ID | **已实现本阶段范围**；共享入口、旧 hybrid 入口、parser 日期、安全、AI adapter/prompt 与 trace 已贯通 | 仅支持上海时区；parser 元数据、monotonic deadline 和业务记录 ID 留待后续 | 24 组 Phase 1B 专项及 Phase 1A/P0/route/核心/服务端离线回归通过 | 中低；未改页面和保存，服务端请求新增兼容时间字段 |
-| 1C. 完成可注入 AI adapter 与三种 mode | AI 编排从 `wx` 解耦；服务端合同元数据 | 误改生产 route、mock 身份 | 三模式同一入口；LOCAL_ONLY 零请求；生产模式与当前一致 | 高；先用 fake characterization |
+| 1C. 完成可注入 AI adapter 与三种 mode | **已实现本阶段范围**；三模式、可信 adapter、AI_ONLY 独立标准化、resultScope 和模式资格已接入共享门面 | 页面尚未接入；REAL provider 和微信运行时未验证；生产采用状态缺逐字段证据 | 16 组 Phase 1C、Phase 1A/1B、P0、route、五步用户、核心、模型和服务端 mock 回归通过 | 中；未改页面、生产 route 或保存逻辑 |
 | 4. 统一领域 confirmation | 抽取两页共有字段/安全计算、revision 和 surface capability | 首页体验变重、按钮分叉或旧确认复用 | 同输入同领域保存结论；首页只收紧；编辑使旧确认失效 | 高；页面 VM 与人工检查都要迁移 |
 | 5. 拆 prepareSavePlan/commit 与 MemoryStore | business 写入改为计划、用户提交授权和 adapter | 金融关联、半保存、重复点击、历史兼容 | 全业务与审计副作用可表达；旧计划拒绝；幂等；原子回滚；state diff 稳定 | 高；保留 wxStorage 兼容适配器 |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |

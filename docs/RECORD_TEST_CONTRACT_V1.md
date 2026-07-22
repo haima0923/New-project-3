@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A 与 Phase 1B 专项运行器已通过离线回归；完整第一阶段 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A、1B 与 1C（三种隔离模式）专项运行器已通过离线回归；完整第一阶段 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -30,7 +30,7 @@
 
 同轮还通过 `ai-safety-regression-tests.js`、`parse-route-observability-tests.js`、`five-step-user-tests.js` 和 `core-feature-tests.js`。所有命令均清除了 AI 环境变量，没有调用真实 AI、生产 endpoint 或生产数据。
 
-这不是完整 V1 runner：尚无 LOCAL_ONLY/AI_ONLY 执行、FrozenClock、固定业务 ID、统一领域 confirmation、savePlan、MemoryStore、state diff、五层报告或页面接入。Phase 1A trace 仅允许内存使用；完整生产脱敏策略未实现。现有保存入口也尚未消费新门面的严格 `originalText`，所以不能把本轮测试写成“最终业务持久化原文合同已验证”。
+Phase 1A 当时还不是完整 V1 runner：尚无 LOCAL_ONLY/AI_ONLY 执行、FrozenClock、固定业务 ID、统一领域 confirmation、savePlan、MemoryStore、state diff、五层报告或页面接入。前两项中的模式执行和业务时间/trace ID 已分别由 Phase 1C、1B 补齐，其余限制仍然存在。Phase 1A trace 仅允许内存使用；完整生产脱敏策略未实现。现有保存入口也尚未消费新门面的严格 `originalText`，所以不能把本轮测试写成“最终业务持久化原文合同已验证”。
 
 ### 1.2 Phase 1B 动态验证状态（2026-07-22）
 
@@ -49,6 +49,25 @@
 同轮通过 Phase 1A 25/25、P0 AI 安全、route/等待、五步用户、核心功能、AI 模型路由和服务端 parse route 离线回归。所有 AI 环境变量均显式清除；只使用 fake/mock/内存数据和本机回环 fake 服务，没有调用真实 AI、生产 endpoint 或生产数据。
 
 Phase 1B 的确定性范围是业务日期、共享 trace 计时和 `runId/traceId/AI requestId`。遗留 parser 的 `parse_*` ID/`createdAt`、旧 AI 等待预算的系统计时、正式业务记录 ID、保存时间及全仓旧测试中的动态日期仍未迁移，因此不能写成“完整解析输出和所有测试已经完全冻结”。页面仍未切换到共享门面，微信运行时和真实 AI 均未验证。
+
+### 1.3 Phase 1C 动态验证状态（2026-07-22）
+
+对应代码与测试提交：`c5821efe5ac4af4a1414f102928472a11f5186ad`。
+
+`scripts/record-shared-core-phase1c-tests.js` 当前包含 16 组离线确定性测试，覆盖：
+
+- 三种合法 mode、兼容默认生产模式和显式非法 mode fail closed；三种 `resultScope` 与模式/生产资格不混淆。
+- LOCAL_ONLY 在 local、pending、standard、deep、金融和多商品 productionRoute 下 adapter 调用始终为 0，同时仍记录真实 parser、安全与生产 route。
+- AI_ONLY 的 `localDraft=null`、request 中不传影子 productionRoute，standard/deep 仅由 `reviewMode` 决定；本地客户、商品、数量、金额、缺失项和 route 不进入最终 AI_ONLY 结果或确认摘要。
+- AI_ONLY 影子本地阶段即使失败也继续调用 adapter；最终只使用统一 AI 有效性检查和标准化，`merge.performed=false`。
+- 空业务、非 JSON、401、403、500、网络错误、超时、缺 adapter、非法身份和不支持 deep 均 fail closed；有效不确定、NO_RECORD、缺字段和 deep 多商品不被空结果规则误伤。
+- FAKE/MOCK/REPLAY 返回 JSON 不能伪造 REAL，模型返回对象不能伪造 transport 事件；REPLAY 的真实延迟、成本和真实调用统计标记不适用，MOCK/FAKE/REPLAY 不获得真实存储资格。
+- PRODUCTION_ROUTING 的 local、pending、standard、deep、timeout、401、空业务、mock、多商品、聊天和历史引用保持当前 route、合并与 P0 行为；Phase 1A 的 11 类起始 HEAD 金样本仍通过。
+- 连续及共用同一 adapter 的跨模式运行没有 trace、结果或调用计数污染。
+
+同轮通过 Phase 1A 25/25、Phase 1B 24/24、P0 AI 安全、route/等待、五步用户 28/28、核心功能、AI 模型路由和服务端 standard/deep mock 回归。所有命令显式清除 AI 环境变量；只使用 fake/mock/replay/内存数据及本机回环 fake 服务，没有调用真实 AI、生产 endpoint 或生产数据。
+
+这仍不是完整 V1 runner：尚无共享领域 confirmation、savePlan、MemoryStore、state diff、五层统一报告、页面接入或真实业务保存副作用；AI_ONLY 的资格仅用于模式评分，不能冒充生产正式保存结论。REAL provider、真实 AI 质量、微信运行时和真机均未验证。
 
 ## 2. 第一阶段范围
 
