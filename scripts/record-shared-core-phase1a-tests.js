@@ -471,6 +471,10 @@ test('现有微信adapter的离线请求保留聊天pasteMeta且不连接生产'
   assert.strictEqual(captures.length, 1);
   assert.deepStrictEqual(captures[0].rawMessages, pasteMeta.rawMessages);
   assert.deepStrictEqual(captures[0].pasteMeta, pasteMeta);
+  assert.strictEqual(captures[0].businessDate, '2026-07-22');
+  assert.strictEqual(captures[0].businessTimezone, 'Asia/Shanghai');
+  assert.strictEqual(captures[0].requestId, output.trace.ai.requestId);
+  assert(!Object.prototype.hasOwnProperty.call(captures[0], 'nowInstant'), '仅固定businessDate时不得伪造精确nowInstant');
   assert.strictEqual(output.trace.ai.providerKind, PROVIDER_KINDS.REAL);
   assert.strictEqual(output.trace.ai.outcome, AI_OUTCOMES.USED);
   assert.strictEqual(output.result.fields.items.length, 2);

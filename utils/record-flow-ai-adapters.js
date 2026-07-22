@@ -25,9 +25,13 @@ function createExistingHybridAiAdapter(options = {}) {
         source: request.legacyInputSource || 'typed',
         context: request.context || 'home',
         reviewMode: request.reviewMode || 'standard',
+        requestId: request.requestId || '',
+        businessTimezone: request.businessTimezone || 'Asia/Shanghai',
         rawMessages: request.rawMessages || [],
         pasteMeta: request.pasteMeta || null
       };
+      if (request.businessDate) payload.businessDate = request.businessDate;
+      if (request.nowInstant) payload.nowInstant = request.nowInstant;
       try {
         const response = await requestHybridAiRaw({
           payload,
@@ -41,7 +45,8 @@ function createExistingHybridAiAdapter(options = {}) {
         });
         const result = {
           rawResult: response.aiResult,
-          requestId: response.aiResult && response.aiResult.ai_request_id,
+          requestId: request.requestId || '',
+          serverRequestId: response.aiResult && response.aiResult.ai_request_id,
           latencyMs: response.aiDurationMs
         };
         existingTransportEvents.set(result, {

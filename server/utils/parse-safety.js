@@ -169,9 +169,9 @@ function validateAmountConsistency(fields, issues) {
   );
 }
 
-function validateOrderDueDate(result, fields, issues) {
+function validateOrderDueDate(result, fields, issues, businessDate = '') {
   if (result.intent !== 'order' || !hasFieldValue(fields, 'dueDate')) return;
-  if (diffDays(fields.dueDate, today()) >= 0) return;
+  if (diffDays(fields.dueDate, businessDate || today()) >= 0) return;
   addIssue(issues, 'dueDate', `交期${fields.dueDate}早于今天，请确认这是历史补录还是日期说错了。`, 'low_confidence');
 }
 
@@ -200,7 +200,7 @@ function evaluateLocalEvidence(result, options = {}) {
   const hasUnitPrice = Boolean(compact(fields.unitPrice)) && UNIT_PRICE_PATTERN.test(originalText);
   const parsedDateDetail = result.date_detail && result.date_detail.matchedText
     ? result.date_detail
-    : parseChineseDateDetail(normalizedText || originalText);
+    : parseChineseDateDetail(normalizedText || originalText, options.businessDate || undefined);
   const hasDueDate = Boolean(compact(fields.dueDate))
     && !parsedDateDetail.ambiguous
     && !parsedDateDetail.invalid
@@ -270,7 +270,7 @@ function evaluateLocalParseSafety(result, options = {}) {
   validateQuantity(fields, issues);
   validateUnitPrice(fields, issues);
   validateAmountConsistency(fields, issues);
-  validateOrderDueDate(result, fields, issues);
+  validateOrderDueDate(result, fields, issues, options.businessDate);
 
   const items = getItems(fields);
   const hasProductItem = items.some((item) => hasFieldValue(item, 'productName'));
@@ -281,7 +281,8 @@ function evaluateLocalParseSafety(result, options = {}) {
     || FINANCIAL_RISK_PATTERN.test(sourceText);
   const evidence = evaluateLocalEvidence(result, {
     originalText: options.originalText || result.original_text || '',
-    normalizedText: sourceText
+    normalizedText: sourceText,
+    businessDate: options.businessDate || ''
   });
 
   if (CUSTOMER_REQUIRED_INTENTS.includes(result.intent) && !hasFieldValue(fields, 'customerName')) {
@@ -393,7 +394,7 @@ function applyLocalParseSafety(result, options = {}) {
   return next;
 }
 
-function getFinalFieldSafety(result) {
+function getFinalFieldSafety(result, options = {}) {
   const manualFields = result.manual_fields || [];
   const shouldVerifyCustomerAgainstOriginal = !manualFields.includes('customerName');
   return evaluateLocalParseSafety(Object.assign({}, result, {
@@ -401,7 +402,8 @@ function getFinalFieldSafety(result) {
     low_confidence_fields: []
   }), {
     source: 'typed',
-    normalizedText: shouldVerifyCustomerAgainstOriginal ? (result.original_text || '') : ''
+    normalizedText: shouldVerifyCustomerAgainstOriginal ? (result.original_text || '') : '',
+    businessDate: options.businessDate || ''
   });
 }
 
@@ -440,7 +442,7 @@ function filterFinalFieldConflicts(conflicts, fields, finalMissing, finalLow) {
   });
 }
 
-function applyFinalParseSafety(result) {
+function applyFinalParseSafety(result, options = {}) {
   let fields = Object.assign({}, result.fields || {});
   const manualFields = uniqueStrings(result.manual_fields || []);
   if (result.edit_mode === 'direct_order') {
@@ -469,7 +471,7 @@ function applyFinalParseSafety(result) {
     });
   }
   const suggestedFields = Object.keys(result.field_suggestions || {});
-  let safety = getFinalFieldSafety(Object.assign({}, result, { fields }));
+  let safety = getFinalFieldSafety(Object.assign({}, result, { fields }), options);
   const invalidFields = (((safety.field_validations || {}).invalid_fields) || []);
   if (invalidFields.includes('customerName')) {
     delete fields.customerName;
@@ -482,7 +484,7 @@ function applyFinalParseSafety(result) {
     delete fields.orderId;
   }
   if (fields !== result.fields) {
-    safety = getFinalFieldSafety(Object.assign({}, result, { fields }));
+    safety = getFinalFieldSafety(Object.assign({}, result, { fields }), options);
   }
   const finalMissing = uniqueStrings(safety.missing_fields || []);
   const conflictFields = uniqueStrings(((safety.field_validations || {}).conflict_fields) || []);

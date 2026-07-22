@@ -1116,7 +1116,7 @@ function extractTodoTitle(text, fields = {}) {
   return { value: customerName ? `跟进${customerName}` : '待办提醒', source: 'rule:todo_default' };
 }
 
-function scoreIntent(text, context) {
+function scoreIntent(text, context, businessDate) {
   if (context === 'query') return { intent: 'query', candidates: ['query'] };
   if (EXPLICIT_NON_RECORD_PATTERN.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
@@ -1136,7 +1136,7 @@ function scoreIntent(text, context) {
   if (/售后|断了|坏了|破了|质量问题/.test(text) && /处理|跟进|先/.test(text)) {
     return { intent: 'todo', candidates: ['todo', 'unknown'] };
   }
-  if (/联系/.test(text) && parseChineseDate(text)) {
+  if (/联系/.test(text) && parseChineseDate(text, businessDate)) {
     return { intent: 'todo', candidates: ['todo', 'quotation'] };
   }
   if (/只是参考|别录|先别录|不要录|等确认|撤回|上个月的记录|旧记录|货价先不报|不用录/.test(text)) {
@@ -1175,7 +1175,7 @@ function scoreIntent(text, context) {
   const hasExplicitQuotePlan = /(?:问[^，,。；;]{0,12}(?:价|报)|(?:先)?给(?:他|她)?报|先看看价|看(?:看)?价)/.test(text);
 
   if (hasTodoSignal) scores.todo += 7;
-  if (/问/.test(text) && /(回|回复|答复)/.test(text) && parseChineseDate(text)) scores.todo += 3;
+  if (/问/.test(text) && /(回|回复|答复)/.test(text) && parseChineseDate(text, businessDate)) scores.todo += 3;
   if (/收了|已收|收到|先收|转了|刚转|先转|转账|打了|刚打|已付款|已付|打款|到账|已经到账|还我|还了|给了|定金|订金|预付|预付款/.test(text)) scores.payment += 5;
   if (DEPOSIT_PATTERN.test(text) && new RegExp(`(${numberPattern()})`).test(text) && !hasQuantity) scores.payment += 4;
   if (DEPOSIT_PATTERN.test(text) && /转了|付了|收了|收到|打了|打款|到账/.test(text) && !hasQuantity) scores.payment += 3;
@@ -1197,7 +1197,7 @@ function scoreIntent(text, context) {
     scores.order += 8;
     scores.payment = Math.max(0, scores.payment - 4);
   }
-  if (/追加|再来|返单|补/.test(text) && (hasQuantity || parseChineseDate(text))) scores.order += 3;
+  if (/追加|再来|返单|补/.test(text) && (hasQuantity || parseChineseDate(text, businessDate))) scores.order += 3;
   if (/改|改成|提前|延期|取消|别做|备注/.test(text) && /那单|这单|订单|交期|数量|杯垫|杯子|玩具|包装袋|礼品盒|钥匙扣|水杯|扣子|收纳盒|小夜灯|饰品盒|五金挂件|贴纸|头绳|箱规/.test(text)) scores.order += 6;
   if ((/交|拿|出/.test(text) || /给(?:他|她)(?!回|回复)/.test(text)) && new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)) scores.order += 4;
   if (hasQuantity && hasDeliverySignal && hasPriceSignal && !hasStrongQuotationSignal) scores.order += 4;
@@ -1390,7 +1390,18 @@ function detectMixedBusiness(text) {
   return hasProductBusiness && hasOtherBusiness;
 }
 
-function parseInput({ text, source = 'typed', context = 'home', state, rawText = '', extractedText = '', pasteMeta = null }) {
+function parseInput({
+  text,
+  source = 'typed',
+  context = 'home',
+  state,
+  rawText = '',
+  extractedText = '',
+  pasteMeta = null,
+  businessDate = '',
+  businessTimezone = 'Asia/Shanghai',
+  nowInstant = null
+}) {
   const recognitionText = extractedText || text;
   const originalText = normalizeOriginalText(rawText || text);
   const extractedOriginalText = normalizeOriginalText(recognitionText);
@@ -1402,7 +1413,7 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     || (hasTerminationSignal && !requiresExistingRecord)
     || mixedBusiness;
   const structuredDraft = source === 'paste' ? getPasteStructuredDraft(pasteMeta) : null;
-  const scoredIntent = scoreIntent(normalized, context);
+  const scoredIntent = scoreIntent(normalized, context, businessDate);
   const customer = extractCustomerName(normalized);
   const chatCustomerName = source === 'paste' ? getPasteCustomerName(pasteMeta) : '';
   const customerName = chooseCustomerName(chatCustomerName, customer.value, normalized);
@@ -1453,7 +1464,10 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const productName = ['quotation', 'order', 'todo', 'dunning', 'unknown'].includes(intent)
     ? ((singleItemDraft && singleItemDraft.productName) || (hasMultiProductDraft ? multiProductNames.join('、') : ((structuredDraft && structuredDraft.productName) || product.value)))
     : '';
-  const dateDetail = parseChineseDateDetail((structuredDraft && structuredDraft.dueText) || normalized);
+  const dateDetail = parseChineseDateDetail(
+    (structuredDraft && structuredDraft.dueText) || normalized,
+    businessDate || undefined
+  );
   const date = dateDetail.date;
   const todoTitle = ['todo', 'dunning'].includes(intent) ? extractTodoTitle(normalized, {
     customerName,
@@ -1479,7 +1493,7 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     remainingAmount: remainingAmount.value,
     paymentMethod: /月结/.test(normalized) ? '月结' : (DEPOSIT_PATTERN.test(normalized) ? '预付' : ''),
     dueDate: date,
-    quoteDate: today(),
+    quoteDate: businessDate || today(),
     remark: buildRemarkText(originalText)
   };
   if (useItems) {
@@ -1652,7 +1666,10 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   return applyLocalParseSafety(result, {
     normalizedText: normalized,
     originalText,
-    source
+    source,
+    businessDate,
+    businessTimezone,
+    nowInstant
   });
 }
 

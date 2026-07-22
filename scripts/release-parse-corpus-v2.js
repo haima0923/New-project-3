@@ -222,7 +222,10 @@ function evaluateCase(testCase, local, hybrid, safety) {
     const beforeConfirmState = buildEmptySaveState();
     const beforeConfirmSaved = saveConfirmedDraft(beforeConfirmState, hybrid);
     check(beforeConfirmSaved.type === 'pending', `未确认商品名称前不能正式保存，实际是“${beforeConfirmSaved.type}”`);
-    const manuallyConfirmed = applyFinalParseSafety(Object.assign({}, hybrid, { manual_fields: ['productName'] }));
+    const manuallyConfirmed = applyFinalParseSafety(
+      Object.assign({}, hybrid, { manual_fields: ['productName'] }),
+      { businessDate: testCase.businessDate }
+    );
     const afterConfirmState = buildEmptySaveState();
     const afterConfirmSaved = saveConfirmedDraft(afterConfirmState, manuallyConfirmed);
     check(afterConfirmSaved.type !== 'pending', '老板确认商品名称后应能正常保存，不能永远卡在待整理');
@@ -311,13 +314,17 @@ async function main() {
       context: 'home',
       state: { customers: [], quotations: [], orders: [], receivables: [] },
       rawMessages: testCase.rawMessages,
-      pasteMeta: buildCorpusPasteMeta(testCase)
+      pasteMeta: buildCorpusPasteMeta(testCase),
+      businessDate: testCase.businessDate,
+      businessTimezone: testCase.businessTimezone
     };
     const parsed = parseInput(payload);
     const local = applyLocalParseSafety(parsed, {
       normalizedText: payload.rawText,
       originalText: payload.rawText,
-      source: payload.source
+      source: payload.source,
+      businessDate: payload.businessDate,
+      businessTimezone: payload.businessTimezone
     });
     const safety = local.local_parse_safety;
     if (!safety || !safety.status) {

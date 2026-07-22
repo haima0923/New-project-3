@@ -33,6 +33,7 @@ function createRequestId() {
 
 function getParseErrorStatus(error) {
   const code = String((error && error.code) || 'AI_PARSE_FAILED');
+  if (['INVALID_BUSINESS_DATE', 'UNSUPPORTED_BUSINESS_TIMEZONE', 'INVALID_NOW_INSTANT', 'BUSINESS_DATE_MISMATCH'].includes(code)) return 400;
   if (code === 'AI_FAST_TIMEOUT' || code === 'AI_DEEP_TIMEOUT') return 504;
   if (code === 'AI_RESPONSE_INVALID' || code === 'AI_RESPONSE_EMPTY_BUSINESS') return 422;
   if (code === 'AI_PROVIDER_UNAVAILABLE') return 502;
@@ -46,7 +47,11 @@ function toSafeParseError(error) {
     AI_RESPONSE_INVALID: '智能核对没有给出可核对的结果。',
     AI_RESPONSE_EMPTY_BUSINESS: '智能核对返回了空业务结果，已拒绝采用。',
     AI_PROVIDER_UNAVAILABLE: '智能核对服务暂时不可用。',
-    AI_DEEP_TIMEOUT: '深度核对超时。'
+    AI_DEEP_TIMEOUT: '深度核对超时。',
+    INVALID_BUSINESS_DATE: '业务日期格式不正确。',
+    UNSUPPORTED_BUSINESS_TIMEZONE: '业务时区不受支持。',
+    INVALID_NOW_INSTANT: '当前时刻格式不正确。',
+    BUSINESS_DATE_MISMATCH: '业务日期与当前时刻不一致。'
   };
   return { error: code, message: messages[code] || '智能核对暂时不可用。' };
 }

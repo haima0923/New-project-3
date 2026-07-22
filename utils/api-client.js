@@ -41,6 +41,7 @@ function createRequestError(statusCode, payload) {
   const error = new Error(`Request failed with status ${statusCode}`);
   error.statusCode = statusCode;
   error.code = payload && payload.error ? payload.error : '';
+  error.serverRequestId = payload && payload.ai_request_id ? String(payload.ai_request_id) : '';
   return error;
 }
 

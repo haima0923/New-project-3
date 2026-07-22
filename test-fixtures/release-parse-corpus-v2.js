@@ -7,7 +7,10 @@
  * 题数：1,490（1,390 道用户输入 + 100 道 AI 失败保护场景）
  */
 
-const { diffDays, parseChineseDate, today } = require('../utils/date');
+const { diffDays, parseChineseDate } = require('../utils/date');
+
+const REFERENCE_BUSINESS_DATE = '2026-07-22';
+const BUSINESS_TIMEZONE = 'Asia/Shanghai';
 
 const customers = ['王总', '李姐', '陈老板', '周姐', '老王', '赵姐', '黄老板', '吴总', '钱总', '孙姐', '阿强', '刘总', '马姐', '何老板', '郑总', '杨姐', '冯总', '方姐', '郭老板', '宋总'];
 
@@ -64,7 +67,7 @@ function expectedBusiness(intent, data, extra = {}) {
 
 function applySpecificDueDateExpectation(data, extra = {}) {
   const expected = Object.assign({}, extra);
-  const parsedDueDate = parseChineseDate(data.due);
+  const parsedDueDate = parseChineseDate(data.due, REFERENCE_BUSINESS_DATE);
   // “下周拿/下周交”没有具体星期几；已经早于今天的交期也可能是历史补录
   // 或口误。两类都不能无提示直接保存，必须让老板确认。
   if (!parsedDueDate) {
@@ -73,7 +76,7 @@ function applySpecificDueDateExpectation(data, extra = {}) {
     expected.canSaveAfterConfirm = false;
     expected.requiresManualProductConfirmation = false;
     expected.mustBlockOnAiFailure = false;
-  } else if (diffDays(parsedDueDate, today()) < 0) {
+  } else if (diffDays(parsedDueDate, REFERENCE_BUSINESS_DATE) < 0) {
     const hadLocalProductConfirmation = expected.requiresManualProductConfirmation === true;
     if ((expected.route || 'local') === 'local' && !hadLocalProductConfirmation) expected.route = 'pending';
     expected.mustBlock = true;
@@ -93,6 +96,8 @@ function createCase(id, category, expression, source, input, expected, extras = 
     input,
     expected,
     originalText: input,
+    businessDate: REFERENCE_BUSINESS_DATE,
+    businessTimezone: BUSINESS_TIMEZONE,
     rawMessages: [],
     severity: 'normal'
   }, extras);
@@ -332,6 +337,8 @@ if (uniqueInputs.size !== corpus.length) {
 }
 
 module.exports = {
+  BUSINESS_TIMEZONE,
+  REFERENCE_BUSINESS_DATE,
   corpus,
   makeCorpus
 };

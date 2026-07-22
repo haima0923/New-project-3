@@ -47,6 +47,10 @@ const {
   getExistingHybridAiAdapterDescriptor,
   getExistingHybridTransportEvents
 } = require('./record-flow-ai-adapters');
+const {
+  DEFAULT_BUSINESS_TIMEZONE,
+  resolveRecordFlowRuntime
+} = require('./record-flow-runtime');
 
 const trustedAdapterDescriptors = new WeakMap();
 
@@ -141,7 +145,7 @@ function getAdoptionStatus(result, aiRequested) {
     return { status: ADOPTION_STATUSES.NOT_ADOPTED, resolved: true };
   }
   // An explicit uncertain conclusion can tighten safety, but does not contribute
-  // a reliable business field in Phase 1A.
+  // a reliable business field in the current facade.
   return { status: ADOPTION_STATUSES.NOT_ADOPTED, resolved: true };
 }
 
@@ -240,7 +244,7 @@ function buildConfirmationSummary(result, route, saveEligibility) {
       || missingFields.length > 0 || lowFields.length > 0 || conflicts.length > 0,
     requiresExplicitSaveAction: true,
     needsDeepReview: Boolean(route && route.deep_review_available),
-    // The shared full-page navigation rule is intentionally not part of Phase 1A.
+    // The shared full-page navigation rule is intentionally not part of Phase 1B.
     needsFullPage: null,
     // The unified per-intent required-field catalogue belongs to a later phase.
     requiredFields: null,
@@ -360,7 +364,7 @@ function createNoAiAdapter() {
   );
 }
 
-function buildLegacyPayload(input, originalText) {
+function buildLegacyPayload(input, originalText, runtime) {
   const extractedText = typeof input.extractedText === 'string' ? input.extractedText : '';
   return {
     text: extractedText || originalText,
@@ -369,6 +373,9 @@ function buildLegacyPayload(input, originalText) {
     source: toLegacyInputSource(input.inputSource),
     context: input.context || 'home',
     reviewMode: input.reviewMode === 'deep' ? 'deep' : 'standard',
+    businessDate: runtime.businessDate,
+    businessTimezone: runtime.businessTimezone,
+    nowInstant: runtime.nowInstant,
     state: cloneInputValue(input.initialState || {}),
     rawMessages: cloneInputValue(input.rawMessages || []),
     pasteMeta: cloneInputValue(input.pasteMeta || null)
@@ -384,7 +391,8 @@ function setTraceAiMetadata(trace, adapter, response) {
   trace.ai.provider = descriptor.provider || (response && response.provider) || '';
   trace.ai.model = descriptor.model || (response && response.model) || '';
   trace.ai.modelTier = descriptor.modelTier || (response && response.modelTier) || '';
-  trace.ai.requestId = (response && response.requestId) || '';
+  trace.ai.serverRequestId = (response && response.serverRequestId) || '';
+  trace.ai.providerRequestId = (response && response.providerRequestId) || '';
   return descriptor;
 }
 
@@ -393,7 +401,7 @@ function setAiRequestState(trace, state) {
   trace.ai.requestStatus = state;
 }
 
-function buildAiAdapterRequest(input, prepared, trace, normalizedText) {
+function buildAiAdapterRequest(input, prepared, trace, normalizedText, runtime, requestId) {
   const pasteMeta = cloneInputValue(input.pasteMeta || null);
   const pasteMessages = pasteMeta && (
     (Array.isArray(pasteMeta.rawMessages) && pasteMeta.rawMessages)
@@ -403,7 +411,7 @@ function buildAiAdapterRequest(input, prepared, trace, normalizedText) {
     ? input.rawMessages
     : (pasteMessages || []);
   return {
-    requestId: `${trace.runId}:ai`,
+    requestId,
     mode: trace.mode,
     reviewMode: input.reviewMode === 'deep' ? 'deep' : 'standard',
     originalText: trace.input.originalText,
@@ -412,8 +420,9 @@ function buildAiAdapterRequest(input, prepared, trace, normalizedText) {
     inputSource: trace.inputSource,
     legacyInputSource: toLegacyInputSource(input.inputSource),
     context: input.context || 'home',
-    businessDate: input.businessDate || '',
-    businessTimezone: input.businessTimezone || 'Asia/Shanghai',
+    businessDate: runtime.businessDate,
+    businessTimezone: runtime.businessTimezone,
+    nowInstant: runtime.nowInstant,
     localDraft: cloneInputValue(prepared.localResult),
     businessContext: cloneInputValue((prepared.scopedHistory || {}).businessContext || {}),
     customerCandidates: cloneInputValue((prepared.scopedHistory || {}).customers || []),
@@ -424,11 +433,63 @@ function buildAiAdapterRequest(input, prepared, trace, normalizedText) {
     productionRoute: trace.routing.productionRoute,
     routeDecision: cloneInputValue(prepared.route),
     localDurationMs: prepared.localDurationMs,
-    traceContext: { runId: trace.runId, caseId: trace.caseId }
+    traceContext: { runId: trace.runId, traceId: trace.traceId, caseId: trace.caseId }
   };
 }
 
+function buildRuntimeFailureOutput(input, error, dependencies = {}) {
+  const originalText = typeof input.originalText === 'string' ? input.originalText : '';
+  const modeRaw = input.mode || FLOW_MODES.PRODUCTION_ROUTING;
+  const inputSourceRaw = input.inputSource || 'typed';
+  const flowError = createFlowError(
+    (error && error.code) || RECORD_FLOW_ERROR_CODES.INPUT_INVALID,
+    'input',
+    error && error.message ? error.message : '运行时间上下文无效。'
+  );
+  const trace = createRecordFlowTrace({
+    runId: input.runId || '',
+    traceId: input.traceId || '',
+    caseId: input.caseId || '',
+    mode: normalizeFlowMode(modeRaw),
+    modeRaw,
+    context: input.context || 'home',
+    inputSource: normalizeInputSource(inputSourceRaw),
+    inputSourceRaw,
+    originalText,
+    normalizedText: normalizeBusinessText(originalText).trim(),
+    businessTimezone: input.businessTimezone || DEFAULT_BUSINESS_TIMEZONE,
+    businessDate: input.businessDate || '',
+    nowInstant: null,
+    nowInstantResolved: false,
+    clockSource: dependenciesSource(dependencies.clock),
+    idGeneratorSource: dependenciesSource(dependencies.idGenerator)
+  }, { skipClockRead: true });
+  trace.errors = [flowError];
+  trace.timing.stages.input.status = 'FAILED';
+  return {
+    schemaVersion: CORE_IMPLEMENTATION_VERSION,
+    coreContractVersion: CORE_CONTRACT_VERSION,
+    traceSchemaVersion: TRACE_SCHEMA_VERSION,
+    result: null,
+    trace: safeClone(trace),
+    confirmationSummary: buildConfirmationSummary(null, null, buildSaveEligibility(null)),
+    saveEligibility: buildSaveEligibility(null),
+    errors: [flowError]
+  };
+}
+
+function dependenciesSource(value) {
+  if (!value) return 'SYSTEM';
+  return value.source === 'FIXED_TEST' ? 'FIXED_TEST' : 'INJECTED';
+}
+
 async function runRecordFlow(input = {}, dependencies = {}) {
+  let runtime;
+  try {
+    runtime = resolveRecordFlowRuntime(input, dependencies);
+  } catch (error) {
+    return buildRuntimeFailureOutput(input, error, dependencies);
+  }
   const originalText = typeof input.originalText === 'string' ? input.originalText : '';
   const modeRaw = input.mode || FLOW_MODES.PRODUCTION_ROUTING;
   const mode = normalizeFlowMode(modeRaw);
@@ -438,7 +499,10 @@ async function runRecordFlow(input = {}, dependencies = {}) {
   const normalizedText = normalizeBusinessText(
     typeof input.extractedText === 'string' && input.extractedText ? input.extractedText : originalText
   ).trim();
+  const traceClock = runtime.clock;
   const trace = createRecordFlowTrace(Object.assign({}, input, {
+    runId: runtime.runId,
+    traceId: runtime.traceId,
     mode,
     modeRaw,
     originalText,
@@ -446,19 +510,28 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     inputSource,
     inputSourceRaw,
     context: contextRaw,
-    contextRaw
-  }), dependencies);
+    contextRaw,
+    businessTimezone: runtime.businessTimezone,
+    businessDate: runtime.businessDate,
+    nowInstant: runtime.nowInstant,
+    nowInstantResolved: runtime.nowInstantResolved,
+    clockSource: runtime.clockSource,
+    idGeneratorSource: runtime.idGeneratorSource
+  }), {
+    clock: traceClock,
+    initialTimeSample: runtime.initialTimeSample
+  });
   const errors = [];
   let result = null;
   let route = null;
 
-  startTraceStage(trace, 'input', dependencies.clock);
+  startTraceStage(trace, 'input', traceClock);
   if (!originalText.trim()) {
     errors.push(createFlowError(RECORD_FLOW_ERROR_CODES.INPUT_INVALID, 'input', 'originalText 不能为空。'));
     trace.errors = errors.slice();
-    failTraceStage(trace, 'input', dependencies.clock);
-    ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, dependencies.clock));
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    failTraceStage(trace, 'input', traceClock);
+    ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,
@@ -476,9 +549,9 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       inputSource === 'unknown' ? 'inputSource 不在允许范围内。' : 'context 不在允许范围内。'
     ));
     trace.errors = errors.slice();
-    failTraceStage(trace, 'input', dependencies.clock);
-    ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, dependencies.clock));
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    failTraceStage(trace, 'input', traceClock);
+    ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,
@@ -489,17 +562,17 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       errors: finalizedTrace.errors
     };
   }
-  completeTraceStage(trace, 'input', dependencies.clock);
+  completeTraceStage(trace, 'input', traceClock);
 
   if (mode !== FLOW_MODES.PRODUCTION_ROUTING) {
     errors.push(createFlowError(
       RECORD_FLOW_ERROR_CODES.MODE_INVALID,
       'input',
-      `Phase 1A 尚未实现 ${mode}。`
+      `Phase 1B 尚未实现 ${mode}。`
     ));
     trace.errors = errors.slice();
-    ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, dependencies.clock));
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,
@@ -513,16 +586,16 @@ async function runRecordFlow(input = {}, dependencies = {}) {
 
   let legacyPayload;
   let prepared;
-  startTraceStage(trace, 'local', dependencies.clock);
+  startTraceStage(trace, 'local', traceClock);
   try {
-    legacyPayload = buildLegacyPayload(input, originalText);
+    legacyPayload = buildLegacyPayload(input, originalText, runtime);
     prepared = prepareHybridLocalStage(legacyPayload);
     trace.local.result = safeClone(prepared.localResult);
     trace.local.confidence = prepared.localResult.confidence === undefined ? null : prepared.localResult.confidence;
     trace.local.warnings = safeClone(prepared.localResult.unsafe_reasons || []);
     trace.local.safetyRaw = ((prepared.localResult.local_parse_safety || {}).status) || null;
     trace.local.safety = normalizeSafetyStatus(trace.local.safetyRaw);
-    completeTraceStage(trace, 'local', dependencies.clock);
+    completeTraceStage(trace, 'local', traceClock);
   } catch (error) {
     const flowError = createFlowError(
       RECORD_FLOW_ERROR_CODES.LOCAL_PARSE_FAILED,
@@ -532,9 +605,9 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     errors.push(flowError);
     trace.local.errors.push(flowError);
     trace.errors = errors.slice();
-    failTraceStage(trace, 'local', dependencies.clock);
-    ['routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, dependencies.clock));
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    failTraceStage(trace, 'local', traceClock);
+    ['routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,
@@ -546,7 +619,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     };
   }
 
-  startTraceStage(trace, 'routing', dependencies.clock);
+  startTraceStage(trace, 'routing', traceClock);
   route = prepared.route || {};
   trace.routing.productionRouteRaw = route.decision || null;
   trace.routing.productionRoute = normalizeProductionRoute(route.decision);
@@ -563,9 +636,9 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     );
     errors.push(routeError);
     trace.errors = errors.slice();
-    failTraceStage(trace, 'routing', dependencies.clock);
-    ['ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, dependencies.clock));
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    failTraceStage(trace, 'routing', traceClock);
+    ['ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,
@@ -577,22 +650,22 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       errors: finalizedTrace.errors
     };
   }
-  completeTraceStage(trace, 'routing', dependencies.clock);
+  completeTraceStage(trace, 'routing', traceClock);
 
   const localOnlyResult = finishHybridWithoutAi(prepared);
   if (localOnlyResult) {
     result = localOnlyResult;
     trace.ai.outcomeRaw = ((result.ai_fallback || {}).status) || 'not_requested';
     trace.ai.outcome = getAiOutcome(result, '', PROVIDER_KINDS.NONE);
-    skipTraceStage(trace, 'ai', dependencies.clock);
-    skipTraceStage(trace, 'merge', dependencies.clock);
+    skipTraceStage(trace, 'ai', traceClock);
+    skipTraceStage(trace, 'merge', traceClock);
   } else {
     const aiAdapter = dependencies.aiAdapter;
     trace.ai.requiredByRoute = true;
     trace.ai.requested = false;
     setAiRequestState(trace, AI_REQUEST_STATUSES.DECIDED);
     setTraceAiMetadata(trace, aiAdapter, null);
-    startTraceStage(trace, 'ai', dependencies.clock);
+    startTraceStage(trace, 'ai', traceClock);
     if (!aiAdapter || typeof aiAdapter.execute !== 'function') {
       const missingError = new Error('AI adapter is required for this production route');
       missingError.code = RECORD_FLOW_ERROR_CODES.AI_ADAPTER_REQUIRED;
@@ -608,20 +681,29 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       trace.ai.outcome = AI_OUTCOMES.SKIPPED_NO_ENDPOINT;
       trace.ai.outcomeRaw = 'skipped_no_endpoint';
       setAiRequestState(trace, AI_REQUEST_STATUSES.SKIPPED);
-      skipTraceStage(trace, 'ai', dependencies.clock);
+      skipTraceStage(trace, 'ai', traceClock);
       trace.ai.latencyMs = trace.timing.stages.ai.latencyMs;
-      skipTraceStage(trace, 'merge', dependencies.clock);
+      skipTraceStage(trace, 'merge', traceClock);
       trace.merge.adoptionStatus = ADOPTION_STATUSES.NOT_ADOPTED;
       trace.merge.adoptionStatusResolved = true;
     } else {
       let response = null;
       let mergeStarted = false;
       try {
+        const requestId = runtime.nextId('ai_request');
+        trace.ai.requestId = requestId;
         trace.ai.adapterInvoked = true;
         trace.ai.requestStarted = true;
         trace.ai.requested = true;
         setAiRequestState(trace, AI_REQUEST_STATUSES.REQUESTING);
-        response = await aiAdapter.execute(buildAiAdapterRequest(input, prepared, trace, normalizedText));
+        response = await aiAdapter.execute(buildAiAdapterRequest(
+          input,
+          prepared,
+          trace,
+          normalizedText,
+          runtime,
+          requestId
+        ));
         trace.ai.responseReceived = true;
         const trustedEvents = getExistingHybridTransportEvents(response);
         if (trustedEvents) Object.assign(trace.ai, trustedEvents);
@@ -629,7 +711,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
         trace.ai.rawResult = safeClone(response && Object.prototype.hasOwnProperty.call(response, 'rawResult')
           ? response.rawResult
           : response);
-        // The current legacy normalizer combines normalization and merge. Phase 1A
+        // The current legacy normalizer combines normalization and merge. Phase 1B
         // must not pretend a separate AI-normalized object already exists.
         trace.ai.normalizedResult = null;
         trace.ai.normalizationAvailable = false;
@@ -638,9 +720,13 @@ async function runRecordFlow(input = {}, dependencies = {}) {
           : response;
         const validity = getAiBusinessResultValidity(rawResult);
         trace.ai.businessResultValid = validity.valid;
-        startTraceStage(trace, 'merge', dependencies.clock);
+        startTraceStage(trace, 'merge', traceClock);
         mergeStarted = true;
-        result = normalizeAiResult(prepared.localResult, rawResult);
+        result = normalizeAiResult(prepared.localResult, rawResult, {
+          businessDate: runtime.businessDate,
+          businessTimezone: runtime.businessTimezone,
+          nowInstant: runtime.nowInstant
+        });
         if (trace.ai.providerKind === PROVIDER_KINDS.MOCK
           && ((result.ai_fallback || {}).status) !== 'mock_used') {
           result = withAiStatus(result, 'mock_used', {
@@ -656,14 +742,17 @@ async function runRecordFlow(input = {}, dependencies = {}) {
         trace.merge.performed = true;
         trace.merge.result = safeClone(result);
         trace.merge.conflicts = safeClone((result && result.field_conflicts) || []);
-        completeTraceStage(trace, 'merge', dependencies.clock);
+        completeTraceStage(trace, 'merge', traceClock);
       } catch (error) {
         const noEndpoint = error && error.code === RECORD_FLOW_ERROR_CODES.AI_ENDPOINT_MISSING;
+        const preflightFailure = error && error.code === RECORD_FLOW_ERROR_CODES.ID_GENERATOR_INVALID_RESULT;
         const legacyStatus = noEndpoint ? 'skipped_no_endpoint' : getAiFailureStatus(error);
         const trustedEvents = getExistingHybridTransportEvents(error);
         if (trustedEvents) Object.assign(trace.ai, trustedEvents);
+        trace.ai.serverRequestId = (error && error.serverRequestId) || '';
+        trace.ai.providerRequestId = (error && error.providerRequestId) || '';
         result = withAiStatus(prepared.localResult, legacyStatus, {
-          attempted: !noEndpoint,
+          attempted: !noEndpoint && !preflightFailure,
           reason: noEndpoint ? (error.reason || '没有配置 AI 服务地址，无法发起 AI 请求。') : getAiFailureReason(error),
           code: error && error.code,
           businessResultValid: false
@@ -684,17 +773,17 @@ async function runRecordFlow(input = {}, dependencies = {}) {
         trace.ai.errorCode = errorCode;
         trace.ai.errorCodeRaw = errorCodeRaw;
         trace.ai.errorMessage = (error && error.message) || 'AI 调用失败。';
-        if (mergeStarted) failTraceStage(trace, 'merge', dependencies.clock);
-        else skipTraceStage(trace, 'merge', dependencies.clock);
+        if (mergeStarted) failTraceStage(trace, 'merge', traceClock);
+        else skipTraceStage(trace, 'merge', traceClock);
       }
       const aiFallback = (result && result.ai_fallback) || {};
       trace.ai.requested = aiFallback.attempted === true;
       trace.ai.outcomeRaw = aiFallback.status || null;
       trace.ai.outcome = getAiOutcome(result, trace.ai.errorCode, trace.ai.providerKind);
       setAiRequestState(trace, getAiRequestStatus(trace.ai.outcome, trace.ai));
-      if (trace.ai.requestState === AI_REQUEST_STATUSES.SUCCEEDED) completeTraceStage(trace, 'ai', dependencies.clock);
-      else if (trace.ai.requestState === AI_REQUEST_STATUSES.SKIPPED) skipTraceStage(trace, 'ai', dependencies.clock);
-      else failTraceStage(trace, 'ai', dependencies.clock);
+      if (trace.ai.requestState === AI_REQUEST_STATUSES.SUCCEEDED) completeTraceStage(trace, 'ai', traceClock);
+      else if (trace.ai.requestState === AI_REQUEST_STATUSES.SKIPPED) skipTraceStage(trace, 'ai', traceClock);
+      else failTraceStage(trace, 'ai', traceClock);
       trace.ai.latencyMs = trace.timing.stages.ai.latencyMs;
       const adoption = getAdoptionStatus(result, true);
       trace.merge.adoptionStatus = adoption.status;
@@ -702,10 +791,10 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     }
   }
 
-  startTraceStage(trace, 'final', dependencies.clock);
+  startTraceStage(trace, 'final', traceClock);
   let finalResult = null;
   try {
-    finalResult = applyFinalParseSafety(result || {});
+    finalResult = applyFinalParseSafety(result || {}, { businessDate: runtime.businessDate });
     finalResult = Object.assign({}, finalResult, { originalText });
     result = finalResult;
     const saveEligibility = buildSaveEligibility(finalResult, {
@@ -724,8 +813,8 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     trace.confirmation.needsDeepReview = confirmationSummary.needsDeepReview;
     trace.confirmation.needsFullPage = confirmationSummary.needsFullPage;
     trace.errors = errors.slice();
-    completeTraceStage(trace, 'final', dependencies.clock);
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    completeTraceStage(trace, 'final', traceClock);
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,
@@ -743,8 +832,8 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       error && error.message ? error.message : '最终安全检查失败。'
     ));
     trace.errors = errors.slice();
-    failTraceStage(trace, 'final', dependencies.clock);
-    const finalizedTrace = finalizeRecordFlowTrace(trace, dependencies);
+    failTraceStage(trace, 'final', traceClock);
+    const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
     return {
       schemaVersion: CORE_IMPLEMENTATION_VERSION,
       coreContractVersion: CORE_CONTRACT_VERSION,

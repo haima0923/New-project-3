@@ -48,7 +48,10 @@ function mockParse(payload) {
     state,
     rawText: payload.rawText || '',
     extractedText: payload.extractedText || '',
-    pasteMeta: payload.pasteMeta || null
+    pasteMeta: payload.pasteMeta || null,
+    businessDate: payload.businessDate || '',
+    businessTimezone: payload.businessTimezone || 'Asia/Shanghai',
+    nowInstant: payload.nowInstant || null
   }));
 }
 

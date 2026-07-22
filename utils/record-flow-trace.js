@@ -11,6 +11,7 @@ const {
   TRACE_SCHEMA_VERSION,
   TRACE_STAGE_STATUSES
 } = require('./record-flow-contract');
+const { readClockSample, systemClock } = require('./record-flow-runtime');
 
 const STAGE_NAMES = ['input', 'local', 'routing', 'ai', 'merge', 'final'];
 const SENSITIVE_KEYS = new Set([
@@ -28,21 +29,8 @@ function sanitizeCredentialText(value) {
     .replace(/\b(api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|client[-_ ]?secret|password)\s*[:=]\s*[^\s,;]+/gi, '$1=[REDACTED]');
 }
 
-function getNowValue(clock) {
-  let value;
-  if (typeof clock === 'function') value = clock();
-  else if (clock && typeof clock.now === 'function') value = clock.now();
-  else if (clock && typeof clock.nowInstant === 'function') value = clock.nowInstant();
-  else value = Date.now();
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === 'string') return Date.parse(value);
-  return Number(value);
-}
-
 function takeTime(clock) {
-  const candidate = getNowValue(clock);
-  const milliseconds = Number.isFinite(candidate) ? candidate : Date.now();
-  return { milliseconds, instant: new Date(milliseconds).toISOString() };
+  return readClockSample(clock || systemClock);
 }
 
 function safeClone(value, seen = new WeakSet(), key = '') {
@@ -74,12 +62,6 @@ function safeClone(value, seen = new WeakSet(), key = '') {
   return cloned;
 }
 
-function makeRunId(idGenerator, startedAtMs) {
-  if (typeof idGenerator === 'function') return String(idGenerator('record-flow-run'));
-  if (idGenerator && typeof idGenerator.next === 'function') return String(idGenerator.next('record-flow-run'));
-  return `record-flow-${startedAtMs}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function createStageMap() {
   return STAGE_NAMES.reduce((result, stage) => {
     result[stage] = {
@@ -93,7 +75,8 @@ function createStageMap() {
 }
 
 function createRecordFlowTrace(input = {}, dependencies = {}) {
-  const started = takeTime(dependencies.clock);
+  const started = dependencies.initialTimeSample
+    || (dependencies.skipClockRead ? { milliseconds: null, instant: null } : takeTime(dependencies.clock));
   const originalText = typeof input.originalText === 'string' ? input.originalText : '';
   const pasteMessages = input.pasteMeta && (
     (Array.isArray(input.pasteMeta.rawMessages) && input.pasteMeta.rawMessages)
@@ -102,7 +85,8 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
   return {
     schemaVersion: TRACE_SCHEMA_VERSION,
     targetSchemaVersion: TARGET_TRACE_SCHEMA_VERSION,
-    runId: input.runId || makeRunId(dependencies.idGenerator, started.milliseconds),
+    runId: input.runId || '',
+    traceId: input.traceId || '',
     caseId: input.caseId || '',
     mode: input.mode || FLOW_MODES.PRODUCTION_ROUTING,
     modeRaw: input.modeRaw === undefined ? (input.mode || null) : input.modeRaw,
@@ -117,6 +101,14 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
       rawMessagesCount: Array.isArray(input.rawMessages) && input.rawMessages.length
         ? input.rawMessages.length
         : (pasteMessages || []).length
+    },
+    runtime: {
+      businessTimezone: input.businessTimezone || 'Asia/Shanghai',
+      businessDate: input.businessDate || '',
+      nowInstant: input.nowInstant || null,
+      nowInstantResolved: input.nowInstantResolved === true,
+      clockSource: input.clockSource || 'SYSTEM',
+      idGeneratorSource: input.idGeneratorSource || 'SYSTEM'
     },
     dataHandling: {
       persistencePolicy: 'MEMORY_ONLY',
@@ -160,6 +152,8 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
       model: '',
       modelTier: '',
       requestId: '',
+      serverRequestId: '',
+      providerRequestId: '',
       latencyMs: null,
       businessResultValid: null,
       errorCode: '',
@@ -195,6 +189,19 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
   };
 }
 
+function addClockMovedBackwardWarning(trace, stage, startedAtMs, finishedAtMs) {
+  if (!trace || !Array.isArray(trace.warnings)) return;
+  if (!trace.warnings.some((warning) => warning && warning.code === 'CLOCK_MOVED_BACKWARD' && warning.stage === stage)) {
+    trace.warnings.push({
+      code: 'CLOCK_MOVED_BACKWARD',
+      stage,
+      message: '注入的 clock 在计时过程中倒退，耗时已按 0 记录。',
+      startedAtMs,
+      finishedAtMs
+    });
+  }
+}
+
 function startTraceStage(trace, stage, clock) {
   if (!trace || !trace.timing || !trace.timing.stages[stage]) return trace;
   const now = takeTime(clock);
@@ -215,11 +222,13 @@ function finishTraceStage(trace, stage, status, clock) {
   const startedAtMs = Number.isFinite(current._startedAtMs)
     ? current._startedAtMs
     : Date.parse(current.startedAt || now.instant);
+  const movedBackward = Number.isFinite(startedAtMs) && now.milliseconds < startedAtMs;
+  if (movedBackward) addClockMovedBackwardWarning(trace, stage, startedAtMs, now.milliseconds);
   trace.timing.stages[stage] = {
     status,
     startedAt: current.startedAt || now.instant,
     finishedAt: now.instant,
-    latencyMs: Math.max(0, now.milliseconds - startedAtMs)
+    latencyMs: movedBackward ? 0 : Math.max(0, now.milliseconds - startedAtMs)
   };
   return trace;
 }
@@ -239,8 +248,10 @@ function skipTraceStage(trace, stage, clock) {
 function finalizeRecordFlowTrace(trace, dependencies = {}) {
   const finished = takeTime(dependencies.clock);
   const startedAtMs = Date.parse(trace.timing.startedAt);
+  const movedBackward = Number.isFinite(startedAtMs) && finished.milliseconds < startedAtMs;
+  if (movedBackward) addClockMovedBackwardWarning(trace, 'total', startedAtMs, finished.milliseconds);
   trace.timing.finishedAt = finished.instant;
-  trace.timing.latencyMs = Math.max(0, finished.milliseconds - startedAtMs);
+  trace.timing.latencyMs = movedBackward ? 0 : Math.max(0, finished.milliseconds - startedAtMs);
   return safeClone(trace);
 }
 

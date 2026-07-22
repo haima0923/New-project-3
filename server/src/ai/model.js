@@ -1,5 +1,6 @@
 const { isRealAiEnabled } = require('../config');
 const { mockParse, mockQuery, mockTranscribe } = require('./mock');
+const { resolveBusinessTimeContext } = require('../../utils/record-flow-runtime');
 
 const COMPLEX_PARSE_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|改数量|延期|提前|那单|那笔|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回|定金|订金|预付|尾款|欠款|还了|还剩|结清|到账|转了|付了|收了)/i;
 const CRITICAL_FIELDS = ['customerName', 'productName', 'quantity', 'unitPrice', 'amount', 'paymentAmount', 'dueDate'];
@@ -334,9 +335,20 @@ function withModelTimeout(config, selection) {
   });
 }
 
-function parseWithAi(config, payload) {
+function parseWithAi(config, payload, dependencies = {}) {
+  let runtime;
+  try {
+    runtime = resolveBusinessTimeContext(payload || {}, { clock: dependencies.clock });
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  payload = Object.assign({}, payload || {}, {
+    businessDate: runtime.businessDate,
+    businessTimezone: runtime.businessTimezone,
+    nowInstant: runtime.nowInstant
+  });
   if (!isRealAiEnabled(config)) return Promise.resolve(mockParse(payload));
-  const today = new Date().toISOString().slice(0, 10);
+  const today = runtime.businessDate;
   const messages = payload.reviewMode === 'deep' ? [
     {
       role: 'system',

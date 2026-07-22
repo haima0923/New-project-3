@@ -1,7 +1,7 @@
 const CORE_CONTRACT_VERSION = 'record-shared-core-v1';
-const CORE_IMPLEMENTATION_VERSION = 'record-flow-phase1a-v1';
+const CORE_IMPLEMENTATION_VERSION = 'record-flow-phase1b-v1';
 const TARGET_TRACE_SCHEMA_VERSION = 'record-trace-v1';
-const TRACE_SCHEMA_VERSION = 'record-trace-phase1a-v1';
+const TRACE_SCHEMA_VERSION = 'record-trace-phase1b-v1';
 
 function freezeEnum(values) {
   return Object.freeze(values.reduce((result, value) => {
@@ -121,7 +121,14 @@ const RECORD_FLOW_ERROR_CODES = freezeEnum([
   'AI_RESPONSE_INVALID',
   'AI_RESPONSE_EMPTY_BUSINESS',
   'MERGE_FAILED',
-  'FINAL_SAFETY_FAILED'
+  'FINAL_SAFETY_FAILED',
+  'INVALID_BUSINESS_DATE',
+  'UNSUPPORTED_BUSINESS_TIMEZONE',
+  'INVALID_NOW_INSTANT',
+  'BUSINESS_DATE_MISMATCH',
+  'CLOCK_INVALID_RESULT',
+  'CLOCK_MOVED_BACKWARD',
+  'ID_GENERATOR_INVALID_RESULT'
 ]);
 
 const RECORD_FLOW_ERROR_CODE_ALIASES = Object.freeze({

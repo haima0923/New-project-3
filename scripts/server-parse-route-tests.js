@@ -118,6 +118,9 @@ async function main() {
     const sample = {
       text: '王总订水杯100个，5块5一个，明天交',
       source: 'voice',
+      businessDate: '2026-07-22',
+      businessTimezone: 'Asia/Shanghai',
+      nowInstant: '2026-07-22T02:30:00.000Z',
       localDraft: { intent: 'order', fields: {} }
     };
     fakeAiResponses.push({
@@ -157,9 +160,19 @@ async function main() {
     assert.strictEqual(emptyDeep.statusCode, 422, '深度核对空fields必须返回422');
     assert.strictEqual(emptyDeep.body.error, 'AI_RESPONSE_EMPTY_BUSINESS', '深度核对必须返回统一空业务错误码');
 
+    const invalidDate = await request('/api/ai/parse', Object.assign({}, sample, { businessDate: '2026-02-30' }));
+    assert.strictEqual(invalidDate.statusCode, 400, '非法业务日期必须在请求provider前返回400');
+    assert.strictEqual(invalidDate.body.error, 'INVALID_BUSINESS_DATE', '非法业务日期必须保留统一错误码');
+
+    const unsupportedTimezone = await request('/api/ai/parse/deep', Object.assign({}, sample, { businessTimezone: 'UTC' }));
+    assert.strictEqual(unsupportedTimezone.statusCode, 400, '不支持的业务时区必须在请求provider前返回400');
+    assert.strictEqual(unsupportedTimezone.body.error, 'UNSUPPORTED_BUSINESS_TIMEZONE', '非法时区必须保留统一错误码');
+
     assert.strictEqual(fakeAiRequests.length, 4, '离线fake上游请求次数必须符合预期');
     assert.strictEqual(fakeAiRequests[0].model, 'offline-fast-model', 'standard必须使用离线fast模型');
     assert.strictEqual(fakeAiRequests[1].model, 'offline-quality-model', 'deep必须使用离线quality模型');
+    assert(fakeAiRequests[0].messages[0].content.includes('2026-07-22'), 'standard prompt必须使用请求业务日期');
+    assert(fakeAiRequests[1].messages[0].content.includes('2026-07-22'), 'deep prompt必须使用同一业务日期');
     console.log('服务端识别路由测试通过：mock来源明确、standard/deep有效结果正常、空业务结果均返回422。');
   } finally {
     stopServer();

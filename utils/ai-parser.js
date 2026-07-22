@@ -4,6 +4,7 @@ const { getApiBaseUrl, requestJson } = require('./api-client');
 const { normalizeBusinessText } = require('./text-normalize');
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
 const { applyLocalParseSafety, NEEDS_USER_CONFIRM } = require('./parse-safety');
+const { resolveBusinessTimeContext } = require('./record-flow-runtime');
 const { normalizeUnit, unitsMatch } = require('./units');
 
 // 普通 AI 只是一轮快速核对：网络层最多 6.7 秒，外层连同本地整理最多 8 秒。
@@ -685,7 +686,7 @@ function pickFirst(source, paths) {
   return '';
 }
 
-function normalizeAiItem(item = {}) {
+function normalizeAiItem(item = {}, options = {}) {
   if (!item || typeof item !== 'object') return null;
   const quantity = pickFirst(item, ['quantity', 'qty', 'product.quantity', 'item.quantity']);
   const unitPrice = pickFirst(item, ['unitPrice', 'unit_price', 'price.unitPrice', 'price.unit_price', 'price.perUnit', 'price.per_unit', 'unitAmount']);
@@ -697,7 +698,10 @@ function normalizeAiItem(item = {}) {
     unitPrice,
     priceUnit: normalizeUnit(pickFirst(item, ['priceUnit', 'price_unit', 'unitPriceUnit', 'unit_price_unit', 'price.unit', 'price.perUnitName'])),
     totalAmount: pickFirst(item, ['totalAmount', 'total_amount', 'amount', 'price.amount', 'price.totalAmount']),
-    itemDeliveryDate: normalizeDateValue(pickFirst(item, ['itemDeliveryDate', 'item_delivery_date', 'deliveryDate', 'delivery_date', 'dueDate', 'due_date'])),
+    itemDeliveryDate: normalizeDateValue(
+      pickFirst(item, ['itemDeliveryDate', 'item_delivery_date', 'deliveryDate', 'delivery_date', 'dueDate', 'due_date']),
+      options
+    ),
     itemRemark: pickFirst(item, ['itemRemark', 'item_remark', 'remark', 'note', 'memo'])
   };
   if (!mapped.totalAmount && quantity && unitPrice) mapped.totalAmount = calculateAmount(quantity, unitPrice, mapped.unit, mapped.priceUnit);
@@ -708,9 +712,9 @@ function normalizeAiItem(item = {}) {
   return compact.productName || compact.quantity || compact.unitPrice || compact.totalAmount ? compact : null;
 }
 
-function normalizeAiItems(value) {
+function normalizeAiItems(value, options = {}) {
   return (Array.isArray(value) ? value : [])
-    .map(normalizeAiItem)
+    .map((item) => normalizeAiItem(item, options))
     .filter(Boolean);
 }
 
@@ -720,7 +724,7 @@ function getItemsTotal(items = []) {
   return toCleanNumber(total);
 }
 
-function normalizeDateValue(value) {
+function normalizeDateValue(value, options = {}) {
   if (!value) return '';
   const source = String(value).trim();
   const numeric = source.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
@@ -732,12 +736,15 @@ function normalizeDateValue(value) {
       ? formatDate(new Date(year, month - 1, day))
       : '';
   }
-  const parsed = parseChineseDate(source);
+  const parsed = parseChineseDate(source, options.businessDate || undefined);
   return parsed || source;
 }
 
-function normalizeFields(fields = {}) {
-  const items = normalizeAiItems(fields.items || fields.lineItems || fields.line_items || fields.products || fields.goods);
+function normalizeFields(fields = {}, options = {}) {
+  const items = normalizeAiItems(
+    fields.items || fields.lineItems || fields.line_items || fields.products || fields.goods,
+    options
+  );
   const mapped = {
     customerId: pickFirst(fields, ['customerId', 'customer_id', 'customer.id', 'client.id']),
     customerName: pickFirst(fields, ['customerName', 'customer_name', 'customer.name', 'customer', 'clientName', 'client_name', 'client.name']),
@@ -761,8 +768,11 @@ function normalizeFields(fields = {}) {
     remainingAmount: pickFirst(fields, ['remainingAmount', 'remaining_amount', 'leftAmount', 'left_amount', 'unpaidAmount', 'unpaid_amount', 'balance', 'balanceAmount', 'balance_amount', 'payment.remainingAmount']),
     paymentMethod: pickFirst(fields, ['paymentMethod', 'payment_method', 'payment.method']),
     paymentKind: pickFirst(fields, ['paymentKind', 'payment_kind', 'kind', 'payment.kind']),
-    dueDate: normalizeDateValue(pickFirst(fields, ['dueDate', 'due_date', 'remindDate', 'remind_date', 'reminderDate', 'reminder_date', 'deliveryDate', 'delivery_date', 'requiredDeliveryDate', 'required_delivery_date', 'date.dueDate', 'date.remindDate', 'date.deliveryDate'])),
-    quoteDate: normalizeDateValue(pickFirst(fields, ['quoteDate', 'quote_date', 'date.quoteDate'])),
+    dueDate: normalizeDateValue(
+      pickFirst(fields, ['dueDate', 'due_date', 'remindDate', 'remind_date', 'reminderDate', 'reminder_date', 'deliveryDate', 'delivery_date', 'requiredDeliveryDate', 'required_delivery_date', 'date.dueDate', 'date.remindDate', 'date.deliveryDate']),
+      options
+    ),
+    quoteDate: normalizeDateValue(pickFirst(fields, ['quoteDate', 'quote_date', 'date.quoteDate']), options),
     orderId: pickFirst(fields, ['orderId', 'order_id', 'order.id']),
     quotationId: pickFirst(fields, ['quotationId', 'quotation_id', 'quotation.id']),
     remark: pickFirst(fields, ['remark', 'note', 'memo'])
@@ -1128,6 +1138,8 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
     extractedText: payload.extractedText || payload.text || '',
     rawMessages: getPayloadRawMessages(payload),
     pasteMeta: payload.pasteMeta || null,
+    requestId: payload.requestId || '',
+    businessTimezone: payload.businessTimezone || 'Asia/Shanghai',
     localDraft: {
       intent: localResult.intent || 'unknown',
       operation: localResult.operation || '',
@@ -1142,6 +1154,11 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
     },
     routeDecision: localResult.parse_route || null
   };
+  // Legacy pages do not provide Phase 1B's explicit businessDate. Omitting the
+  // field lets the server derive today's date in Asia/Shanghai; sending an empty
+  // string would incorrectly turn a compatible legacy request into a 400.
+  if (payload.businessDate) requestPayload.businessDate = payload.businessDate;
+  if (payload.nowInstant) requestPayload.nowInstant = payload.nowInstant;
   if (localResult.history_status === 'found') {
     requestPayload.customerCandidates = scopedHistory.customers;
     requestPayload.businessContext = scopedHistory.businessContext;
@@ -1587,12 +1604,12 @@ function applyAiCustomerEvidenceSafety(result) {
   });
 }
 
-function normalizeAiResult(localResult, aiResult) {
+function normalizeAiResult(localResult, aiResult, options = {}) {
   const normalized = unwrapAiResult(aiResult);
   const mockUsed = hasMockProvider(aiResult);
   const validity = getAiBusinessResultValidity(normalized);
   if (!validity.valid) throw createEmptyAiBusinessResultError(validity);
-  const aiFields = normalizeFields(normalized.fields || normalized);
+  const aiFields = normalizeFields(normalized.fields || normalized, options);
   const intent = mergeAiIntent(localResult, normalized);
   const hardSafety = getLocalHardSafety(localResult, normalized);
   const itemStructure = applyAiItemStructureGuard(localResult, aiFields);
@@ -1737,7 +1754,8 @@ function prepareHybridLocalStage(payload) {
     {
       normalizedText: normalizeBusinessText(payload.rawText || payload.text || localParsedResult.original_text || ''),
       originalText: payload.rawText || localParsedResult.original_text || '',
-      source: payload.source || localParsedResult.source
+      source: payload.source || localParsedResult.source,
+      businessDate: payload.businessDate || ''
     }
   ));
   const localDurationMs = Date.now() - totalStartedAt;
@@ -1797,7 +1815,11 @@ function requestHybridAiStage(payload, prepared) {
   } = prepared;
   return requestHybridAiRaw({ payload, localResult, route, scopedHistory, localDurationMs })
     .then(({ aiResult, aiDurationMs, networkWaitLimitMs }) => attachParseTrace(
-      normalizeAiResult(localResult, aiResult),
+      normalizeAiResult(localResult, aiResult, {
+        businessDate: payload.businessDate || '',
+        businessTimezone: payload.businessTimezone || 'Asia/Shanghai',
+        nowInstant: payload.nowInstant || null
+      }),
       route,
       {
         localDurationMs,
@@ -1879,11 +1901,25 @@ function requestHybridAiRaw({ payload, localResult, route, scopedHistory, localD
   });
 }
 
-function parseHybridInput(payload) {
-  const prepared = prepareHybridLocalStage(payload);
+function parseHybridInput(payload, dependencies = {}) {
+  let runtime;
+  try {
+    // Legacy page callers do not yet pass Phase 1B fields. Resolve them once at
+    // the public hybrid entry so local parsing, server prompts and AI merge all
+    // share one Shanghai business date even when a request crosses midnight.
+    runtime = resolveBusinessTimeContext(payload || {}, { clock: dependencies.clock });
+  } catch (error) {
+    return Promise.reject(error);
+  }
+  const resolvedPayload = Object.assign({}, payload || {}, {
+    businessDate: runtime.businessDate,
+    businessTimezone: runtime.businessTimezone,
+    nowInstant: runtime.nowInstant
+  });
+  const prepared = prepareHybridLocalStage(resolvedPayload);
   const localOnlyResult = finishHybridWithoutAi(prepared);
   if (localOnlyResult) return Promise.resolve(localOnlyResult);
-  return requestHybridAiStage(payload, prepared);
+  return requestHybridAiStage(resolvedPayload, prepared);
 }
 
 module.exports = {
