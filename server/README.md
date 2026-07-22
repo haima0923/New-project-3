@@ -2,11 +2,11 @@
 
 No npm dependencies are required for the mock test server.
 
-> Candidate fix status (2026-07-22): **P0 CODE FIXED / DYNAMIC VALIDATION
-> PENDING / NOT RELEASE**. Commit `d652d97` rejects empty business AI responses
-> and prevents the live flow gate from replacing failures with stub results.
-> Node-based targeted regression has not run on the current machine, so this is
-> not release evidence yet.
+> Candidate fix status (2026-07-22): **P0 TARGETED DYNAMIC TESTS PASSED /
+> WECHAT RUNTIME VALIDATION PENDING / NOT RELEASE**. Commits `d652d97` and
+> `457f84d` reject empty business AI responses, preserve live failures, and pass
+> offline fake/mock Node regression. Real AI, Mini Program runtime, and device
+> validation have not run, so this is not release evidence.
 
 ## Local Run
 
@@ -61,8 +61,9 @@ objects, empty `fields`, metadata-only objects and empty item results fail with
 "needs confirmation" conclusion is retained as an uncertain safety result; it
 does not authorize a formal save. The Mini Program validates again before
 merging, and its final business save gate requires both `status: used` and an
-explicit valid-result flag. Dynamic Node regression is still required before
-these protections can be used as release proof.
+explicit valid-result flag. Targeted offline Node regression has now passed with
+a synthetic localhost provider, but it is not release proof; real AI and WeChat
+runtime validation are still required before release.
 
 Production standard/deep prompts are defined in `src/ai/model.js`. Prompts in
 `../scripts/lib/real-ai-comparison-prompts.js` are experimental evaluation
