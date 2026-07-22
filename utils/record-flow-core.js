@@ -10,6 +10,7 @@ const {
   PRODUCTION_ROUTES,
   PROVIDER_KINDS,
   RECORD_FLOW_ERROR_CODES,
+  RESULT_SCOPES,
   TRACE_SCHEMA_VERSION,
   normalizeAiOutcome,
   normalizeFlowMode,
@@ -32,6 +33,7 @@ const {
   getAiBusinessResultValidity,
   getAiFailureReason,
   getAiFailureStatus,
+  normalizeAiBusinessResult,
   normalizeAiResult,
   prepareHybridLocalStage,
   ROUTE_AI_DEEP,
@@ -138,7 +140,10 @@ function getAdoptionStatus(result, aiRequested) {
   }
   const fallback = (result && result.ai_fallback) || {};
   if (fallback.status === 'used' && fallback.business_result_valid === true) {
-    return { status: ADOPTION_STATUSES.ADOPTED, resolved: true };
+    // The legacy production normalizer merges and protects fields in one step.
+    // Until field-level provenance exists, claiming full or partial adoption
+    // would be a guess and would corrupt layer attribution.
+    return { status: ADOPTION_STATUSES.NOT_APPLICABLE, resolved: false };
   }
   if (['failed', 'timed_out', 'mock_used', 'skipped_no_endpoint'].includes(fallback.status)
     || fallback.business_result_valid === false) {
@@ -257,15 +262,52 @@ function buildConfirmationSummary(result, route, saveEligibility) {
 function registerAiAdapter(execute, descriptor, inspectors = {}) {
   const trustedDescriptor = Object.freeze({
     adapterId: descriptor.adapterId || '',
+    adapterName: descriptor.adapterName || descriptor.adapterId || '',
     providerKind: normalizeProviderKind(descriptor.providerKind),
     provider: descriptor.provider || '',
     model: descriptor.model || '',
     modelTier: descriptor.modelTier || '',
-    networkAccess: descriptor.networkAccess === true
+    networkAccess: descriptor.networkAccess === true,
+    supportsStandard: descriptor.supportsStandard !== false,
+    supportsDeep: descriptor.supportsDeep !== false,
+    supportsAbort: descriptor.supportsAbort === true,
+    supportsUsage: descriptor.supportsUsage === true,
+    referenceMetadata: safeClone(descriptor.referenceMetadata || {})
   });
-  const adapter = Object.freeze(Object.assign({ execute }, inspectors, { descriptor: trustedDescriptor }));
+  const parse = function parse(request, hooks = {}) {
+    if (typeof hooks.onRequestStarted === 'function') hooks.onRequestStarted();
+    return Promise.resolve()
+      .then(() => execute(request, hooks))
+      .then((response) => {
+        if (typeof hooks.onResponseReceived === 'function') hooks.onResponseReceived();
+        return response;
+      })
+      .catch((error) => {
+        if (error && /timeout|超时/i.test(`${error.code || ''} ${error.message || ''}`)) {
+          if (typeof hooks.onTimeout === 'function') hooks.onTimeout(error);
+        } else if (typeof hooks.onTransportError === 'function') {
+          hooks.onTransportError(error);
+        }
+        throw error;
+      });
+  };
+  const adapter = Object.freeze(Object.assign({
+    execute: parse,
+    parse,
+    getIdentity() { return safeClone(trustedDescriptor); }
+  }, inspectors, { descriptor: trustedDescriptor }));
   trustedAdapterDescriptors.set(adapter, trustedDescriptor);
   return adapter;
+}
+
+function normalizeAdapterHandlerResponse(value) {
+  if (value && typeof value === 'object' && (
+    Object.prototype.hasOwnProperty.call(value, 'rawResult')
+    || Object.prototype.hasOwnProperty.call(value, 'parsedResult')
+    || Object.prototype.hasOwnProperty.call(value, 'rawText')
+    || value.ok === false
+  )) return value;
+  return { rawResult: value };
 }
 
 function createFakeAiAdapter(handler, descriptorOverrides = {}) {
@@ -276,17 +318,16 @@ function createFakeAiAdapter(handler, descriptorOverrides = {}) {
     provider: descriptorOverrides.provider || 'phase1a-fake',
     model: descriptorOverrides.model || 'deterministic-fake',
     modelTier: descriptorOverrides.modelTier || 'test',
-    networkAccess: false
+    networkAccess: false,
+    supportsStandard: descriptorOverrides.supportsStandard !== false,
+    supportsDeep: descriptorOverrides.supportsDeep !== false
   };
   return registerAiAdapter(
     function execute(context) {
       calls.push(safeClone(context));
       return Promise.resolve()
         .then(() => (typeof handler === 'function' ? handler(context) : handler))
-        .then((value) => {
-          if (value && Object.prototype.hasOwnProperty.call(value, 'rawResult')) return value;
-          return { rawResult: value };
-        });
+        .then(normalizeAdapterHandlerResponse);
     },
     descriptor,
     {
@@ -303,9 +344,7 @@ function createMockAiAdapter(handler, descriptorOverrides = {}) {
       calls.push(safeClone(context));
       return Promise.resolve()
         .then(() => (typeof handler === 'function' ? handler(context) : handler))
-        .then((value) => (value && Object.prototype.hasOwnProperty.call(value, 'rawResult')
-          ? value
-          : { rawResult: value }));
+        .then(normalizeAdapterHandlerResponse);
     },
     {
       adapterId: descriptorOverrides.adapterId || 'phase1a-mock',
@@ -313,7 +352,9 @@ function createMockAiAdapter(handler, descriptorOverrides = {}) {
       provider: descriptorOverrides.provider || 'registered-mock',
       model: descriptorOverrides.model || 'mock',
       modelTier: descriptorOverrides.modelTier || 'test',
-      networkAccess: false
+      networkAccess: false,
+      supportsStandard: descriptorOverrides.supportsStandard !== false,
+      supportsDeep: descriptorOverrides.supportsDeep !== false
     },
     {
       getCallCount() { return calls.length; },
@@ -323,15 +364,21 @@ function createMockAiAdapter(handler, descriptorOverrides = {}) {
 }
 
 function createReplayAiAdapter(handler, descriptorOverrides = {}) {
+  if (descriptorOverrides.referenceMetadata !== undefined
+    && (!descriptorOverrides.referenceMetadata
+      || typeof descriptorOverrides.referenceMetadata !== 'object'
+      || Array.isArray(descriptorOverrides.referenceMetadata))) {
+    const error = new Error('REPLAY referenceMetadata must be an object when provided');
+    error.code = RECORD_FLOW_ERROR_CODES.REPLAY_METADATA_INVALID;
+    throw error;
+  }
   const calls = [];
   return registerAiAdapter(
     function execute(context) {
       calls.push(safeClone(context));
       return Promise.resolve()
         .then(() => (typeof handler === 'function' ? handler(context) : handler))
-        .then((value) => (value && Object.prototype.hasOwnProperty.call(value, 'rawResult')
-          ? value
-          : { rawResult: value }));
+        .then(normalizeAdapterHandlerResponse);
     },
     {
       adapterId: descriptorOverrides.adapterId || 'phase1a-replay',
@@ -339,7 +386,10 @@ function createReplayAiAdapter(handler, descriptorOverrides = {}) {
       provider: descriptorOverrides.provider || 'fixture-replay',
       model: descriptorOverrides.model || 'replay',
       modelTier: descriptorOverrides.modelTier || 'test',
-      networkAccess: false
+      networkAccess: false,
+      supportsStandard: descriptorOverrides.supportsStandard !== false,
+      supportsDeep: descriptorOverrides.supportsDeep !== false,
+      referenceMetadata: descriptorOverrides.referenceMetadata || {}
     },
     {
       getCallCount() { return calls.length; },
@@ -357,7 +407,14 @@ function createNoAiAdapter() {
       error.code = RECORD_FLOW_ERROR_CODES.AI_CALLED_IN_LOCAL_ONLY;
       throw error;
     },
-    { adapterId: 'no-ai', providerKind: PROVIDER_KINDS.NONE, networkAccess: false },
+    {
+      adapterId: 'no-ai',
+      adapterName: 'fail-on-ai-call',
+      providerKind: PROVIDER_KINDS.NONE,
+      networkAccess: false,
+      supportsStandard: false,
+      supportsDeep: false
+    },
     {
     getCallCount() { return callCount; }
     }
@@ -388,12 +445,30 @@ function setTraceAiMetadata(trace, adapter, response) {
     || {};
   trace.ai.providerKindRaw = descriptor.providerKind || null;
   trace.ai.providerKind = normalizeProviderKind(descriptor.providerKind);
+  trace.ai.adapterName = descriptor.adapterName || descriptor.adapterId || '';
   trace.ai.provider = descriptor.provider || (response && response.provider) || '';
   trace.ai.model = descriptor.model || (response && response.model) || '';
   trace.ai.modelTier = descriptor.modelTier || (response && response.modelTier) || '';
+  trace.ai.referenceMetadata = descriptor.providerKind === PROVIDER_KINDS.REPLAY
+    ? safeClone(descriptor.referenceMetadata || {})
+    : null;
+  trace.ai.usage = response && response.usage ? safeClone(response.usage) : null;
   trace.ai.serverRequestId = (response && response.serverRequestId) || '';
   trace.ai.providerRequestId = (response && response.providerRequestId) || '';
   return descriptor;
+}
+
+function getTrustedAiAdapterDescriptor(adapter) {
+  return trustedAdapterDescriptors.get(adapter)
+    || getExistingHybridAiAdapterDescriptor(adapter)
+    || null;
+}
+
+function getAdapterParseFunction(adapter) {
+  if (!adapter) return null;
+  if (typeof adapter.parse === 'function') return adapter.parse.bind(adapter);
+  if (typeof adapter.execute === 'function') return adapter.execute.bind(adapter);
+  return null;
 }
 
 function setAiRequestState(trace, state) {
@@ -401,7 +476,30 @@ function setAiRequestState(trace, state) {
   trace.ai.requestStatus = state;
 }
 
-function buildAiAdapterRequest(input, prepared, trace, normalizedText, runtime, requestId) {
+function finalizeAiMeasurement(trace) {
+  trace.ai.countsAsRealAiCall = trace.ai.adapterInvoked === true
+    && trace.ai.providerKind === PROVIDER_KINDS.REAL;
+  if (trace.ai.providerKind === PROVIDER_KINDS.REPLAY) {
+    trace.ai.latencyMs = null;
+    trace.ai.latencyAvailable = false;
+    trace.ai.latencySource = 'NOT_APPLICABLE_REPLAY';
+    trace.ai.costAvailable = false;
+    return;
+  }
+  if (trace.ai.adapterInvoked) {
+    trace.ai.latencyMs = trace.timing.stages.ai.latencyMs;
+    trace.ai.latencyAvailable = true;
+    trace.ai.latencySource = 'CORE_OBSERVED';
+  } else {
+    trace.ai.latencyMs = null;
+    trace.ai.latencyAvailable = false;
+    trace.ai.latencySource = 'NOT_APPLICABLE';
+  }
+  trace.ai.costAvailable = false;
+}
+
+function buildAiAdapterRequest(input, prepared, trace, normalizedText, runtime, requestId, options = {}) {
+  const aiOnly = options.aiOnly === true;
   const pasteMeta = cloneInputValue(input.pasteMeta || null);
   const pasteMessages = pasteMeta && (
     (Array.isArray(pasteMeta.rawMessages) && pasteMeta.rawMessages)
@@ -423,16 +521,25 @@ function buildAiAdapterRequest(input, prepared, trace, normalizedText, runtime, 
     businessDate: runtime.businessDate,
     businessTimezone: runtime.businessTimezone,
     nowInstant: runtime.nowInstant,
-    localDraft: cloneInputValue(prepared.localResult),
-    businessContext: cloneInputValue((prepared.scopedHistory || {}).businessContext || {}),
-    customerCandidates: cloneInputValue((prepared.scopedHistory || {}).customers || []),
+    localDraft: aiOnly ? null : cloneInputValue(prepared.localResult),
+    localDraftPolicy: aiOnly ? 'OMIT' : 'PRODUCTION_MERGE',
+    businessContext: aiOnly
+      ? cloneInputValue(input.businessContext || input.initialState || {})
+      : cloneInputValue((prepared.scopedHistory || {}).businessContext || {}),
+    customerCandidates: aiOnly
+      ? cloneInputValue(input.historyCandidates || input.customerCandidates || [])
+      : cloneInputValue((prepared.scopedHistory || {}).customers || []),
     rawMessages: cloneInputValue(rawMessages),
     selectedMessages: cloneInputValue(input.selectedMessages || (pasteMeta && pasteMeta.selectedMessages) || []),
     pasteMeta,
-    requiredOutputShape: prepared.route.decision === ROUTE_AI_DEEP ? 'record-deep-legacy-v1' : 'record-standard-legacy-v1',
-    productionRoute: trace.routing.productionRoute,
-    routeDecision: cloneInputValue(prepared.route),
-    localDurationMs: prepared.localDurationMs,
+    requiredOutputShape: options.reviewMode === 'deep' || (!aiOnly && prepared.route.decision === ROUTE_AI_DEEP)
+      ? 'record-deep-legacy-v1'
+      : 'record-standard-legacy-v1',
+    deadlineMs: null,
+    productionRoute: aiOnly ? null : trace.routing.productionRoute,
+    executionPath: trace.routing.executionPath,
+    routeDecision: aiOnly ? null : cloneInputValue(prepared.route),
+    localDurationMs: aiOnly ? 0 : prepared.localDurationMs,
     traceContext: { runId: trace.runId, traceId: trace.traceId, caseId: trace.caseId }
   };
 }
@@ -440,6 +547,8 @@ function buildAiAdapterRequest(input, prepared, trace, normalizedText, runtime, 
 function buildRuntimeFailureOutput(input, error, dependencies = {}) {
   const originalText = typeof input.originalText === 'string' ? input.originalText : '';
   const modeRaw = input.mode || FLOW_MODES.PRODUCTION_ROUTING;
+  const mode = normalizeFlowMode(modeRaw);
+  const resultScope = getResultScopeForMode(mode);
   const inputSourceRaw = input.inputSource || 'typed';
   const flowError = createFlowError(
     (error && error.code) || RECORD_FLOW_ERROR_CODES.INPUT_INVALID,
@@ -450,8 +559,9 @@ function buildRuntimeFailureOutput(input, error, dependencies = {}) {
     runId: input.runId || '',
     traceId: input.traceId || '',
     caseId: input.caseId || '',
-    mode: normalizeFlowMode(modeRaw),
+    mode,
     modeRaw,
+    resultScope,
     context: input.context || 'home',
     inputSource: normalizeInputSource(inputSourceRaw),
     inputSourceRaw,
@@ -466,21 +576,92 @@ function buildRuntimeFailureOutput(input, error, dependencies = {}) {
   }, { skipClockRead: true });
   trace.errors = [flowError];
   trace.timing.stages.input.status = 'FAILED';
-  return {
-    schemaVersion: CORE_IMPLEMENTATION_VERSION,
-    coreContractVersion: CORE_CONTRACT_VERSION,
-    traceSchemaVersion: TRACE_SCHEMA_VERSION,
-    result: null,
-    trace: safeClone(trace),
-    confirmationSummary: buildConfirmationSummary(null, null, buildSaveEligibility(null)),
-    saveEligibility: buildSaveEligibility(null),
+  return buildFlowOutput({
+    mode,
+    resultScope,
+    trace,
     errors: [flowError]
-  };
+  });
 }
 
 function dependenciesSource(value) {
   if (!value) return 'SYSTEM';
   return value.source === 'FIXED_TEST' ? 'FIXED_TEST' : 'INJECTED';
+}
+
+function getResultScopeForMode(mode) {
+  if (mode === FLOW_MODES.LOCAL_ONLY) return RESULT_SCOPES.LOCAL_ONLY_RESULT;
+  if (mode === FLOW_MODES.AI_ONLY) return RESULT_SCOPES.AI_ONLY_RESULT;
+  if (mode === FLOW_MODES.PRODUCTION_ROUTING) return RESULT_SCOPES.PRODUCTION_RESULT;
+  return RESULT_SCOPES.NOT_AVAILABLE;
+}
+
+function getExecutionPathForMode(mode, routeDecision, reviewMode) {
+  if (mode === FLOW_MODES.LOCAL_ONLY) return EXECUTION_PATHS.LOCAL_ONLY;
+  if (mode === FLOW_MODES.AI_ONLY) {
+    return reviewMode === 'deep' ? EXECUTION_PATHS.AI_ONLY_DEEP : EXECUTION_PATHS.AI_ONLY_STANDARD;
+  }
+  return getExecutionPath(routeDecision);
+}
+
+function routeRequiresAi(routeDecision) {
+  return routeDecision === ROUTE_AI_STANDARD || routeDecision === ROUTE_AI_DEEP;
+}
+
+function buildEligibilityEnvelope(mode, modeEligibility, productionEligibility, productionEligibilityResolved) {
+  return {
+    modeEligibility: safeClone(modeEligibility),
+    productionEligibility: productionEligibilityResolved ? safeClone(productionEligibility) : null,
+    productionEligibilityResolved: productionEligibilityResolved === true
+  };
+}
+
+function buildModeSaveEligibility(result, mode, options = {}) {
+  const eligibility = buildSaveEligibility(result, options);
+  if (mode === FLOW_MODES.PRODUCTION_ROUTING) return eligibility;
+  return Object.assign({}, eligibility, {
+    canCommitToRealStorage: false,
+    commitScope: eligibility.canCommitToMemory ? 'MEMORY_ONLY' : 'BLOCKED',
+    blockedReasons: Array.from(new Set([].concat(
+      eligibility.blockedReasons || [],
+      eligibility.allowed ? `${mode} 结果仅用于隔离测试，不能直接写入正式存储。` : []
+    )))
+  });
+}
+
+function buildFlowOutput(options = {}) {
+  const mode = options.mode || FLOW_MODES.PRODUCTION_ROUTING;
+  const resultScope = options.resultScope || getResultScopeForMode(mode);
+  const result = options.result ? safeClone(options.result) : null;
+  const modeEligibility = options.modeEligibility || buildSaveEligibility(null);
+  const eligibility = buildEligibilityEnvelope(
+    mode,
+    modeEligibility,
+    options.productionEligibility || null,
+    options.productionEligibilityResolved === true
+  );
+  return {
+    schemaVersion: CORE_IMPLEMENTATION_VERSION,
+    coreContractVersion: CORE_CONTRACT_VERSION,
+    traceSchemaVersion: TRACE_SCHEMA_VERSION,
+    mode,
+    productionRoute: options.productionRoute || PRODUCTION_ROUTES.UNKNOWN,
+    executionPath: options.executionPath || EXECUTION_PATHS.NOT_EXECUTED,
+    resultScope,
+    result,
+    results: {
+      finalResult: result,
+      localResult: mode === FLOW_MODES.LOCAL_ONLY ? result : safeClone(options.localResult || null),
+      aiOnlyResult: mode === FLOW_MODES.AI_ONLY ? result : null,
+      productionResult: mode === FLOW_MODES.PRODUCTION_ROUTING ? result : safeClone(options.productionResult || null)
+    },
+    trace: safeClone(options.trace),
+    confirmationSummary: safeClone(options.confirmationSummary
+      || buildConfirmationSummary(null, null, buildSaveEligibility(null))),
+    saveEligibility: safeClone(modeEligibility),
+    eligibility,
+    errors: safeClone(options.errors || [])
+  };
 }
 
 async function runRecordFlow(input = {}, dependencies = {}) {
@@ -493,6 +674,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
   const originalText = typeof input.originalText === 'string' ? input.originalText : '';
   const modeRaw = input.mode || FLOW_MODES.PRODUCTION_ROUTING;
   const mode = normalizeFlowMode(modeRaw);
+  const resultScope = getResultScopeForMode(mode);
   const inputSourceRaw = input.inputSource || 'typed';
   const inputSource = normalizeInputSource(inputSourceRaw);
   const contextRaw = input.context || 'home';
@@ -505,6 +687,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     traceId: runtime.traceId,
     mode,
     modeRaw,
+    resultScope,
     originalText,
     normalizedText,
     inputSource,
@@ -524,6 +707,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
   const errors = [];
   let result = null;
   let route = null;
+  let shadowLocalFailed = false;
 
   startTraceStage(trace, 'input', traceClock);
   if (!originalText.trim()) {
@@ -532,15 +716,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     failTraceStage(trace, 'input', traceClock);
     ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      result: null,
-      trace: finalizedTrace,
-      confirmationSummary: buildConfirmationSummary(null, null, buildSaveEligibility(null)),
-      saveEligibility: buildSaveEligibility(null),
-      errors: finalizedTrace.errors
-    };
+    return buildFlowOutput({ mode, resultScope, trace: finalizedTrace, errors: finalizedTrace.errors });
   }
   if (inputSource === 'unknown' || !['home', 'record'].includes(contextRaw)) {
     errors.push(createFlowError(
@@ -552,41 +728,27 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     failTraceStage(trace, 'input', traceClock);
     ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      result: null,
-      trace: finalizedTrace,
-      confirmationSummary: buildConfirmationSummary(null, null, buildSaveEligibility(null)),
-      saveEligibility: buildSaveEligibility(null),
-      errors: finalizedTrace.errors
-    };
+    return buildFlowOutput({ mode, resultScope, trace: finalizedTrace, errors: finalizedTrace.errors });
   }
   completeTraceStage(trace, 'input', traceClock);
 
-  if (mode !== FLOW_MODES.PRODUCTION_ROUTING) {
+  if (![FLOW_MODES.PRODUCTION_ROUTING, FLOW_MODES.LOCAL_ONLY, FLOW_MODES.AI_ONLY].includes(mode)) {
     errors.push(createFlowError(
-      RECORD_FLOW_ERROR_CODES.MODE_INVALID,
+      RECORD_FLOW_ERROR_CODES.UNSUPPORTED_FLOW_MODE,
       'input',
-      `Phase 1B 尚未实现 ${mode}。`
+      `不支持运行模式：${modeRaw}。`
     ));
     trace.errors = errors.slice();
     ['local', 'routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      result: null,
-      trace: finalizedTrace,
-      confirmationSummary: buildConfirmationSummary(null, null, buildSaveEligibility(null)),
-      saveEligibility: buildSaveEligibility(null),
-      errors: finalizedTrace.errors
-    };
+    return buildFlowOutput({ mode, resultScope, trace: finalizedTrace, errors: finalizedTrace.errors });
   }
 
   let legacyPayload;
   let prepared;
   startTraceStage(trace, 'local', traceClock);
+  trace.local.executed = true;
+  trace.local.shadowOnly = mode === FLOW_MODES.AI_ONLY;
   try {
     legacyPayload = buildLegacyPayload(input, originalText, runtime);
     prepared = prepareHybridLocalStage(legacyPayload);
@@ -600,33 +762,31 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     const flowError = createFlowError(
       RECORD_FLOW_ERROR_CODES.LOCAL_PARSE_FAILED,
       'local',
-      error && error.message ? error.message : '本地解析失败。'
+      error && error.message ? error.message : '本地解析失败。',
+      mode === FLOW_MODES.AI_ONLY ? { blocksFormalSave: false, shadowOnly: true } : {}
     );
     errors.push(flowError);
     trace.local.errors.push(flowError);
     trace.errors = errors.slice();
     failTraceStage(trace, 'local', traceClock);
+    if (mode === FLOW_MODES.AI_ONLY) {
+      shadowLocalFailed = true;
+      prepared = null;
+    } else {
     ['routing', 'ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      result: null,
-      trace: finalizedTrace,
-      confirmationSummary: buildConfirmationSummary(null, null, buildSaveEligibility(null)),
-      saveEligibility: buildSaveEligibility(null),
-      errors: finalizedTrace.errors
-    };
+    return buildFlowOutput({ mode, resultScope, trace: finalizedTrace, errors: finalizedTrace.errors });
+    }
   }
 
   startTraceStage(trace, 'routing', traceClock);
-  route = prepared.route || {};
+  route = (prepared && prepared.route) || {};
   trace.routing.productionRouteRaw = route.decision || null;
   trace.routing.productionRoute = normalizeProductionRoute(route.decision);
-  trace.routing.executionPath = getExecutionPath(route.decision);
+  trace.routing.executionPath = getExecutionPathForMode(mode, route.decision, input.reviewMode);
   trace.routing.routeReasons = safeClone(route.reasons || []);
   trace.routing.deepReviewAvailable = Boolean(route.deep_review_available);
-  if (trace.routing.productionRoute === PRODUCTION_ROUTES.UNKNOWN
+  if ((trace.routing.productionRoute === PRODUCTION_ROUTES.UNKNOWN && mode !== FLOW_MODES.AI_ONLY)
     || trace.routing.executionPath === EXECUTION_PATHS.UNKNOWN) {
     const routeError = createFlowError(
       RECORD_FLOW_ERROR_CODES.ROUTE_CONTRACT_VIOLATION,
@@ -639,52 +799,118 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     failTraceStage(trace, 'routing', traceClock);
     ['ai', 'merge', 'final'].forEach((stage) => skipTraceStage(trace, stage, traceClock));
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      traceSchemaVersion: TRACE_SCHEMA_VERSION,
-      result: null,
+    return buildFlowOutput({
+      mode,
+      resultScope,
+      productionRoute: trace.routing.productionRoute,
+      executionPath: trace.routing.executionPath,
       trace: finalizedTrace,
-      confirmationSummary: buildConfirmationSummary(null, route, buildSaveEligibility(null)),
-      saveEligibility: buildSaveEligibility(null),
       errors: finalizedTrace.errors
-    };
+    });
   }
-  completeTraceStage(trace, 'routing', traceClock);
+  trace.ai.requiredByRoute = routeRequiresAi(route.decision);
+  trace.ai.requiredByProductionRoute = trace.ai.requiredByRoute;
+  trace.ai.requiredByExecutionMode = mode === FLOW_MODES.AI_ONLY
+    || (mode === FLOW_MODES.PRODUCTION_ROUTING && trace.ai.requiredByRoute);
+  if (shadowLocalFailed) skipTraceStage(trace, 'routing', traceClock);
+  else completeTraceStage(trace, 'routing', traceClock);
 
-  const localOnlyResult = finishHybridWithoutAi(prepared);
-  if (localOnlyResult) {
-    result = localOnlyResult;
+  const productionLocalResult = prepared ? finishHybridWithoutAi(prepared) : null;
+  if (mode === FLOW_MODES.LOCAL_ONLY) {
+    result = productionLocalResult || withAiStatus(prepared.localResult, 'not_requested', {
+      attempted: false,
+      reason: 'LOCAL_ONLY 模式只运行本地解析，不调用 AI。',
+      businessResultValid: false
+    });
+    trace.ai.skippedReason = 'MODE_LOCAL_ONLY';
+    trace.ai.providerKind = PROVIDER_KINDS.NONE;
+    trace.ai.outcomeRaw = 'not_requested';
+    trace.ai.outcome = AI_OUTCOMES.NOT_REQUESTED;
+    setAiRequestState(trace, AI_REQUEST_STATUSES.NOT_REQUESTED);
+    trace.merge.reason = 'LOCAL_ONLY_NO_AI_MERGE';
+    skipTraceStage(trace, 'ai', traceClock);
+    finalizeAiMeasurement(trace);
+    skipTraceStage(trace, 'merge', traceClock);
+  } else if (mode === FLOW_MODES.PRODUCTION_ROUTING && productionLocalResult) {
+    result = productionLocalResult;
+    trace.ai.skippedReason = route.decision === ROUTE_PENDING ? 'PRODUCTION_PENDING' : 'PRODUCTION_LOCAL';
     trace.ai.outcomeRaw = ((result.ai_fallback || {}).status) || 'not_requested';
     trace.ai.outcome = getAiOutcome(result, '', PROVIDER_KINDS.NONE);
+    trace.merge.reason = 'PRODUCTION_ROUTE_DID_NOT_CALL_AI';
     skipTraceStage(trace, 'ai', traceClock);
+    finalizeAiMeasurement(trace);
     skipTraceStage(trace, 'merge', traceClock);
   } else {
+    const aiOnly = mode === FLOW_MODES.AI_ONLY;
     const aiAdapter = dependencies.aiAdapter;
-    trace.ai.requiredByRoute = true;
+    const adapterDescriptor = getTrustedAiAdapterDescriptor(aiAdapter);
+    const adapterParse = getAdapterParseFunction(aiAdapter);
     trace.ai.requested = false;
     setAiRequestState(trace, AI_REQUEST_STATUSES.DECIDED);
     setTraceAiMetadata(trace, aiAdapter, null);
     startTraceStage(trace, 'ai', traceClock);
-    if (!aiAdapter || typeof aiAdapter.execute !== 'function') {
-      const missingError = new Error('AI adapter is required for this production route');
-      missingError.code = RECORD_FLOW_ERROR_CODES.AI_ADAPTER_REQUIRED;
-      result = withAiStatus(prepared.localResult, 'skipped_no_endpoint', {
+    let adapterPreflightError = null;
+    if (!aiAdapter || !adapterParse) {
+      adapterPreflightError = new Error('AI adapter is required for this execution path');
+      adapterPreflightError.code = RECORD_FLOW_ERROR_CODES.AI_ADAPTER_REQUIRED;
+    } else if (!adapterDescriptor || adapterDescriptor.providerKind === PROVIDER_KINDS.UNKNOWN) {
+      adapterPreflightError = new Error('AI adapter identity is not registered by a trusted factory');
+      adapterPreflightError.code = RECORD_FLOW_ERROR_CODES.AI_ADAPTER_IDENTITY_INVALID;
+    } else if (adapterDescriptor.providerKind === PROVIDER_KINDS.NONE) {
+      adapterPreflightError = new Error('The no-AI adapter is forbidden on an AI execution path');
+      adapterPreflightError.code = RECORD_FLOW_ERROR_CODES.AI_ADAPTER_FORBIDDEN;
+    } else {
+      const needsDeep = trace.routing.executionPath === EXECUTION_PATHS.AI_ONLY_DEEP
+        || trace.routing.executionPath === EXECUTION_PATHS.PRODUCTION_DEEP;
+      if ((needsDeep && adapterDescriptor.supportsDeep !== true)
+        || (!needsDeep && adapterDescriptor.supportsStandard !== true)) {
+        adapterPreflightError = new Error(`AI adapter does not support ${needsDeep ? 'deep' : 'standard'} parsing`);
+        adapterPreflightError.code = RECORD_FLOW_ERROR_CODES.AI_ADAPTER_CAPABILITY_MISSING;
+      }
+    }
+
+    if (adapterPreflightError) {
+      const status = adapterPreflightError.code === RECORD_FLOW_ERROR_CODES.AI_ADAPTER_REQUIRED
+        ? 'skipped_no_endpoint'
+        : 'failed';
+      const baseResult = aiOnly ? {
+        intent: 'unknown',
+        operation: '',
+        fields: {},
+        missing_fields: [],
+        low_confidence_fields: ['intent'],
+        field_conflicts: [],
+        formal_save_blocked: true,
+        block_reason: 'AI_ONLY 没有得到可用的 AI 结果。',
+        original_text: originalText,
+        source: toLegacyInputSource(input.inputSource),
+        ai_fallback: { needed: true }
+      } : prepared.localResult;
+      result = withAiStatus(baseResult, status, {
         attempted: false,
-        reason: '没有提供 AI adapter，无法完成本次联网整理。',
-        code: missingError.code
+        reason: adapterPreflightError.message,
+        code: adapterPreflightError.code,
+        businessResultValid: false
       });
-      errors.push(createFlowError(missingError.code, 'ai', missingError.message));
-      trace.ai.errorCode = missingError.code;
-      trace.ai.errorCodeRaw = missingError.code;
-      trace.ai.errorMessage = missingError.message;
-      trace.ai.outcome = AI_OUTCOMES.SKIPPED_NO_ENDPOINT;
-      trace.ai.outcomeRaw = 'skipped_no_endpoint';
-      setAiRequestState(trace, AI_REQUEST_STATUSES.SKIPPED);
-      skipTraceStage(trace, 'ai', traceClock);
-      trace.ai.latencyMs = trace.timing.stages.ai.latencyMs;
+      errors.push(createFlowError(adapterPreflightError.code, 'ai', adapterPreflightError.message));
+      trace.ai.errorCode = adapterPreflightError.code;
+      trace.ai.errorCodeRaw = adapterPreflightError.code;
+      trace.ai.errorMessage = adapterPreflightError.message;
+      trace.ai.outcome = status === 'skipped_no_endpoint'
+        ? AI_OUTCOMES.SKIPPED_NO_ENDPOINT
+        : AI_OUTCOMES.FAILED;
+      trace.ai.outcomeRaw = status;
+      setAiRequestState(trace, status === 'skipped_no_endpoint'
+        ? AI_REQUEST_STATUSES.SKIPPED
+        : AI_REQUEST_STATUSES.FAILED);
+      if (trace.ai.requestState === AI_REQUEST_STATUSES.SKIPPED) skipTraceStage(trace, 'ai', traceClock);
+      else failTraceStage(trace, 'ai', traceClock);
+      finalizeAiMeasurement(trace);
+      trace.merge.reason = aiOnly ? 'AI_ONLY_NO_MERGE' : 'AI_PREFLIGHT_FAILED';
       skipTraceStage(trace, 'merge', traceClock);
-      trace.merge.adoptionStatus = ADOPTION_STATUSES.NOT_ADOPTED;
+      trace.merge.adoptionStatus = aiOnly
+        ? ADOPTION_STATUSES.NOT_APPLICABLE
+        : ADOPTION_STATUSES.NOT_ADOPTED;
       trace.merge.adoptionStatusResolved = true;
     } else {
       let response = null;
@@ -693,65 +919,145 @@ async function runRecordFlow(input = {}, dependencies = {}) {
         const requestId = runtime.nextId('ai_request');
         trace.ai.requestId = requestId;
         trace.ai.adapterInvoked = true;
+        trace.ai.adapterCallCount = 1;
         trace.ai.requestStarted = true;
         trace.ai.requested = true;
         setAiRequestState(trace, AI_REQUEST_STATUSES.REQUESTING);
-        response = await aiAdapter.execute(buildAiAdapterRequest(
+        const request = buildAiAdapterRequest(
           input,
           prepared,
           trace,
           normalizedText,
           runtime,
-          requestId
-        ));
+          requestId,
+          { aiOnly, reviewMode: input.reviewMode === 'deep' ? 'deep' : 'standard' }
+        );
+        if (aiOnly && request.localDraft !== null) {
+          const leakError = new Error('AI_ONLY adapter request contains a local draft');
+          leakError.code = RECORD_FLOW_ERROR_CODES.AI_ONLY_LOCAL_DRAFT_LEAK;
+          throw leakError;
+        }
+        const transportEvents = { requestStarted: false, responseReceived: false, timedOut: false };
+        response = await adapterParse(request, {
+          onRequestStarted() { transportEvents.requestStarted = true; },
+          onResponseReceived() { transportEvents.responseReceived = true; },
+          onTransportError(error) {
+            transportEvents.responseReceived = Boolean(error && error.statusCode);
+          },
+          onTimeout() { transportEvents.timedOut = true; }
+        });
+        trace.ai.requestStarted = trace.ai.requestStarted || transportEvents.requestStarted;
         trace.ai.responseReceived = true;
         const trustedEvents = getExistingHybridTransportEvents(response);
         if (trustedEvents) Object.assign(trace.ai, trustedEvents);
         setTraceAiMetadata(trace, aiAdapter, response);
-        trace.ai.rawResult = safeClone(response && Object.prototype.hasOwnProperty.call(response, 'rawResult')
-          ? response.rawResult
-          : response);
-        // The current legacy normalizer combines normalization and merge. Phase 1B
-        // must not pretend a separate AI-normalized object already exists.
-        trace.ai.normalizedResult = null;
-        trace.ai.normalizationAvailable = false;
-        const rawResult = response && Object.prototype.hasOwnProperty.call(response, 'rawResult')
-          ? response.rawResult
-          : response;
+        if (response && response.ok === false) {
+          const responseError = new Error(
+            (response.error && response.error.message) || 'AI adapter returned a structured failure'
+          );
+          responseError.code = (response.error && response.error.code) || RECORD_FLOW_ERROR_CODES.AI_CALL_FAILED;
+          responseError.statusCode = response.error && response.error.httpStatus;
+          responseError.retryable = Boolean(response.error && response.error.retryable);
+          throw responseError;
+        }
+        let rawResult;
+        if (response && Object.prototype.hasOwnProperty.call(response, 'parsedBusinessResult')) {
+          rawResult = response.parsedBusinessResult;
+        } else if (response && Object.prototype.hasOwnProperty.call(response, 'parsedResult')) {
+          rawResult = response.parsedResult;
+        } else if (response && Object.prototype.hasOwnProperty.call(response, 'rawResult')) {
+          rawResult = response.rawResult;
+        } else if (response && typeof response.rawText === 'string') {
+          try {
+            rawResult = JSON.parse(response.rawText);
+          } catch (error) {
+            const invalidError = new Error('AI adapter returned non-JSON rawText');
+            invalidError.code = RECORD_FLOW_ERROR_CODES.AI_RESPONSE_INVALID;
+            throw invalidError;
+          }
+        } else {
+          rawResult = response;
+        }
+        if (typeof rawResult === 'string') {
+          try {
+            rawResult = JSON.parse(rawResult);
+          } catch (error) {
+            const invalidError = new Error('AI adapter returned a non-JSON business result');
+            invalidError.code = RECORD_FLOW_ERROR_CODES.AI_RESPONSE_INVALID;
+            throw invalidError;
+          }
+        }
+        trace.ai.rawText = response && typeof response.rawText === 'string' ? response.rawText : '';
+        trace.ai.parsedResult = safeClone(rawResult);
+        trace.ai.rawResult = safeClone(rawResult);
         const validity = getAiBusinessResultValidity(rawResult);
         trace.ai.businessResultValid = validity.valid;
-        startTraceStage(trace, 'merge', traceClock);
-        mergeStarted = true;
-        result = normalizeAiResult(prepared.localResult, rawResult, {
-          businessDate: runtime.businessDate,
-          businessTimezone: runtime.businessTimezone,
-          nowInstant: runtime.nowInstant
-        });
-        if (trace.ai.providerKind === PROVIDER_KINDS.MOCK
-          && ((result.ai_fallback || {}).status) !== 'mock_used') {
-          result = withAiStatus(result, 'mock_used', {
-            attempted: true,
-            reason: '调用方注册的是模拟 AI adapter，结果不能作为真实 AI 成功使用。',
-            code: '',
-            businessResultValid: Boolean(result.ai_fallback && result.ai_fallback.business_result_valid)
+        if (aiOnly) {
+          result = normalizeAiBusinessResult(rawResult, {
+            businessDate: runtime.businessDate,
+            businessTimezone: runtime.businessTimezone,
+            nowInstant: runtime.nowInstant,
+            originalText,
+            source: toLegacyInputSource(input.inputSource),
+            rawMessages: input.rawMessages,
+            providerKind: trace.ai.providerKind
           });
+          trace.ai.normalizedResult = safeClone(result);
+          trace.ai.normalizationAvailable = true;
+          trace.merge.reason = 'AI_ONLY_NO_LOCAL_MERGE';
+          trace.merge.adoptionStatus = ADOPTION_STATUSES.NOT_APPLICABLE;
+          trace.merge.adoptionStatusResolved = true;
+          skipTraceStage(trace, 'merge', traceClock);
+        } else {
+          trace.ai.normalizedResult = null;
+          trace.ai.normalizationAvailable = false;
+          startTraceStage(trace, 'merge', traceClock);
+          mergeStarted = true;
+          result = normalizeAiResult(prepared.localResult, rawResult, {
+            businessDate: runtime.businessDate,
+            businessTimezone: runtime.businessTimezone,
+            nowInstant: runtime.nowInstant
+          });
+          if (trace.ai.providerKind === PROVIDER_KINDS.MOCK
+            && ((result.ai_fallback || {}).status) !== 'mock_used') {
+            result = withAiStatus(result, 'mock_used', {
+              attempted: true,
+              reason: '调用方注册的是模拟 AI adapter，结果不能作为真实 AI 成功使用。',
+              code: '',
+              businessResultValid: Boolean(result.ai_fallback && result.ai_fallback.business_result_valid)
+            });
+          }
+          trace.merge.performed = true;
+          trace.merge.reason = 'PRODUCTION_LOCAL_AI_MERGE';
+          trace.merge.result = safeClone(result);
+          trace.merge.conflicts = safeClone((result && result.field_conflicts) || []);
+          completeTraceStage(trace, 'merge', traceClock);
         }
-        if (trace.ai.businessResultValid === null) {
-          trace.ai.businessResultValid = Boolean(result && result.ai_fallback && result.ai_fallback.business_result_valid);
-        }
-        trace.merge.performed = true;
-        trace.merge.result = safeClone(result);
-        trace.merge.conflicts = safeClone((result && result.field_conflicts) || []);
-        completeTraceStage(trace, 'merge', traceClock);
       } catch (error) {
         const noEndpoint = error && error.code === RECORD_FLOW_ERROR_CODES.AI_ENDPOINT_MISSING;
-        const preflightFailure = error && error.code === RECORD_FLOW_ERROR_CODES.ID_GENERATOR_INVALID_RESULT;
+        const preflightFailure = error && [
+          RECORD_FLOW_ERROR_CODES.ID_GENERATOR_INVALID_RESULT,
+          RECORD_FLOW_ERROR_CODES.AI_ONLY_LOCAL_DRAFT_LEAK
+        ].includes(error.code);
         const legacyStatus = noEndpoint ? 'skipped_no_endpoint' : getAiFailureStatus(error);
         const trustedEvents = getExistingHybridTransportEvents(error);
         if (trustedEvents) Object.assign(trace.ai, trustedEvents);
         trace.ai.serverRequestId = (error && error.serverRequestId) || '';
         trace.ai.providerRequestId = (error && error.providerRequestId) || '';
-        result = withAiStatus(prepared.localResult, legacyStatus, {
+        const baseResult = aiOnly ? {
+          intent: 'unknown',
+          operation: '',
+          fields: {},
+          missing_fields: [],
+          low_confidence_fields: ['intent'],
+          field_conflicts: [],
+          formal_save_blocked: true,
+          block_reason: 'AI_ONLY 没有得到可用的 AI 结果。',
+          original_text: originalText,
+          source: toLegacyInputSource(input.inputSource),
+          ai_fallback: { needed: true }
+        } : prepared.localResult;
+        result = withAiStatus(baseResult, legacyStatus, {
           attempted: !noEndpoint && !preflightFailure,
           reason: noEndpoint ? (error.reason || '没有配置 AI 服务地址，无法发起 AI 请求。') : getAiFailureReason(error),
           code: error && error.code,
@@ -775,6 +1081,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
         trace.ai.errorMessage = (error && error.message) || 'AI 调用失败。';
         if (mergeStarted) failTraceStage(trace, 'merge', traceClock);
         else skipTraceStage(trace, 'merge', traceClock);
+        trace.merge.reason = aiOnly ? 'AI_ONLY_NO_MERGE' : 'AI_FAILED_BEFORE_MERGE';
       }
       const aiFallback = (result && result.ai_fallback) || {};
       trace.ai.requested = aiFallback.attempted === true;
@@ -784,10 +1091,12 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       if (trace.ai.requestState === AI_REQUEST_STATUSES.SUCCEEDED) completeTraceStage(trace, 'ai', traceClock);
       else if (trace.ai.requestState === AI_REQUEST_STATUSES.SKIPPED) skipTraceStage(trace, 'ai', traceClock);
       else failTraceStage(trace, 'ai', traceClock);
-      trace.ai.latencyMs = trace.timing.stages.ai.latencyMs;
-      const adoption = getAdoptionStatus(result, true);
-      trace.merge.adoptionStatus = adoption.status;
-      trace.merge.adoptionStatusResolved = adoption.resolved;
+      finalizeAiMeasurement(trace);
+      if (!aiOnly) {
+        const adoption = getAdoptionStatus(result, true);
+        trace.merge.adoptionStatus = adoption.status;
+        trace.merge.adoptionStatusResolved = adoption.resolved;
+      }
     }
   }
 
@@ -797,11 +1106,15 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     finalResult = applyFinalParseSafety(result || {}, { businessDate: runtime.businessDate });
     finalResult = Object.assign({}, finalResult, { originalText });
     result = finalResult;
-    const saveEligibility = buildSaveEligibility(finalResult, {
+    const saveEligibility = buildModeSaveEligibility(finalResult, mode, {
       providerKind: trace.ai.providerKind,
-      aiRequested: trace.ai.requiredByRoute
+      aiRequested: trace.ai.requiredByExecutionMode
     });
-    const confirmationSummary = buildConfirmationSummary(finalResult, route, saveEligibility);
+    const confirmationSummary = buildConfirmationSummary(
+      finalResult,
+      mode === FLOW_MODES.AI_ONLY ? null : route,
+      saveEligibility
+    );
     trace.final.result = safeClone(finalResult);
     trace.final.safety = normalizeSafetyStatus((finalResult.final_parse_safety || {}).status);
     trace.final.formalSaveBlocked = Boolean(finalResult.formal_save_blocked);
@@ -812,19 +1125,46 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     trace.confirmation.canSavePending = confirmationSummary.canSavePending;
     trace.confirmation.needsDeepReview = confirmationSummary.needsDeepReview;
     trace.confirmation.needsFullPage = confirmationSummary.needsFullPage;
+    let productionEligibility = null;
+    let productionEligibilityResolved = false;
+    let productionResult = null;
+    if (mode === FLOW_MODES.PRODUCTION_ROUTING) {
+      productionEligibility = saveEligibility;
+      productionEligibilityResolved = true;
+      productionResult = finalResult;
+    } else if (mode === FLOW_MODES.LOCAL_ONLY && route.decision === ROUTE_LOCAL) {
+      productionEligibility = buildSaveEligibility(finalResult, {
+        providerKind: PROVIDER_KINDS.NONE,
+        aiRequested: false
+      });
+      productionEligibilityResolved = true;
+      productionResult = finalResult;
+    }
+    trace.resultScope = resultScope;
+    trace.eligibility = buildEligibilityEnvelope(
+      mode,
+      saveEligibility,
+      productionEligibility,
+      productionEligibilityResolved
+    );
     trace.errors = errors.slice();
     completeTraceStage(trace, 'final', traceClock);
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      traceSchemaVersion: TRACE_SCHEMA_VERSION,
-      result: safeClone(finalResult),
+    return buildFlowOutput({
+      mode,
+      resultScope,
+      productionRoute: trace.routing.productionRoute,
+      executionPath: trace.routing.executionPath,
+      result: finalResult,
+      localResult: prepared && prepared.localResult,
+      productionResult,
       trace: finalizedTrace,
-      confirmationSummary: safeClone(confirmationSummary),
-      saveEligibility: safeClone(saveEligibility),
-      errors: safeClone(errors)
-    };
+      confirmationSummary,
+      modeEligibility: saveEligibility,
+      productionEligibility,
+      productionEligibilityResolved,
+      errors
+    });
   } catch (error) {
     errors.push(createFlowError(
       RECORD_FLOW_ERROR_CODES.FINAL_SAFETY_FAILED,
@@ -834,16 +1174,16 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     trace.errors = errors.slice();
     failTraceStage(trace, 'final', traceClock);
     const finalizedTrace = finalizeRecordFlowTrace(trace, { clock: traceClock });
-    return {
-      schemaVersion: CORE_IMPLEMENTATION_VERSION,
-      coreContractVersion: CORE_CONTRACT_VERSION,
-      traceSchemaVersion: TRACE_SCHEMA_VERSION,
-      result: finalResult ? safeClone(finalResult) : null,
+    return buildFlowOutput({
+      mode,
+      resultScope,
+      productionRoute: trace.routing.productionRoute,
+      executionPath: trace.routing.executionPath,
+      result: finalResult,
+      localResult: prepared && prepared.localResult,
       trace: finalizedTrace,
-      confirmationSummary: buildConfirmationSummary(null, route, buildSaveEligibility(null)),
-      saveEligibility: buildSaveEligibility(null),
-      errors: safeClone(errors)
-    };
+      errors
+    });
   }
 }
 

@@ -1134,13 +1134,15 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
     source: payload.source,
     reviewMode: payload.reviewMode === 'deep' ? 'deep' : 'standard',
     context: payload.context,
-    rawText: payload.rawText || localResult.original_text || '',
+    rawText: payload.rawText || (localResult && localResult.original_text) || '',
     extractedText: payload.extractedText || payload.text || '',
     rawMessages: getPayloadRawMessages(payload),
     pasteMeta: payload.pasteMeta || null,
     requestId: payload.requestId || '',
-    businessTimezone: payload.businessTimezone || 'Asia/Shanghai',
-    localDraft: {
+    businessTimezone: payload.businessTimezone || 'Asia/Shanghai'
+  };
+  if (localResult) {
+    requestPayload.localDraft = {
       intent: localResult.intent || 'unknown',
       operation: localResult.operation || '',
       fields: localResult.fields || {},
@@ -1151,17 +1153,24 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
       field_sources: localResult.field_sources || {},
       local_parse_safety: localResult.local_parse_safety || null,
       unsafe_reasons: localResult.unsafe_reasons || []
-    },
-    routeDecision: localResult.parse_route || null
-  };
+    };
+    requestPayload.routeDecision = localResult.parse_route || null;
+  }
   // Legacy pages do not provide Phase 1B's explicit businessDate. Omitting the
   // field lets the server derive today's date in Asia/Shanghai; sending an empty
   // string would incorrectly turn a compatible legacy request into a 400.
   if (payload.businessDate) requestPayload.businessDate = payload.businessDate;
   if (payload.nowInstant) requestPayload.nowInstant = payload.nowInstant;
-  if (localResult.history_status === 'found') {
+  if (localResult && localResult.history_status === 'found') {
     requestPayload.customerCandidates = scopedHistory.customers;
     requestPayload.businessContext = scopedHistory.businessContext;
+  } else if (!localResult && scopedHistory) {
+    if (Array.isArray(scopedHistory.customers) && scopedHistory.customers.length) {
+      requestPayload.customerCandidates = scopedHistory.customers;
+    }
+    if (scopedHistory.businessContext && Object.keys(scopedHistory.businessContext).length) {
+      requestPayload.businessContext = scopedHistory.businessContext;
+    }
   }
   return requestPayload;
 }
@@ -1604,12 +1613,95 @@ function applyAiCustomerEvidenceSafety(result) {
   });
 }
 
-function normalizeAiResult(localResult, aiResult, options = {}) {
+function prepareAiBusinessNormalization(aiResult, options = {}) {
   const normalized = unwrapAiResult(aiResult);
-  const mockUsed = hasMockProvider(aiResult);
   const validity = getAiBusinessResultValidity(normalized);
   if (!validity.valid) throw createEmptyAiBusinessResultError(validity);
-  const aiFields = normalizeFields(normalized.fields || normalized, options);
+  return {
+    normalized,
+    validity,
+    fields: normalizeFields(normalized.fields || normalized, options)
+  };
+}
+
+// Normalize a provider result without reading or merging any local parser draft.
+// AI_ONLY uses this layer so model/normalizer scoring cannot be repaired by the
+// local parser. Production routing continues to use normalizeAiResult below.
+function normalizeAiBusinessResult(aiResult, options = {}) {
+  const prepared = prepareAiBusinessNormalization(aiResult, options);
+  const normalized = prepared.normalized;
+  const validity = prepared.validity;
+  const intentRaw = String(normalized.intent || '').trim().toLowerCase();
+  const intent = validIntents.includes(intentRaw) ? intentRaw : 'unknown';
+  const explicitDecision = String(normalized.decision || normalized.status || '').trim().toLowerCase();
+  const noRecord = normalized.no_record === true
+    || normalized.recordable === false
+    || explicitDecision === 'no_record';
+  const providerKind = String(options.providerKind || '').trim().toUpperCase();
+  const mockUsed = providerKind === 'MOCK';
+  const missingFields = toStringArray(normalized.missing_fields || normalized.missingFields);
+  const lowFields = toStringArray(normalized.low_confidence_fields || normalized.lowConfidenceFields);
+  const conflicts = toArray(normalized.field_conflicts || normalized.fieldConflicts);
+  const intentCandidates = uniqueStrings([].concat(
+    toStringArray(normalized.intent_candidates || normalized.intentCandidates),
+    intent
+  )).filter((candidate) => validIntents.includes(candidate) && candidate !== 'query');
+  let result = {
+    id: normalized.id || '',
+    source: options.source || 'typed',
+    original_text: typeof options.originalText === 'string' ? options.originalText : '',
+    intent,
+    operation: normalized.operation || '',
+    fields: prepared.fields,
+    missing_fields: missingFields,
+    low_confidence_fields: lowFields,
+    field_conflicts: conflicts,
+    customer_candidates: toArray(normalized.customer_candidates || normalized.customerCandidates),
+    computed_fields: toArray(normalized.computed_fields || normalized.computedFields),
+    computed_tips: toArray(normalized.computed_tips || normalized.computedTips),
+    field_sources: Object.assign({}, normalized.field_sources || normalized.fieldSources || {}),
+    field_evidence: normalizeObject(normalized.field_evidence || normalized.fieldEvidence, {}),
+    remark_items: toArray(normalized.remark_items || normalized.remarkItems),
+    intent_candidates: intentCandidates,
+    confidence: normalized.confidence === undefined ? null : normalized.confidence,
+    confirm_message: normalized.confirm_message || normalized.confirmMessage
+      || (validity.kind === 'uncertain'
+        ? 'AI 认为信息仍不确定，请你确认后再处理。'
+        : 'AI 识别成下面这样，请你确认。'),
+    formal_save_blocked: Boolean(normalized.formal_save_blocked || normalized.formalSaveBlocked || noRecord),
+    block_reason: normalized.block_reason || normalized.blockReason
+      || (noRecord ? 'AI 明确判断当前内容不能形成业务记录。' : ''),
+    requires_existing_record: Boolean(normalized.requires_existing_record || normalized.requiresExistingRecord),
+    mixed_business: Boolean(normalized.mixed_business || normalized.mixedBusiness),
+    no_record: noRecord,
+    ai_fallback: {
+      needed: true,
+      status: mockUsed
+        ? 'mock_used'
+        : (validity.kind === 'uncertain' ? 'returned_uncertain' : 'used'),
+      attempted: true,
+      business_result_valid: true,
+      reason: mockUsed
+        ? '调用方注册的是模拟 AI adapter，结果不能作为真实 AI 成功使用。'
+        : (validity.kind === 'uncertain'
+          ? 'AI 已明确返回不确定或不能记录的安全结论。'
+          : 'AI 已成功返回整理结果。')
+    },
+    ai_business_result_valid: true,
+    provider: normalized.provider || '',
+    raw_messages: toArray(options.rawMessages || [])
+  };
+  result = applyPostAiConsistency(result, normalized);
+  result = applyAiCustomerEvidenceSafety(result);
+  return applyProductTranscriptionSafety(result);
+}
+
+function normalizeAiResult(localResult, aiResult, options = {}) {
+  const prepared = prepareAiBusinessNormalization(aiResult, options);
+  const normalized = prepared.normalized;
+  const mockUsed = hasMockProvider(aiResult);
+  const validity = prepared.validity;
+  const aiFields = prepared.fields;
   const intent = mergeAiIntent(localResult, normalized);
   const hardSafety = getLocalHardSafety(localResult, normalized);
   const itemStructure = applyAiItemStructureGuard(localResult, aiFields);
@@ -1707,7 +1799,7 @@ function getAiFailureReason(error) {
   const code = String((error && error.code) || '').toUpperCase();
   const message = String((error && (error.errMsg || error.message)) || '').toLowerCase();
   const statusCode = Number(error && error.statusCode);
-  if (code === 'AI_TOTAL_TIMEOUT') return '智能快速核对在 8 秒内没有完成，这条先放待整理。';
+  if (code === 'AI_TOTAL_TIMEOUT' || code === 'AI_TIMEOUT') return '智能快速核对在 8 秒内没有完成，这条先放待整理。';
   if (code === 'AI_FAST_TIMEOUT') return '智能快速核对超时，这条先放待整理。';
   if (code === 'AUTH_SESSION_NOT_READY') return '智能核对正在准备登录，请稍后点“重新生成确认卡”。';
   if (code === 'AUTH_SESSION_EXPIRED' || code === 'AUTH_REQUIRED' || statusCode === 401) return '智能核对的登录准备还没完成，这条先放待整理。';
@@ -1725,7 +1817,7 @@ function getAiFailureReason(error) {
 function getAiFailureStatus(error) {
   const code = String((error && error.code) || '').toUpperCase();
   const message = String((error && (error.errMsg || error.message)) || '').toLowerCase();
-  if (['AI_TOTAL_TIMEOUT', 'AI_FAST_TIMEOUT', 'AI_DEEP_TIMEOUT', 'AI_PROVIDER_TIMEOUT'].includes(code)
+  if (['AI_TIMEOUT', 'AI_TOTAL_TIMEOUT', 'AI_FAST_TIMEOUT', 'AI_DEEP_TIMEOUT', 'AI_PROVIDER_TIMEOUT'].includes(code)
     || message.includes('timeout') || message.includes('超时')) return 'timed_out';
   if (['AI_RESPONSE_INVALID', 'AI_RESPONSE_EMPTY_BUSINESS'].includes(code)) return 'returned_uncertain';
   return 'failed';
@@ -1876,18 +1968,21 @@ function requestHybridAiRaw({ payload, localResult, route, scopedHistory, localD
   }
 
   const aiStartedAt = Date.now();
-  const networkWaitLimitMs = getAiWaitLimitMs(route);
+  const effectiveRoute = route || {
+    decision: payload.reviewMode === 'deep' ? ROUTE_AI_DEEP : ROUTE_AI_STANDARD
+  };
+  const networkWaitLimitMs = getAiWaitLimitMs(effectiveRoute);
   const remainingWaitMs = Math.max(0, networkWaitLimitMs - localDurationMs);
-  const requestPath = route.decision === ROUTE_AI_DEEP
+  const requestPath = effectiveRoute.decision === ROUTE_AI_DEEP
     ? `${getAiParseEndpoint().replace(/\/$/, '')}/deep`
     : getAiParseEndpoint();
-  const requestTimeoutMs = route.decision === ROUTE_AI_DEEP
+  const requestTimeoutMs = effectiveRoute.decision === ROUTE_AI_DEEP
     ? AI_DEEP_REQUEST_TIMEOUT_MS
     : AI_STANDARD_REQUEST_TIMEOUT_MS;
   return requestWithDeadline(
     requestJson(requestPath, buildAiRequestPayload(payload, localResult, scopedHistory), requestTimeoutMs, {
-      retryAuth: route.decision === ROUTE_AI_DEEP,
-      requireReadyAuth: route.decision === ROUTE_AI_STANDARD
+      retryAuth: effectiveRoute.decision === ROUTE_AI_DEEP,
+      requireReadyAuth: effectiveRoute.decision === ROUTE_AI_STANDARD
     }),
     remainingWaitMs
   ).then((aiResult) => ({
@@ -1936,6 +2031,7 @@ module.exports = {
   getAiWaitLimitMs,
   finishHybridWithoutAi,
   normalizeAiResult,
+  normalizeAiBusinessResult,
   parseHybridInput,
   prepareHybridLocalStage,
   requestHybridAiRaw,

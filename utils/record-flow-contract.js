@@ -1,7 +1,7 @@
 const CORE_CONTRACT_VERSION = 'record-shared-core-v1';
-const CORE_IMPLEMENTATION_VERSION = 'record-flow-phase1b-v1';
+const CORE_IMPLEMENTATION_VERSION = 'record-flow-phase1c-v1';
 const TARGET_TRACE_SCHEMA_VERSION = 'record-trace-v1';
-const TRACE_SCHEMA_VERSION = 'record-trace-phase1b-v1';
+const TRACE_SCHEMA_VERSION = 'record-trace-phase1c-v1';
 
 function freezeEnum(values) {
   return Object.freeze(values.reduce((result, value) => {
@@ -33,6 +33,14 @@ const EXECUTION_PATHS = freezeEnum([
   'PRODUCTION_STANDARD',
   'PRODUCTION_DEEP',
   'NOT_EXECUTED',
+  'UNKNOWN'
+]);
+
+const RESULT_SCOPES = freezeEnum([
+  'LOCAL_ONLY_RESULT',
+  'AI_ONLY_RESULT',
+  'PRODUCTION_RESULT',
+  'NOT_AVAILABLE',
   'UNKNOWN'
 ]);
 
@@ -102,8 +110,16 @@ const TRACE_STAGE_STATUSES = freezeEnum([
 const RECORD_FLOW_ERROR_CODES = freezeEnum([
   'INPUT_INVALID',
   'MODE_INVALID',
+  'UNSUPPORTED_FLOW_MODE',
   'AI_ADAPTER_REQUIRED',
+  'AI_ADAPTER_FORBIDDEN',
+  'AI_ADAPTER_IDENTITY_INVALID',
+  'AI_ADAPTER_CAPABILITY_MISSING',
   'AI_CALLED_IN_LOCAL_ONLY',
+  'AI_ONLY_LOCAL_DRAFT_LEAK',
+  'AI_ONLY_LOCAL_RESULT_LEAK',
+  'REPLAY_METADATA_INVALID',
+  'MODE_RESULT_SCOPE_MISMATCH',
   'AI_TIMEOUT',
   'AI_PROVIDER_FAILED',
   'AI_ENDPOINT_MISSING',
@@ -195,6 +211,15 @@ function normalizeExecutionPath(value) {
     ai_standard: 'PRODUCTION_STANDARD',
     ai_deep: 'PRODUCTION_DEEP',
     not_executed: 'NOT_EXECUTED'
+  });
+}
+
+function normalizeResultScope(value) {
+  return normalizeEnum(value, RESULT_SCOPES, {
+    local_only_result: 'LOCAL_ONLY_RESULT',
+    ai_only_result: 'AI_ONLY_RESULT',
+    production_result: 'PRODUCTION_RESULT',
+    not_available: 'NOT_AVAILABLE'
   });
 }
 
@@ -290,6 +315,7 @@ module.exports = {
   PRODUCTION_ROUTES,
   PROVIDER_KINDS,
   RECORD_FLOW_ERROR_CODES,
+  RESULT_SCOPES,
   TRACE_SCHEMA_VERSION,
   TARGET_TRACE_SCHEMA_VERSION,
   TRACE_STAGE_STATUSES,
@@ -300,6 +326,7 @@ module.exports = {
   normalizeFlowMode,
   normalizeProductionRoute,
   normalizeProviderKind,
+  normalizeResultScope,
   normalizeRecordFlowErrorCode,
   normalizeSafetyStatus,
   normalizeWithRaw

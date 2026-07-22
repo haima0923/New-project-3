@@ -7,6 +7,7 @@ const {
   LOCAL_SAFETY_STATUSES,
   PRODUCTION_ROUTES,
   PROVIDER_KINDS,
+  RESULT_SCOPES,
   TARGET_TRACE_SCHEMA_VERSION,
   TRACE_SCHEMA_VERSION,
   TRACE_STAGE_STATUSES
@@ -90,6 +91,7 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
     caseId: input.caseId || '',
     mode: input.mode || FLOW_MODES.PRODUCTION_ROUTING,
     modeRaw: input.modeRaw === undefined ? (input.mode || null) : input.modeRaw,
+    resultScope: input.resultScope || RESULT_SCOPES.NOT_AVAILABLE,
     context: input.context || 'home',
     contextRaw: input.contextRaw === undefined ? (input.context || null) : input.contextRaw,
     inputSource: input.inputSource || 'typed',
@@ -122,6 +124,8 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
       stages: createStageMap()
     },
     local: {
+      executed: false,
+      shadowOnly: false,
       result: null,
       confidence: null,
       warnings: [],
@@ -138,7 +142,12 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
     },
     ai: {
       requiredByRoute: false,
+      requiredByProductionRoute: false,
+      requiredByExecutionMode: false,
       adapterInvoked: false,
+      adapterCallCount: 0,
+      adapterName: '',
+      skippedReason: '',
       requestStarted: false,
       responseReceived: false,
       requested: false,
@@ -151,24 +160,38 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
       provider: '',
       model: '',
       modelTier: '',
+      referenceMetadata: null,
+      usage: null,
       requestId: '',
       serverRequestId: '',
       providerRequestId: '',
       latencyMs: null,
+      latencyAvailable: null,
+      latencySource: 'NOT_APPLICABLE',
+      countsAsRealAiCall: false,
+      costAvailable: false,
       businessResultValid: null,
       errorCode: '',
       errorCodeRaw: '',
       errorMessage: '',
+      rawText: '',
+      parsedResult: null,
       rawResult: null,
       normalizedResult: null,
       normalizationAvailable: false
     },
     merge: {
       performed: false,
+      reason: '',
       result: null,
       conflicts: [],
       adoptionStatus: ADOPTION_STATUSES.NOT_APPLICABLE,
       adoptionStatusResolved: true
+    },
+    eligibility: {
+      modeEligibility: null,
+      productionEligibility: null,
+      productionEligibilityResolved: false
     },
     final: {
       result: null,

@@ -255,13 +255,23 @@ test('fake工厂和未注册adapter都不能伪造REAL身份', async () => {
   assert.strictEqual(forgedOutput.saveEligibility.canCommitToRealStorage, false);
 });
 
-test('LOCAL_ONLY和AI_ONLY在Phase 1A明确拒绝，不偷换成生产模式', async () => {
-  for (const mode of [FLOW_MODES.LOCAL_ONLY, FLOW_MODES.AI_ONLY]) {
-    const output = await runRecordFlow(baseInput('王总订水杯100个', { mode }));
-    assert.strictEqual(output.result, null);
-    assert.strictEqual(output.errors[0].code, 'MODE_INVALID');
-    assert.strictEqual(output.trace.routing.executionPath, EXECUTION_PATHS.NOT_EXECUTED);
-  }
+test('Phase 1C启用LOCAL_ONLY和AI_ONLY后仍不会偷换成生产结果', async () => {
+  const localOnly = await runRecordFlow(baseInput('王总订水杯100个', {
+    mode: FLOW_MODES.LOCAL_ONLY
+  }), { aiAdapter: createNoAiAdapter() });
+  assert(localOnly.result);
+  assert.strictEqual(localOnly.resultScope, 'LOCAL_ONLY_RESULT');
+  assert.strictEqual(localOnly.trace.routing.executionPath, EXECUTION_PATHS.LOCAL_ONLY);
+  assert.strictEqual(localOnly.eligibility.productionEligibilityResolved, false);
+
+  const aiOnly = await runRecordFlow(baseInput('王总订水杯100个', {
+    mode: FLOW_MODES.AI_ONLY
+  }));
+  assert(aiOnly.result);
+  assert.strictEqual(aiOnly.resultScope, 'AI_ONLY_RESULT');
+  assert.strictEqual(aiOnly.trace.routing.executionPath, EXECUTION_PATHS.AI_ONLY_STANDARD);
+  assert.strictEqual(aiOnly.errors[0].code, 'AI_ADAPTER_REQUIRED');
+  assert.strictEqual(aiOnly.eligibility.productionEligibilityResolved, false);
 });
 
 test('trace严格保留原文、可序列化、脱敏且运行间隔离', async () => {
@@ -374,7 +384,8 @@ test('standard fake AI只调用一次并沿用现有合并逻辑', async () => {
   assert.strictEqual(output.trace.ai.adapterInvoked, true);
   assert.strictEqual(output.trace.ai.requestStarted, true);
   assert.strictEqual(output.trace.ai.responseReceived, true);
-  assert.strictEqual(output.trace.merge.adoptionStatus, ADOPTION_STATUSES.ADOPTED);
+  assert.strictEqual(output.trace.merge.adoptionStatus, ADOPTION_STATUSES.NOT_APPLICABLE);
+  assert.strictEqual(output.trace.merge.adoptionStatusResolved, false);
   assert.strictEqual(output.result.fields.remark, 'PHASE1A_STANDARD_UNIQUE');
   assert.deepStrictEqual(output.trace.ai.rawResult, validStandardResult);
   assert.strictEqual(output.trace.ai.normalizedResult, null);
