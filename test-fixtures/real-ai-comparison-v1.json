@@ -1,0 +1,367 @@
+{
+  "benchmarkVersion": "real-ai-comparison-v1",
+  "referenceDate": "2026-07-20",
+  "description": "40 道虚构但贴近义乌小工厂老板表达的真实业务题。前32道用于同题优化回归，最后8道在第五版提示词冻结后加入，只用于最终验证。",
+  "cases": [
+    {
+      "id": "A01",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "老王今天要订五百个杯子，二十块钱一个，本周五交货",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "老王", "productName": "杯子", "quantity": "500", "unitPrice": "20", "dueDate": "2026-07-24" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A02",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "李总，礼品盒五百套，周三交，三块八一套，给我下单",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "李总", "productName": "礼品盒", "quantity": "500", "unit": "套", "unitPrice": "3.8", "dueDate": "2026-07-22" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A03",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "张总下两千只纸袋，一块二一个，后天发",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "张总", "productName": "纸袋", "quantity": "2000", "unit": "只", "unitPrice": "1.2", "dueDate": "2026-07-22" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A04",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "typed",
+      "text": "五块五一个，水杯一百个，王姐要订，明天拿",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "王姐", "productName": "水杯", "quantity": "100", "unitPrice": "5.5", "dueDate": "2026-07-21" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A05",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "赵总下单卡通杯八百个，六元一个，下个月五号交",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "赵总", "productName": "卡通杯", "quantity": "800", "unitPrice": "6", "dueDate": "2026-08-05" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A06",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "陈姐订钥匙扣八百个，一块二一个，本周三交",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "陈姐", "productName": "钥匙扣", "quantity": "800", "unitPrice": "1.2", "dueDate": "2026-07-22" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A07",
+      "split": "development",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "郑老板挂件三千个，一块五一个，先给他报价，还没下单",
+      "expected": { "kind": "exact", "intent": "quotation", "fields": { "customerName": "郑老板", "productName": "挂件", "quantity": "3000", "unitPrice": "1.5" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "A08",
+      "split": "holdout",
+      "category": "明确单笔订单/报价",
+      "source": "voice_transcript",
+      "text": "给刘姐报收纳盒一千套，两块八一套",
+      "expected": { "kind": "exact", "intent": "quotation", "fields": { "customerName": "刘姐", "productName": "收纳盒", "quantity": "1000", "unit": "套", "unitPrice": "2.8" }, "formalSaveAllowed": true }
+    },
+
+    {
+      "id": "B01",
+      "split": "development",
+      "category": "业务类型边界",
+      "source": "voice_transcript",
+      "text": "周姐问五百套礼品盒多少钱，明天提醒我给她回价",
+      "expected": { "kind": "exact", "intent": "todo", "fields": { "customerName": "周姐", "productName": "礼品盒", "quantity": "500", "dueDate": "2026-07-21" }, "requiredNonEmpty": ["todoTitle"], "formalSaveAllowed": true }
+    },
+    {
+      "id": "B02",
+      "split": "development",
+      "category": "业务类型边界",
+      "source": "typed",
+      "text": "下周一记得催王总尾款",
+      "expected": { "kind": "exact", "intent": "dunning", "fields": { "customerName": "王总", "dueDate": "2026-07-27" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "B03",
+      "split": "development",
+      "category": "业务类型边界",
+      "source": "typed",
+      "text": "周姐那批货还差三千二没给，月底收",
+      "expected": { "kind": "exact", "intent": "receivable", "fields": { "customerName": "周姐", "amount": "3200", "dueDate": "2026-07-31" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "B04",
+      "split": "holdout",
+      "category": "业务类型边界",
+      "source": "voice_transcript",
+      "text": "刘姐说先看看杯子的价，一千个，两块八一个，还没有下单",
+      "expected": { "kind": "exact", "intent": "quotation", "fields": { "customerName": "刘姐", "productName": "杯子", "quantity": "1000", "unitPrice": "2.8" }, "formalSaveAllowed": true }
+    },
+
+    {
+      "id": "C01",
+      "split": "development",
+      "category": "口语/错字/语序",
+      "source": "voice_transcript",
+      "text": "老板今天要订五个椅子，二十块钱一个，这周五交货",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "productName": "椅子", "quantity": "5", "unitPrice": "20", "dueDate": "2026-07-24" }, "mustBeEmpty": ["customerName"], "mustMarkUncertain": ["customerName"], "forbiddenValues": { "customerName": ["老板", "老板今", "老板今天"] }, "formalSaveAllowed": false }
+    },
+    {
+      "id": "C02",
+      "split": "development",
+      "category": "口语/错字/语序",
+      "source": "voice_transcript",
+      "text": "王总那个水怀先做两千个，蓝的，一块二毛五，这礼拜五发",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "customerName": "王总", "quantity": "2000", "unitPrice": "1.25", "dueDate": "2026-07-24" }, "allowedValues": { "productName": ["水怀", "水杯"] }, "mustMarkUncertain": ["productName"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "C03",
+      "split": "development",
+      "category": "口语/错字/语序",
+      "source": "voice_transcript",
+      "text": "老李那边礼合先要五百套，哦不对八百套，明天下午带走，三块八一套",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "customerName": "老李", "quantity": "800", "unit": "套", "unitPrice": "3.8", "dueDate": "2026-07-21" }, "allowedValues": { "productName": ["礼合", "礼盒", "礼品盒"] }, "mustMarkUncertain": ["productName"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "C04",
+      "split": "holdout",
+      "category": "口语/错字/语序",
+      "source": "voice_transcript",
+      "text": "明朝提醒我回赵姐样品价格",
+      "expected": { "kind": "exact", "intent": "todo", "fields": { "customerName": "赵姐", "dueDate": "2026-07-21" }, "requiredNonEmpty": ["todoTitle"], "formalSaveAllowed": true }
+    },
+
+    {
+      "id": "D01",
+      "split": "development",
+      "category": "缺失/歧义/不应记录",
+      "source": "typed",
+      "text": "杯子五百个，二十块钱一个，下周交",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "productName": "杯子", "quantity": "500", "unitPrice": "20" }, "mustBeEmpty": ["customerName"], "mustMarkUncertain": ["customerName", "dueDate"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "D02",
+      "split": "development",
+      "category": "缺失/歧义/不应记录",
+      "source": "typed",
+      "text": "王总礼品盒先报个大概价，数量和单价还没定",
+      "expected": { "kind": "safe_uncertain", "intent": "quotation", "fields": { "customerName": "王总", "productName": "礼品盒" }, "mustBeEmpty": ["quantity", "unitPrice"], "mustMarkUncertain": ["quantity", "unitPrice"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "D03",
+      "split": "holdout",
+      "category": "缺失/歧义/不应记录",
+      "source": "voice_transcript",
+      "text": "今天仓库看起来挺满的",
+      "expected": { "kind": "safe_uncertain", "allowedIntents": ["unknown"], "mustBeEmpty": ["customerName", "productName", "amount", "paymentAmount"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "D04",
+      "split": "development",
+      "category": "缺失/歧义/不应记录",
+      "source": "voice_transcript",
+      "text": "王总杯子报价五百个二十块，另外周姐刚打了两千",
+      "expected": { "kind": "split_required", "requiredIntentCandidates": ["quotation", "payment"], "mustMarkAnyRisk": true, "formalSaveAllowed": false }
+    },
+    {
+      "id": "D05",
+      "split": "holdout",
+      "category": "缺失/歧义/不应记录",
+      "source": "typed",
+      "text": "陈总订杯垫五百个，两块一个，总共一千二，后天交",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "customerName": "陈总", "productName": "杯垫", "quantity": "500", "unitPrice": "2", "amount": "1200", "dueDate": "2026-07-22" }, "mustMarkUncertain": ["amount"], "formalSaveAllowed": false }
+    },
+
+    {
+      "id": "E01",
+      "split": "development",
+      "category": "历史/纠错/多轮聊天",
+      "source": "typed",
+      "text": "老王补三百个杯垫，还是上次价格，下周五交",
+      "businessContext": {
+        "recentOrders": [
+          { "id": "ord_laowang_mat", "customerName": "老王", "productName": "杯垫", "unitPrice": "0.9", "unit": "个" },
+          { "id": "ord_zhou_mat", "customerName": "周姐", "productName": "杯垫", "unitPrice": "1.1", "unit": "个" }
+        ]
+      },
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "老王", "productName": "杯垫", "quantity": "300", "unitPrice": "0.9", "dueDate": "2026-07-31" }, "mustBeEmpty": ["orderId"], "formalSaveAllowed": true }
+    },
+    {
+      "id": "E02",
+      "split": "development",
+      "category": "历史/纠错/多轮聊天",
+      "source": "typed",
+      "text": "老王补三百个杯垫，还是上次价格",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "customerName": "老王", "productName": "杯垫", "quantity": "300" }, "mustBeEmpty": ["unitPrice", "orderId"], "mustMarkUncertain": ["unitPrice"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "E03",
+      "split": "development",
+      "category": "历史/纠错/多轮聊天",
+      "source": "paste",
+      "text": "王总：水杯一千个先按三十一个\n我：贵了可以少点\n王总：最后二十五一个，就做一千个，月底交",
+      "rawMessages": [
+        { "index": 0, "speaker": "王总", "content": "水杯一千个先按三十一个" },
+        { "index": 1, "speaker": "我", "content": "贵了可以少点" },
+        { "index": 2, "speaker": "王总", "content": "最后二十五一个，就做一千个，月底交" }
+      ],
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "王总", "productName": "水杯", "quantity": "1000", "unitPrice": "25", "dueDate": "2026-07-31" }, "requiredSupersededValue": "30", "formalSaveAllowed": true }
+    },
+    {
+      "id": "E04",
+      "split": "development",
+      "category": "历史/纠错/多轮聊天",
+      "source": "voice_transcript",
+      "text": "陈姐礼品盒先做五百套，哦不对改成八百套，三块八一套，明天交",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "陈姐", "productName": "礼品盒", "quantity": "800", "unit": "套", "unitPrice": "3.8", "dueDate": "2026-07-21" }, "requiredSupersededValue": "500", "formalSaveAllowed": true }
+    },
+    {
+      "id": "E05",
+      "split": "holdout",
+      "category": "历史/纠错/多轮聊天",
+      "source": "voice_transcript",
+      "text": "王总刚说那五百个杯子的单先别做了，取消，等他重新确认",
+      "businessContext": { "recentOrders": [{ "id": "ord_cancel_1", "customerName": "王总", "productName": "杯子", "quantity": "500", "status": "待生产" }] },
+      "expected": { "kind": "safe_uncertain", "allowedIntents": ["order", "unknown", "todo"], "fields": { "customerName": "王总", "productName": "杯子", "quantity": "500", "orderId": "ord_cancel_1" }, "mustMarkAnyRisk": true, "formalSaveAllowed": false }
+    },
+
+    {
+      "id": "F01",
+      "split": "development",
+      "category": "钱款/关联高风险",
+      "source": "voice_transcript",
+      "text": "周姐刚微信打了两千，顶在上回礼品盒货款里",
+      "businessContext": { "recentReceivables": [{ "id": "rec_unique_1", "customerName": "周姐", "productName": "礼品盒", "amount": "5000", "paidAmount": "0", "status": "待收" }] },
+      "expected": { "kind": "exact", "intent": "payment", "fields": { "customerName": "周姐", "paymentAmount": "2000", "receivableId": "rec_unique_1" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "F02",
+      "split": "development",
+      "category": "钱款/关联高风险",
+      "source": "voice_transcript",
+      "text": "周姐打了两千，哪笔我也说不准",
+      "businessContext": { "recentReceivables": [
+        { "id": "rec_a", "customerName": "周姐", "productName": "礼品盒", "amount": "5000", "paidAmount": "0", "status": "待收" },
+        { "id": "rec_b", "customerName": "周姐", "productName": "纸袋", "amount": "3000", "paidAmount": "0", "status": "待收" }
+      ] },
+      "expected": { "kind": "safe_uncertain", "intent": "payment", "fields": { "customerName": "周姐", "paymentAmount": "2000" }, "mustBeEmpty": ["receivableId", "orderId"], "mustMarkAnyRisk": true, "formalSaveAllowed": false }
+    },
+    {
+      "id": "F03",
+      "split": "development",
+      "category": "钱款/关联高风险",
+      "source": "typed",
+      "text": "李总订纸袋一万个，一块一个，先付了两千定金，下周五交，余款发货前结",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "李总", "productName": "纸袋", "quantity": "10000", "unitPrice": "1", "depositAmount": "2000", "paymentAmount": "2000", "paymentKind": "deposit", "dueDate": "2026-07-31" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "F04",
+      "split": "holdout",
+      "category": "钱款/关联高风险",
+      "source": "voice_transcript",
+      "text": "马总这批杯子货款一共八千六，月底给，先记一下",
+      "expected": { "kind": "exact", "intent": "receivable", "fields": { "customerName": "马总", "productName": "杯子", "amount": "8600", "dueDate": "2026-07-31" }, "formalSaveAllowed": true }
+    },
+
+    {
+      "id": "G01",
+      "split": "development",
+      "category": "多商品",
+      "source": "typed",
+      "text": "王总下单：杯垫三百个，每个九毛；礼品盒二百套，每套三块八；后天一起交",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "王总", "dueDate": "2026-07-22" }, "items": [
+        { "productName": "杯垫", "quantity": "300", "unit": "个", "unitPrice": "0.9" },
+        { "productName": "礼品盒", "quantity": "200", "unit": "套", "unitPrice": "3.8" }
+      ], "formalSaveAllowed": true }
+    },
+    {
+      "id": "G02",
+      "split": "holdout",
+      "category": "多商品",
+      "source": "voice_transcript",
+      "text": "王总要杯垫和礼品盒，一共五百个，杯垫九毛，礼品盒三块八，明天交",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "customerName": "王总", "dueDate": "2026-07-21" }, "mustMarkAnyRisk": true, "formalSaveAllowed": false }
+    },
+
+    {
+      "id": "H01",
+      "split": "final_holdout",
+      "category": "最终未见题/明确订单",
+      "source": "voice_transcript",
+      "text": "孙老板，帆布袋先做一千二百个，黑色，四块六一个，礼拜四送过来",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "孙老板", "productName": "帆布袋", "quantity": "1200", "unitPrice": "4.6", "dueDate": "2026-07-23" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "H02",
+      "split": "final_holdout",
+      "category": "最终未见题/报价边界",
+      "source": "typed",
+      "text": "吴姐问亚克力牌八百个什么价，先按一块六给她报，还没确定做",
+      "expected": { "kind": "exact", "allowedIntents": ["quotation", "todo"], "fields": { "customerName": "吴姐", "productName": "亚克力牌", "quantity": "800", "unitPrice": "1.6" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "H03",
+      "split": "final_holdout",
+      "category": "最终未见题/日期口语",
+      "source": "voice_transcript",
+      "text": "冯总订三百只保温壶，十二块一只，下礼拜二发走",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "冯总", "productName": "保温壶", "quantity": "300", "unit": "只", "unitPrice": "12", "dueDate": "2026-07-28" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "H04",
+      "split": "final_holdout",
+      "category": "最终未见题/缺少信息",
+      "source": "voice_transcript",
+      "text": "五百个，三块一个，月底交，先记下来",
+      "expected": { "kind": "safe_uncertain", "intent": "order", "fields": { "quantity": "500", "unitPrice": "3" }, "optionalExactOrUncertain": { "dueDate": "2026-07-31" }, "mustBeEmpty": ["customerName", "productName"], "mustMarkUncertain": ["customerName", "productName"], "formalSaveAllowed": false }
+    },
+    {
+      "id": "H05",
+      "split": "final_holdout",
+      "category": "最终未见题/收款关联",
+      "source": "voice_transcript",
+      "text": "陈总刚打了一千五，算在纸袋那笔货款里",
+      "businessContext": { "recentReceivables": [
+        { "id": "rec_paper", "customerName": "陈总", "productName": "纸袋", "amount": "3000", "paidAmount": "0", "status": "待收" },
+        { "id": "rec_cup", "customerName": "陈总", "productName": "杯子", "amount": "5000", "paidAmount": "0", "status": "待收" }
+      ] },
+      "expected": { "kind": "exact", "intent": "payment", "fields": { "customerName": "陈总", "productName": "纸袋", "paymentAmount": "1500", "receivableId": "rec_paper" }, "formalSaveAllowed": true }
+    },
+    {
+      "id": "H06",
+      "split": "final_holdout",
+      "category": "最终未见题/历史价格隔离",
+      "source": "typed",
+      "text": "赵姐再做两百个钥匙扣，价格照旧，下周三拿",
+      "businessContext": { "recentOrders": [
+        { "id": "ord_zhao_key", "customerName": "赵姐", "productName": "钥匙扣", "unitPrice": "1.3", "unit": "个" },
+        { "id": "ord_zhao_badge", "customerName": "赵姐", "productName": "徽章", "unitPrice": "2", "unit": "个" },
+        { "id": "ord_wu_key", "customerName": "吴姐", "productName": "钥匙扣", "unitPrice": "1.1", "unit": "个" }
+      ] },
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "赵姐", "productName": "钥匙扣", "quantity": "200", "unitPrice": "1.3", "dueDate": "2026-07-29" }, "mustBeEmpty": ["orderId"], "formalSaveAllowed": true }
+    },
+    {
+      "id": "H07",
+      "split": "final_holdout",
+      "category": "最终未见题/三商品",
+      "source": "paste",
+      "text": "郭总下单：镜子一百个，二块一个；梳子二百把，一块五一把；化妆包三百个，四块一个；本周六一起交",
+      "expected": { "kind": "exact", "intent": "order", "fields": { "customerName": "郭总", "dueDate": "2026-07-25" }, "items": [
+        { "productName": "镜子", "quantity": "100", "unit": "个", "unitPrice": "2" },
+        { "productName": "梳子", "quantity": "200", "unit": "把", "unitPrice": "1.5" },
+        { "productName": "化妆包", "quantity": "300", "unit": "个", "unitPrice": "4" }
+      ], "formalSaveAllowed": true }
+    },
+    {
+      "id": "H08",
+      "split": "final_holdout",
+      "category": "最终未见题/多业务",
+      "source": "voice_transcript",
+      "text": "李总订五百个纸袋一块二一个，另外明天记得催王总尾款",
+      "expected": { "kind": "split_required", "requiredIntentCandidates": ["order", "dunning"], "mustMarkAnyRisk": true, "formalSaveAllowed": false }
+    }
+  ]
+}

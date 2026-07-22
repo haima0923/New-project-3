@@ -89,7 +89,7 @@ async function testMiniProgramClient() {
     }
   };
   delete require.cache[require.resolve(apiClientPath)];
-  const { AI_AUTH_STORAGE_KEY, requestJson } = require(apiClientPath);
+  const { AI_AUTH_STORAGE_KEY, clearSession, requestJson } = require(apiClientPath);
 
   await requestJson('/api/ai/parse', { text: '王总订水杯100个' });
   assert.strictEqual(loginCalls, 1);
@@ -99,6 +99,14 @@ async function testMiniProgramClient() {
   await requestJson('/api/ai/query', { question: '王总还欠多少' });
   assert.strictEqual(loginCalls, 2, '401 should clear the old token and login once more');
   assert.strictEqual(requests[4].header.authorization, 'Bearer token-2');
+
+  clearSession();
+  const requestCountBeforeFastCall = requests.length;
+  await assert.rejects(
+    () => requestJson('/api/ai/parse', { text: '王总订水杯100个' }, 6700, { requireReadyAuth: true }),
+    (error) => error && error.code === 'AUTH_SESSION_NOT_READY'
+  );
+  assert.strictEqual(requests.length, requestCountBeforeFastCall, '快速核对在登录未准备好时不能后台再发登录或 AI 请求');
 
   delete global.wx;
   delete global.getApp;
@@ -110,7 +118,7 @@ async function main() {
   await testWechatExchange();
   testRequiredConfig();
   await testMiniProgramClient();
-  console.log('微信登录校验测试通过：令牌、防篡改、过期、微信验真、客户端自动登录与 401 重试均已覆盖。');
+  console.log('微信登录校验测试通过：令牌、防篡改、过期、微信验真、客户端自动登录与 401 重试，以及快速核对不等待首次登录均已覆盖。');
 }
 
 main().catch((error) => {

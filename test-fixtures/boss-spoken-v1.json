@@ -1,0 +1,170 @@
+[
+  {
+    "id": "voice-order-boss-today-price",
+    "group": "语音口语 / 角色称呼",
+    "source": "voice",
+    "input": "老板今天要订5个椅子，20块钱一个。这周日交货",
+    "expect": { "intent": "order", "customerEmpty": true, "product": "椅子", "quantity": 5, "unitPrice": 20, "itemCount": 1, "mustBlock": true }
+  },
+  {
+    "id": "voice-order-laowang-colloquial-price",
+    "group": "语音口语 / 价格说法",
+    "source": "voice",
+    "input": "老王今天要订五百个杯子，二十块钱一个，周日交货",
+    "expect": { "intent": "order", "customer": "老王", "product": "杯子", "quantity": 500, "unitPrice": 20, "itemCount": 1 }
+  },
+  {
+    "id": "voice-order-reordered-fields",
+    "group": "语序颠倒",
+    "source": "voice",
+    "input": "李总，礼品盒五百套，礼拜天交，三块八一个",
+    "expect": { "intent": "order", "customer": "李总", "product": "礼品盒", "quantity": 500, "unitPrice": 3.8, "itemCount": 1 }
+  },
+  {
+    "id": "voice-order-decimal-colloquial",
+    "group": "义乌常见口语",
+    "source": "voice",
+    "input": "张总下两千只纸袋，1块2一个，后天发",
+    "expect": { "intent": "order", "customer": "张总", "product": "纸袋", "quantity": 2000, "unitPrice": 1.2, "itemCount": 1 }
+  },
+  {
+    "id": "voice-order-product-homophone",
+    "group": "语音同音字",
+    "source": "voice",
+    "input": "王总那个水怀先整两千个，蓝的，一块二毛五，这礼拜五发",
+    "expect": { "intent": "order", "customer": "王总", "product": "水杯", "quantity": 2000, "unitPrice": 1.25, "itemCount": 1 }
+  },
+  {
+    "id": "voice-order-dialect-tomorrow",
+    "group": "本地口语日期",
+    "source": "voice",
+    "input": "周姐这单杯子要五百个，明个儿交，二十块钱一只",
+    "expect": { "intent": "order", "customer": "周姐", "product": "杯子", "quantity": 500, "unitPrice": 20, "itemCount": 1 }
+  },
+  {
+    "id": "typed-order-price-first",
+    "group": "语序颠倒",
+    "source": "typed",
+    "input": "二十块钱一个，椅子五个，李姐要订，周日拿",
+    "expect": { "intent": "order", "customer": "李姐", "product": "椅子", "quantity": 5, "unitPrice": 20, "itemCount": 1 }
+  },
+  {
+    "id": "voice-quotation-not-order",
+    "group": "报价和订单区分",
+    "source": "voice",
+    "input": "郑老板挂件三千个，一块五能不能，先报个价哈，还没下单",
+    "expect": { "intent": "quotation", "customer": "郑老板", "product": "挂件", "quantity": 3000, "unitPrice": 1.5, "itemCount": 1 }
+  },
+  {
+    "id": "typed-quotation-chatty-order",
+    "group": "口语报价",
+    "source": "typed",
+    "input": "阿强那边问杯垫啥价，五百个，八毛一个，明后天回他",
+    "expect": { "intent": "quotation", "customer": "阿强", "product": "杯垫", "quantity": 500, "unitPrice": 0.8, "itemCount": 1 }
+  },
+  {
+    "id": "paste-quotation-correction",
+    "group": "聊天纠错",
+    "source": "paste",
+    "input": "王总：保温杯先按18，不对，最后17块一个，500个。",
+    "expect": { "intent": "quotation", "customer": "王总", "product": "保温杯", "quantity": 500, "unitPrice": 17, "itemCount": 1 }
+  },
+  {
+    "id": "voice-quotation-price-after-product",
+    "group": "语音口语 / 价格在后",
+    "source": "voice",
+    "input": "陈总问那个礼品盒，八百套，先给他报三块五一套",
+    "expect": { "intent": "quotation", "customer": "陈总", "product": "礼品盒", "quantity": 800, "unitPrice": 3.5, "itemCount": 1 }
+  },
+  {
+    "id": "voice-quotation-no-false-order",
+    "group": "报价和订单区分",
+    "source": "voice",
+    "input": "刘姐说先看看价，杯子一千个，2块8一个",
+    "expect": { "intent": "quotation", "customer": "刘姐", "product": "杯子", "quantity": 1000, "unitPrice": 2.8, "itemCount": 1 }
+  },
+  {
+    "id": "voice-order-correction-history-price",
+    "group": "自我纠正 / 不可编造",
+    "source": "voice",
+    "input": "陈姐礼合先五百套，哦不对八百，明天下午带走，价格照上回",
+    "expect": { "intent": "order", "customer": "陈姐", "quantity": 800, "mustBlock": true }
+  },
+  {
+    "id": "typed-receivable-colloquial",
+    "group": "待收款口语",
+    "source": "typed",
+    "input": "周姐那批货还差三千二没给，月底收",
+    "expect": { "intent": "receivable", "customer": "周姐", "amount": 3200 }
+  },
+  {
+    "id": "voice-receivable-typo",
+    "group": "错别字",
+    "source": "voice",
+    "input": "王总货款还欠八千，礼拜一催下",
+    "expect": { "intent": "dunning", "customer": "王总", "amount": 8000 }
+  },
+  {
+    "id": "voice-payment-colloquial",
+    "group": "收款口语",
+    "source": "voice",
+    "input": "周姐刚微信打了两千，顶在上回礼盒款里",
+    "expect": { "intent": "payment", "customer": "周姐", "paymentAmount": 2000, "mustBlock": true }
+  },
+  {
+    "id": "voice-payment-ambiguous-link",
+    "group": "收款高风险",
+    "source": "voice",
+    "input": "周姐打了两千，哪笔我也说不准",
+    "expect": { "intent": "payment", "customer": "周姐", "paymentAmount": 2000, "mustBlock": true }
+  },
+  {
+    "id": "typed-deposit-order",
+    "group": "订单定金",
+    "source": "typed",
+    "input": "李总纸袋这单先付了两千定金，余款发货前结",
+    "expect": { "intent": "payment", "customer": "李总", "paymentAmount": 2000, "mustBlock": true }
+  },
+  {
+    "id": "voice-todo-dialect-date",
+    "group": "提醒 / 本地口语",
+    "source": "voice",
+    "input": "明朝提醒我回赵姐样品价格",
+    "expect": { "intent": "todo", "customer": "赵姐" }
+  },
+  {
+    "id": "typed-dunning",
+    "group": "催款提醒",
+    "source": "typed",
+    "input": "下周一记得催王总尾款",
+    "expect": { "intent": "dunning", "customer": "王总" }
+  },
+  {
+    "id": "voice-todo-reordered",
+    "group": "语序颠倒",
+    "source": "voice",
+    "input": "报价单别忘了，明天上午给陈姐发",
+    "expect": { "intent": "todo", "customer": "陈姐" }
+  },
+  {
+    "id": "voice-mixed-business",
+    "group": "混合业务必须拦住",
+    "source": "voice",
+    "input": "王总杯子报价五百个二十块，另外周姐刚打了两千",
+    "expect": { "mustBlock": true }
+  },
+  {
+    "id": "typed-no-customer",
+    "group": "缺少核心信息",
+    "source": "typed",
+    "input": "杯子五百个，二十块钱一个，下周交",
+    "expect": { "intent": "order", "customerEmpty": true, "product": "杯子", "quantity": 500, "unitPrice": 20, "mustBlock": true }
+  },
+  {
+    "id": "voice-no-business",
+    "group": "不应强行记账",
+    "source": "voice",
+    "input": "等会儿看看仓库还有没有位置",
+    "expect": { "mustBlock": true }
+  }
+]

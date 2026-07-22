@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+/*
+ * P0 OPEN: `--live-ai` is paused as a release gate because this harness can
+ * convert failed AI results into `used` results. Keep the mode for diagnosis
+ * only; do not use it as release evidence until the dedicated P0 fix lands.
+ */
+
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
@@ -217,7 +223,16 @@ function formalDeltaTotal(diff) {
   return FORMAL_KEYS.reduce((sum, key) => sum + Math.max(0, diff[key] || 0), 0);
 }
 
-function getLatestFormalRecord(state, delta = {}) {
+function getFormalRecordIds(state) {
+  return FORMAL_KEYS.reduce((result, key) => {
+    result[key] = (state[key] || [])
+      .map((record) => record && record.id)
+      .filter(Boolean);
+    return result;
+  }, {});
+}
+
+function getLatestFormalRecord(state, delta = {}, beforeIds = {}) {
   const deltaCandidates = [
     ['orders', 'order'],
     ['quotations', 'quotation'],
@@ -229,18 +244,9 @@ function getLatestFormalRecord(state, delta = {}) {
   if (changed) {
     const [key, type] = changed;
     const records = state[key] || [];
-    return { type, record: records[0] || null };
-  }
-  const candidates = [
-    ['orders', 'order'],
-    ['quotations', 'quotation'],
-    ['receivables', 'receivable'],
-    ['paymentRecords', 'payment'],
-    ['todos', 'todo']
-  ];
-  for (const [key, type] of candidates) {
-    const records = state[key] || [];
-    if (records.length) return { type, record: records[0] };
+    const oldIds = new Set(beforeIds[key] || []);
+    const created = records.find((record) => record && record.id && !oldIds.has(record.id));
+    return { type: created ? type : '', record: created || null };
   }
   return { type: '', record: null };
 }
@@ -677,7 +683,25 @@ function defaultAiFieldsForCase(testCase) {
 
 function buildHybridStub(testCase) {
   const scenario = testCase.aiScenario || '';
-  if (!scenario || scenario === 'real') return null;
+  // 非真机门禁不允许把“没有连上 AI”当成已整理成功。
+  // 对普通用例，若本地正确判断需要 AI，就用本地草稿作为受控的“AI 已返回”联调结果；
+  // failed / timeout / skipped 等场景仍显式走失败分支，专门验证不能误存。
+  if (!scenario && testCase.expect && testCase.expect.allowFormalSave === false) return null;
+  if (!scenario || scenario === 'real') {
+    return async function defaultHybridStub(payload) {
+      const localResult = await realParseHybridInput(payload);
+      const route = (localResult.parse_route || {}).decision;
+      if (!['ai_standard', 'ai_deep'].includes(route)) return localResult;
+      return normalizeAiResult(localResult, {
+        provider: 'server',
+        intent: localResult.intent || 'unknown',
+        fields: localResult.fields || {},
+        missing_fields: localResult.missing_fields || [],
+        low_confidence_fields: localResult.low_confidence_fields || [],
+        field_conflicts: localResult.field_conflicts || []
+      });
+    };
+  }
 
   return async function hybridStub(payload) {
     const localResult = await realParseHybridInput(payload);
@@ -862,6 +886,9 @@ async function runOneFlow(testCase, entry, options = {}) {
   const parseResult = getParseResultFromPage(page) || {};
   const finalFields = clone(getFieldsFromPage(page));
   const buttonDisabled = getButtonDisabled(entry, page);
+  // 必须在点击“打开完整记一笔”或“存待整理”之前取证；这些动作会关闭
+  // 首页确认卡。旧脚本在动作之后读取，曾把“已经正确提示过”误报成没提示。
+  const showContinueInputBeforeAction = Boolean(page.data.showContinueInput);
   const entryExpect = Object.assign({}, testCase.expect || {}, ((testCase.expectByEntry || {})[entry] || {}));
   if (entryExpect.requireFullInput && typeof page.continueInput === 'function') {
     page.continueInput();
@@ -869,6 +896,7 @@ async function runOneFlow(testCase, entry, options = {}) {
   }
   const saveMethod = ENTRY_CONFIG[entry].saveMethod;
   const beforeSaveCounts = getCounts(harness.getState());
+  const beforeSaveFormalIds = getFormalRecordIds(harness.getState());
   if (typeof page[saveMethod] === 'function') {
     page[saveMethod]();
     await flushAsync();
@@ -883,7 +911,7 @@ async function runOneFlow(testCase, entry, options = {}) {
   const afterSaveState = harness.getState();
   const afterSaveCounts = getCounts(afterSaveState);
   const saveDelta = diffCounts(beforeSaveCounts, afterSaveCounts);
-  const latestFormal = getLatestFormalRecord(afterSaveState, saveDelta);
+  const latestFormal = getLatestFormalRecord(afterSaveState, saveDelta, beforeSaveFormalIds);
 
   let pendingDeltaAfterPending = 0;
   let pendingOriginalText = '';
@@ -924,7 +952,7 @@ async function runOneFlow(testCase, entry, options = {}) {
     finalFields,
     aiStatus: parseResult.ai_fallback && parseResult.ai_fallback.status,
     buttonDisabled,
-    showContinueInput: Boolean(page.data.showContinueInput),
+    showContinueInput: showContinueInputBeforeAction,
     warningText: getWarningText(entry, page, harness.events),
     beforeCounts,
     saveDelta,
@@ -1019,9 +1047,18 @@ function buildHardGateCases() {
       '王总',
       '礼品盒',
       {
-        title: '多商品订单在完整页确认，首页不允许只保存第一件',
+        title: '多商品订单必须先完成深度核对，首页不允许只保存第一件',
         allowEntryDifference: true,
-        expect: { itemsMin: 2, lowNotIncludes: ['customerName'], missingNotIncludes: ['phone'] },
+        expect: {
+          itemsMin: 2,
+          lowNotIncludes: ['customerName'],
+          missingNotIncludes: ['phone'],
+          allowFormalSave: false,
+          recordType: '',
+          formalDeltaKey: '',
+          reloadKeepsRecord: false,
+          pendingAfterPending: true
+        },
         expectByEntry: {
           dashboard: { allowFormalSave: false, recordType: '', formalDeltaKey: '', reloadKeepsRecord: false, pendingAfterPending: false, requireFullInput: true }
         }
@@ -1036,7 +1073,16 @@ function buildHardGateCases() {
         title: 'AI used 后王总不能被旧低置信误拦；多商品仍去完整页确认',
         extra: { aiScenario: 'used', aiLowConfidenceFields: ['customerName'] },
         allowEntryDifference: true,
-        expect: { itemsMin: 2, lowNotIncludes: ['customerName'], missingNotIncludes: ['phone'] },
+        expect: {
+          itemsMin: 2,
+          lowNotIncludes: ['customerName'],
+          missingNotIncludes: ['phone'],
+          allowFormalSave: false,
+          recordType: '',
+          formalDeltaKey: '',
+          reloadKeepsRecord: false,
+          pendingAfterPending: true
+        },
         expectByEntry: {
           dashboard: { allowFormalSave: false, recordType: '', formalDeltaKey: '', reloadKeepsRecord: false, pendingAfterPending: false, requireFullInput: true }
         }
@@ -1054,7 +1100,12 @@ function buildHardGateCases() {
         expect: {
           itemsMin: 2,
           missingNotIncludes: ['phone'],
-          warningNotIncludes: ['手机号', '电话']
+          warningNotIncludes: ['手机号', '电话'],
+          allowFormalSave: false,
+          recordType: '',
+          formalDeltaKey: '',
+          reloadKeepsRecord: false,
+          pendingAfterPending: true
         },
         expectByEntry: {
           dashboard: { allowFormalSave: false, recordType: '', formalDeltaKey: '', reloadKeepsRecord: false, pendingAfterPending: false, requireFullInput: true }
@@ -1092,7 +1143,12 @@ function buildHardGateCases() {
       allowEntryDifference: true,
       expect: {
         itemsMin: 2,
-        productNotIncludes: ['周三交', '周五交']
+        productNotIncludes: ['周三交', '周五交'],
+        allowFormalSave: false,
+        recordType: '',
+        formalDeltaKey: '',
+        reloadKeepsRecord: false,
+        pendingAfterPending: true
       },
       expectByEntry: {
         dashboard: { allowFormalSave: false, recordType: '', formalDeltaKey: '', reloadKeepsRecord: false, pendingAfterPending: false, requireFullInput: true }
@@ -1101,24 +1157,25 @@ function buildHardGateCases() {
     createBlockedCase('missing-customer', '礼品盒500套3.8元下周五交', {
       expect: { productIncludes: '礼品盒', customerNotIn: ['元', '套'] }
     }),
-    createOrderCase('missing-quantity', '王总订水杯，5.5一个，下周五交', '王总', '水杯', {
-      title: '订单可先只记客户和商品，不虚构数量',
-      expect: { missingNotIncludes: ['quantity'] }
+    createBlockedCase('missing-quantity', '王总订水杯，5.5一个，下周五交', {
+      title: '订单缺数量时不能正式保存，也不能虚构数量',
+      expect: { intent: 'order', customerName: '王总', productIncludes: '水杯', missingIncludes: ['quantity'] }
     }),
-    createOrderCase('missing-price', '王总订水杯100个，下周五交', '王总', '水杯', {
-      title: '订单可先只记客户和商品，不虚构单价',
-      expect: { missingNotIncludes: ['unitPrice'] }
+    createBlockedCase('missing-price', '王总订水杯100个，下周五交', {
+      title: '订单缺单价时不能正式保存，也不能虚构单价',
+      expect: { intent: 'order', customerName: '王总', productIncludes: '水杯', missingIncludes: ['unitPrice'] }
     }),
-    createOrderCase('missing-price-and-date', '李老板订水杯100个', '李老板', '水杯', {
-      title: '订单可先只记客户和商品，不虚构单价或交期',
-      expect: { missingNotIncludes: ['unitPrice', 'dueDate'] }
+    createBlockedCase('missing-price-and-date', '李老板订水杯100个', {
+      title: '订单缺单价和交期时不能正式保存',
+      expect: { intent: 'order', customerName: '李老板', productIncludes: '水杯', missingIncludes: ['unitPrice', 'dueDate'] }
     }),
-    createOrderCase('missing-date', '王总订水杯100个，5.5一个', '王总', '水杯', {
-      title: '订单交期可后补，系统不得默认猜日期',
-      expect: { missingNotIncludes: ['dueDate'] }
+    createBlockedCase('missing-date', '王总订水杯100个，5.5一个', {
+      title: '订单交期没说时不得猜日期，也不能正式保存',
+      expect: { intent: 'order', customerName: '王总', productIncludes: '水杯', missingIncludes: ['dueDate'] }
     }),
-    createOrderCase('only-total-price', '王总礼品盒一批总价1964.6元，下周五交', '王总', '礼品盒', {
-      title: '只有总价时先保存订单，不伪造单价'
+    createBlockedCase('only-total-price', '王总礼品盒一批总价1964.6元，下周五交', {
+      title: '只有总价但缺单价时先确认，不能伪造单价',
+      expect: { intent: 'order', customerName: '王总', productIncludes: '礼品盒', missingIncludes: ['unitPrice'] }
     }),
     createBlockedCase('invalid-customer-kehu', '客户下单水杯100个5.5元下周五交', {
       expect: { customerNotIn: ['客户'] }
@@ -1148,36 +1205,45 @@ function buildHardGateCases() {
         noPendingOnSave: true
       }
     }),
-    createOrderCase('receivable-clear', '王总还欠礼品盒尾款1964.6元，月底结', '王总', '礼品盒', {
+    createBlockedCase('receivable-clear', '王总还欠礼品盒尾款1964.6元，月底结', {
       expect: {
         intent: 'receivable',
-        recordType: 'receivable',
-        formalDeltaKey: 'receivables',
-        productIncludes: ''
+        customerName: '王总',
+        productIncludes: '',
+        pendingAfterPending: true
       }
     }),
-    createOrderCase('payment-with-receivable', '王总今天付了2000元', '王总', '', {
+    createBlockedCase('payment-with-receivable', '王总今天付了2000元', {
       extra: { initialState: () => buildStateWithReceivable('王总', 5000) },
       expect: {
         intent: 'payment',
         customerName: '王总',
-        recordType: 'payment',
-        formalDeltaKey: 'paymentRecords'
+        pendingAfterPending: false
+      },
+      expectByEntry: {
+        input: { lowIncludes: ['receivableId'] },
+        dashboard: { requireFullInput: true }
       }
     }),
-    createOrderCase('existing-order-deposit', '王总礼品盒这单收到定金500元', '王总', '礼品盒', {
+    createBlockedCase('existing-order-deposit', '王总礼品盒这单收到定金500元', {
       extra: { initialState: () => buildStateWithOrder('王总') },
       expect: {
         intent: 'payment',
-        productIncludes: '',
-        recordType: 'payment',
-        formalDeltaKey: 'paymentRecords',
-        noPendingOnSave: true
+        customerName: '王总',
+        pendingAfterPending: false
+      },
+      expectByEntry: {
+        input: { lowIncludes: ['orderId'] },
+        dashboard: { requireFullInput: true }
       }
     }),
     createBlockedCase('payment-over-remaining', '王总今天付了6000元', {
       extra: { initialState: () => buildStateWithReceivable('王总', 5000) },
-      expect: { intent: 'payment', customerName: '王总', lowIncludes: ['paymentAmount'] }
+      expect: { intent: 'payment', customerName: '王总', pendingAfterPending: false },
+      expectByEntry: {
+        input: { lowIncludes: ['receivableId'] },
+        dashboard: { requireFullInput: true }
+      }
     }),
     createBlockedCase('price-change-chat-conflict', [
       '王总 09:10',
@@ -1210,8 +1276,8 @@ function buildHardGateCases() {
         originalIncludes: '今天在吗'
       }
     }),
-    createBlockedCase('voice-transcribed-order', '周姐订纸袋2000个，1.2一个，下周一交', {
-      title: '本轮未接入语音转文字时，语音来源不能直接正式保存',
+    createOrderCase('voice-transcribed-order', '周姐订纸袋2000个，1.2一个，下周一交', '周姐', '纸袋', {
+      title: '语音已转成清楚文字后，与手打文字使用同一套事实检查',
       source: 'voice',
       expect: { customerName: '周姐', productIncludes: '纸袋' }
     }),
@@ -1312,9 +1378,14 @@ function buildExtendedCases() {
           customer,
           product,
           {
-            title: '缺单价订单允许先保存，不虚构价格',
+            title: '缺单价订单只能先存待整理，不能生成正式订单',
             expect: {
-              missingNotIncludes: ['unitPrice'],
+              missingIncludes: ['unitPrice'],
+              allowFormalSave: false,
+              recordType: '',
+              formalDeltaKey: '',
+              reloadKeepsRecord: false,
+              pendingAfterPending: true,
               originalIncludes: product
             }
           }
@@ -1331,12 +1402,13 @@ function buildExtendedCases() {
           expect: {
             customerName: customer,
             intent: 'receivable',
-            recordType: 'receivable',
-            formalDeltaKey: 'receivables',
-            allowFormalSave: true,
+            recordType: '',
+            formalDeltaKey: '',
+            allowFormalSave: false,
             noPendingOnSave: true,
+            pendingAfterPending: true,
             originalIncludes: customer,
-            reloadKeepsRecord: true,
+            reloadKeepsRecord: false,
             missingNotIncludes: ['phone'],
             warningNotIncludes: ['手机号', '电话']
           }
@@ -1361,13 +1433,16 @@ function buildExtendedCases() {
             extra: { aiScenario: 'used_local' },
             expect: {
               intent: 'order',
-              recordType: 'order',
-              formalDeltaKey: 'orders',
+              recordType: '',
+              formalDeltaKey: '',
+              allowFormalSave: false,
               originalIncludes: product,
               noPendingOnSave: true,
-              reloadKeepsRecord: true,
+              pendingAfterPending: true,
+              reloadKeepsRecord: false,
               missingNotIncludes: ['phone'],
-              warningNotIncludes: ['手机号', '电话']
+              warningNotIncludes: ['手机号', '电话'],
+              aiStatus: 'used'
             }
           }
         ));
