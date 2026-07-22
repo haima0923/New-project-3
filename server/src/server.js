@@ -34,7 +34,7 @@ function createRequestId() {
 function getParseErrorStatus(error) {
   const code = String((error && error.code) || 'AI_PARSE_FAILED');
   if (code === 'AI_FAST_TIMEOUT' || code === 'AI_DEEP_TIMEOUT') return 504;
-  if (code === 'AI_RESPONSE_INVALID') return 422;
+  if (code === 'AI_RESPONSE_INVALID' || code === 'AI_RESPONSE_EMPTY_BUSINESS') return 422;
   if (code === 'AI_PROVIDER_UNAVAILABLE') return 502;
   return 500;
 }
@@ -44,6 +44,7 @@ function toSafeParseError(error) {
   const messages = {
     AI_FAST_TIMEOUT: '智能快速核对超时。',
     AI_RESPONSE_INVALID: '智能核对没有给出可核对的结果。',
+    AI_RESPONSE_EMPTY_BUSINESS: '智能核对返回了空业务结果，已拒绝采用。',
     AI_PROVIDER_UNAVAILABLE: '智能核对服务暂时不可用。',
     AI_DEEP_TIMEOUT: '深度核对超时。'
   };

@@ -69,7 +69,10 @@ const requiredFieldsByOperation = {
 const digitFields = ['quantity', 'unitPrice', 'amount', 'depositAmount', 'paymentAmount', 'remainingAmount'];
 const dateFields = ['dueDate'];
 const VOICE_HOLD_DELAY_MS = 260;
-const resolvedAiFallbackStatuses = ['used'];
+function hasResolvedAiFallback(parseResult = {}) {
+  const aiFallback = parseResult.ai_fallback || {};
+  return aiFallback.status === 'used' && aiFallback.business_result_valid === true;
+}
 const activeReceivableStatuses = ['待收', '部分收款'];
 const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
 
@@ -262,7 +265,10 @@ function getQuickSaveSafetyBlockText(parseResult = {}) {
   const aiStatus = aiFallback.status || 'not_requested';
   const route = parseResult.parse_route || {};
   if (route.deep_review_available) return '这条内容需要深度核对；未核对前不能直接保存。';
-  if (safety.status === 'NEEDS_AI' && !resolvedAiFallbackStatuses.includes(aiStatus)) {
+  if ((safety.status === 'NEEDS_AI' || ['ai_standard', 'ai_deep'].includes(route.decision))
+    && !hasResolvedAiFallback(parseResult)) {
+    if (aiStatus === 'timed_out') return '智能核对等待超时，这条先放待整理。';
+    if (aiStatus === 'returned_uncertain') return '智能核对没有给出可采用的业务结果，这条先放待整理。';
     if (aiStatus === 'failed') return '智能快速核对没有完成，这条先放待整理。';
     if (aiStatus === 'skipped_no_endpoint') return '这段内容比较复杂，建议先放待整理，稍后再补。';
     return '这段内容需要你重点核对，建议先放待整理。';

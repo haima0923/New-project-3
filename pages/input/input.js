@@ -69,7 +69,10 @@ const warningFieldsByOperation = {
 };
 const activeReceivableStatuses = ['待收', '部分收款'];
 const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
-const resolvedAiFallbackStatuses = ['used'];
+function hasResolvedAiFallback(parseResult = {}) {
+  const aiFallback = parseResult.ai_fallback || {};
+  return aiFallback.status === 'used' && aiFallback.business_result_valid === true;
+}
 const operationByIntent = {
   quotation: 'create_quotation',
   order: 'create_order',
@@ -231,7 +234,10 @@ function getFormalSaveSafetyBlockText(parseResult = {}) {
   const aiStatus = aiFallback.status || 'not_requested';
   const route = parseResult.parse_route || {};
   if (route.deep_review_available) return '这条内容需要深度核对；未核对前不能直接保存。';
-  if (safety.status === 'NEEDS_AI' && !resolvedAiFallbackStatuses.includes(aiStatus)) {
+  if ((safety.status === 'NEEDS_AI' || ['ai_standard', 'ai_deep'].includes(route.decision))
+    && !hasResolvedAiFallback(parseResult)) {
+    if (aiStatus === 'timed_out') return '智能核对等待超时，这条先放待整理。';
+    if (aiStatus === 'returned_uncertain') return '智能核对没有给出可采用的业务结果，这条先放待整理。';
     if (aiStatus === 'failed') return '智能快速核对没有完成，这条先放待整理。';
     if (aiStatus === 'skipped_no_endpoint') return '这条信息需要你多看一眼，确认后再保存。';
     return '这条信息有几处需要你确认，拿不准可以先放待整理。';
@@ -1751,7 +1757,7 @@ Page({
       const deepReviewAvailable = Boolean((parseResult.parse_route || {}).deep_review_available);
       const aiStatusText = deepReviewAvailable
           ? '这条内容需要深度核对；未点击前不会自动等待慢速 AI。'
-        : (safetyStatus === 'NEEDS_AI' && ['failed', 'skipped_no_endpoint'].includes(aiStatus))
+        : (safetyStatus === 'NEEDS_AI' && ['failed', 'timed_out', 'returned_uncertain', 'skipped_no_endpoint'].includes(aiStatus))
           ? '这条内容比较复杂，请重点核对带提示的字段，拿不准就先放待整理。'
         : (safetyStatus === 'NEEDS_USER_CONFIRM'
           ? '我先帮你整理成草稿了，还有几项需要你确认。'
@@ -1760,7 +1766,9 @@ Page({
         skipped_no_endpoint: '已整理出一张草稿，请确认后保存。',
         mock_used: '已整理出一张草稿，请确认后保存。',
         used: '已整理出一张草稿，请确认后保存。',
-        failed: '暂时没能自动整理完整，请核对后再保存。'
+        failed: '暂时没能自动整理完整，请核对后再保存。',
+        timed_out: '智能核对等待超时，这条不能直接保存。',
+        returned_uncertain: '智能核对没有给出可采用的业务结果，这条不能直接保存。'
       }[aiStatus]);
       this.setData(Object.assign({}, confirmationState, {
         intent: confirmationState.parseResult.intent,

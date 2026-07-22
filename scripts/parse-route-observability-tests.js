@@ -140,11 +140,11 @@ async function main() {
     '王总要订5个水悲，五块五一个，明天交',
     'voice'
   )));
-  assert.strictEqual(failed.ai_fallback.status, 'failed', 'AI 超时必须明确标记失败');
+  assert.strictEqual(failed.ai_fallback.status, 'timed_out', 'AI 超时必须与其他失败状态区分');
   assertTrace(failed, 'AI 超时');
   assert(failed.parse_trace.aiDurationMs >= 0, 'AI 超时时也应记录已经等了多久');
   const failedEvidence = buildParseEvidence(failed);
-  assert.strictEqual(failedEvidence.aiStatusText, '智能快速核对未完成', '凭证不能把超时说成成功');
+  assert.strictEqual(failedEvidence.aiStatusText, '智能核对等待超时', '凭证不能把超时说成成功');
 
   const deepDefault = await parseHybridInput(payload('王总水杯100个，5块5一个，改成后天交', 'typed'));
   assert.strictEqual(deepDefault.parse_route.decision, ROUTE_PENDING, '改价内容首次必须不联网等待慢模型');

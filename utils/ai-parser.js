@@ -33,6 +33,101 @@ function unwrapAiResult(result) {
   return result;
 }
 
+function hasMockProvider(result) {
+  if (!result || typeof result !== 'object') return false;
+  const provider = String(result.provider || result.aiProvider || '').trim().toLowerCase();
+  if (provider === 'mock') return true;
+  if (result.data && typeof result.data === 'object' && hasMockProvider(result.data)) return true;
+  if (result.result && typeof result.result === 'object' && hasMockProvider(result.result)) return true;
+  return false;
+}
+
+const AI_BUSINESS_FIELD_KEYS = [
+  'customerId', 'customerName', 'phone', 'company', 'region', 'todoTitle', 'followupDays',
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'paymentAmount',
+  'depositAmount', 'amount', 'totalAmount', 'statedAmount', 'calculatedAmount',
+  'remainingAmount', 'paymentMethod', 'paymentKind', 'dueDate', 'quoteDate', 'orderId',
+  'quotationId', 'receivableId', 'remark'
+];
+const AI_ITEM_FIELD_KEYS = [
+  'productName', 'product_name', 'name', 'spec', 'quantity', 'unit', 'unitPrice', 'unit_price',
+  'priceUnit', 'price_unit', 'totalAmount', 'total_amount', 'amount', 'itemDeliveryDate',
+  'deliveryDate', 'dueDate', 'itemRemark', 'remark'
+];
+
+function hasMeaningfulValue(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return value.trim() !== '';
+  if (Array.isArray(value)) return value.some(hasMeaningfulValue);
+  if (typeof value === 'object') return Object.keys(value).some((key) => hasMeaningfulValue(value[key]));
+  if (typeof value === 'boolean') return value;
+  return true;
+}
+
+function hasBusinessScalar(value) {
+  if (typeof value === 'string') return value.trim() !== '';
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function hasMeaningfulItem(item) {
+  return item && typeof item === 'object' && !Array.isArray(item)
+    && AI_ITEM_FIELD_KEYS.some((key) => hasBusinessScalar(item[key]));
+}
+
+function getAiBusinessResultValidity(aiResult) {
+  const result = unwrapAiResult(aiResult);
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return { valid: false, kind: 'empty', reason: 'AI result is not an object' };
+  }
+  const fields = result.fields && typeof result.fields === 'object' && !Array.isArray(result.fields)
+    ? result.fields
+    : result;
+  const intent = String(result.intent || '').trim().toLowerCase();
+  const knownIntent = ['quotation', 'order', 'receivable', 'payment', 'dunning', 'todo', 'query']
+    .includes(intent);
+  const hasBusinessField = AI_BUSINESS_FIELD_KEYS.some((key) => (
+    hasBusinessScalar(fields[key]) || (fields !== result && hasBusinessScalar(result[key]))
+  ));
+  const fieldEvidence = result.field_evidence || result.fieldEvidence || {};
+  const fieldSources = result.field_sources || result.fieldSources || {};
+  const hasBusinessEvidence = AI_BUSINESS_FIELD_KEYS.concat('items').some((key) => (
+    hasMeaningfulValue(fieldEvidence[key])
+    || /^(?:history|source|original|message|user|local)(?::|$)/i.test(String(fieldSources[key] || '').trim())
+  ));
+  const items = fields.items || fields.lineItems || fields.line_items || fields.products || fields.goods
+    || result.items || result.lineItems || result.line_items || result.products || result.goods;
+  const hasItems = Array.isArray(items) && items.some(hasMeaningfulItem);
+  const hasSafetyFinding = [
+    result.missing_fields || result.missingFields,
+    result.low_confidence_fields || result.lowConfidenceFields,
+    result.field_conflicts || result.fieldConflicts,
+    result.intent_candidates || result.intentCandidates
+  ].some((value) => hasMeaningfulValue(value));
+  const explicitDecision = String(result.decision || result.status || '').trim().toLowerCase();
+  const explicitDecisionReason = result.confirm_message || result.confirmMessage || result.reason || result.message;
+  const explicitlyNotRecordable = result.no_record === true
+    || result.recordable === false
+    || (['no_record', 'needs_user_confirm', 'needs_ai', 'pending'].includes(explicitDecision)
+      && hasMeaningfulValue(explicitDecisionReason));
+  const hasUnknownConclusion = intent === 'unknown'
+    && hasMeaningfulValue(explicitDecisionReason);
+
+  if (hasSafetyFinding || explicitlyNotRecordable || hasUnknownConclusion
+    || (intent === 'unknown' && (hasBusinessField || hasItems))) {
+    return { valid: true, kind: 'uncertain', reason: 'AI returned an explicit safety decision' };
+  }
+  if (knownIntent || ((hasBusinessField || hasItems) && hasBusinessEvidence)) {
+    return { valid: true, kind: 'business', reason: 'AI returned a business decision or field' };
+  }
+  return { valid: false, kind: 'empty', reason: 'AI returned no business decision, field, or safety finding' };
+}
+
+function createEmptyAiBusinessResultError(validity) {
+  const error = new Error((validity && validity.reason) || 'AI returned no business result');
+  error.code = 'AI_RESPONSE_EMPTY_BUSINESS';
+  return error;
+}
+
 function toArray(value) {
   if (Array.isArray(value)) return value.filter((item) => item !== undefined && item !== null && item !== '');
   if (value === undefined || value === null || value === '') return [];
@@ -323,7 +418,10 @@ function markAiNeeded(localResult, route = {}) {
   return Object.assign({}, localResult, {
     parse_route: route,
     ai_fallback: Object.assign({}, localResult.ai_fallback || {}, {
-      needed: true
+      needed: true,
+      status: 'requested',
+      attempted: true,
+      business_result_valid: false
     })
   });
 }
@@ -1476,6 +1574,9 @@ function applyAiCustomerEvidenceSafety(result) {
 
 function normalizeAiResult(localResult, aiResult) {
   const normalized = unwrapAiResult(aiResult);
+  const mockUsed = hasMockProvider(aiResult);
+  const validity = getAiBusinessResultValidity(normalized);
+  if (!validity.valid) throw createEmptyAiBusinessResultError(validity);
   const aiFields = normalizeFields(normalized.fields || normalized);
   const intent = mergeAiIntent(localResult, normalized);
   const hardSafety = getLocalHardSafety(localResult, normalized);
@@ -1545,13 +1646,19 @@ function normalizeAiResult(localResult, aiResult) {
   merged.confirm_message = normalized.confirm_message || normalized.confirmMessage || localResult.confirm_message || '我识别成下面这样，你确认后再保存。';
   merged.ai_fallback = {
     needed: true,
-    status: normalized.provider === 'mock' ? 'mock_used' : 'used',
+    status: mockUsed
+      ? 'mock_used'
+      : (validity.kind === 'uncertain' ? 'returned_uncertain' : 'used'),
     attempted: true,
-    reason: normalized.provider === 'mock'
+    business_result_valid: true,
+    reason: mockUsed
       ? '服务返回的是模拟整理结果。'
-      : 'AI 已成功返回整理结果。'
+      : (validity.kind === 'uncertain'
+        ? 'AI 已明确返回不确定或不能记录的安全结论。'
+        : 'AI 已成功返回整理结果。')
   };
-  merged.provider = normalized.provider || 'server';
+  merged.ai_business_result_valid = true;
+  merged.provider = mockUsed ? 'mock' : (normalized.provider || 'server');
   merged.context_policy = localResult.context_policy || 'none';
   merged.history_status = localResult.history_status || 'not_required';
   merged.history_warning_text = localResult.history_warning_text || '';
@@ -1573,6 +1680,7 @@ function getAiFailureReason(error) {
   if (code === 'AUTH_SESSION_NOT_READY') return '智能核对正在准备登录，请稍后点“重新生成确认卡”。';
   if (code === 'AUTH_SESSION_EXPIRED' || code === 'AUTH_REQUIRED' || statusCode === 401) return '智能核对的登录准备还没完成，这条先放待整理。';
   if (statusCode === 429 || code === 'RATE_LIMITED') return '请求太频繁，AI 暂时没有返回结果。';
+  if (code === 'AI_RESPONSE_EMPTY_BUSINESS') return 'AI 返回了空业务结果，系统已拒绝采用；这条先放待整理。';
   if (code === 'AI_RESPONSE_INVALID') return 'AI 已返回，但关键内容不够确定；这条保留原话，等你确认后再保存。';
   if (code === 'AI_PROVIDER_UNAVAILABLE') return '智能核对服务暂时不可用，这条先放待整理。';
   if (message.includes('timeout') || message.includes('超时')) return '等待 AI 返回超时，当前只按基础规则整理。';
@@ -1582,13 +1690,23 @@ function getAiFailureReason(error) {
   return 'AI 没有返回可用结果，当前只按基础规则整理。';
 }
 
+function getAiFailureStatus(error) {
+  const code = String((error && error.code) || '').toUpperCase();
+  const message = String((error && (error.errMsg || error.message)) || '').toLowerCase();
+  if (['AI_TOTAL_TIMEOUT', 'AI_FAST_TIMEOUT', 'AI_DEEP_TIMEOUT', 'AI_PROVIDER_TIMEOUT'].includes(code)
+    || message.includes('timeout') || message.includes('超时')) return 'timed_out';
+  if (['AI_RESPONSE_INVALID', 'AI_RESPONSE_EMPTY_BUSINESS'].includes(code)) return 'returned_uncertain';
+  return 'failed';
+}
+
 function withAiStatus(localResult, status, metadata = {}) {
   const result = Object.assign({}, localResult);
   result.ai_fallback = Object.assign({}, localResult.ai_fallback, {
     status,
     attempted: Boolean(metadata.attempted),
     reason: metadata.reason || '',
-    code: metadata.code || ''
+    code: metadata.code || '',
+    business_result_valid: metadata.businessResultValid === true
   });
   return result;
 }
@@ -1681,7 +1799,7 @@ function parseHybridInput(payload) {
     ))
     .catch((error) => attachParseTrace(withAiStatus(
       localResult,
-      error && error.code === 'AI_RESPONSE_INVALID' ? 'returned_uncertain' : 'failed',
+      getAiFailureStatus(error),
       {
       attempted: true,
       reason: getAiFailureReason(error),
@@ -1705,6 +1823,8 @@ module.exports = {
   findScopedHistory,
   getContextPolicy,
   getAiFailureReason,
+  getAiFailureStatus,
+  getAiBusinessResultValidity,
   getParseRouteDecision,
   getBusinessDraftSummary,
   getAiWaitLimitMs,

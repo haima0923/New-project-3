@@ -34,6 +34,11 @@ function getAiEvidence(aiFallback = {}) {
       detail: fallbackReason || '当前没有可靠的智能核对结果，这条只能先待整理。',
       tone: 'warning'
     },
+    timed_out: {
+      statusText: '智能核对等待超时',
+      detail: fallbackReason || 'AI 没有在等待上限内返回可靠结果，这条只能先待整理。',
+      tone: 'warning'
+    },
     returned_uncertain: {
       statusText: 'AI 已返回，但不够确定',
       detail: fallbackReason || 'AI 没有把关键内容说清楚，当前不会把它当成可保存的结果。',
@@ -161,7 +166,7 @@ function getCheckText(parseResult = {}, aiEvidence = {}) {
   const reasons = Array.isArray(safety.reason_texts) ? safety.reason_texts.filter(Boolean) : [];
   const missing = Array.isArray(parseResult.missing_fields) ? parseResult.missing_fields : [];
   const low = Array.isArray(parseResult.low_confidence_fields) ? parseResult.low_confidence_fields : [];
-  if (aiEvidence.status === 'failed' || aiEvidence.status === 'skipped_no_endpoint' || aiEvidence.status === 'returned_uncertain') {
+  if (aiEvidence.status === 'failed' || aiEvidence.status === 'timed_out' || aiEvidence.status === 'skipped_no_endpoint' || aiEvidence.status === 'returned_uncertain') {
     return '智能核对没有给出可靠结果，本次不能正式保存；请补充后再试或先放待整理。';
   }
   if (reasons.length) return reasons.map(toPlainCheckReason).filter(Boolean).join('；');

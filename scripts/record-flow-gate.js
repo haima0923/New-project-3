@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 
 /*
- * P0 OPEN: `--live-ai` is paused as a release gate because this harness can
- * convert failed AI results into `used` results. Keep the mode for diagnosis
- * only; do not use it as release evidence until the dedicated P0 fix lands.
+ * `--live-ai` must use the real parseHybridInput path. Controlled stubs remain
+ * available only in non-live suites; live and stub modes are intentionally
+ * mutually exclusive so a failed request cannot be rewritten as `used`.
  */
 
 const fs = require('fs');
@@ -291,7 +291,7 @@ function requestWithNode(options) {
   req.end();
 }
 
-function createWxHarness({ initialState, apiBaseUrl = '', clipboardText = '' } = {}) {
+function createWxHarness({ initialState, apiBaseUrl = '', clipboardText = '', requestHandler = null } = {}) {
   const storage = {
     [STORAGE_KEY]: clone(initialState || buildBaseState())
   };
@@ -349,6 +349,14 @@ function createWxHarness({ initialState, apiBaseUrl = '', clipboardText = '' } =
         url: options.url,
         data: clone(options.data || {})
       });
+      if (typeof requestHandler === 'function') {
+        try {
+          requestHandler(options, events);
+        } catch (error) {
+          if (typeof options.fail === 'function') options.fail(error);
+        }
+        return;
+      }
       if (!apiBaseUrl) {
         if (typeof options.fail === 'function') options.fail(new Error('API base URL is not configured'));
         return;
@@ -467,6 +475,27 @@ function flushAsync() {
   });
 }
 
+function waitForParseCompletion(page, options = {}) {
+  const timeoutMs = Number(options.parseWaitTimeoutMs || 30000);
+  const startedAt = Date.now();
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      if (!page.data || page.data.parsing !== true) {
+        resolve();
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        const error = new Error(`Page parse did not settle within ${timeoutMs}ms`);
+        error.code = 'FLOW_PARSE_TIMEOUT';
+        reject(error);
+        return;
+      }
+      setTimeout(poll, 10);
+    };
+    setImmediate(poll);
+  });
+}
+
 function getCaseInputForParser(testCase) {
   if (testCase.source === 'paste' || isWechatChatText(testCase.input)) {
     const analysis = analyzeClipboardText(testCase.input);
@@ -552,19 +581,19 @@ function runPageParse(entry, page, testCase) {
         text: testCase.input
       });
     }
-    page.runParse();
+    page.runParse(testCase.reviewMode || 'standard');
     return;
   }
 
   if (entry === 'dashboard') {
     if (testCase.source === 'voice') {
-      page.runQuickParse(testCase.input, 'voice');
+      page.runQuickParse(testCase.input, 'voice', null, testCase.reviewMode || 'standard');
       return;
     }
     if (testCase.source === 'paste') {
       const analysis = analyzeClipboardText(testCase.input);
       if (analysis.status === 'ok') {
-        page.runQuickParse(analysis.extractedText, 'paste', analysis);
+        page.runQuickParse(analysis.extractedText, 'paste', analysis, testCase.reviewMode || 'standard');
       } else {
         page.setData({ composerText: testCase.input });
         page.submitComposer();
@@ -572,7 +601,11 @@ function runPageParse(entry, page, testCase) {
       return;
     }
     page.setData({ composerText: testCase.input });
-    page.submitComposer();
+    if (testCase.reviewMode === 'deep') {
+      page.runQuickParse(testCase.input, 'typed', null, 'deep');
+    } else {
+      page.submitComposer();
+    }
   }
 }
 
@@ -706,10 +739,13 @@ function buildHybridStub(testCase) {
   return async function hybridStub(payload) {
     const localResult = await realParseHybridInput(payload);
     if (scenario === 'failed' || scenario === 'timeout' || scenario === 'skipped_no_endpoint' || scenario === 'not_requested') {
+      const status = scenario === 'timeout' ? 'timed_out' : scenario;
       return Object.assign({}, localResult, {
         ai_fallback: Object.assign({}, localResult.ai_fallback || {}, {
           needed: scenario !== 'not_requested',
-          status: scenario
+          status,
+          attempted: !['not_requested', 'skipped_no_endpoint'].includes(scenario),
+          business_result_valid: false
         })
       });
     }
@@ -866,17 +902,19 @@ async function runOneFlow(testCase, entry, options = {}) {
   const harness = createWxHarness({
     initialState,
     apiBaseUrl: options.liveAi ? options.apiBaseUrl : '',
-    clipboardText: testCase.source === 'paste' ? testCase.input : ''
+    clipboardText: testCase.source === 'paste' ? testCase.input : '',
+    requestHandler: options.requestHandler || null
   });
   installGlobals(harness, options.liveAi ? options.apiBaseUrl : '');
-  const page = loadPage(entry, harness, buildHybridStub(testCase), options.liveAi ? options.apiBaseUrl : '');
+  const hybridStub = options.liveAi ? null : buildHybridStub(testCase);
+  const page = loadPage(entry, harness, hybridStub, options.liveAi ? options.apiBaseUrl : '');
   if (typeof page.onLoad === 'function') page.onLoad({});
   if (typeof page.onShow === 'function') page.onShow();
 
   const localParser = buildLocalParserEvidence(testCase, initialState);
   const beforeCounts = getCounts(harness.getState());
   runPageParse(entry, page, testCase);
-  await flushAsync();
+  await waitForParseCompletion(page, options);
 
   for (const edit of (testCase.edits || [])) {
     runEdit(entry, page, edit);
@@ -927,7 +965,7 @@ async function runOneFlow(testCase, entry, options = {}) {
     pendingOriginalText = ((afterPendingState.pendingNotes || [])[0] || {}).originalText || '';
   }
 
-  const reloadedPage = loadPage(entry, harness, buildHybridStub(testCase), options.liveAi ? options.apiBaseUrl : '');
+  const reloadedPage = loadPage(entry, harness, hybridStub, options.liveAi ? options.apiBaseUrl : '');
   if (typeof reloadedPage.onLoad === 'function') reloadedPage.onLoad({});
   if (typeof reloadedPage.onShow === 'function') reloadedPage.onShow();
   const reloadState = harness.getState();
@@ -951,6 +989,10 @@ async function runOneFlow(testCase, entry, options = {}) {
     parseResult: clone(parseResult),
     finalFields,
     aiStatus: parseResult.ai_fallback && parseResult.ai_fallback.status,
+    aiFailureCode: (parseResult.ai_fallback && parseResult.ai_fallback.code) || '',
+    aiBusinessResultValid: Boolean(parseResult.ai_fallback && parseResult.ai_fallback.business_result_valid),
+    aiProvider: parseResult.provider || '',
+    hybridStubInjected: Boolean(hybridStub),
     buttonDisabled,
     showContinueInput: showContinueInputBeforeAction,
     warningText: getWarningText(entry, page, harness.events),
@@ -1132,7 +1174,7 @@ function buildHardGateCases() {
     createBlockedCase('ai-timeout-invalid-yuan', '下单礼品盒517套3.8元下周五交', {
       title: 'AI timeout 时不能保存高风险本地猜测',
       extra: { aiScenario: 'timeout' },
-      expect: { aiStatus: 'timeout', customerNotIn: ['元'] }
+      expect: { aiStatus: 'timed_out', customerNotIn: ['元'] }
     }),
     createOrderCase('single-clear-order', '王总订水杯100个，5.5一个，下周五交', '王总', '水杯'),
     createOrderCase('single-clear-order-no-phone', '李老板订包装袋300个，0.9一个，月底交', '李老板', '包装袋'),
@@ -1631,7 +1673,16 @@ async function main() {
   console.log('\n结论：当前记一笔门禁通过。');
 }
 
-main().catch((error) => {
-  console.error(error && error.stack ? error.stack : error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error && error.stack ? error.stack : error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  buildHybridStub,
+  createWxHarness,
+  loadPage,
+  runOneFlow
+};

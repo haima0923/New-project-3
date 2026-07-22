@@ -651,16 +651,20 @@ function isFormalReady(parseResult) {
 function hasUnresolvedAiResult(parseResult = {}) {
   const routeInfo = parseResult.parse_route || {};
   const route = routeInfo.decision;
-  const aiStatus = ((parseResult.ai_fallback || {}).status || 'not_requested');
+  const aiFallback = parseResult.ai_fallback || {};
+  const aiStatus = aiFallback.status || 'not_requested';
+  const hasVerifiedAiResult = aiStatus === 'used' && aiFallback.business_result_valid === true;
   // 只要本次明确选择了 AI 整理，AI 没有真正返回结果就不能把草稿直接变成正式订单/报价/账款。
   // 页面按钮之外再拦一次，防止以后新增入口时绕过保护。
   return (['ai_standard', 'ai_deep'].includes(route) || routeInfo.deep_review_available === true)
-    && aiStatus !== 'used';
+    && !hasVerifiedAiResult;
 }
 
 function getUnresolvedAiReason(parseResult = {}) {
   if (!hasUnresolvedAiResult(parseResult)) return '';
   const aiStatus = ((parseResult.ai_fallback || {}).status || 'not_requested');
+  if (aiStatus === 'timed_out') return '联网整理等待超时，这条内容先存到待整理，不能直接记成正式业务。';
+  if (aiStatus === 'returned_uncertain') return '联网整理没有给出可采用的业务结果，这条内容先存到待整理。';
   if (aiStatus === 'failed') return '联网整理没有成功返回，这条内容先存到待整理，不能直接记成正式业务。';
   if (aiStatus === 'skipped_no_endpoint') return '本次没有连上智能整理服务，这条内容先存到待整理，不能直接记成正式业务。';
   if (aiStatus === 'mock_used') return '本次拿到的是模拟整理结果，不能直接记成正式业务。';

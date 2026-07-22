@@ -131,10 +131,10 @@ async function runRouteEvidenceTests() {
     });
     const failedEvidence = buildParseEvidence(failed);
     recordResult('第1步', 'voice-ai-timeout', '李姐要订5个椅孑，20元一个，周日交', [
-      { pass: failed.ai_fallback.status === 'failed', message: `AI 超时时应显示失败，实际为 ${failed.ai_fallback.status}` },
+      { pass: failed.ai_fallback.status === 'timed_out', message: `AI 超时时应明确标记 timed_out，实际为 ${failed.ai_fallback.status}` },
       { pass: failed.ai_fallback.attempted === true, message: '凭证没有记录“已经尝试调用 AI”' },
       { pass: String(failed.ai_fallback.reason || '').includes('超时'), message: `失败原因应说明超时，实际为“${failed.ai_fallback.reason || ''}”` },
-      { pass: failedEvidence.aiStatusText === '智能快速核对未完成', message: '凭证没有清楚显示智能核对未完成' }
+      { pass: failedEvidence.aiStatusText === '智能核对等待超时', message: '凭证没有清楚显示智能核对超时' }
     ]);
   } finally {
     if (originalWx === undefined) delete global.wx;
