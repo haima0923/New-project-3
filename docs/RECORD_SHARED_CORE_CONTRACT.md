@@ -1,9 +1,9 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A 状态、trace 与编排门面已实现并通过离线回归；完整共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A 与 Phase 1B（业务日期、时区、编排 clock 和 trace/AI 请求 ID）已通过离线回归；完整共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
-> 本合同以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
-> 的真实代码为事实基线。实现不得借合同之名改变当前 AI 分流产品规则。
+> 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
+> 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
 
 ## 1. 权威范围
 
@@ -31,6 +31,23 @@ Phase 1A 已新增：
 Phase 1A trace 被标记为 `MEMORY_ONLY`，包含业务原文和解析内容；在完整 `TraceOptions.redaction` 落地前不得直接持久化。当前兼容 normalizer 仍把“AI 标准化+合并”作为一个遗留步骤，所以 `ai.rawResult` 已可记录，而 `ai.normalizedResult=null`、`normalizationAvailable=false`，不能据此宣称第二层评分已实现。
 
 新门面在自身 output/trace 中逐字保留 `originalText`；现有正式保存入口仍读取遗留 `original_text`。因此 Phase 1A 只证明门面原文保护，尚未证明未来页面切换后的最终持久化合同。
+
+### 1.2 Phase 1B 当前实现状态（2026-07-22）
+
+对应代码与测试提交：`3688cef1463b021fb091272a3a5f52f52c0c6c95`。
+
+Phase 1B 在不迁移页面和保存逻辑的前提下新增并验证：
+
+- `utils/record-flow-runtime.js` 提供 `clock.now() → Date`、默认 `systemClock`、`Asia/Shanghai` 业务日期投影，以及可注入的 `idGenerator.next(scope)`；服务端部署目录保留逐字同步的 `server/utils/record-flow-runtime.js`。
+- `runRecordFlow()` 每次运行只确定一次 `businessTimezone`、`businessDate` 和业务 `nowInstant`，并把同一上下文传给本地 parser、安全检查、AI adapter、AI 日期标准化和最终安全检查。
+- 当前 Phase 1B 只正式支持 `Asia/Shanghai`（明确的 UTC+08:00 业务合同）；其他时区返回 `UNSUPPORTED_BUSINESS_TIMEZONE`，不静默使用运行机器时区。
+- 输入只给 `nowInstant` 时按上海时区推导 `businessDate`；二者都给时必须一致，否则返回 `BUSINESS_DATE_MISMATCH`；都不提供时从同一次 `clock.now()` 取值。为兼容现有固定日期 fixture，只给 `businessDate` 时允许 `nowInstant=null`，并在 trace 标记 `nowInstantResolved=false`；完整 V1 runner 仍应同时提供二者。
+- 现有 `parseHybridInput()` 也会在入口固定一次兼容时间上下文，因此尚未迁移的两页不传新字段时仍可运行，且同一次 local、standard/deep 请求和 AI 合并使用同一上海业务日期。
+- trace 新增 `runtime`、`traceId` 和 AI `requestId`；`runId`、`traceId`、AI `requestId` 可由测试固定。服务端自身生成的编号另记为 `serverRequestId`，不得冒充上游模型的 `providerRequestId`。
+- standard/deep 服务端 prompt 统一使用经校验的业务日期；旧客户端省略日期时由服务端上海 clock 补齐，不再用 UTC `toISOString().slice(0, 10)`。
+- 1,490 题 fixture 和正式 runner 已固定并接线传递业务日期与时区；专项测试验证了题数、fixture 字段和 runner 接线，但本轮没有生成报告或全量重跑 1,490 题。其他专项覆盖系统时区差异、上海午夜、跨年、下周五、月底、非法输入、倒退 clock、固定/重复 ID、旧调用兼容和 server 独立部署加载。
+
+本阶段没有完成整个合同中的时间/ID改造：`clock.monotonicMs()`、deadline、parser 自身的兼容 `parse_*` ID/`createdAt`、正式业务记录 ID、保存时间和存储 ID 均未迁移；现有 provider 响应 ID 也尚未进入 trace。页面未切换到 `runRecordFlow()`，保存逻辑未修改，真实 AI 与微信运行时仍未验证。
 
 ## 2. 目标与非目标
 
@@ -790,8 +807,8 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | --- | --- | --- | --- | --- |
 | 三种 mode | 部分 | `utils/record-flow-contract.js`、`utils/record-flow-core.js` | Phase 1A 仅启用 PRODUCTION_ROUTING；另两种明确拒绝，未实现完整执行 | P0 |
 | 不可变严格原文 | 部分 | `utils/record-flow-core.js`、`utils/record-flow-trace.js`、遗留 parser/business | 新门面和 trace 已逐字保护；旧保存入口仍读取 `original_text`，最终持久化未迁移 | P0 |
-| 固定业务日期/时区 | 部分 | `utils/date.js`、parser/business/server model | 多处 `new Date()`；服务器用 UTC 切日；未注入上海业务时区 | P0 |
-| clock/idGenerator | 否 | `utils/storage.js`、`utils/business.js`、页面/服务端 | `Date.now()`、`Math.random()`、`new Date()` 分散 | P0 |
+| 固定业务日期/时区 | 部分 | `utils/record-flow-runtime.js`、parser/safety/AI adapter、`server/src/ai/model.js` | Phase 1B 已统一共享入口、旧 hybrid 入口和 standard/deep prompt 的上海业务日期；正式保存时间及部分遗留测试仍动态取时 | P0 |
+| clock/idGenerator | 部分 | `utils/record-flow-runtime.js`、`utils/record-flow-core.js`、`utils/record-flow-trace.js`、`utils/ai-parser.js`、`server/src/ai/model.js` | Phase 1B 已统一业务日期、trace clock 及 run/trace/AI request ID；monotonic deadline、parser 元数据和正式业务/存储 ID 尚未注入 | P0 |
 | AI adapter | 部分 | `utils/record-flow-core.js`、`utils/record-flow-ai-adapters.js`、`utils/ai-parser.js` | 核心已注入 adapter，微信兼容层已隔离；页面未接入，真实 provider 未验证 | P0 |
 | AI 空业务多层保护 | 是 | client/server AI + business | 两个 P0 已修并通过针对性 Node 动态测试；迁移时须保留 | P0 回归不变量 |
 | 完整 trace | 部分 | `utils/record-flow-trace.js`、`utils/record-flow-core.js` | Phase 1A 已有输入/local/route/AI/merge/final/确认摘要、事件、耗时和采用状态；缺 prompt hash、字段来源、savePlan/state diff 及生产脱敏策略 | P0 |
@@ -812,8 +829,8 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 | 阶段 | 修改范围 | 主要风险 | 完成标准 | 生产影响/测试迁移 |
 | --- | --- | --- | --- | --- |
 | 1A. 统一状态枚举、trace 与平台无关门面 | **已实现**；新增纯合同/trace/core/adapter 模块，现有函数只做可复用阶段导出 | 页面尚未接入；trace 仍含业务内容；AI normalized 尚未分层 | 25 组专项离线测试、11 类起始 HEAD 金样本和既有 P0/核心回归通过 | 低；未改页面、分流和保存行为 |
-| 2. 注入 clock、businessDate、timezone、idGenerator | date/parser/business/storage 的参数边界 | 日期、历史 ID 和旧数据兼容 | 冻结时间下全部相对日期和 ID 稳定；上海时区一致 | 中；需要日期 golden 迁移 |
-| 3. 注入 AI adapter 并实现三种 mode | AI 编排从 `wx` 解耦；服务端合同元数据 | 误改生产 route、mock 身份 | 三模式同一入口；LOCAL_ONLY 零请求；生产模式与当前一致 | 高；先用 fake characterization |
+| 1B. 注入业务 clock、businessDate、timezone 与测试 ID | **已实现本阶段范围**；共享入口、旧 hybrid 入口、parser 日期、安全、AI adapter/prompt 与 trace 已贯通 | 仅支持上海时区；parser 元数据、monotonic deadline 和业务记录 ID 留待后续 | 24 组 Phase 1B 专项及 Phase 1A/P0/route/核心/服务端离线回归通过 | 中低；未改页面和保存，服务端请求新增兼容时间字段 |
+| 1C. 完成可注入 AI adapter 与三种 mode | AI 编排从 `wx` 解耦；服务端合同元数据 | 误改生产 route、mock 身份 | 三模式同一入口；LOCAL_ONLY 零请求；生产模式与当前一致 | 高；先用 fake characterization |
 | 4. 统一领域 confirmation | 抽取两页共有字段/安全计算、revision 和 surface capability | 首页体验变重、按钮分叉或旧确认复用 | 同输入同领域保存结论；首页只收紧；编辑使旧确认失效 | 高；页面 VM 与人工检查都要迁移 |
 | 5. 拆 prepareSavePlan/commit 与 MemoryStore | business 写入改为计划、用户提交授权和 adapter | 金融关联、半保存、重复点击、历史兼容 | 全业务与审计副作用可表达；旧计划拒绝；幂等；原子回滚；state diff 稳定 | 高；保留 wxStorage 兼容适配器 |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |

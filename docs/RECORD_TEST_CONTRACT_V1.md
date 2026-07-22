@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A 编排门面专项运行器已实现并通过离线回归；完整第一阶段 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A 与 Phase 1B 专项运行器已通过离线回归；完整第一阶段 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -31,6 +31,24 @@
 同轮还通过 `ai-safety-regression-tests.js`、`parse-route-observability-tests.js`、`five-step-user-tests.js` 和 `core-feature-tests.js`。所有命令均清除了 AI 环境变量，没有调用真实 AI、生产 endpoint 或生产数据。
 
 这不是完整 V1 runner：尚无 LOCAL_ONLY/AI_ONLY 执行、FrozenClock、固定业务 ID、统一领域 confirmation、savePlan、MemoryStore、state diff、五层报告或页面接入。Phase 1A trace 仅允许内存使用；完整生产脱敏策略未实现。现有保存入口也尚未消费新门面的严格 `originalText`，所以不能把本轮测试写成“最终业务持久化原文合同已验证”。
+
+### 1.2 Phase 1B 动态验证状态（2026-07-22）
+
+对应代码与测试提交：`3688cef1463b021fb091272a3a5f52f52c0c6c95`。
+
+`scripts/record-shared-core-phase1b-tests.js` 当前包含 24 组离线确定性测试，覆盖：
+
+- 默认且唯一正式支持的 `Asia/Shanghai` 业务时区，以及 UTC、洛杉矶系统时区下相同注入时刻的稳定结果；
+- 显式业务日期、上海午夜前后、UTC 仍为前一天、跨年、下周五、本月底、下月底和三天后；其中测试只冻结当前 parser 语义，不借 Phase 1B 重定义日期产品规则；
+- 非法日期、非法时区、非法时刻、日期/时刻不一致、非法 clock、倒退 clock、空 ID 和同次运行重复 ID 的 fail-closed 行为；
+- 固定 `runId`、`traceId`、AI `requestId` 贯穿 core/adapter/trace；成功与 HTTP 失败时，客户端 `requestId` 和服务端 `serverRequestId` 分开记录，`providerRequestId` 不伪造；
+- 旧 `parseHybridInput()` 的 standard/deep 入口在一次运行中固定同一业务日期，旧页面形态不再发送空 `businessDate`；
+- standard/deep prompt 使用同一业务日期，服务端缺省按上海日期而非 UTC 截断，非法日期在 fake provider 前被拒绝；
+- 根目录与 server 的 parser/date/safety/runtime 镜像一致、独立复制 `server/` 后模型模块可加载；1,490 题 fixture 与正式 runner 已完成固定日期接线，专项测试验证题数、fixture 字段和 runner 接线，本轮未生成报告或全量重跑 1,490 题。
+
+同轮通过 Phase 1A 25/25、P0 AI 安全、route/等待、五步用户、核心功能、AI 模型路由和服务端 parse route 离线回归。所有 AI 环境变量均显式清除；只使用 fake/mock/内存数据和本机回环 fake 服务，没有调用真实 AI、生产 endpoint 或生产数据。
+
+Phase 1B 的确定性范围是业务日期、共享 trace 计时和 `runId/traceId/AI requestId`。遗留 parser 的 `parse_*` ID/`createdAt`、旧 AI 等待预算的系统计时、正式业务记录 ID、保存时间及全仓旧测试中的动态日期仍未迁移，因此不能写成“完整解析输出和所有测试已经完全冻结”。页面仍未切换到共享门面，微信运行时和真实 AI 均未验证。
 
 ## 2. 第一阶段范围
 
