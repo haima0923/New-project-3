@@ -31,6 +31,7 @@ delete global.wx;
 const FIXED_INSTANT = '2026-07-22T02:30:00.000Z';
 const BUSINESS_DATE = '2026-07-22';
 const tests = [];
+let legacyEquivalenceVisitor = null;
 function test(name, fn) { tests.push({ name, fn }); }
 function clone(value) { return JSON.parse(JSON.stringify(value)); }
 
@@ -604,6 +605,17 @@ test('代表业务与现有business隔离保存结果等价', () => {
     const legacy = legacySave(initial, prepared.finalResult, action);
     const modern = newSave(initial, prepared, name).state;
     assert.deepStrictEqual(canonicalState(modern, initial), canonicalState(legacy, initial), name);
+    if (typeof legacyEquivalenceVisitor === 'function') {
+      legacyEquivalenceVisitor({
+        name,
+        action,
+        initialState: clone(initial),
+        rawResult: clone(raw),
+        prepared: clone(prepared),
+        legacyState: clone(legacy),
+        sharedState: clone(modern)
+      });
+    }
     assert.deepStrictEqual(modern.meta, normalizeDomainState(initial).meta, `${name}:meta must not change`);
     assert.deepStrictEqual(modern.dunningTemplates, normalizeDomainState(initial).dunningTemplates, `${name}:templates must not change`);
     if (name === '目录缺失时回填历史再保存') {
@@ -902,4 +914,34 @@ async function main() {
   console.log(`Phase 1E.1: ${passed}/${tests.length} passed`);
 }
 
-main();
+async function runLegacyEquivalenceWithVisitor(visitor) {
+  const selected = tests.find((item) => item.name === '代表业务与现有business隔离保存结果等价');
+  if (!selected) throw new Error('Phase 1E.1等价题未注册。');
+  const previous = legacyEquivalenceVisitor;
+  legacyEquivalenceVisitor = visitor;
+  try {
+    await selected.fn();
+  } finally {
+    legacyEquivalenceVisitor = previous;
+  }
+}
+
+if (require.main === module) main();
+
+module.exports = {
+  authorization,
+  canonicalState,
+  clone,
+  customer,
+  fixedClock,
+  order,
+  orderResult,
+  prepare,
+  quotation,
+  receivable,
+  result,
+  runLegacyEquivalenceWithVisitor,
+  scopedIdGenerator,
+  stateWith,
+  withFixedGlobals
+};

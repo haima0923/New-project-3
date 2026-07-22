@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'yiwu_boss_ai_assistant_v1';
+const { LEGACY_BUSINESS_STORAGE_KEY: STORAGE_KEY } = require('./record-storage-adapter-contract');
 const { maskPhone, simpleFingerprint } = require('./customer-identity');
 
 function createInitialState() {
@@ -88,6 +88,7 @@ function getCustomerDisplay(customer) {
 }
 
 module.exports = {
+  STORAGE_KEY,
   createInitialState,
   generateId,
   getCustomerDisplay,
