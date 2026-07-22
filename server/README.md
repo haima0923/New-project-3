@@ -2,10 +2,11 @@
 
 No npm dependencies are required for the mock test server.
 
-> Candidate snapshot status (2026-07-22): **P0 OPEN / NOT RELEASE**. The live
-> AI flow gate is paused as release evidence, and valid empty business JSON can
-> currently be treated as a successful AI result. This server snapshot preserves
-> that known state; it does not fix either blocker.
+> Candidate fix status (2026-07-22): **P0 CODE FIXED / DYNAMIC VALIDATION
+> PENDING / NOT RELEASE**. Commit `d652d97` rejects empty business AI responses
+> and prevents the live flow gate from replacing failures with stub results.
+> Node-based targeted regression has not run on the current machine, so this is
+> not release evidence yet.
 
 ## Local Run
 
@@ -52,9 +53,16 @@ The quality model is used only for an explicit deep-review request.
 
 The server caps the fast model at 5.2 seconds and the quality model at 20
 seconds. The Mini Program's total wait limits are 8 seconds for standard and 25
-seconds for deep review. Blocking an unsafe save is the intended behavior, but
-the two open P0 issues mean timeout/empty-result reports cannot yet be used as
-release proof.
+seconds for deep review. Blocking an unsafe save is the intended behavior.
+
+Standard and deep parsing share the same business-result validity check. Empty
+objects, empty `fields`, metadata-only objects and empty item results fail with
+`AI_RESPONSE_EMPTY_BUSINESS` (HTTP 422). An explicit "not enough information" or
+"needs confirmation" conclusion is retained as an uncertain safety result; it
+does not authorize a formal save. The Mini Program validates again before
+merging, and its final business save gate requires both `status: used` and an
+explicit valid-result flag. Dynamic Node regression is still required before
+these protections can be used as release proof.
 
 Production standard/deep prompts are defined in `src/ai/model.js`. Prompts in
 `../scripts/lib/real-ai-comparison-prompts.js` are experimental evaluation
