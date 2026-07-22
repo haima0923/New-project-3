@@ -1,11 +1,22 @@
 const { addDays, diffDays, today } = require('./date');
 const { applyFinalParseSafety } = require('./parse-safety');
 const { ensureProductCatalog, learnProductCatalogFromRecord } = require('./product-catalog');
-const { generateId, getCustomerDisplay, normalizeCustomer, simpleFingerprint } = require('./storage');
+const {
+  ACTIVE_ORDER_STATUSES: activeOrderStatuses,
+  ACTIVE_RECEIVABLE_STATUSES: activeReceivableStatuses,
+  calculateOrderDepositAmount,
+  calculateOrderRemainingSettlement,
+  customerNameMatches,
+  evaluateRecordDomainPreflight,
+  findCustomerMatches,
+  getReceivablePaymentIssue,
+  getReceivableRemainingAmount,
+  getTrustedRecordFlowContext,
+  orderMatchesProduct
+} = require('./record-domain-preflight');
+const { generateId, getCustomerDisplay, normalizeCustomer } = require('./storage');
 const { normalizeUnit, unitsMatch } = require('./units');
 
-const activeReceivableStatuses = ['待收', '部分收款'];
-const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
 const depositKinds = ['deposit'];
 const recordCollections = {
   quotation: 'quotations',
@@ -50,14 +61,6 @@ function archiveDeletedRecord(state, recordType, record, related = {}) {
   };
   state.deletedRecords.unshift(archive);
   return archive;
-}
-
-function normalizeCustomerNameForMatch(name) {
-  return String(name || '').trim().replace(/总$/, '');
-}
-
-function getActiveCustomers(state) {
-  return (state.customers || []).filter((customer) => !customer.mergedInto);
 }
 
 function toMoney(value) {
@@ -303,34 +306,19 @@ function softDeleteRecord(state, recordType, recordId) {
 }
 
 function getReceivableRemaining(receivable) {
-  return Math.max(0, toMoney(receivable.amount) - toMoney(receivable.paidAmount));
+  return getReceivableRemainingAmount(receivable);
 }
 
 function getPaymentAmount(fields) {
   return fields.paymentAmount || fields.amount || '';
 }
 
-function getPaymentKind(fields = {}, fallback = 'receivable_payment') {
-  return fields.paymentKind || fields.kind || fallback;
-}
-
 function getOrderDepositAmount(state, orderId) {
-  if (!orderId) return 0;
-  const order = (state.orders || []).find((item) => item.id === orderId);
-  return (state.paymentRecords || [])
-    .filter((item) => item.orderId === orderId
-      && depositKinds.includes(item.kind || item.paymentKind)
-      && (!order || item.customerId === order.customerId))
-    .reduce((sum, item) => sum + toMoney(item.amount), 0);
+  return calculateOrderDepositAmount(state, orderId);
 }
 
 function getOrderRemainingSettlement(state, order) {
-  if (!order) return 0;
-  const receivable = (state.receivables || []).find((item) => (
-    item.orderId === order.id && item.customerId === order.customerId
-  ));
-  if (receivable) return getReceivableRemaining(receivable);
-  return Math.max(0, toMoney(order.totalAmount) - getOrderDepositAmount(state, order.id));
+  return calculateOrderRemainingSettlement(state, order);
 }
 
 function createPaymentRecord(state, {
@@ -369,30 +357,6 @@ function getReceivableSourceFromDraft(parseResult) {
 
 function getCustomerById(state, id) {
   return (state.customers || []).find((customer) => customer.id === id && !customer.mergedInto);
-}
-
-function customerNameMatches(customer, customerName) {
-  if (!customer || !customerName) return true;
-  const currentName = String(customer.name || '');
-  const nextName = String(customerName || '');
-  const currentCompact = normalizeCustomerNameForMatch(currentName);
-  const nextCompact = normalizeCustomerNameForMatch(nextName);
-  return currentName === nextName
-    || currentCompact === nextCompact
-    || (currentCompact.length >= 2 && nextName.includes(currentCompact))
-    || (nextCompact.length >= 2 && currentName.includes(nextCompact));
-}
-
-function findCustomerMatches(state, fields = {}) {
-  const customers = getActiveCustomers(state);
-  const phoneFingerprint = simpleFingerprint(fields.phone);
-  if (phoneFingerprint) {
-    return customers.filter((customer) => (
-      customer.phoneFingerprint === phoneFingerprint && customerNameMatches(customer, fields.customerName)
-    ));
-  }
-  if (!fields.customerName) return [];
-  return customers.filter((customer) => customerNameMatches(customer, fields.customerName));
 }
 
 function getRecordCustomerLinkError(state, record, fields = {}, recordLabel = '这条记录') {
@@ -479,14 +443,6 @@ function findOrCreateCustomer(state, fields) {
   created.lastTradeAt = today();
   state.customers.unshift(created);
   return created;
-}
-
-function orderMatchesProduct(order, productName) {
-  if (!productName) return true;
-  const source = String(productName || '').replace(/\s+/g, '');
-  const current = String(order.productName || '').replace(/\s+/g, '');
-  if (!source || !current) return true;
-  return source === current || source.includes(current) || current.includes(source);
 }
 
 function findOrderForDeposit(state, fields = {}, customer = null) {
@@ -633,19 +589,21 @@ function markDuplicateCustomerReviewed(state, customerId) {
   return customer;
 }
 
-function isFormalReady(parseResult) {
+function isFormalReady(parseResult, initialState = {}) {
   const reviewed = applyFinalParseSafety(parseResult || {});
-  const missing = Array.isArray(reviewed.missing_fields) ? reviewed.missing_fields : [];
-  const low = Array.isArray(reviewed.low_confidence_fields) ? reviewed.low_confidence_fields : [];
-  const conflicts = Array.isArray(reviewed.field_conflicts) ? reviewed.field_conflicts : [];
-  return !missing.length
-    && !low.length
-    && !conflicts.length
-    && !hasUnresolvedAiResult(reviewed)
-    && !reviewed.formal_save_blocked
-    && !reviewed.mixed_business
-    && !reviewed.requires_existing_record
-    && reviewed.intent !== 'unknown';
+  const flowContext = getTrustedRecordFlowContext(reviewed);
+  return evaluateRecordDomainPreflight({
+    mode: flowContext.mode || 'PRODUCTION_ROUTING',
+    resultScope: flowContext.resultScope || 'PRODUCTION_RESULT',
+    operation: reviewed.operation,
+    businessType: reviewed.intent,
+    finalResult: reviewed,
+    originalText: getOriginalTextFromDraft(reviewed),
+    initialState,
+    aiOutcome: flowContext.aiOutcome || (reviewed.ai_fallback || {}).status || 'not_requested',
+    providerKind: flowContext.providerKind || (reviewed.ai_fallback || {}).provider_kind || 'NONE',
+    skipFinalSafety: true
+  }).domainCanSaveFormal;
 }
 
 function hasUnresolvedAiResult(parseResult = {}) {
@@ -672,10 +630,11 @@ function getUnresolvedAiReason(parseResult = {}) {
 }
 
 function savePendingNote(state, parseResult, reason = '信息不完整，需要稍后整理') {
+  const originalText = getOriginalTextFromDraft(parseResult);
   const note = {
     id: generateId('pending'),
     userId: 'local-user',
-    originalText: parseResult.original_text,
+    originalText,
     guessedIntent: parseResult.intent,
     guessedFields: parseResult.fields,
     missingFields: parseResult.missing_fields,
@@ -697,7 +656,7 @@ function appendParseLog(state, parseResult, action) {
     id: generateId('log'),
     userId: 'local-user',
     inputSource: parseResult.source,
-    originalText: parseResult.original_text,
+    originalText: getOriginalTextFromDraft(parseResult),
     parseResult,
     action,
     createdAt: new Date().toISOString()
@@ -827,6 +786,10 @@ function saveOrder(state, parseResult) {
     updatedAt: new Date().toISOString()
   };
   state.orders.unshift(order);
+  if (fields.quotationId) {
+    const quotation = (state.quotations || []).find((item) => item.id === fields.quotationId);
+    markQuotationConverted(quotation, order, order.createdAt);
+  }
   learnProductCatalogFromRecord(state, order, 'order', { skipEnsure: true });
   state.orderProgress.unshift({
     id: generateId('prog'),
@@ -981,7 +944,9 @@ function saveReceivableWithPayment(state, parseResult) {
       orderId: fields.orderId || '',
       receivableId: receivable.id,
       amount: paymentAmount,
-      kind: getReceivableSourceFromDraft(parseResult) === 'legacy' ? 'legacy_payment' : getPaymentKind(fields, fields.orderId ? 'final_payment' : 'receivable_payment'),
+      kind: getReceivableSourceFromDraft(parseResult) === 'legacy'
+        ? 'legacy_payment'
+        : (fields.orderId ? 'final_payment' : 'receivable_payment'),
       originalText,
       remark: fields.remark || '由记一笔新建应收时记录'
     });
@@ -1053,7 +1018,7 @@ function savePayment(state, parseResult) {
     return payment;
   }
   const payment = recordPayment(state, activeReceivable.id, paymentAmount, {
-    kind: getPaymentKind(fields, activeReceivable.orderId ? 'final_payment' : 'receivable_payment'),
+    kind: activeReceivable.orderId ? 'final_payment' : 'receivable_payment',
     originalText,
     remark: fields.remark || ''
   });
@@ -1098,10 +1063,44 @@ function saveTodo(state, parseResult) {
 
 function saveConfirmedDraft(state, parseResult) {
   parseResult = applyFinalParseSafety(parseResult || {});
-  if (!isFormalReady(parseResult)) {
+  const flowContext = getTrustedRecordFlowContext(parseResult);
+  const preflight = evaluateRecordDomainPreflight({
+    mode: flowContext.mode || 'PRODUCTION_ROUTING',
+    resultScope: flowContext.resultScope || 'PRODUCTION_RESULT',
+    operation: parseResult.operation,
+    businessType: parseResult.intent,
+    finalResult: parseResult,
+    originalText: getOriginalTextFromDraft(parseResult),
+    initialState: state,
+    aiOutcome: flowContext.aiOutcome || (parseResult.ai_fallback || {}).status || 'not_requested',
+    providerKind: flowContext.providerKind || (parseResult.ai_fallback || {}).provider_kind || 'NONE',
+    skipFinalSafety: true
+  });
+  if (!preflight.domainCanSaveFormal) {
+    const firstIssue = preflight.blockingIssues[0] || {};
+    const preflightReason = getUnresolvedAiReason(parseResult)
+      || (firstIssue.code === 'ORDER_TOTAL_UPDATE_WITH_FINANCIAL_LINKS'
+        ? '这笔订单已有定金、收款或待收，不能直接修改订单总额。其他内容仍可修改。'
+        : '')
+      || (firstIssue.messageParams && firstIssue.messageParams.reason)
+      || firstIssue.messageKey
+      || '信息不完整，需要稍后整理';
+    if (parseResult.edit_mode === 'direct_order') {
+      return {
+        type: 'error',
+        error: preflightReason,
+        field: firstIssue.field || '',
+        preflight
+      };
+    }
     appendParseLog(state, parseResult, 'save_pending');
-    return { type: 'pending', record: savePendingNote(state, parseResult, getUnresolvedAiReason(parseResult) || '信息不完整，需要稍后整理') };
+    return {
+      type: 'pending',
+      record: savePendingNote(state, parseResult, preflightReason),
+      preflight
+    };
   }
+  const saveResult = (() => {
   if (parseResult.operation === 'update_quotation') {
     const record = updateQuotationFromDraft(state, parseResult);
     if (record && !record.error) return { type: 'quotation', record };
@@ -1242,6 +1241,8 @@ function saveConfirmedDraft(state, parseResult) {
   }
   appendParseLog(state, parseResult, 'save_pending');
   return { type: 'pending', record: savePendingNote(state, parseResult) };
+  })();
+  return Object.assign({}, saveResult, { preflight });
 }
 
 function isQuotationConverted(quotation = {}) {
@@ -1423,14 +1424,7 @@ function completeTodo(state, todoId) {
 }
 
 function getReceivablePaymentError(receivable, amount) {
-  const paymentAmount = toMoney(amount);
-  if (!receivable) return '没有找到这笔待收款';
-  if (!activeReceivableStatuses.includes(receivable.status)) return '这笔钱已经结清，不能重复记录';
-  if (paymentAmount <= 0) return '先填本次收款金额';
-  const remaining = getReceivableRemaining(receivable);
-  if (remaining <= 0) return '这笔钱已经结清，不能重复记录';
-  if (paymentAmount > remaining) return `本次收款不能超过还差 ${formatMoneyValue(remaining)} 元`;
-  return '';
+  return getReceivablePaymentIssue(receivable, amount);
 }
 
 function recordPayment(state, receivableId, amount, options = {}) {

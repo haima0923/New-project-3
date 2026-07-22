@@ -235,7 +235,7 @@ function testClientAndBusinessDefenseInDepth() {
     provider: 'server',
     intent: 'order',
     fields: buildAiRequiredOrder().fields
-  });
+  }, { providerKind: 'REAL' });
   assert.strictEqual(standard.ai_fallback.status, 'used', '合法 standard 仍应成功');
   assert.strictEqual(standard.ai_fallback.business_result_valid, true, '合法 standard 必须带有效证明');
   const standardState = emptyState();
@@ -245,7 +245,7 @@ function testClientAndBusinessDefenseInDepth() {
     provider: 'server',
     intent: 'order',
     fields: buildAiRequiredOrder('ai_deep').fields
-  });
+  }, { providerKind: 'REAL' });
   const deepState = emptyState();
   assert.strictEqual(saveConfirmedDraft(deepState, deep).type, 'order', '合法 deep 仍可保存订单');
 
@@ -297,7 +297,7 @@ function testClientAndBusinessDefenseInDepth() {
   multiLocal.fields.amount = '710';
   const multi = normalizeAiResult(multiLocal, {
     provider: 'server', intent: 'order', fields: multiLocal.fields
-  });
+  }, { providerKind: 'REAL' });
   assert.strictEqual(multi.ai_fallback.status, 'used', '有效多商品结果不能被误判为空');
   assert.strictEqual(multi.fields.items.length, 2, '有效多商品明细必须保留');
   const multiState = emptyState();

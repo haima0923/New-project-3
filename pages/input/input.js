@@ -7,6 +7,7 @@ const { addDays, diffDays, today } = require('../../utils/date');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
+const { evaluateRecordDomainPreflight, getCustomerNameMatchKind, getTrustedRecordFlowContext } = require('../../utils/record-domain-preflight');
 const { getCatalogCheck, getProductSuggestions, getSpecSuggestions } = require('../../utils/product-catalog');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
@@ -542,9 +543,10 @@ function withCustomerHistoryState(baseState, state, fields, operation) {
   nextState.customerHistoryTitle = history.title;
   nextState.customerHistoryLines = history.lines;
   if (!fields.customerHistoryConfirmed) {
-    nextState.showCustomerHistoryConfirm = true;
-    nextState.customerMatchWarningText = `${history.title}。请确认这是新增一笔业务，不是要整理旧记录。`;
-    nextState.customerMatchBlocksSave = true;
+    nextState.showCustomerHistoryConfirm = false;
+    nextState.customerMatchWarningText = `${history.title}。当前内容会按新增业务保存；若原话指旧记录，请改为选择旧记录。`;
+    // 单纯存在历史业务不是保存风险；更新或历史指代由统一领域预检判断。
+    nextState.customerMatchBlocksSave = false;
   }
   return nextState;
 }
@@ -557,22 +559,27 @@ function buildCustomerMatchState(state, fields, operation) {
 
   const matches = findCustomerMatches(state, nextFields);
   const selectedCustomer = nextFields.customerId ? getCustomerById(state, nextFields.customerId) : null;
+  const uniqueMatchKind = matches.length === 1
+    ? getCustomerNameMatchKind(matches[0], nextFields.customerName)
+    : 'NONE';
   if (selectedCustomer && nextFields.customerName && !includesCustomerName(selectedCustomer, nextFields.customerName)) {
     delete nextFields.customerId;
   }
 
-  if (matches.length === 1 && !nextFields.forceNewCustomer && !nextFields.customerId) {
+  if (matches.length === 1 && uniqueMatchKind === 'EXACT'
+    && !nextFields.forceNewCustomer && !nextFields.customerId) {
     nextFields.customerId = matches[0].id;
   }
 
-  if (matches.length === 1 && !nextFields.forceNewCustomer) {
+  if (matches.length === 1 && !nextFields.forceNewCustomer
+    && (uniqueMatchKind === 'EXACT' || nextFields.customerSelectionConfirmed === true)) {
     return withCustomerHistoryState(Object.assign(emptyCustomerMatchState(nextFields), {
       showCustomerMatchBox: true,
       customerMatchText: `已匹配已有客户：${getCustomerDisplay(matches[0])}`
     }), state, nextFields, operation);
   }
 
-  if (matches.length <= 1 && !nextFields.forceNewCustomer) {
+  if (matches.length === 0 && !nextFields.forceNewCustomer) {
     return emptyCustomerMatchState(nextFields);
   }
 
@@ -601,7 +608,9 @@ function buildCustomerMatchState(state, fields, operation) {
     showCustomerPicker: true,
     showCustomerDisambiguationField: creatingNew,
     showCustomerHistoryConfirm: false,
-    customerMatchText: `找到 ${matches.length} 个同名客户，请确认这笔业务属于谁。`,
+    customerMatchText: matches.length === 1
+      ? `找到称呼相近的客户：${getCustomerDisplay(matches[0])}，请确认是否为同一人。`
+      : `找到 ${matches.length} 个同名或近似客户，请确认这笔业务属于谁。`,
     customerMatchWarningText,
     customerHistoryTitle: '',
     customerHistoryLines: [],
@@ -1128,12 +1137,20 @@ function buildConfirmationState(state, parseResult, intent, fields) {
       warningLowText: warningState.warningLowText || safetyBlockText
     })
     : warningState;
-  const canFormalSave = !missingFields.length
-    && !lowConfidenceFields.length
-    && !fieldConflictLines.length
-    && !customerMatchState.customerMatchBlocksSave
-    && !safetyBlockText
-    && intent !== 'unknown';
+  const flowContext = getTrustedRecordFlowContext(normalizedParseResult);
+  const domainPreflight = evaluateRecordDomainPreflight({
+    mode: flowContext.mode || 'PRODUCTION_ROUTING',
+    resultScope: flowContext.resultScope || 'PRODUCTION_RESULT',
+    operation,
+    businessType: intent,
+    finalResult: normalizedParseResult,
+    originalText: normalizedParseResult.original_text || '',
+    initialState: state,
+    aiOutcome: flowContext.aiOutcome || (normalizedParseResult.ai_fallback || {}).status || 'not_requested',
+    providerKind: flowContext.providerKind || (normalizedParseResult.ai_fallback || {}).provider_kind || 'NONE',
+    skipFinalSafety: true
+  });
+  const canFormalSave = domainPreflight.domainCanSaveFormal === true;
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
 
   return Object.assign({
@@ -1158,6 +1175,10 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showHistoryWarning: Boolean(normalizedParseResult.history_warning_text),
     historyDefaultWarningText: normalizedParseResult.history_default_warning_text || '',
     showHistoryDefaultWarning: Boolean(normalizedParseResult.history_default_warning_text),
+    domainCanSaveFormal: domainPreflight.domainCanSaveFormal,
+    domainCanSavePending: domainPreflight.domainCanSavePending,
+    preflightFingerprint: domainPreflight.preflightFingerprint,
+    preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
     orderAmountSummaryLines,
@@ -1857,6 +1878,7 @@ Page({
         delete nextFields.receivableSelectionConfirmed;
         delete nextFields.orderSelectionConfirmed;
         delete nextFields.customerHistoryConfirmed;
+        delete nextFields.customerSelectionConfirmed;
         if (field === 'customerName') delete nextFields.forceNewCustomer;
       }
       if (field === 'productName') {
@@ -1973,9 +1995,11 @@ Page({
     delete fields.orderSelectionConfirmed;
     if (selected.id === NEW_CUSTOMER_OPTION_ID) {
       delete fields.customerId;
+      delete fields.customerSelectionConfirmed;
       fields.forceNewCustomer = true;
     } else {
       fields.customerId = selected.id;
+      fields.customerSelectionConfirmed = true;
       delete fields.forceNewCustomer;
     }
     delete fields.customerHistoryConfirmed;
@@ -2013,6 +2037,7 @@ Page({
     delete fields.receivableSelectionConfirmed;
     delete fields.orderSelectionConfirmed;
     delete fields.customerHistoryConfirmed;
+    delete fields.customerSelectionConfirmed;
     fields.forceNewCustomer = true;
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: [],

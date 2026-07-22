@@ -1624,6 +1624,13 @@ function prepareAiBusinessNormalization(aiResult, options = {}) {
   };
 }
 
+function normalizeTrustedProviderKind(value, fallback = 'UNKNOWN') {
+  const normalized = String(value || '').trim().toUpperCase();
+  return ['REAL', 'MOCK', 'FAKE', 'REPLAY', 'NONE'].includes(normalized)
+    ? normalized
+    : fallback;
+}
+
 // Normalize a provider result without reading or merging any local parser draft.
 // AI_ONLY uses this layer so model/normalizer scoring cannot be repaired by the
 // local parser. Production routing continues to use normalizeAiResult below.
@@ -1637,7 +1644,7 @@ function normalizeAiBusinessResult(aiResult, options = {}) {
   const noRecord = normalized.no_record === true
     || normalized.recordable === false
     || explicitDecision === 'no_record';
-  const providerKind = String(options.providerKind || '').trim().toUpperCase();
+  const providerKind = normalizeTrustedProviderKind(options.providerKind);
   const mockUsed = providerKind === 'MOCK';
   const missingFields = toStringArray(normalized.missing_fields || normalized.missingFields);
   const lowFields = toStringArray(normalized.low_confidence_fields || normalized.lowConfidenceFields);
@@ -1681,6 +1688,7 @@ function normalizeAiBusinessResult(aiResult, options = {}) {
         : (validity.kind === 'uncertain' ? 'returned_uncertain' : 'used'),
       attempted: true,
       business_result_valid: true,
+      provider_kind: providerKind,
       reason: mockUsed
         ? '调用方注册的是模拟 AI adapter，结果不能作为真实 AI 成功使用。'
         : (validity.kind === 'uncertain'
@@ -1700,6 +1708,10 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
   const prepared = prepareAiBusinessNormalization(aiResult, options);
   const normalized = prepared.normalized;
   const mockUsed = hasMockProvider(aiResult);
+  const providerKind = normalizeTrustedProviderKind(
+    options.providerKind,
+    mockUsed ? 'MOCK' : 'UNKNOWN'
+  );
   const validity = prepared.validity;
   const aiFields = prepared.fields;
   const intent = mergeAiIntent(localResult, normalized);
@@ -1731,6 +1743,23 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
     mixed_business: Boolean(localResult.mixed_business),
     date_detail: localResult.date_detail || null
   });
+  // AI business JSON is untrusted data. Routing, safety and shared-core
+  // provenance are transport/control-plane facts and must never be supplied by
+  // the model response. Keep the local route/safety values and let the shared
+  // core attach its protected record_flow_context after normalization.
+  merged.parse_route = localResult.parse_route;
+  merged.local_parse_safety = localResult.local_parse_safety;
+  merged.parse_trace = localResult.parse_trace;
+  if (localResult.final_parse_safety !== undefined) {
+    merged.final_parse_safety = localResult.final_parse_safety;
+  } else {
+    delete merged.final_parse_safety;
+  }
+  if (localResult.record_flow_context !== undefined) {
+    merged.record_flow_context = localResult.record_flow_context;
+  } else {
+    delete merged.record_flow_context;
+  }
   merged.id = normalized.id || localResult.id;
   merged.source = localResult.source;
   merged.original_text = localResult.original_text;
@@ -1775,6 +1804,7 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
       : (validity.kind === 'uncertain' ? 'returned_uncertain' : 'used'),
     attempted: true,
     business_result_valid: true,
+    provider_kind: providerKind,
     reason: mockUsed
       ? '服务返回的是模拟整理结果。'
       : (validity.kind === 'uncertain'
@@ -1910,7 +1940,9 @@ function requestHybridAiStage(payload, prepared) {
       normalizeAiResult(localResult, aiResult, {
         businessDate: payload.businessDate || '',
         businessTimezone: payload.businessTimezone || 'Asia/Shanghai',
-        nowInstant: payload.nowInstant || null
+        nowInstant: payload.nowInstant || null,
+        // This identity comes from the trusted network path, not model JSON.
+        providerKind: hasMockProvider(aiResult) ? 'MOCK' : 'REAL'
       }),
       route,
       {

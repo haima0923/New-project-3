@@ -253,8 +253,8 @@ test('缺字段和冲突只结构化现有安全事实并阻断正式动作', ()
 });
 
 test('风险字段使用结构化级别且危险字段不会因surface能力不足而隐藏', () => {
-  const result = validAiOrder({}, {
-    low_confidence_fields: ['customerName'],
+  const result = validAiOrder({ customerName: '' }, {
+    missing_fields: ['customerName'],
     field_conflicts: [{ field: 'quantity', values: ['100', '500'] }]
   });
   const home = directConfirmation(result, {
@@ -305,14 +305,14 @@ test('完整多商品在FULL_PAGE和HOME_QUICK中不丢失且只产生surface差
 
 test('AI used uncertain failed timeout mock empty invalid replay均保持P0安全语义', async () => {
   const cases = [
-    ['used', createFakeAiAdapter(() => validAiOrder()), AI_OUTCOMES.USED, true],
+    ['used', createFakeAiAdapter(() => validAiOrder()), AI_OUTCOMES.USED, false],
     ['uncertain', createFakeAiAdapter(() => ({ intent: 'unknown', decision: 'needs_user_confirm', reason: '无法可靠确定客户', missing_fields: ['customerName'] })), AI_OUTCOMES.RETURNED_UNCERTAIN, false],
     ['failed', createFakeAiAdapter(() => { const error = new Error('failed'); error.code = 'AI_PROVIDER_FAILED'; throw error; }), AI_OUTCOMES.FAILED, false],
     ['timeout', createFakeAiAdapter(() => { const error = new Error('timeout'); error.code = 'AI_TIMEOUT'; throw error; }), AI_OUTCOMES.TIMED_OUT, false],
-    ['mock', createMockAiAdapter(() => validAiOrder()), AI_OUTCOMES.MOCK_USED, true],
+    ['mock', createMockAiAdapter(() => validAiOrder()), AI_OUTCOMES.MOCK_USED, false],
     ['empty', createFakeAiAdapter(() => ({})), AI_OUTCOMES.EMPTY_BUSINESS_RESULT, false],
     ['invalid', createFakeAiAdapter(() => 'not-json'), AI_OUTCOMES.INVALID_RESPONSE, false],
-    ['replay', createReplayAiAdapter(() => validAiOrder(), { referenceMetadata: { caseSet: 'synthetic-v1' } }), AI_OUTCOMES.USED, true]
+    ['replay', createReplayAiAdapter(() => validAiOrder(), { referenceMetadata: { caseSet: 'synthetic-v1' } }), AI_OUTCOMES.USED, false]
   ];
   for (const [name, adapter, expectedOutcome, expectedDomain] of cases) {
     const output = await runRecordFlow(baseInput('王总订水杯100个，每个5.5元，明天交', {
@@ -429,9 +429,9 @@ test('候选记录只表达已有事实，不伪造订单报价或待收候选',
   assert.strictEqual(local.confirmation.surface.requiresFullPage, true);
   assert.strictEqual(Object.prototype.hasOwnProperty.call(local.confirmation.candidates.customerCandidates[0], 'phone'), false);
   assert.strictEqual(Object.prototype.hasOwnProperty.call(local.confirmation.candidates.customerCandidates[0], 'privateNote'), false);
-  assert.strictEqual(local.confirmation.candidates.orderCandidatesResolved, false);
-  assert.strictEqual(local.confirmation.candidates.quotationCandidatesResolved, false);
-  assert.strictEqual(local.confirmation.candidates.receivableCandidatesResolved, false);
+  assert.strictEqual(local.confirmation.candidates.orderCandidatesResolved, true);
+  assert.strictEqual(local.confirmation.candidates.quotationCandidatesResolved, true);
+  assert.strictEqual(local.confirmation.candidates.receivableCandidatesResolved, true);
   assert.deepStrictEqual(local.confirmation.candidates.orderCandidates, []);
 
   const aiOnly = await runRecordFlow(baseInput('王总订礼品盒500个，明天交', {
@@ -444,7 +444,7 @@ test('候选记录只表达已有事实，不伪造订单报价或待收候选',
   const forged = directConfirmation(Object.assign(validAiOrder(), {
     customer_candidates: [{ id: 'forged_customer', name: 'AI伪造客户' }]
   }), { localResult: null });
-  assert.strictEqual(forged.candidates.customerCandidatesResolved, false);
+  assert.strictEqual(forged.candidates.customerCandidatesResolved, true);
   assert.deepStrictEqual(forged.candidates.customerCandidates, []);
 
   const cannotEraseDerived = await runRecordFlow(baseInput('王总订礼品盒500个，单价3.8元，2026年8月1日交', {
@@ -456,7 +456,7 @@ test('候选记录只表达已有事实，不伪造订单报价或待收候选',
   assert.strictEqual(cannotEraseDerived.confirmation.domain.domainCanSaveFormal, false);
 });
 
-test('客户历史、待收款和订单关联候选只收紧领域安全且可由surface表达', async () => {
+test('普通新业务不被历史存在误伤，待收款和订单关联仍由统一预检阻断', async () => {
   const customer = { id: 'cus_wang', name: '王总' };
   const order = {
     id: 'ord_1', customerId: customer.id, productName: '礼品盒',
@@ -482,16 +482,15 @@ test('客户历史、待收款和订单关联候选只收紧领域安全且可�
     skipFinalSafety: true,
     surfaceCapabilities: FULL_PAGE_CAPABILITIES
   });
-  assert.strictEqual(historyFull.candidates.customerHistoryConfirmationRequired, true);
-  assert.strictEqual(historyFull.domain.domainCanSaveFormal, false);
-  assert.strictEqual(actionByType(historyFull, 'CONFIRM_CUSTOMER_HISTORY').enabled, true);
+  assert.strictEqual(historyFull.domain.domainCanSaveFormal, true);
+  assert.strictEqual(actionByType(historyFull, 'CONFIRM_CUSTOMER_HISTORY').enabled, false);
   const historyHome = directConfirmation(validAiOrder(), {
     initialState: state,
     saveEligibility: safe,
     skipFinalSafety: true,
     surfaceCapabilities: HOME_QUICK_CAPABILITIES
   });
-  assert.strictEqual(historyHome.surface.requiresFullPage, true);
+  assert.strictEqual(historyHome.surface.requiresFullPage, false);
   assert.strictEqual(actionByType(historyHome, 'CONFIRM_CUSTOMER_HISTORY').enabled, false);
 
   const realLocalHistory = await runRecordFlow(baseInput(
@@ -500,8 +499,7 @@ test('客户历史、待收款和订单关联候选只收紧领域安全且可�
   ), { aiAdapter: createNoAiAdapter() });
   assert.strictEqual(realLocalHistory.result.operation, '');
   assert.strictEqual(realLocalHistory.confirmation.operation, 'create_order');
-  assert.strictEqual(realLocalHistory.confirmation.candidates.customerHistoryConfirmationRequired, true);
-  assert.strictEqual(realLocalHistory.confirmation.domain.domainCanSaveFormal, false);
+  assert.strictEqual(realLocalHistory.confirmation.domain.domainCanSaveFormal, true);
 
   const paymentDraft = {
     intent: 'payment', operation: 'record_payment',
@@ -548,9 +546,8 @@ test('客户历史、待收款和订单关联候选只收紧领域安全且可�
     saveEligibility: safe,
     skipFinalSafety: true
   });
-  assert.strictEqual(wrongCustomer.candidates.customerLinkMismatch, true);
   assert.strictEqual(wrongCustomer.domain.domainCanSaveFormal, false);
-  assert(wrongCustomer.blockingIssues.some((issue) => issue.code === 'CUSTOMER_LINK_MISMATCH'));
+  assert(wrongCustomer.blockingIssues.some((issue) => issue.code === 'CUSTOMER_SELECTION_INPUT_CONFLICT'));
 
   const wrongReceivable = directConfirmation(Object.assign({}, paymentDraft, {
     fields: Object.assign({}, paymentDraft.fields, {
@@ -569,7 +566,7 @@ test('客户历史、待收款和订单关联候选只收紧领域安全且可�
     skipFinalSafety: true
   });
   assert.strictEqual(wrongReceivable.domain.domainCanSaveFormal, false);
-  assert(wrongReceivable.blockingIssues.some((issue) => issue.code === 'RECEIVABLE_LINK_MISMATCH'));
+  assert(wrongReceivable.blockingIssues.some((issue) => issue.code === 'RECEIVABLE_CUSTOMER_MISMATCH'));
 
   const wrongOrder = directConfirmation(Object.assign({}, depositDraft, {
     fields: Object.assign({}, depositDraft.fields, {
@@ -588,7 +585,7 @@ test('客户历史、待收款和订单关联候选只收紧领域安全且可�
     skipFinalSafety: true
   });
   assert.strictEqual(wrongOrder.domain.domainCanSaveFormal, false);
-  assert(wrongOrder.blockingIssues.some((issue) => issue.code === 'ORDER_LINK_MISMATCH'));
+  assert(wrongOrder.blockingIssues.some((issue) => issue.code === 'ORDER_CUSTOMER_MISMATCH'));
 
   const overPayment = directConfirmation(Object.assign({}, paymentDraft, {
     fields: Object.assign({}, paymentDraft.fields, {
@@ -616,7 +613,7 @@ test('客户历史、待收款和订单关联候选只收紧领域安全且可�
     })
   }), { initialState: nearlyPaidState, saveEligibility: safe, skipFinalSafety: true });
   assert.strictEqual(overDeposit.domain.domainCanSaveFormal, false);
-  assert(overDeposit.blockingIssues.some((issue) => issue.code === 'ORDER_DEPOSIT_AMOUNT_INVALID'));
+  assert(overDeposit.blockingIssues.some((issue) => issue.code === 'DEPOSIT_EXCEEDS_ORDER_REMAINING'));
 });
 
 test('revision和contentHash只随业务内容变化并可使后续计划失效', () => {
@@ -638,16 +635,10 @@ test('revision和contentHash只随业务内容变化并可使后续计划失效'
   assert.strictEqual(revised.revision, first.revision + 1);
 
   const candidateA = directConfirmation(base, {
-    candidateContext: {
-      customerCandidates: [{ id: 'cus_a', displayName: '王总' }],
-      customerCandidatesResolved: true
-    }
+    initialState: emptyBusinessState([{ id: 'cus_a', name: '王总' }])
   });
   const candidateB = directConfirmation(base, {
-    candidateContext: {
-      customerCandidates: [{ id: 'cus_b', displayName: '王总' }],
-      customerCandidatesResolved: true
-    }
+    initialState: emptyBusinessState([{ id: 'cus_b', name: '王总' }])
   });
   assert.notStrictEqual(candidateA.contentHash, candidateB.contentHash);
   const unlinked = directConfirmation({
@@ -732,15 +723,15 @@ test('现有完整页和首页纯函数仅作事实对照且共享模型表达�
   });
   const state = emptyBusinessState();
   const fullState = buildFull(state, simple.result, simple.result.intent, simple.result.fields);
-  const homeState = buildHome(simple.result);
+  const homeState = buildHome(simple.result, state);
   assert.strictEqual(!fullState.disableFormalSave, simple.confirmation.domain.domainCanSaveFormal);
   assert.strictEqual(!homeState.disableQuickSave, simple.confirmation.domain.domainCanSaveFormal);
 
-  const order = await runRecordFlow(baseInput('王总订礼品盒500个，单价3.8元，2026年8月1日交', {
-    mode: FLOW_MODES.LOCAL_ONLY
-  }), { aiAdapter: createNoAiAdapter() });
+  const order = await runRecordFlow(baseInput('王总订礼品盒500个，单价3.8元，2026年8月1日交'), {
+    aiAdapter: createNoAiAdapter()
+  });
   const fullOrder = buildFull(state, order.result, order.result.intent, order.result.fields);
-  const homeOrder = buildHome(order.result);
+  const homeOrder = buildHome(order.result, state);
   assert.strictEqual(!fullOrder.disableFormalSave, order.confirmation.domain.domainCanSaveFormal);
   assert.strictEqual(!homeOrder.disableQuickSave, order.confirmation.domain.domainCanSaveFormal);
 
@@ -749,7 +740,7 @@ test('现有完整页和首页纯函数仅作事实对照且共享模型表达�
     reviewMode: 'deep',
     surfaceCapabilities: HOME_QUICK_CAPABILITIES
   }), { aiAdapter: createFakeAiAdapter(() => validDeepOrder()) });
-  const homeMulti = buildHome(multi.result);
+  const homeMulti = buildHome(multi.result, state);
   assert.strictEqual(homeMulti.showContinueInput, true);
   assert.strictEqual(multi.confirmation.surface.requiresFullPage, true);
   assert.strictEqual(multi.confirmation.items.length, 2);
@@ -778,7 +769,7 @@ test('现有完整页和首页纯函数仅作事实对照且共享模型表达�
     missing_fields: ['customerName']
   }));
   const fullMissing = buildFull(state, missingCustomer, missingCustomer.intent, missingCustomer.fields);
-  const homeMissing = buildHome(missingCustomer);
+  const homeMissing = buildHome(missingCustomer, state);
   const missingConfirmation = directConfirmation(missingCustomer, { skipFinalSafety: true });
   assert.strictEqual(missingConfirmation.domain.domainCanSaveFormal, false);
   assert.strictEqual(fullMissing.disableFormalSave, true);
@@ -788,7 +779,7 @@ test('现有完整页和首页纯函数仅作事实对照且共享模型表达�
     aiAdapter: createNoAiAdapter()
   });
   const fullPending = buildFull(state, pending.result, pending.result.intent, pending.result.fields);
-  const homePending = buildHome(pending.result);
+  const homePending = buildHome(pending.result, state);
   assert.strictEqual(pending.confirmation.domain.domainCanSaveFormal, false);
   assert.strictEqual(fullPending.disableFormalSave, true);
   assert.strictEqual(homePending.disableQuickSave, true);
@@ -797,7 +788,7 @@ test('现有完整页和首页纯函数仅作事实对照且共享模型表达�
     aiAdapter: createFakeAiAdapter(() => { const error = new Error('failed'); error.code = 'AI_PROVIDER_FAILED'; throw error; })
   });
   const fullFailed = buildFull(state, failed.result, failed.result.intent, failed.result.fields);
-  const homeFailed = buildHome(failed.result);
+  const homeFailed = buildHome(failed.result, state);
   assert.strictEqual(failed.confirmation.domain.domainCanSaveFormal, false);
   assert.strictEqual(fullFailed.disableFormalSave, true);
   assert.strictEqual(homeFailed.disableQuickSave, true);

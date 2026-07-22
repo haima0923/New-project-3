@@ -205,6 +205,7 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
       confirmationId: '',
       revision: 0,
       contentHash: '',
+      preflightFingerprint: '',
       resultScope: input.resultScope || RESULT_SCOPES.NOT_AVAILABLE,
       surfaceType: '',
       canSaveFormal: false,

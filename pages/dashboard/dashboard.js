@@ -7,6 +7,7 @@ const { buildRecentRecords, buildTodayTasks } = require('../../utils/home-workbe
 const { requestOrderFilterReset, setNextOrderFilter, setNextRecordFilter } = require('../../utils/navigation-state');
 const { getRecordDetailUrl } = require('../../utils/record-detail');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
+const { evaluateRecordDomainPreflight, getTrustedRecordFlowContext } = require('../../utils/record-domain-preflight');
 const { getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
 const { getFieldLabel, isVisibleField } = require('../../utils/display');
@@ -116,12 +117,12 @@ function findQuickCustomer(state, fields = {}) {
     if (byId && (!fields.customerName || includesCustomerName(byId, fields.customerName))) return byId;
   }
   if (!fields.customerName) return null;
-  return customers.find((customer) => includesCustomerName(customer, fields.customerName)) || null;
+  const matches = customers.filter((customer) => includesCustomerName(customer, fields.customerName));
+  return matches.length === 1 ? matches[0] : null;
 }
 
-function hydrateQuickPaymentResult(parseResult) {
+function hydrateQuickPaymentResult(parseResult, state = getState()) {
   if (!parseResult || parseResult.intent !== 'payment') return parseResult;
-  const state = getState();
   const fields = Object.assign({}, parseResult.fields || {});
   if (!hasFieldValue(fields, 'paymentAmount') && hasFieldValue(fields, 'amount')) {
     fields.paymentAmount = fields.amount;
@@ -194,8 +195,8 @@ function getEditableFields(parseResult) {
     .concat(parseResult.low_confidence_fields || []));
 }
 
-function normalizeEditableParseResult(parseResult) {
-  parseResult = hydrateQuickPaymentResult(parseResult);
+function normalizeEditableParseResult(parseResult, state = getState()) {
+  parseResult = hydrateQuickPaymentResult(parseResult, state);
   let fields = parseResult.fields || {};
   if (parseResult.intent === 'dunning') {
     fields = Object.assign({}, fields, {
@@ -220,8 +221,8 @@ function normalizeEditableParseResult(parseResult) {
   }));
 }
 
-function buildConfirmFields(parseResult) {
-  const normalized = normalizeEditableParseResult(parseResult);
+function buildConfirmFields(parseResult, state = getState()) {
+  const normalized = normalizeEditableParseResult(parseResult, state);
   const fields = normalized.fields || {};
   const suggestions = normalized.field_suggestions || {};
   const missingMap = (normalized.missing_fields || []).reduce((map, field) => {
@@ -275,14 +276,6 @@ function getQuickSaveSafetyBlockText(parseResult = {}) {
   }
   if (safety.status === 'NO_RECORD') return '没有识别到可直接保存的业务记录。';
   return '';
-}
-
-function canQuickSave(parseResult) {
-  if (!parseResult || parseResult.intent === 'unknown') return false;
-  return !(parseResult.missing_fields || []).length
-    && !(parseResult.low_confidence_fields || []).length
-    && !(parseResult.field_conflicts || []).length
-    && !getQuickSaveSafetyBlockText(parseResult);
 }
 
 function getMetaText(item) {
@@ -339,23 +332,50 @@ function getFullInputConfirmationReason(parseResult = {}) {
   return '';
 }
 
-function buildHomeConfirmState(parseResult) {
-  const normalized = normalizeEditableParseResult(parseResult);
+function buildHomeConfirmState(parseResult, state = getState()) {
+  const normalized = normalizeEditableParseResult(parseResult, state);
   const fullInputReason = getFullInputConfirmationReason(normalized);
-  const needsFullInput = Boolean(fullInputReason);
-  const quickReady = canQuickSave(normalized) && !needsFullInput;
+  const flowContext = getTrustedRecordFlowContext(normalized);
+  const domainPreflight = evaluateRecordDomainPreflight({
+    mode: flowContext.mode || 'PRODUCTION_ROUTING',
+    resultScope: flowContext.resultScope || 'PRODUCTION_RESULT',
+    operation: normalized.operation,
+    businessType: normalized.intent,
+    finalResult: normalized,
+    originalText: normalized.original_text || '',
+    initialState: state,
+    aiOutcome: flowContext.aiOutcome || (normalized.ai_fallback || {}).status || 'not_requested',
+    providerKind: flowContext.providerKind || (normalized.ai_fallback || {}).provider_kind || 'NONE',
+    skipFinalSafety: true
+  });
+  const relationSelectionRequired = domainPreflight.blockingIssues.some((item) => (
+    ['SELECT_CUSTOMER', 'SELECT_ORDER', 'SELECT_QUOTATION', 'SELECT_RECEIVABLE', 'SELECT_TARGET']
+      .includes(item.requiredAction)
+  ));
+  const needsFullInput = Boolean(fullInputReason) || relationSelectionRequired;
+  const surfaceCanCompleteFormal = !needsFullInput;
+  const quickReady = domainPreflight.domainCanSaveFormal === true && surfaceCanCompleteFormal;
   const safetyBlockText = getQuickSaveSafetyBlockText(normalized);
   const fieldConflictLines = formatFieldConflicts(normalized.field_conflicts || []);
   const supersededFactLines = formatSupersededFacts(normalized.superseded_facts || []);
   const remarkItemLines = formatRemarkItems(normalized.remark_items || []);
   return {
     parseResult: normalized,
+    domainCanSaveFormal: domainPreflight.domainCanSaveFormal,
+    domainCanSavePending: domainPreflight.domainCanSavePending,
+    surfaceCanCompleteFormal,
+    effectiveCanSaveFormal: quickReady,
+    requiresFullPage: needsFullInput,
+    preflightFingerprint: domainPreflight.preflightFingerprint,
+    preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
     parseEvidence: buildParseEvidence(normalized),
     showParseEvidence: false,
-    confirmFields: buildConfirmFields(normalized),
+    confirmFields: buildConfirmFields(normalized, state),
     intentLabel: INTENT_LABELS[normalized.intent] || '待确认',
     sourceLabel: INPUT_SOURCE_LABELS[normalized.source] || '输入',
-    warningText: fullInputReason || buildWarningText(normalized),
+    warningText: fullInputReason
+      || (relationSelectionRequired ? '这笔需要选择正确的客户或关联记录，请打开完整记一笔确认。' : '')
+      || buildWarningText(normalized),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
     supersededFactLines,
@@ -364,7 +384,14 @@ function buildHomeConfirmState(parseResult) {
     showRemarkItems: Boolean(remarkItemLines.length),
     quickSaveText: quickReady ? '确认保存' : '补齐后保存',
     disableQuickSave: !quickReady,
-    showPendingButton: Boolean(needsFullInput || safetyBlockText || (normalized.missing_fields || []).length || (normalized.low_confidence_fields || []).length || fieldConflictLines.length),
+    showPendingButton: Boolean(domainPreflight.domainCanSavePending && (
+      !domainPreflight.domainCanSaveFormal
+      || needsFullInput
+      || safetyBlockText
+      || (normalized.missing_fields || []).length
+      || (normalized.low_confidence_fields || []).length
+      || fieldConflictLines.length
+    )),
     showContinueInput: needsFullInput,
     // 多商品、聊天记录等内容先进入完整确认页，避免首页确认卡堆叠过多操作。
     // 在完整页里仍可由用户主动选择“深度核对”。
@@ -894,14 +921,18 @@ Page({
 
   confirmQuickSave() {
     if (!this.data.parseResult) return;
-    const confirmState = buildHomeConfirmState(this.data.parseResult);
+    const state = getState();
+    const confirmState = buildHomeConfirmState(this.data.parseResult, state);
     if (confirmState.disableQuickSave) {
       this.setData(confirmState);
       wx.showToast({ title: confirmState.showFieldConflicts ? '先确认聊天里的冲突信息' : '先补齐卡片里的信息', icon: 'none' });
       return;
     }
-    const state = getState();
     const saved = saveConfirmedDraft(state, confirmState.parseResult);
+    if (saved.type === 'error') {
+      wx.showToast({ title: saved.error || '没有保存，请核对后重试', icon: 'none' });
+      return;
+    }
     saveState(state);
     wx.showToast({
       title: saved.type === 'pending' ? '已存待整理' : '已保存',

@@ -43,7 +43,7 @@ const {
   withAiStatus
 } = require('./ai-parser');
 const { applyFinalParseSafety } = require('./parse-safety');
-const { getUnresolvedAiReason, isFormalReady } = require('./business');
+const { getUnresolvedAiReason } = require('./business');
 const { normalizeBusinessText } = require('./text-normalize');
 const {
   getExistingHybridAiAdapterDescriptor,
@@ -57,6 +57,7 @@ const {
   buildRecordConfirmation,
   deriveConfirmationSummary
 } = require('./record-confirmation-builder');
+const { evaluateRecordDomainPreflight, isParseSafetyReady } = require('./record-domain-preflight');
 
 const trustedAdapterDescriptors = new WeakMap();
 
@@ -185,7 +186,9 @@ function buildSaveEligibility(result, options = {}) {
   if (result.intent === 'unknown') reasons.push('业务类型尚未确定。');
   const unresolvedAiReason = getUnresolvedAiReason(result);
   if (unresolvedAiReason) reasons.push(unresolvedAiReason);
-  const allowed = isFormalReady(result);
+  // Preliminary parser/AI readiness only. State-aware domain authority is
+  // evaluateRecordDomainPreflight(), applied later in this flow.
+  const allowed = isParseSafetyReady(result);
   if (!allowed && !reasons.length) reasons.push('未通过现有正式保存安全闸门。');
   const providerKind = normalizeProviderKind(options.providerKind || PROVIDER_KINDS.NONE);
   const aiRequested = options.aiRequested === true;
@@ -590,6 +593,28 @@ function buildModeSaveEligibility(result, mode, options = {}) {
       eligibility.blockedReasons || [],
       eligibility.allowed ? `${mode} 结果仅用于隔离测试，不能直接写入正式存储。` : []
     )))
+  });
+}
+
+function applyDomainPreflightToEligibility(eligibility, preflight) {
+  if (!preflight || preflight.schemaVersion !== 'record-domain-preflight-v1') return eligibility;
+  const allowed = eligibility.allowed === true && preflight.domainCanSaveFormal === true;
+  const blockedReasons = Array.from(new Set([].concat(
+    eligibility.blockedReasons || [],
+    allowed ? [] : (preflight.blockingIssues || []).map((item) => item.code)
+  ).filter(Boolean)));
+  const canCommitToMemory = allowed && eligibility.canCommitToMemory === true;
+  const canCommitToRealStorage = allowed && eligibility.canCommitToRealStorage === true;
+  return Object.assign({}, eligibility, {
+    allowed,
+    domainCanSaveFormal: preflight.domainCanSaveFormal === true,
+    canCommitToMemory,
+    canCommitToRealStorage,
+    commitScope: canCommitToRealStorage ? eligibility.commitScope : (canCommitToMemory ? 'MEMORY_ONLY' : 'BLOCKED'),
+    status: allowed ? FORMAL_SAVE_STATUSES.ALLOWED : FORMAL_SAVE_STATUSES.BLOCKED,
+    blockedReasons,
+    formalSaveBlocked: preflight.formalSaveBlocked === true,
+    preflightFingerprint: preflight.preflightFingerprint || ''
   });
 }
 
@@ -1004,7 +1029,8 @@ async function runRecordFlow(input = {}, dependencies = {}) {
           result = normalizeAiResult(prepared.localResult, rawResult, {
             businessDate: runtime.businessDate,
             businessTimezone: runtime.businessTimezone,
-            nowInstant: runtime.nowInstant
+            nowInstant: runtime.nowInstant,
+            providerKind: trace.ai.providerKind
           });
           if (trace.ai.providerKind === PROVIDER_KINDS.MOCK
             && ((result.ai_fallback || {}).status) !== 'mock_used') {
@@ -1092,12 +1118,46 @@ async function runRecordFlow(input = {}, dependencies = {}) {
   let finalResult = null;
   try {
     finalResult = applyFinalParseSafety(result || {}, { businessDate: runtime.businessDate });
-    finalResult = Object.assign({}, finalResult, { originalText });
+    const existingFallback = finalResult.ai_fallback || {};
+    finalResult = Object.assign({}, finalResult, {
+      originalText,
+      ai_fallback: Object.assign({}, existingFallback, {
+        // Attached after normalization from the trusted adapter registry.
+        // Model JSON therefore cannot promote itself to a REAL provider.
+        provider_kind: trace.ai.providerKind
+      }),
+      record_flow_context: {
+        schemaVersion: 'record-flow-context-v1',
+        mode,
+        resultScope,
+        productionRoute: trace.routing.productionRoute,
+        executionPath: trace.routing.executionPath,
+        aiOutcome: trace.ai.outcome,
+        aiRequested: trace.ai.requiredByExecutionMode === true,
+        providerKind: trace.ai.providerKind,
+        generatedBySharedCore: true
+      }
+    });
     result = finalResult;
-    const saveEligibility = buildModeSaveEligibility(finalResult, mode, {
+    const baseSaveEligibility = buildModeSaveEligibility(finalResult, mode, {
       providerKind: trace.ai.providerKind,
       aiRequested: trace.ai.requiredByExecutionMode
     });
+    const domainPreflight = evaluateRecordDomainPreflight({
+      mode,
+      resultScope,
+      operation: finalResult.operation,
+      businessType: finalResult.intent,
+      finalResult,
+      originalText,
+      initialState: input.initialState,
+      aiOutcome: trace.ai.outcome,
+      providerKind: trace.ai.providerKind,
+      skipFinalSafety: true
+    });
+    const saveEligibility = mode === FLOW_MODES.PRODUCTION_ROUTING
+      ? applyDomainPreflightToEligibility(baseSaveEligibility, domainPreflight)
+      : baseSaveEligibility;
     const confirmation = buildRecordConfirmation({
       mode,
       resultScope,
@@ -1108,6 +1168,9 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       aiResult: trace.ai.normalizedResult,
       finalSafety: finalResult.final_parse_safety,
       saveEligibility,
+      preflight: domainPreflight,
+      aiOutcome: trace.ai.outcome,
+      providerKind: trace.ai.providerKind,
       originalText,
       normalizedText,
       inputSource,
@@ -1143,6 +1206,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     trace.confirmation.contentHash = confirmation.contentHash;
     trace.confirmation.resultScope = confirmation.resultScope;
     trace.confirmation.surfaceType = confirmation.surface.surfaceType;
+    trace.confirmation.preflightFingerprint = confirmation.preflightFingerprint || '';
     trace.confirmation.surfaceCanCompleteFormal = confirmation.surface.surfaceCanCompleteFormal;
     trace.confirmation.effectiveCanSaveFormal = confirmation.surface.effectiveCanSaveFormal;
     trace.confirmation.effectiveCanCommitFormal = confirmation.surface.effectiveCanCommitFormal;

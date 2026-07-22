@@ -659,16 +659,16 @@ test('现有微信兼容adapter在离线环境保持SKIPPED事件，不触发pro
   assert.strictEqual(output.saveEligibility.allowed, false);
 });
 
-test('通用调用方不能注册REAL，固定REPLAY只能内存态', async () => {
+test('通用调用方不能注册REAL，生产模式REPLAY不能取得保存资格', async () => {
   const input = baseInput('王总要订5个水悲，五块五一个，明天交', { inputSource: 'voice' });
   assert.strictEqual(require('../utils/record-flow-core').createRegisteredAiAdapter, undefined);
   const replay = createReplayAiAdapter(async () => ({ rawResult: validFormallyReadyStandardResult }));
   const replayOutput = await runRecordFlow(input, { aiAdapter: replay });
-  assert.strictEqual(replayOutput.saveEligibility.domainCanSaveFormal, true);
+  assert.strictEqual(replayOutput.saveEligibility.domainCanSaveFormal, false);
   assert.strictEqual(replayOutput.saveEligibility.canCommitToRealStorage, false);
-  assert.strictEqual(replayOutput.saveEligibility.commitScope, 'MEMORY_ONLY');
+  assert.strictEqual(replayOutput.saveEligibility.commitScope, 'BLOCKED');
   assert.strictEqual(replayOutput.confirmationSummary.canCommitToRealStorage, false);
-  assert.strictEqual(replayOutput.confirmationSummary.commitScope, 'MEMORY_ONLY');
+  assert.strictEqual(replayOutput.confirmationSummary.commitScope, 'BLOCKED');
 });
 
 test('八类合成题的新旧入口关键结果等价', async () => {
@@ -714,7 +714,7 @@ test('起始HEAD冻结的十一类完整关键结果金样本保持不变', asyn
     { name: 'missing', input: baseInput('帮我记一笔订单'), hash: '8e6e1492d86691ee14c099fcbf25de418a2ddbf14499ff09b32f5f5e73cb83fd', allowed: false },
     { name: 'no_record', input: baseInput('这是一句普通闲聊'), hash: 'b14d380a8ed093ab38313663a894de5713414e3046b08b7bddc3e5ff96ce4cfe', allowed: false },
     { name: 'standard', input: baseInput('王总要订5个水悲，五块五一个，2026年8月1日交', { inputSource: 'voice' }), ai: validStandardResult, hash: '3a4fda5db9e18b31ed7910bf3cbbe732eae5059227f31a9d65560089f00820e5', allowed: false },
-    { name: 'deep', input: baseInput('王总水杯100个5块5一个，礼品盒200个3块一个，2026年8月1日交', { reviewMode: 'deep' }), ai: validDeepResult, hash: '8ab5b66e57982d64f0486c2ae2b0cf7c98bc1c21a420914e23aa4629e70293b5', allowed: true },
+    { name: 'deep', input: baseInput('王总水杯100个5块5一个，礼品盒200个3块一个，2026年8月1日交', { reviewMode: 'deep' }), ai: validDeepResult, hash: '8ab5b66e57982d64f0486c2ae2b0cf7c98bc1c21a420914e23aa4629e70293b5', allowed: false },
     { name: 'failure', input: baseInput('王总要订5个水悲，五块五一个，2026年8月1日交', { inputSource: 'voice' }), ai: timeout, hash: '6befc8f386e1911914e0dee430836a35cc3310128d7d8ba99fc45d785a94c550', allowed: false },
     { name: 'history', input: baseInput('还是上次的价格，王总礼品盒再做500个'), hash: 'def6151de27cc0d759c19f5183c18a9dc268a6f2e6d0483d576f592bffdbe099', allowed: false }
   ];

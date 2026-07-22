@@ -310,10 +310,6 @@ function getPaymentAmount(fields) {
   return fields.paymentAmount || fields.amount || '';
 }
 
-function getPaymentKind(fields = {}, fallback = 'receivable_payment') {
-  return fields.paymentKind || fields.kind || fallback;
-}
-
 function getOrderDepositAmount(state, orderId) {
   if (!orderId) return 0;
   const order = (state.orders || []).find((item) => item.id === orderId);
@@ -372,6 +368,12 @@ function getCustomerById(state, id) {
 }
 
 function customerNameMatches(customer, customerName) {
+  const sharedModule = getSharedDomainPreflightModule();
+  if (sharedModule && typeof sharedModule.customerNameMatches === 'function') {
+    return sharedModule.customerNameMatches(customer, customerName);
+  }
+  // Compatibility fallback for server-only tooling. Formal saves fail closed
+  // earlier when the shared domain preflight is unavailable.
   if (!customer || !customerName) return true;
   const currentName = String(customer.name || '');
   const nextName = String(customerName || '');
@@ -384,6 +386,11 @@ function customerNameMatches(customer, customerName) {
 }
 
 function findCustomerMatches(state, fields = {}) {
+  const sharedModule = getSharedDomainPreflightModule();
+  if (sharedModule && typeof sharedModule.findCustomerMatches === 'function') {
+    return sharedModule.findCustomerMatches(state, fields);
+  }
+  // Compatibility fallback for non-formal server utilities only.
   const customers = getActiveCustomers(state);
   const phoneFingerprint = simpleFingerprint(fields.phone);
   if (phoneFingerprint) {
@@ -633,19 +640,63 @@ function markDuplicateCustomerReviewed(state, customerId) {
   return customer;
 }
 
-function isFormalReady(parseResult) {
+function getSharedDomainPreflightModule() {
+  try {
+    return require('../../utils/record-domain-preflight');
+  } catch (error) {
+    return null;
+  }
+}
+
+function getSharedDomainPreflightEvaluator() {
+  const sharedModule = getSharedDomainPreflightModule();
+  return sharedModule && sharedModule.evaluateRecordDomainPreflight;
+}
+
+function getServerTrustedRecordFlowContext(result) {
+  const sharedModule = getSharedDomainPreflightModule();
+  if (!sharedModule || typeof sharedModule.getTrustedRecordFlowContext !== 'function') return {};
+  return sharedModule.getTrustedRecordFlowContext(result);
+}
+
+function getUnavailableDomainPreflight() {
+  return {
+    schemaVersion: 'record-domain-preflight-v1',
+    domainCanSaveFormal: false,
+    domainCanSavePending: true,
+    formalSaveBlocked: true,
+    blockingIssues: [{
+      code: 'DOMAIN_PREFLIGHT_UNAVAILABLE',
+      field: '',
+      riskLevel: 'ZERO_TOLERANCE',
+      sourceRule: 'SERVER_SHARED_PREFLIGHT_REQUIRED',
+      messageKey: 'RECORD_PREFLIGHT_DOMAIN_PREFLIGHT_UNAVAILABLE',
+      messageParams: {},
+      resolvableByUser: false,
+      requiredAction: 'REVIEW_SAFETY',
+      relatedRecordIds: []
+    }],
+    preflightFingerprint: 'rdp1_unavailable'
+  };
+}
+
+function isFormalReady(parseResult, initialState = {}) {
   const reviewed = applyFinalParseSafety(parseResult || {});
-  const missing = Array.isArray(reviewed.missing_fields) ? reviewed.missing_fields : [];
-  const low = Array.isArray(reviewed.low_confidence_fields) ? reviewed.low_confidence_fields : [];
-  const conflicts = Array.isArray(reviewed.field_conflicts) ? reviewed.field_conflicts : [];
-  return !missing.length
-    && !low.length
-    && !conflicts.length
-    && !hasUnresolvedAiResult(reviewed)
-    && !reviewed.formal_save_blocked
-    && !reviewed.mixed_business
-    && !reviewed.requires_existing_record
-    && reviewed.intent !== 'unknown';
+  const flowContext = getServerTrustedRecordFlowContext(reviewed);
+  const evaluateRecordDomainPreflight = getSharedDomainPreflightEvaluator();
+  if (!evaluateRecordDomainPreflight) return false;
+  return evaluateRecordDomainPreflight({
+    mode: flowContext.mode || 'PRODUCTION_ROUTING',
+    resultScope: flowContext.resultScope || 'PRODUCTION_RESULT',
+    operation: reviewed.operation,
+    businessType: reviewed.intent,
+    finalResult: reviewed,
+    originalText: getOriginalTextFromDraft(reviewed),
+    initialState,
+    aiOutcome: flowContext.aiOutcome || (reviewed.ai_fallback || {}).status || 'not_requested',
+    providerKind: flowContext.providerKind || (reviewed.ai_fallback || {}).provider_kind || 'NONE',
+    skipFinalSafety: true
+  }).domainCanSaveFormal;
 }
 
 function hasUnresolvedAiResult(parseResult = {}) {
@@ -672,10 +723,11 @@ function getUnresolvedAiReason(parseResult = {}) {
 }
 
 function savePendingNote(state, parseResult, reason = '信息不完整，需要稍后整理') {
+  const originalText = getOriginalTextFromDraft(parseResult);
   const note = {
     id: generateId('pending'),
     userId: 'local-user',
-    originalText: parseResult.original_text,
+    originalText,
     guessedIntent: parseResult.intent,
     guessedFields: parseResult.fields,
     missingFields: parseResult.missing_fields,
@@ -697,7 +749,7 @@ function appendParseLog(state, parseResult, action) {
     id: generateId('log'),
     userId: 'local-user',
     inputSource: parseResult.source,
-    originalText: parseResult.original_text,
+    originalText: getOriginalTextFromDraft(parseResult),
     parseResult,
     action,
     createdAt: new Date().toISOString()
@@ -827,6 +879,10 @@ function saveOrder(state, parseResult) {
     updatedAt: new Date().toISOString()
   };
   state.orders.unshift(order);
+  if (fields.quotationId) {
+    const quotation = (state.quotations || []).find((item) => item.id === fields.quotationId);
+    markQuotationConverted(quotation, order, order.createdAt);
+  }
   learnProductCatalogFromRecord(state, order, 'order', { skipEnsure: true });
   state.orderProgress.unshift({
     id: generateId('prog'),
@@ -981,7 +1037,9 @@ function saveReceivableWithPayment(state, parseResult) {
       orderId: fields.orderId || '',
       receivableId: receivable.id,
       amount: paymentAmount,
-      kind: getReceivableSourceFromDraft(parseResult) === 'legacy' ? 'legacy_payment' : getPaymentKind(fields, fields.orderId ? 'final_payment' : 'receivable_payment'),
+      kind: getReceivableSourceFromDraft(parseResult) === 'legacy'
+        ? 'legacy_payment'
+        : (fields.orderId ? 'final_payment' : 'receivable_payment'),
       originalText,
       remark: fields.remark || '由记一笔新建应收时记录'
     });
@@ -1053,7 +1111,7 @@ function savePayment(state, parseResult) {
     return payment;
   }
   const payment = recordPayment(state, activeReceivable.id, paymentAmount, {
-    kind: getPaymentKind(fields, activeReceivable.orderId ? 'final_payment' : 'receivable_payment'),
+    kind: activeReceivable.orderId ? 'final_payment' : 'receivable_payment',
     originalText,
     remark: fields.remark || ''
   });
@@ -1098,10 +1156,47 @@ function saveTodo(state, parseResult) {
 
 function saveConfirmedDraft(state, parseResult) {
   parseResult = applyFinalParseSafety(parseResult || {});
-  if (!isFormalReady(parseResult)) {
+  const flowContext = getServerTrustedRecordFlowContext(parseResult);
+  // The server business mirror is used by offline safety tests. Domain rules
+  // live in the platform-neutral root module so the mirror cannot drift.
+  const evaluateRecordDomainPreflight = getSharedDomainPreflightEvaluator();
+  const preflight = evaluateRecordDomainPreflight ? evaluateRecordDomainPreflight({
+    mode: flowContext.mode || 'PRODUCTION_ROUTING',
+    resultScope: flowContext.resultScope || 'PRODUCTION_RESULT',
+    operation: parseResult.operation,
+    businessType: parseResult.intent,
+    finalResult: parseResult,
+    originalText: getOriginalTextFromDraft(parseResult),
+    initialState: state,
+    aiOutcome: flowContext.aiOutcome || (parseResult.ai_fallback || {}).status || 'not_requested',
+    providerKind: flowContext.providerKind || (parseResult.ai_fallback || {}).provider_kind || 'NONE',
+    skipFinalSafety: true
+  }) : getUnavailableDomainPreflight();
+  if (!preflight.domainCanSaveFormal) {
+    const firstIssue = preflight.blockingIssues[0] || {};
+    const preflightReason = getUnresolvedAiReason(parseResult)
+      || (firstIssue.code === 'ORDER_TOTAL_UPDATE_WITH_FINANCIAL_LINKS'
+        ? '这笔订单已有定金、收款或待收，不能直接修改订单总额。其他内容仍可修改。'
+        : '')
+      || (firstIssue.messageParams && firstIssue.messageParams.reason)
+      || firstIssue.messageKey
+      || '信息不完整，需要稍后整理';
+    if (parseResult.edit_mode === 'direct_order') {
+      return {
+        type: 'error',
+        error: preflightReason,
+        field: firstIssue.field || '',
+        preflight
+      };
+    }
     appendParseLog(state, parseResult, 'save_pending');
-    return { type: 'pending', record: savePendingNote(state, parseResult, getUnresolvedAiReason(parseResult) || '信息不完整，需要稍后整理') };
+    return {
+      type: 'pending',
+      record: savePendingNote(state, parseResult, preflightReason),
+      preflight
+    };
   }
+  const saveResult = (() => {
   if (parseResult.operation === 'update_quotation') {
     const record = updateQuotationFromDraft(state, parseResult);
     if (record && !record.error) return { type: 'quotation', record };
@@ -1242,6 +1337,8 @@ function saveConfirmedDraft(state, parseResult) {
   }
   appendParseLog(state, parseResult, 'save_pending');
   return { type: 'pending', record: savePendingNote(state, parseResult) };
+  })();
+  return Object.assign({}, saveResult, { preflight });
 }
 
 function isQuotationConverted(quotation = {}) {

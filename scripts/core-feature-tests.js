@@ -536,7 +536,7 @@ function runRecordActionsAndOrderEditTests() {
   editDraft.fields.dueDate = addDays(today(), 4);
   editDraft.fields.remark = '红色改为20个';
   const edited = saveConfirmedDraft(state, editDraft);
-  assert(edited.type === 'order' && state.orders.length === 1, `active edit should update instead of creating a second order, got ${edited.type}`);
+  assert(edited.type === 'order' && state.orders.length === 1, `active edit should update instead of creating a second order, got ${edited.type}: ${JSON.stringify((edited.preflight || {}).blockingIssues || [])}`);
   assert(state.orders[0].items[1].quantity === '20', 'active edit should save changed specification quantity');
   assertNumber(state.orders[0].totalAmount, 1500, 'active edit total');
   assert(state.orders[0].requiredDeliveryDate === addDays(today(), 4), 'active edit should save changed delivery date');
@@ -1381,7 +1381,10 @@ function runCustomerIdentityTests() {
   assert(pending.type === 'pending', `duplicate names without selected customer should become pending, got ${pending.type}`);
   assert(duplicateState.orders.length === 0, 'duplicate names without selected customer should not save an order');
 
-  const selected = saveConfirmedDraft(duplicateState, buildOrderDraft({ customerId: 'cus_wang_b' }));
+  const selected = saveConfirmedDraft(duplicateState, buildOrderDraft({
+    customerId: 'cus_wang_b',
+    customerSelectionConfirmed: true
+  }));
   assert(selected.type === 'order', `selected duplicate customer should save order, got ${selected.type}`);
   assert(duplicateState.orders[0].customerId === 'cus_wang_b', `selected order should attach to cus_wang_b, got ${duplicateState.orders[0].customerId}`);
 
@@ -1459,11 +1462,11 @@ function runInputCustomerHistoryTests() {
     status: '待生产'
   });
   const draft = buildOrderDraft();
-  const blocked = buildConfirmationStateForTest(state, draft, draft.intent, draft.fields);
-  assert(blocked.showCustomerMatchBox, 'existing customer should show customer match box');
-  assert(blocked.customerHistoryTitle.includes('已有 1 笔订单'), `history title should mention existing order, got ${blocked.customerHistoryTitle}`);
-  assert(blocked.showCustomerHistoryConfirm, 'existing order should require explicit new-order confirmation');
-  assert(blocked.disableFormalSave, 'existing order should block formal save before confirmation');
+  const historyInfo = buildConfirmationStateForTest(state, draft, draft.intent, draft.fields);
+  assert(historyInfo.showCustomerMatchBox, 'existing customer should show customer match box');
+  assert(historyInfo.customerHistoryTitle.includes('已有 1 笔订单'), `history title should mention existing order, got ${historyInfo.customerHistoryTitle}`);
+  assert(!historyInfo.showCustomerHistoryConfirm, 'ordinary new order should not require a redundant history confirmation');
+  assert(!historyInfo.disableFormalSave, 'existing history alone must not block a clearly new order');
 
   const newCustomerBlocked = buildConfirmationStateForTest(state, draft, draft.intent, Object.assign({}, draft.fields, {
     forceNewCustomer: true

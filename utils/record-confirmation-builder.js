@@ -13,7 +13,7 @@ const {
   normalizeSurfaceCapabilities,
   resolveConfirmationOperation
 } = require('./record-confirmation-contract');
-const { resolveRecordConfirmationContext } = require('./record-confirmation-context');
+const { evaluateRecordDomainPreflight, getTrustedRecordFlowContext } = require('./record-domain-preflight');
 
 function safeClone(value) {
   if (value === undefined) return undefined;
@@ -169,67 +169,11 @@ function normalizeEvidence(result, semanticKey, legacyKey) {
   };
 }
 
-const zeroToleranceFields = new Set([
-  'customerName', 'customerId', 'quantity', 'totalAmount', 'receivableAmount',
-  'paymentAmount', 'depositAmount', 'remainingAmount', 'quotationId', 'orderId', 'receivableId'
-]);
-
-function getIssueRisk(field, issueType) {
-  if (issueType === 'conflict' && zeroToleranceFields.has(field)) return RISK_LEVELS.ZERO_TOLERANCE;
-  if (zeroToleranceFields.has(field)) return RISK_LEVELS.DANGEROUS;
-  if (issueType === 'missing' || issueType === 'conflict') return RISK_LEVELS.DANGEROUS;
-  return RISK_LEVELS.WARNING;
-}
-
-function buildIssue(code, field, riskLevel, messageKey, source, requiredAction, messageParams = {}) {
-  return {
-    code,
-    field: field || '',
-    riskLevel,
-    messageKey,
-    messageParams: safeClone(messageParams),
-    source,
-    resolvableByUser: ['EDIT_FIELDS', 'SELECT_CUSTOMER', 'SELECT_ORDER', 'SELECT_QUOTATION', 'SELECT_RECEIVABLE', 'CONFIRM_CUSTOMER_HISTORY', 'CHANGE_BUSINESS_TYPE'].includes(requiredAction),
-    requiredAction
-  };
-}
-
-function buildBlockingIssues(result, businessType, saveEligibility) {
-  const issues = [];
-  uniqueStrings(result.missing_fields || []).forEach((legacyField) => {
-    const field = mapLegacyFieldKey(legacyField, businessType, result.operation);
-    issues.push(buildIssue(
-      'MISSING_REQUIRED_FIELD', field, getIssueRisk(field, 'missing'),
-      'CONFIRMATION_MISSING_FIELD', 'FINAL_RESULT', 'EDIT_FIELDS', { legacyField }
-    ));
-  });
-  uniqueStrings(result.low_confidence_fields || []).forEach((legacyField) => {
-    const field = mapLegacyFieldKey(legacyField, businessType, result.operation);
-    issues.push(buildIssue(
-      'LOW_CONFIDENCE_FIELD', field, getIssueRisk(field, 'low'),
-      'CONFIRMATION_LOW_CONFIDENCE_FIELD', 'FINAL_RESULT', 'EDIT_FIELDS', { legacyField }
-    ));
-  });
-  (Array.isArray(result.field_conflicts) ? result.field_conflicts : []).forEach((conflict) => {
-    const legacyField = conflict && typeof conflict === 'object' ? conflict.field : '';
-    const field = mapLegacyFieldKey(legacyField, businessType, result.operation);
-    issues.push(buildIssue(
-      'FIELD_CONFLICT', field, getIssueRisk(field, 'conflict'),
-      'CONFIRMATION_FIELD_CONFLICT', 'FINAL_RESULT', 'EDIT_FIELDS', {
-        legacyField,
-        values: conflict && Array.isArray(conflict.values) ? safeClone(conflict.values) : []
-      }
-    ));
-  });
-  if (saveEligibility && saveEligibility.domainCanSaveFormal === false) {
-    uniqueStrings(saveEligibility.blockedReasons || []).forEach((reason, index) => {
-      issues.push(buildIssue(
-        `SAVE_ELIGIBILITY_BLOCKED_${index + 1}`, '', RISK_LEVELS.DANGEROUS,
-        'CONFIRMATION_SAVE_ELIGIBILITY_BLOCKED', 'SAVE_ELIGIBILITY', 'REVIEW_SAFETY', { rawReason: reason }
-      ));
-    });
-  }
-  return issues;
+function buildBlockingIssues(preflight, businessType, operation) {
+  return (preflight.blockingIssues || []).map((item) => Object.assign({}, safeClone(item), {
+    field: mapLegacyFieldKey(item.field || '', businessType, operation),
+    source: item.sourceRule || 'DOMAIN_PREFLIGHT'
+  }));
 }
 
 function candidateDisplayName(candidate, type) {
@@ -297,137 +241,6 @@ function buildCandidates(result, resultScope, candidateContext = {}, localResult
   return candidates;
 }
 
-function buildCandidateIssues(candidates) {
-  const definitions = [
-    ['customer', 'customerId', 'SELECT_CUSTOMER'],
-    ['order', 'orderId', 'SELECT_ORDER'],
-    ['quotation', 'quotationId', 'SELECT_QUOTATION'],
-    ['receivable', 'receivableId', 'SELECT_RECEIVABLE']
-  ];
-  return definitions.reduce((issues, [type, field, requiredAction]) => {
-    if (!candidates[`${type}SelectionRequired`]) return issues;
-    issues.push(buildIssue(
-      `CANDIDATE_SELECTION_REQUIRED_${type.toUpperCase()}`,
-      field,
-      RISK_LEVELS.DANGEROUS,
-      'CONFIRMATION_CANDIDATE_SELECTION_REQUIRED',
-      'CANDIDATES',
-      requiredAction,
-      { candidateType: type }
-    ));
-    return issues;
-  }, []);
-}
-
-function buildContextIssues(contextFacts) {
-  const issues = [];
-  if (contextFacts.customerHistoryConfirmationRequired) {
-    issues.push(buildIssue(
-      'CUSTOMER_HISTORY_CONFIRMATION_REQUIRED',
-      'customerId',
-      RISK_LEVELS.DANGEROUS,
-      'CONFIRMATION_CUSTOMER_HISTORY_CONFIRMATION_REQUIRED',
-      'BUSINESS_CONTEXT',
-      'CONFIRM_CUSTOMER_HISTORY',
-      {
-        historyKind: contextFacts.customerHistoryKind,
-        historyCount: contextFacts.customerHistoryCount
-      }
-    ));
-  }
-  if (contextFacts.newCustomerDiscriminatorRequired) {
-    issues.push(buildIssue(
-      'NEW_CUSTOMER_DISCRIMINATOR_REQUIRED',
-      'customerName',
-      RISK_LEVELS.DANGEROUS,
-      'CONFIRMATION_NEW_CUSTOMER_DISCRIMINATOR_REQUIRED',
-      'BUSINESS_CONTEXT',
-      'EDIT_FIELDS'
-    ));
-  }
-  if (contextFacts.customerLinkMismatch) {
-    issues.push(buildIssue(
-      'CUSTOMER_LINK_MISMATCH',
-      'customerId',
-      RISK_LEVELS.ZERO_TOLERANCE,
-      'CONFIRMATION_CUSTOMER_LINK_MISMATCH',
-      'BUSINESS_CONTEXT',
-      'SELECT_CUSTOMER'
-    ));
-  }
-  if (contextFacts.receivableLinkMismatch) {
-    issues.push(buildIssue(
-      'RECEIVABLE_LINK_MISMATCH',
-      'receivableId',
-      RISK_LEVELS.ZERO_TOLERANCE,
-      'CONFIRMATION_RECEIVABLE_LINK_MISMATCH',
-      'BUSINESS_CONTEXT',
-      'SELECT_RECEIVABLE'
-    ));
-  }
-  if (contextFacts.orderLinkMismatch) {
-    issues.push(buildIssue(
-      'ORDER_LINK_MISMATCH',
-      'orderId',
-      RISK_LEVELS.ZERO_TOLERANCE,
-      'CONFIRMATION_ORDER_LINK_MISMATCH',
-      'BUSINESS_CONTEXT',
-      'SELECT_ORDER'
-    ));
-  }
-  if (contextFacts.receivableOrderLinkMismatch) {
-    issues.push(buildIssue(
-      'RECEIVABLE_ORDER_LINK_MISMATCH',
-      'receivableId',
-      RISK_LEVELS.ZERO_TOLERANCE,
-      'CONFIRMATION_RECEIVABLE_ORDER_LINK_MISMATCH',
-      'BUSINESS_CONTEXT',
-      'SELECT_RECEIVABLE'
-    ));
-  }
-  if (contextFacts.receivablePaymentError) {
-    issues.push(buildIssue(
-      'RECEIVABLE_PAYMENT_INVALID',
-      'paymentAmount',
-      RISK_LEVELS.ZERO_TOLERANCE,
-      'CONFIRMATION_RECEIVABLE_PAYMENT_INVALID',
-      'BUSINESS_CONTEXT',
-      'EDIT_FIELDS',
-      { rawReason: contextFacts.receivablePaymentError }
-    ));
-  }
-  if (contextFacts.orderDepositAmountError) {
-    issues.push(buildIssue(
-      'ORDER_DEPOSIT_AMOUNT_INVALID',
-      'depositAmount',
-      RISK_LEVELS.ZERO_TOLERANCE,
-      'CONFIRMATION_ORDER_DEPOSIT_AMOUNT_INVALID',
-      'BUSINESS_CONTEXT',
-      'EDIT_FIELDS',
-      { rawReason: contextFacts.orderDepositAmountError }
-    ));
-  }
-  return issues;
-}
-
-function mergeCandidateContexts(derived = {}, explicit = {}) {
-  const merged = {};
-  ['customer', 'order', 'quotation', 'receivable'].forEach((type) => {
-    const field = `${type}Candidates`;
-    const resolvedField = `${field}Resolved`;
-    // Facts derived from the supplied business state are authoritative and may
-    // not be erased by a looser caller projection.
-    if (Array.isArray(derived[field])) {
-      merged[field] = derived[field];
-      merged[resolvedField] = derived[resolvedField] === true;
-    } else if (Array.isArray(explicit[field])) {
-      merged[field] = explicit[field];
-      merged[resolvedField] = explicit[resolvedField] === true;
-    }
-  });
-  return merged;
-}
-
 function getCandidateSelectionCapabilities(candidates) {
   const required = [];
   if (candidates.customerSelectionRequired) required.push(SURFACE_CAPABILITY_NAMES.SELECT_CUSTOMER);
@@ -437,7 +250,7 @@ function getCandidateSelectionCapabilities(candidates) {
   return required;
 }
 
-function getRequiredSurfaceCapabilities(result, items, candidates, contextFacts, needsDeepReview, originalText) {
+function getRequiredSurfaceCapabilities(result, items, candidates, preflight, needsDeepReview, originalText) {
   const required = [];
   if (originalText) required.push(SURFACE_CAPABILITY_NAMES.SHOW_ORIGINAL_TEXT);
   if ((result.missing_fields || []).length || (result.low_confidence_fields || []).length || (result.field_conflicts || []).length) {
@@ -454,14 +267,12 @@ function getRequiredSurfaceCapabilities(result, items, candidates, contextFacts,
     || result.suggested_operation === 'create_receivable_with_payment') {
     required.push(SURFACE_CAPABILITY_NAMES.HANDLE_COMPLEX_CONFIRMATION);
   }
-  if (contextFacts.customerHistoryConfirmationRequired) {
-    required.push(SURFACE_CAPABILITY_NAMES.HANDLE_COMPLEX_CONFIRMATION);
-  }
-  if (contextFacts.customerLinkMismatch) required.push(SURFACE_CAPABILITY_NAMES.SELECT_CUSTOMER);
-  if (contextFacts.receivableLinkMismatch || contextFacts.receivableOrderLinkMismatch) {
-    required.push(SURFACE_CAPABILITY_NAMES.SELECT_RECEIVABLE);
-  }
-  if (contextFacts.orderLinkMismatch) required.push(SURFACE_CAPABILITY_NAMES.SELECT_ORDER);
+  (preflight.blockingIssues || []).forEach((item) => {
+    if (item.requiredAction === 'SELECT_CUSTOMER') required.push(SURFACE_CAPABILITY_NAMES.SELECT_CUSTOMER);
+    if (item.requiredAction === 'SELECT_ORDER') required.push(SURFACE_CAPABILITY_NAMES.SELECT_ORDER);
+    if (item.requiredAction === 'SELECT_QUOTATION') required.push(SURFACE_CAPABILITY_NAMES.SELECT_QUOTATION);
+    if (item.requiredAction === 'SELECT_RECEIVABLE') required.push(SURFACE_CAPABILITY_NAMES.SELECT_RECEIVABLE);
+  });
   required.push(...getCandidateSelectionCapabilities(candidates));
   if (result.requires_existing_record) {
     if (result.operation === 'update_order') required.push(SURFACE_CAPABILITY_NAMES.SELECT_ORDER);
@@ -624,7 +435,7 @@ function buildActions(confirmationState) {
     domain,
     surface,
     candidates,
-    contextFacts,
+    preflight,
     hasResult,
     hasFields,
     canCommitToRealStorage
@@ -660,10 +471,9 @@ function buildActions(confirmationState) {
     action(ACTION_TYPES.SELECT_RECEIVABLE, candidates.receivableCandidates.length > 0,
       surface.capabilities.canSelectReceivable, ['SELECT_RECEIVABLE_UNAVAILABLE']),
     action(ACTION_TYPES.CONFIRM_CUSTOMER_HISTORY,
-      contextFacts.customerHistoryConfirmationRequired,
-      contextFacts.customerHistoryConfirmationRequired
-        && surface.capabilities.canHandleComplexConfirmation,
-      ['CONFIRM_CUSTOMER_HISTORY_UNAVAILABLE']),
+      (preflight.requiredSelections || []).includes('customerHistory'),
+      false,
+      ['NOT_REQUIRED_BY_CURRENT_DOMAIN_PREFLIGHT']),
     action(ACTION_TYPES.CHANGE_BUSINESS_TYPE, hasResult,
       surface.capabilities.canChangeBusinessType, ['CHANGE_BUSINESS_TYPE_UNAVAILABLE']),
     action(ACTION_TYPES.CANCEL, true, true, [], false)
@@ -729,18 +539,7 @@ function buildContentFingerprintPayload(input) {
       };
       return state;
     }, {}),
-    businessContextConfirmation: {
-      customerHistoryConfirmationRequired: input.candidates.customerHistoryConfirmationRequired === true,
-      customerHistoryCount: input.candidates.customerHistoryCount || 0,
-      customerHistoryKind: input.candidates.customerHistoryKind || '',
-      newCustomerDiscriminatorRequired: input.candidates.newCustomerDiscriminatorRequired === true,
-      customerLinkMismatch: input.contextFacts.customerLinkMismatch === true,
-      receivableLinkMismatch: input.contextFacts.receivableLinkMismatch === true,
-      orderLinkMismatch: input.contextFacts.orderLinkMismatch === true,
-      receivableOrderLinkMismatch: input.contextFacts.receivableOrderLinkMismatch === true,
-      receivablePaymentError: input.contextFacts.receivablePaymentError || '',
-      orderDepositAmountError: input.contextFacts.orderDepositAmountError || ''
-    },
+    preflightFingerprint: input.preflight.preflightFingerprint,
     domainCanSaveFormal: input.domainCanSaveFormal,
     canCommitToRealStorage: input.canCommitToRealStorage
   };
@@ -755,7 +554,8 @@ function buildSourceReferences(input) {
     traceId: String(reference.traceId || ''),
     caseId: String(reference.caseId || ''),
     finalSafetyAvailable: Boolean(input.finalSafety),
-    candidateContextProvided: Boolean(input.candidateContext)
+    candidateContextProvided: Boolean(input.candidateContext),
+    preflightFingerprint: String((input.preflight && input.preflight.preflightFingerprint) || '')
   };
 }
 
@@ -763,20 +563,23 @@ function buildRecordConfirmation(input = {}) {
   const result = input.finalResult && typeof input.finalResult === 'object'
     ? safeClone(input.finalResult)
     : null;
+  const flowContext = getTrustedRecordFlowContext(result || {});
+  const mode = input.mode || flowContext.mode || '';
+  const resultScope = input.resultScope || flowContext.resultScope || '';
   const originalText = typeof input.originalText === 'string'
     ? input.originalText
     : (result && (result.originalText || result.original_text)) || '';
   const capabilities = normalizeSurfaceCapabilities(input.surfaceCapabilities);
   if (!result) {
-    const emptyHash = stableContentHash({ mode: input.mode || '', resultScope: input.resultScope || '', originalText });
+    const emptyHash = stableContentHash({ mode, resultScope, originalText });
     return {
       schemaVersion: CONFIRMATION_SCHEMA_VERSION,
       confirmationId: input.confirmationId || `confirmation_${emptyHash}`,
       revision: 1,
       contentHash: emptyHash,
       status: CONFIRMATION_STATUSES.NO_RESULT,
-      mode: input.mode || '',
-      resultScope: input.resultScope || '',
+      mode,
+      resultScope,
       businessType: 'pending',
       operation: 'pending',
       todoType: '',
@@ -794,6 +597,8 @@ function buildRecordConfirmation(input = {}) {
       missingFields: [],
       lowConfidenceFields: [],
       fieldConflicts: [],
+      preflightFingerprint: '',
+      preflight: null,
       warnings: [],
       blockingIssues: [],
       candidates: {
@@ -843,63 +648,40 @@ function buildRecordConfirmation(input = {}) {
   semanticValues.originalText = originalText;
   const itemsState = buildItems(result, businessType);
   const saveEligibility = input.saveEligibility || {};
-  const domainCanSavePending = Boolean(originalText);
-  const contextFacts = resolveRecordConfirmationContext({
-    result,
+  // Always bind preflight to the current result/state. A caller-supplied object
+  // is not a trust token and must not be able to bypass final parse safety.
+  const preflight = evaluateRecordDomainPreflight({
+    mode,
+    resultScope,
     operation,
+    businessType,
+    finalResult: result,
+    originalText,
     initialState: input.initialState,
-    resultScope: input.resultScope || ''
+    aiOutcome: input.aiOutcome,
+    providerKind: input.providerKind,
+    userConfirmedFields: input.userConfirmedFields,
+    userConfirmedRelations: input.userConfirmedRelations
   });
-  const candidateContext = mergeCandidateContexts(
-    contextFacts.candidateContext,
-    input.candidateContext || {}
-  );
+  const domainCanSavePending = preflight.domainCanSavePending === true;
   const candidates = buildCandidates(
     result,
-    input.resultScope || '',
-    candidateContext,
+    resultScope,
+    preflight.candidates || {},
     input.localResult || null
   );
-  candidates.customerHistoryConfirmationRequired = contextFacts.customerHistoryConfirmationRequired;
-  candidates.customerHistoryCount = contextFacts.customerHistoryCount;
-  candidates.customerHistoryKind = contextFacts.customerHistoryKind;
-  candidates.newCustomerDiscriminatorRequired = contextFacts.newCustomerDiscriminatorRequired;
-  candidates.customerLinkMismatch = contextFacts.customerLinkMismatch;
-  candidates.receivableLinkMismatch = contextFacts.receivableLinkMismatch;
-  candidates.orderLinkMismatch = contextFacts.orderLinkMismatch;
-  candidates.receivableOrderLinkMismatch = contextFacts.receivableOrderLinkMismatch;
-  const blockingIssues = buildBlockingIssues(result, businessType, saveEligibility)
-    .concat(buildCandidateIssues(candidates))
-    .concat(buildContextIssues(contextFacts));
-  const candidateSelectionRequired = [
-    candidates.customerSelectionRequired,
-    candidates.orderSelectionRequired,
-    candidates.quotationSelectionRequired,
-    candidates.receivableSelectionRequired
-  ].some(Boolean);
-  const businessContextConfirmationRequired = contextFacts.customerHistoryConfirmationRequired
-    || contextFacts.newCustomerDiscriminatorRequired
-    || contextFacts.customerLinkMismatch
-    || contextFacts.receivableLinkMismatch
-    || contextFacts.orderLinkMismatch
-    || contextFacts.receivableOrderLinkMismatch
-    || Boolean(contextFacts.receivablePaymentError)
-    || Boolean(contextFacts.orderDepositAmountError);
-  // The existing final save gate remains authoritative for parse/AI risk. An
-  // explicit unresolved candidate ambiguity can only tighten that decision.
-  const domainCanSaveFormal = saveEligibility.domainCanSaveFormal === true
-    && !candidateSelectionRequired
-    && !businessContextConfirmationRequired;
+  const blockingIssues = buildBlockingIssues(preflight, businessType, operation);
+  const domainCanSaveFormal = preflight.domainCanSaveFormal === true;
   const canCommitToMemory = saveEligibility.canCommitToMemory === true
     && domainCanSaveFormal;
-  const canCommitToRealStorage = input.mode === 'PRODUCTION_ROUTING'
+  const canCommitToRealStorage = mode === 'PRODUCTION_ROUTING'
     && saveEligibility.canCommitToRealStorage === true
     && domainCanSaveFormal;
-  const needsDeepReview = input.mode === 'AI_ONLY'
+  const needsDeepReview = mode === 'AI_ONLY'
     ? false
     : Boolean(input.deepReviewAvailable || (result.parse_route || {}).deep_review_available);
   const requiredSurfaceCapabilities = getRequiredSurfaceCapabilities(
-    result, itemsState.items, candidates, contextFacts, needsDeepReview, originalText
+    result, itemsState.items, candidates, preflight, needsDeepReview, originalText
   );
   const missingCapabilities = requiredSurfaceCapabilities
     .filter((capability) => !hasSurfaceCapability(capabilities, capability));
@@ -911,7 +693,7 @@ function buildRecordConfirmation(input = {}) {
     && capabilities.surfaceType !== SURFACE_TYPES.HEADLESS_TEST
     && missingCapabilities.length > 0;
   const warnings = buildWarnings(
-    result, saveEligibility, input.mode || '', input.productionRoute || '', missingCapabilities
+    result, saveEligibility, mode, input.productionRoute || '', missingCapabilities
   );
   const fields = buildFieldModels(result, businessType, policy, semanticValues, blockingIssues, capabilities);
   const domainBlockingReasons = domainCanSaveFormal
@@ -946,20 +728,20 @@ function buildRecordConfirmation(input = {}) {
     effectiveCanSaveFormal: domainCanSaveFormal && surfaceCanCompleteFormal,
     effectiveCanCommitFormal: domainCanSaveFormal && surfaceCanCompleteFormal && canCommitToRealStorage,
     effectiveCanSavePending: domainCanSavePending && surfaceCanCompletePending,
-    effectiveCanCommitPending: input.mode === 'PRODUCTION_ROUTING'
+    effectiveCanCommitPending: mode === 'PRODUCTION_ROUTING'
       && domainCanSavePending && surfaceCanCompletePending
   };
   const contentHash = stableContentHash(buildContentFingerprintPayload({
     result,
-    mode: input.mode || '',
-    resultScope: input.resultScope || '',
+    mode,
+    resultScope,
     businessType,
     operation,
     originalText,
     semanticValues,
     items: itemsState.items,
     candidates,
-    contextFacts,
+    preflight,
     domainCanSaveFormal,
     canCommitToRealStorage
   }));
@@ -988,8 +770,8 @@ function buildRecordConfirmation(input = {}) {
     status: domainCanSaveFormal
       ? CONFIRMATION_STATUSES.READY_FORMAL
       : (domainCanSavePending ? CONFIRMATION_STATUSES.PENDING_ONLY : CONFIRMATION_STATUSES.BLOCKED),
-    mode: input.mode || '',
-    resultScope: input.resultScope || '',
+    mode,
+    resultScope,
     productionRoute: input.productionRoute || '',
     executionPath: input.executionPath || '',
     businessType,
@@ -1011,19 +793,21 @@ function buildRecordConfirmation(input = {}) {
     missingFields: uniqueStrings(result.missing_fields || []).map((field) => mapLegacyFieldKey(field, businessType, result.operation)),
     lowConfidenceFields: uniqueStrings(result.low_confidence_fields || []).map((field) => mapLegacyFieldKey(field, businessType, result.operation)),
     fieldConflicts: safeClone(result.field_conflicts || []),
+    preflightFingerprint: preflight.preflightFingerprint,
+    preflight: safeClone(preflight),
     warnings,
     blockingIssues,
     candidates,
     domain,
     surface,
     actions: [],
-    sourceReferences: buildSourceReferences(input)
+    sourceReferences: buildSourceReferences(Object.assign({}, input, { preflight }))
   };
   confirmation.actions = buildActions({
     domain,
     surface,
     candidates,
-    contextFacts,
+    preflight,
     hasResult: true,
     hasFields: fields.length > 0,
     canCommitToRealStorage
