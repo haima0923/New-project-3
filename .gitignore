@@ -3,9 +3,37 @@ node_modules/
 miniprogram_npm/
 dist/
 temp/
-reports/promptfoo-query/
-reports/promptfoo-record/
+reports/
+output/
+coverage/
+.cache/
+.nyc_output/
 *.log
 *.tmp
-server/.env
+
+# Local environment and authentication state
+.env
+.env.*
+!.env.example
+!server/.env.example
+auth-state*.json
+storage-state*.json
+cookies*.json
+
+# Editor and local workspace files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
 project.private.config.json
+
+# Generated local evaluation exports
+微信本地规则*测试报告*.html
+微信本地规则*测试报告*.md
+微信本地规则*测试报告*.txt
+design-qa.md
+
+# Stray declarations from an incomplete external automator copy
+/Launcher.d.ts
+/index.d.ts
