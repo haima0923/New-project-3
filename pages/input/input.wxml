@@ -1,13 +1,13 @@
-<view class="page">
+<view class="page input-page">
   <view class="page-title">记一笔</view>
-  <view class="page-subtitle">支持说一句、打一段、粘贴微信聊天；识别后必须由你确认。</view>
+  <view class="page-subtitle">说一句、打一段或粘贴聊天；我先整理好，你确认后再保存。</view>
 
-  <view class="card">
-    <view class="segmented">
-      <view class="{{typedClass}}" data-source="typed" bindtap="setSource">手动输入</view>
-      <view class="{{pasteClass}}" data-source="paste" bindtap="setSource">粘贴聊天</view>
-      <view class="{{voiceClass}}" data-source="voice" bindtap="setSource">语音</view>
-    </view>
+  <view class="card input-entry-card">
+      <view class="segmented">
+        <view class="{{typedClass}}" data-source="typed" bindtap="setSource">手动输入</view>
+        <view class="{{pasteClass}}" data-source="paste" bindtap="setSource">粘贴聊天</view>
+        <view class="{{voiceClass}}" data-source="voice" bindtap="setSource">语音</view>
+      </view>
 
     <view wx:if="{{showPaste}}" class="button-row">
       <button class="secondary-button" bindtap="pasteClipboard">读取剪贴板</button>
@@ -17,9 +17,10 @@
 
     <view wx:if="{{showVoice}}" class="voice-box">
       <button
-        class="{{voiceButtonClass}}"
+        class="{{voiceButtonClass}} voice-button"
         bindtouchstart="startVoice"
         bindtouchend="stopVoice"
+        bindtouchcancel="cancelVoice"
       >
         {{voiceButtonText}}
       </button>
@@ -30,7 +31,7 @@
       class="textarea"
       value="{{text}}"
       maxlength="-1"
-      placeholder="例如：给王总报1000个卡通水杯，5块5一个，月底交。也可以直接粘贴微信聊天。"
+      placeholder="例如：给王总报 1000 个水杯，5 块 5 一个，月底交。也可以直接粘贴聊天。"
       bindinput="onTextInput"
     />
     <button class="primary-button parse-button" loading="{{parsing}}" disabled="{{parsing}}" bindtap="runParse">
@@ -38,36 +39,63 @@
     </button>
   </view>
 
+  <view wx:if="{{showParseProgress}}" class="parse-progress-card">
+    <view class="parse-progress-orbit"><view class="parse-progress-dot"></view></view>
+    <view class="parse-progress-copy">
+      <view class="parse-progress-title">{{parseProgressTitle}}</view>
+      <view class="parse-progress-detail">{{parseProgressDetail}}</view>
+    </view>
+  </view>
+
   <view wx:if="{{parseResult}}" class="input-confirm-modal">
     <view class="card input-confirm-card">
-    <view class="row-between">
-      <view class="card-title">确认卡片</view>
-      <view class="pill">{{sourceLabel}}</view>
+    <view class="input-confirm-header">
+      <view class="input-confirm-heading">
+        <view class="card-title">请确认，再保存</view>
+      </view>
+    <view class="input-confirm-header-actions">
+        <view class="pill">{{sourceLabel}}</view>
+        <button class="input-confirm-close-button" bindtap="closeConfirmCard" aria-label="关闭确认卡">×</button>
+      </view>
     </view>
+    <scroll-view scroll-y="true" class="input-confirm-body">
     <view class="muted">{{parseResult.confirm_message}}</view>
     <view wx:if="{{parseAssistText}}" class="assist-box">{{parseAssistText}}</view>
     <view wx:if="{{parseResult.original_text && !parseResult.raw_text && !parseResult.extracted_text && !showGenericDraft}}" class="draft-box">
-      <view class="label">原始内容</view>
+      <view class="label">你刚才说的是</view>
       <view class="note-text">{{parseResult.original_text}}</view>
     </view>
+    <view wx:if="{{parseEvidence}}" class="parse-evidence-card">
+      <view class="parse-evidence-title">本次整理说明</view>
+      <view class="parse-evidence-line">{{parseEvidence.routeLabel}} · <text class="parse-evidence-status parse-evidence-status-{{parseEvidence.aiTone}}">{{parseEvidence.aiStatusText}}</text> · {{parseEvidence.totalDurationText}}</view>
+      <view class="parse-evidence-toggle" bindtap="toggleParseEvidence">{{showParseEvidence ? '收起整理说明' : '查看整理说明'}}</view>
+      <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">{{parseEvidence.sourceTextLabel}}：</text>{{parseEvidence.sourceText}}</view>
+      <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">为什么这样处理：</text>{{parseEvidence.routeReasons}}</view>
+      <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">本地先整理成：</text>{{parseEvidence.localSummary}}</view>
+      <view wx:if="{{showParseEvidence && parseEvidence.aiSummary}}" class="parse-evidence-detail"><text class="parse-evidence-label">AI 回答：</text>{{parseEvidence.aiSummary}}</view>
+      <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">等待时间：</text>本地 {{parseEvidence.localDurationText}}；联网整理 {{parseEvidence.aiDurationText}}；总共 {{parseEvidence.totalDurationText}}{{parseEvidence.networkWaitLimitText ? '；最多等 ' + parseEvidence.networkWaitLimitText : ''}}</view>
+      <view wx:if="{{showParseEvidence && parseEvidence.aiRequestId}}" class="parse-evidence-detail"><text class="parse-evidence-label">本次核对编号：</text>{{parseEvidence.aiRequestId}}{{parseEvidence.aiModelTier ? '；方式：' + parseEvidence.aiModelTier : ''}}{{parseEvidence.aiServerElapsedText ? '；服务端：' + parseEvidence.aiServerElapsedText : ''}}</view>
+      <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail">{{parseEvidence.aiDetail}}</view>
+      <view wx:if="{{showParseEvidence}}" class="parse-evidence-check">核对提醒：{{parseEvidence.checkText}}</view>
+    </view>
     <view wx:if="{{showLocalParseSafety}}" class="warning-box">
-      <view class="card-title">解析安全判断</view>
+      <view class="card-title">这几项请核对</view>
       <view wx:for="{{localParseSafetyLines}}" wx:key="*this" class="warning-line">{{item}}</view>
     </view>
     <view wx:if="{{parseResult.extracted_text}}" class="draft-box">
-      <view class="label">提取内容</view>
+      <view class="label">整理出的业务内容</view>
       <view class="note-text paste-original-text">{{parseResult.extracted_text}}</view>
     </view>
     <view wx:if="{{parseResult.raw_text}}" class="draft-box">
-      <view class="label">原始聊天</view>
+      <view class="label">原始聊天内容</view>
       <view class="note-text paste-original-text">{{parseResult.raw_text}}</view>
     </view>
     <view wx:if="{{showHistoryWarning}}" class="warning-box">
-      <view class="card-title">历史信息提醒</view>
+      <view class="card-title">和之前记录有关</view>
       <view class="warning-line">{{historyWarningText}}</view>
     </view>
     <view wx:if="{{showFieldConflicts}}" class="warning-box">
-      <view class="card-title">需要确认的冲突</view>
+      <view class="card-title">聊天里有两种说法</view>
       <view wx:for="{{fieldConflictLines}}" wx:key="*this" class="warning-line">{{item}}</view>
     </view>
     <view wx:if="{{showSupersededFacts}}" class="draft-box conversation-box">
@@ -79,7 +107,7 @@
       <view wx:for="{{remarkItemLines}}" wx:key="*this" class="draft-line">{{item}}</view>
     </view>
     <view wx:if="{{showHistoryDefaultWarning}}" class="history-default-box">
-      <view class="card-title">已按历史默认填入</view>
+      <view class="card-title">我先按上次记录填了</view>
       <view class="history-default-line">{{historyDefaultWarningText}}</view>
     </view>
     <view class="operation-box">
@@ -95,9 +123,9 @@
     </view>
 
     <view wx:if="{{showGenericDraft && !parseResult.raw_text}}" class="draft-box">
-      <view class="label">原始内容</view>
+      <view class="label">你刚才说的是</view>
       <view class="note-text">{{parseResult.original_text}}</view>
-      <view wx:if="{{guessedSummary.length}}" class="field-tip">AI 猜测字段</view>
+      <view wx:if="{{guessedSummary.length}}" class="field-tip">暂时整理出的信息</view>
       <view wx:for="{{guessedSummary}}" wx:key="*this" class="draft-line">{{item}}</view>
     </view>
 
@@ -144,18 +172,35 @@
       </view>
       <view wx:if="{{customerMatchWarningText}}" class="payment-warning">{{customerMatchWarningText}}</view>
     </view>
+    <view wx:if="{{showProductSuggestion}}" class="confirm-warning" data-value="{{productSuggestionValue}}" bindtap="applyProductSuggestion">{{productSuggestionText}} 点这里采用建议</view>
     <view wx:if="{{showItemList}}" class="item-list-field">
       <view class="label">商品明细</view>
       <view wx:for="{{confirmItems}}" wx:for-item="item" wx:for-index="itemIndex" wx:key="itemKey" class="confirm-item-card">
-        <view class="confirm-item-head">{{item.indexLabel}}</view>
+        <view class="confirm-item-head">
+          <text>{{item.indexLabel}}</text>
+          <text wx:if="{{item.canRemove}}" class="confirm-item-remove" data-index="{{itemIndex}}" bindtap="removeConfirmItem">删除此项</text>
+        </view>
         <view class="field item-field">
           <text class="label">商品</text>
           <input class="input" value="{{item.productName}}" data-index="{{itemIndex}}" data-field="productName" bindinput="updateItemField" placeholder="例如：保温杯" />
+          <view wx:if="{{item.showProductCatalogSuggestions}}" class="catalog-suggestion-box">
+            <view class="catalog-suggestion-label">商品库里的常用商品</view>
+            <view class="catalog-chip-row">
+              <text wx:for="{{item.productSuggestions}}" wx:for-item="suggestion" wx:key="*this" class="catalog-chip" data-index="{{itemIndex}}" data-value="{{suggestion}}" bindtap="applyCatalogProduct">{{suggestion}}</text>
+            </view>
+          </view>
         </view>
-        <view wx:if="{{item.spec}}" class="field item-field">
+        <view class="field item-field">
           <text class="label">规格</text>
-          <input class="input" value="{{item.spec}}" data-index="{{itemIndex}}" data-field="spec" bindinput="updateItemField" />
+          <input class="input" value="{{item.spec}}" data-index="{{itemIndex}}" data-field="spec" bindinput="updateItemField" placeholder="例如：紫色、红色、大号" />
+          <view wx:if="{{item.showSpecCatalogSuggestions}}" class="catalog-suggestion-box">
+            <view class="catalog-suggestion-label">这个商品的常用规格</view>
+            <view class="catalog-chip-row">
+              <text wx:for="{{item.specSuggestions}}" wx:for-item="suggestion" wx:key="*this" class="catalog-chip" data-index="{{itemIndex}}" data-value="{{suggestion}}" bindtap="applyCatalogSpec">{{suggestion}}</text>
+            </view>
+          </view>
         </view>
+        <view class="catalog-check-hint {{item.catalogHintClass}}">{{item.catalogHint}}</view>
         <view class="grid-2">
           <view class="field item-field">
             <text class="label">数量</text>
@@ -172,13 +217,18 @@
             <input class="input" value="{{item.unitPrice}}" data-index="{{itemIndex}}" data-field="unitPrice" bindinput="updateItemField" type="digit" />
           </view>
           <view class="field item-field">
-            <text class="label">金额</text>
-            <input class="input" value="{{item.totalAmount}}" data-index="{{itemIndex}}" data-field="totalAmount" bindinput="updateItemField" type="digit" />
+            <text class="label">计价单位</text>
+            <input class="input" value="{{item.priceUnit}}" data-index="{{itemIndex}}" data-field="priceUnit" bindinput="updateItemField" placeholder="通常同数量单位" />
           </view>
+        </view>
+        <view class="field item-field">
+          <text class="label">该项金额</text>
+          <input class="input" value="{{item.totalAmount}}" data-index="{{itemIndex}}" data-field="totalAmount" bindinput="updateItemField" type="digit" placeholder="单位不同时请手动确认" />
         </view>
         <view wx:if="{{item.showItemDeliveryDate}}" class="item-meta-line">单项交期：{{item.itemDeliveryDate}}</view>
         <view wx:if="{{item.itemRemark}}" class="item-meta-line">备注：{{item.itemRemark}}</view>
       </view>
+      <button class="confirm-item-add" bindtap="addConfirmItem">+ 添加规格或商品</button>
     </view>
     <view wx:if="{{showOrderAmountSummary}}" class="order-amount-summary">
       <view wx:for="{{orderAmountSummaryLines}}" wx:key="label" class="amount-summary-line">
@@ -297,10 +347,12 @@
       <view wx:if="{{warningMissingText}}" class="warning-line">缺少：{{warningMissingText}}</view>
       <view wx:if="{{warningLowText}}" class="warning-line">不确定：{{warningLowText}}</view>
     </view>
+    </scroll-view>
 
-    <view class="button-row">
-      <button class="secondary-button" bindtap="returnToInput">返回修改</button>
-      <button class="secondary-button" bindtap="savePending">存到待整理</button>
+    <view class="button-row confirm-action-row">
+      <button class="secondary-button" bindtap="returnToInput">继续修改</button>
+      <button class="secondary-button" bindtap="savePending">先放待整理</button>
+      <button wx:if="{{showDeepReviewButton}}" class="secondary-button" bindtap="requestDeepReview">深度核对</button>
       <button class="primary-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
     </view>
   </view>

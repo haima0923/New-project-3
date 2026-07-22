@@ -1,4 +1,4 @@
-const { decorateRecords, markDuplicateCustomerReviewed, mergeCustomer } = require('../../utils/business');
+const { decorateRecords, getItemsSummary, markDuplicateCustomerReviewed, mergeCustomer } = require('../../utils/business');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
 
 function normalizeCustomerName(name) {
@@ -75,8 +75,10 @@ Page({
     this.setData({
       customer,
       duplicateCandidates,
-      quotations: decorateRecords(state, state.quotations.filter((item) => item.customerId === this.data.id)),
-      orders: decorateRecords(state, state.orders.filter((item) => item.customerId === this.data.id)),
+      quotations: decorateRecords(state, state.quotations.filter((item) => item.customerId === this.data.id))
+        .map((item) => Object.assign({}, item, { itemsSummary: getItemsSummary(item) })),
+      orders: decorateRecords(state, state.orders.filter((item) => item.customerId === this.data.id))
+        .map((item) => Object.assign({}, item, { itemsSummary: getItemsSummary(item) })),
       receivables: decorateRecords(state, state.receivables.filter((item) => item.customerId === this.data.id))
     });
   },

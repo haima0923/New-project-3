@@ -32,9 +32,15 @@ function getConfig() {
     aiApiKey: process.env.AI_API_KEY || '',
     aiBaseUrl: (process.env.AI_BASE_URL || '').replace(/\/$/, ''),
     aiModel: process.env.AI_MODEL || '',
+    // 普通确认卡只允许一次快速核对。服务端硬性封顶 5.2 秒，给手机端的
+    // 登录、网络和渲染预留时间；绝不自动回退到慢模型。
+    aiFastModel: process.env.AI_FAST_MODEL || 'qwen3.6-flash',
+    aiFastRequestTimeoutMs: Math.min(Math.max(1, Number(process.env.AI_FAST_REQUEST_TIMEOUT_MS) || 5200), 5200),
+    aiQualityRequestTimeoutMs: Number(process.env.AI_QUALITY_REQUEST_TIMEOUT_MS || 20000),
     allowedOrigins: process.env.ALLOWED_ORIGINS || '',
     aiRateLimitWindowMs: Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 60000),
     aiRateLimitMaxRequests: Number(process.env.AI_RATE_LIMIT_MAX_REQUESTS || 30),
+    aiDeepRateLimitMaxRequests: Number(process.env.AI_DEEP_RATE_LIMIT_MAX_REQUESTS || 5),
     authLoginRateLimitMaxRequests: Number(process.env.AUTH_LOGIN_RATE_LIMIT_MAX_REQUESTS || 10),
     authRequired: getBoolean(process.env.AUTH_REQUIRED, env === 'production'),
     authTokenSecret: process.env.AUTH_TOKEN_SECRET || '',

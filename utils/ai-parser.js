@@ -1,13 +1,30 @@
-const { formatDate, parseChineseDate } = require('./date');
+const { formatDate, isValidCalendarDate, parseChineseDate } = require('./date');
 const { parseInput } = require('./parser');
 const { getApiBaseUrl, requestJson } = require('./api-client');
 const { normalizeBusinessText } = require('./text-normalize');
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
-const { applyLocalParseSafety } = require('./parse-safety');
+const { applyLocalParseSafety, NEEDS_USER_CONFIRM } = require('./parse-safety');
+const { normalizeUnit, unitsMatch } = require('./units');
 
-const AI_PARSE_TIMEOUT_MS = 30000;
+// 普通 AI 只是一轮快速核对：网络层最多 6.7 秒，外层连同本地整理最多 8 秒。
+// 深度核对只能由用户主动点击，不能占用日常确认卡的 8 秒预算。
+const AI_STANDARD_REQUEST_TIMEOUT_MS = 6700;
+const AI_DEEP_REQUEST_TIMEOUT_MS = 25000;
+const AI_STANDARD_WAIT_LIMIT_MS = 8000;
+const AI_DEEP_WAIT_LIMIT_MS = 25000;
 const validIntents = ['quotation', 'order', 'receivable', 'payment', 'dunning', 'todo', 'query', 'unknown'];
 const activeReceivableStatuses = ['待收', '部分收款'];
+const ROUTE_LOCAL = 'local';
+const ROUTE_AI_STANDARD = 'ai_standard';
+const ROUTE_AI_DEEP = 'ai_deep';
+const ROUTE_PENDING = 'pending';
+const ROUTE_LABELS = {
+  [ROUTE_LOCAL]: '本地快速整理',
+  [ROUTE_AI_STANDARD]: '请 AI 再核对',
+  [ROUTE_AI_DEEP]: '请 AI 深度整理',
+  [ROUTE_PENDING]: '待整理，不能强行记录'
+};
+const DEEP_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|按原来|价格不变|还是|最终|最后|确认价|改成|改为|改价|改数量|延期|提前|那单|那笔|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回|定金|订金|预付|尾款|欠款|还了|还剩|结清|到账|转了|付了|收了)/i;
 
 function unwrapAiResult(result) {
   if (!result || typeof result !== 'object') return {};
@@ -189,8 +206,11 @@ function applyLatestLocalUnitPrice(next, payload, fieldConflicts) {
   const fields = Object.assign({}, next.fields, {
     unitPrice: latest.value
   });
-  const amount = calculateAmount(fields.quantity, fields.unitPrice);
-  if (amount) fields.amount = amount;
+  const amount = calculateAmount(fields.quantity, fields.unitPrice, fields.unit, fields.priceUnit);
+  if (amount) {
+    fields.calculatedAmount = amount;
+    if (!fields.statedAmount) fields.amount = amount;
+  }
   return Object.assign({}, next, {
     fields,
     field_sources: Object.assign({}, next.field_sources || {}, {
@@ -210,8 +230,11 @@ function applyLatestLocalQuantity(next, payload, fieldConflicts) {
   const fields = Object.assign({}, next.fields, {
     quantity: latest.value
   });
-  const amount = calculateAmount(fields.quantity, fields.unitPrice);
-  if (amount) fields.amount = amount;
+  const amount = calculateAmount(fields.quantity, fields.unitPrice, fields.unit, fields.priceUnit);
+  if (amount) {
+    fields.calculatedAmount = amount;
+    if (!fields.statedAmount) fields.amount = amount;
+  }
   return Object.assign({}, next, {
     fields,
     field_sources: Object.assign({}, next.field_sources || {}, {
@@ -248,17 +271,44 @@ function buildRemarkFromItems(remarkItems) {
   return `客户要求：${items.join('；')}${normalizedText}`;
 }
 
+function getConversationCustomerName(rawMessages = []) {
+  const speakers = rawMessages
+    .map((message) => String(message.speaker || '').trim())
+    .filter((speaker) => speaker && !/^(?:我|自己|本人|老板|客服|系统)$/.test(speaker))
+    .filter((speaker) => !/^(?:就按这个|可以|好的|行|嗯|那就)$/.test(speaker))
+    .filter((speaker, index, array) => array.indexOf(speaker) === index);
+  return speakers[0] || '';
+}
+
+function isUsableConversationCustomer(name) {
+  const value = String(name || '').trim();
+  return Boolean(value)
+    && value.length <= 10
+    && !/[0-9零〇一二两三四五六七八九十百千万]/.test(value)
+    && !/(?:订单|报价|价格|货款|款|杯|盒|袋|鞋|扣|垫|绳)/.test(value);
+}
+
 function attachConversationReview(localResult, payload) {
-  if (!getPayloadRawMessages(payload).length) return localResult;
+  const rawMessages = getPayloadRawMessages(payload);
+  if (!rawMessages.length) return localResult;
   const fieldConflicts = extractLocalFieldConflicts(payload);
   const remarkItems = extractRemarkItemsFromMessages(payload);
   const conflictFields = fieldConflicts.map((item) => item.field).filter(Boolean);
   let next = Object.assign({}, localResult, {
-    raw_messages: getPayloadRawMessages(payload),
+    raw_messages: rawMessages,
     field_conflicts: fieldConflicts,
     remark_items: remarkItems,
     low_confidence_fields: uniqueStrings([].concat(localResult.low_confidence_fields || [], conflictFields))
   });
+  const conversationCustomer = getConversationCustomerName(rawMessages);
+  if (isUsableConversationCustomer(conversationCustomer)) {
+    const currentCustomer = String((next.fields || {}).customerName || '').trim();
+    if (!currentCustomer || !isUsableConversationCustomer(currentCustomer) || currentCustomer !== conversationCustomer) {
+      next.fields = Object.assign({}, next.fields || {}, { customerName: conversationCustomer });
+      next.field_sources = Object.assign({}, next.field_sources || {}, { customerName: 'rule:conversation_speaker' });
+      next.low_confidence_fields = uniqueStrings((next.low_confidence_fields || []).filter((field) => field !== 'customerName'));
+    }
+  }
   next = applyLatestLocalUnitPrice(next, payload, fieldConflicts);
   next = applyLatestLocalQuantity(next, payload, fieldConflicts);
   if (remarkItems.length && next.fields && !String(next.fields.remark || '').startsWith('客户要求：')) {
@@ -269,8 +319,9 @@ function attachConversationReview(localResult, payload) {
   return next;
 }
 
-function markAiNeeded(localResult) {
+function markAiNeeded(localResult, route = {}) {
   return Object.assign({}, localResult, {
+    parse_route: route,
     ai_fallback: Object.assign({}, localResult.ai_fallback || {}, {
       needed: true
     })
@@ -283,11 +334,227 @@ function hasPackagingRequirementSignal(source) {
 }
 
 function shouldForceAi(payload, localResult) {
-  if (payload.source === 'paste' || payload.source === 'voice') return true;
   if (isMultiMessagePaste(payload)) return true;
   const source = String(payload.text || localResult.original_text || '');
   return /(改成|算了|还是|就按|贵了|便宜|换成|确认价|最终|颜色|logo|LOGO|特殊|要求|备注)/.test(source)
     || hasPackagingRequirementSignal(source);
+}
+
+function uniqueReasonTexts(values) {
+  return uniqueStrings(values).slice(0, 4);
+}
+
+function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') {
+  const source = payload.source || localResult.source || 'typed';
+  const text = normalizeBusinessText(String(payload.rawText || payload.text || localResult.original_text || ''));
+  const safety = localResult.local_parse_safety || {};
+  const fields = localResult.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items.filter(Boolean) : [];
+  const conflicts = toArray(localResult.field_conflicts || []);
+  const hasFinancialRisk = ['payment', 'receivable'].includes(localResult.intent)
+    || Boolean(fields.depositAmount || fields.paymentAmount || fields.paymentKind === 'deposit')
+    || /定金|订金|预付|尾款|欠款|还款|收款|到账|转账|打款/.test(text);
+  const hasConversationRisk = isMultiMessagePaste(payload)
+    || getPayloadRawMessages(payload).length > 1;
+  const missingFields = toArray(safety.missing_fields || []);
+  const hasMissingCriticalFact = missingFields.some((field) => ['customerName', 'productName', 'quantity', 'unitPrice', 'amount', 'paymentAmount', 'intent'].includes(field));
+  const hasCompleteButUnverifiedEvidence = safety.evidence_sufficient === false
+    && (safety.evidence_missing_fields || []).length > 0
+    && !hasMissingCriticalFact
+    && (localResult.missing_fields || []).length === 0;
+  const hasHistoryReference = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|按原来|价格不变|还是)/.test(text);
+  const deepReviewRequested = payload.reviewMode === 'deep';
+  // 缺少客户/商品等事实时，“颜色、备注”不能把题目升级成深度 AI；AI 不能替老板编事实。
+  const hasSemanticDeepRisk = DEEP_AI_PATTERN.test(text) && (!hasMissingCriticalFact || hasHistoryReference);
+  const hasDeepRisk = hasFinancialRisk
+    || hasConversationRisk
+    || policy !== 'none'
+    || conflicts.length > 0
+    || items.length > 1
+    || hasSemanticDeepRisk;
+  const hasProductSuggestion = Boolean(localResult.field_suggestions && localResult.field_suggestions.productName);
+  const hasOnlyLocallyConfirmableUnitConflict = conflicts.length > 0
+    && conflicts.every((item) => ((item && item.field) || item) === 'priceUnit');
+  const canConfirmProductAndUnitLocally = hasProductSuggestion
+    && hasOnlyLocallyConfirmableUnitConflict
+    && !hasFinancialRisk
+    && !hasConversationRisk
+    && policy === 'none'
+    && items.length <= 1
+    && !hasSemanticDeepRisk
+    && !deepReviewRequested;
+  const localReasons = uniqueReasonTexts(safety.reason_texts || []);
+
+  if (localResult.formal_save_blocked) {
+    return {
+      decision: ROUTE_PENDING,
+      label: '需要先确认原记录',
+      reasons: uniqueReasonTexts([
+        localResult.block_reason || '这条内容不能直接变成新的正式记录。'
+      ].concat(localReasons))
+    };
+  }
+
+  if (safety.status === 'NO_RECORD') {
+    return {
+      decision: ROUTE_PENDING,
+      label: ROUTE_LABELS[ROUTE_PENDING],
+      reasons: ['没有识别到一笔明确业务，先不替老板猜。']
+    };
+  }
+
+  if (hasMissingCriticalFact && !hasFinancialRisk && !hasConversationRisk && !hasHistoryReference) {
+    return {
+      decision: ROUTE_PENDING,
+      label: '待补充后再保存',
+      reasons: uniqueReasonTexts(['原文缺少关键信息，不能让 AI 替老板猜。'].concat(localReasons))
+    };
+  }
+
+  if (hasProductSuggestion && (!hasDeepRisk || canConfirmProductAndUnitLocally)) {
+    return {
+      decision: ROUTE_LOCAL,
+      label: ROUTE_LABELS[ROUTE_LOCAL],
+      reasons: [canConfirmProductAndUnitLocally
+        ? '商品名称和计价单位都可在确认卡直接核对；系统不猜单位换算，也不额外等待 AI。'
+        : '商品名称已有明确确认建议，点选或手改后再保存，不让 AI 替你猜。']
+    };
+  }
+
+  // 原文明确缺少关键事实时，AI 也不能凭空补造客户、商品或金额。
+  // 这类内容不浪费等待时间，直接让老板补充或放待整理；但历史、改价和账款等复杂情况仍交给深度 AI。
+  if (safety.status === 'NEEDS_USER_CONFIRM' && !hasDeepRisk) {
+    if (hasCompleteButUnverifiedEvidence) {
+      return {
+        decision: ROUTE_AI_STANDARD,
+        label: ROUTE_LABELS[ROUTE_AI_STANDARD],
+        reasons: uniqueReasonTexts(['本地已经整理出字段，但有一项不能直接从原话核对。'].concat(localReasons))
+      };
+    }
+    return {
+      decision: ROUTE_PENDING,
+      label: '待补充后再保存',
+      reasons: uniqueReasonTexts(['原文缺少关键信息，不能让 AI 替老板猜。'].concat(localReasons))
+    };
+  }
+
+  if (hasDeepRisk || (localResult.intent === 'unknown' && safety.status !== 'SAFE_LOCAL')) {
+    const reasons = [];
+    if (hasFinancialRisk) reasons.push('涉及收款、欠款或定金，必须谨慎核对。');
+    if (hasConversationRisk) reasons.push('这是一段多轮聊天，需要理解前后顺序。');
+    if (items.length > 1) reasons.push('包含多个商品，需要逐项整理。');
+    if (conflicts.length) reasons.push('内容前后有冲突，不能自动选一个答案。');
+    if (policy !== 'none') reasons.push('涉及历史记录或关联旧单。');
+    if (hasSemanticDeepRisk) reasons.push('出现改价、最终确认、特殊要求等复杂说法。');
+    if (localResult.intent === 'unknown') reasons.push('本地没有稳定判断出业务类型。');
+    if (deepReviewRequested) {
+      return {
+        decision: ROUTE_AI_DEEP,
+        label: ROUTE_LABELS[ROUTE_AI_DEEP],
+        reasons: uniqueReasonTexts(['老板主动要求深度核对。'].concat(reasons, localReasons))
+      };
+    }
+    return {
+      decision: ROUTE_PENDING,
+      label: '需要深度核对',
+      deep_review_available: true,
+      reasons: uniqueReasonTexts(['这条内容不能在首页自动猜，先由你决定是否深度核对。'].concat(reasons, localReasons))
+    };
+  }
+
+  if (safety.status === 'NEEDS_AI' || shouldForceAi(payload, localResult)) {
+    const reasons = [];
+    if (safety.status === 'NEEDS_AI') reasons.push('本地发现有不稳定字段。');
+    return {
+      decision: ROUTE_AI_STANDARD,
+      label: ROUTE_LABELS[ROUTE_AI_STANDARD],
+      reasons: uniqueReasonTexts(reasons.concat(localReasons))
+    };
+  }
+
+  return {
+    decision: ROUTE_LOCAL,
+    label: ROUTE_LABELS[ROUTE_LOCAL],
+    reasons: ['文字是一件清楚的业务，本次先按本地规则整理。']
+  };
+}
+
+function getBusinessDraftSummary(result = {}) {
+  const fields = result.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items.filter(Boolean) : [];
+  return {
+    intent: result.intent || 'unknown',
+    customerName: fields.customerName || '',
+    productName: fields.productName || '',
+    quantity: fields.quantity || '',
+    unitPrice: fields.unitPrice || '',
+    amount: fields.amount || '',
+    paymentAmount: fields.paymentAmount || fields.depositAmount || '',
+    dueDate: fields.dueDate || '',
+    itemCount: items.length || (fields.productName ? 1 : 0)
+  };
+}
+
+function getAiDraftSummary(aiResult = {}) {
+  const normalized = unwrapAiResult(aiResult);
+  const fields = normalizeFields(normalized.fields || normalized);
+  return getBusinessDraftSummary({
+    intent: validIntents.includes(normalized.intent) ? normalized.intent : 'unknown',
+    fields
+  });
+}
+
+function attachParseTrace(result = {}, route = {}, timing = {}) {
+  const previous = result.parse_trace || {};
+  const localDraft = timing.localDraft || previous.localDraft || getBusinessDraftSummary(result);
+  const finalDraft = timing.finalDraft || getBusinessDraftSummary(result);
+  return Object.assign({}, result, {
+    parse_route: route.decision ? route : (result.parse_route || previous.route || {}),
+    parse_trace: {
+      route: route.decision ? route : (previous.route || result.parse_route || {}),
+      localDurationMs: Number(timing.localDurationMs !== undefined ? timing.localDurationMs : previous.localDurationMs || 0),
+      aiDurationMs: Number(timing.aiDurationMs !== undefined ? timing.aiDurationMs : previous.aiDurationMs || 0),
+      totalDurationMs: Number(timing.totalDurationMs !== undefined ? timing.totalDurationMs : previous.totalDurationMs || 0),
+      networkWaitLimitMs: Number(timing.networkWaitLimitMs !== undefined ? timing.networkWaitLimitMs : previous.networkWaitLimitMs || 0),
+      aiRequestId: timing.aiRequestId !== undefined ? timing.aiRequestId : (previous.aiRequestId || ''),
+      aiServerElapsedMs: Number(timing.aiServerElapsedMs !== undefined ? timing.aiServerElapsedMs : previous.aiServerElapsedMs || 0),
+      aiServerDeadlineMs: Number(timing.aiServerDeadlineMs !== undefined ? timing.aiServerDeadlineMs : previous.aiServerDeadlineMs || 0),
+      aiModelTier: timing.aiModelTier !== undefined ? timing.aiModelTier : (previous.aiModelTier || ''),
+      aiFailureCode: timing.aiFailureCode !== undefined ? timing.aiFailureCode : (previous.aiFailureCode || ''),
+      localDraft,
+      aiDraft: timing.aiDraft !== undefined ? timing.aiDraft : (previous.aiDraft || null),
+      finalDraft
+    }
+  });
+}
+
+function getAiWaitLimitMs(route = {}) {
+  return route.decision === ROUTE_AI_DEEP ? AI_DEEP_WAIT_LIMIT_MS : AI_STANDARD_WAIT_LIMIT_MS;
+}
+
+function requestWithDeadline(request, timeoutMs) {
+  const waitMs = Number(timeoutMs);
+  if (!Number.isFinite(waitMs) || waitMs <= 0) {
+    const error = new Error('AI total wait limit reached');
+    error.code = 'AI_TOTAL_TIMEOUT';
+    return Promise.reject(error);
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const error = new Error('AI total wait limit reached');
+      error.code = 'AI_TOTAL_TIMEOUT';
+      reject(error);
+    }, waitMs);
+    Promise.resolve(request)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 }
 
 function getByPath(source, path) {
@@ -313,13 +580,14 @@ function normalizeAiItem(item = {}) {
     productName: pickFirst(item, ['productName', 'product_name', 'product.name', 'product', 'itemName', 'item_name', 'item.name', 'goodsName', 'goods_name', 'name']),
     spec: pickFirst(item, ['spec', 'specification', 'product.spec', 'product.specification']),
     quantity,
-    unit: pickFirst(item, ['unit', 'product.unit', 'item.unit']),
+    unit: normalizeUnit(pickFirst(item, ['unit', 'product.unit', 'item.unit'])),
     unitPrice,
+    priceUnit: normalizeUnit(pickFirst(item, ['priceUnit', 'price_unit', 'unitPriceUnit', 'unit_price_unit', 'price.unit', 'price.perUnitName'])),
     totalAmount: pickFirst(item, ['totalAmount', 'total_amount', 'amount', 'price.amount', 'price.totalAmount']),
     itemDeliveryDate: normalizeDateValue(pickFirst(item, ['itemDeliveryDate', 'item_delivery_date', 'deliveryDate', 'delivery_date', 'dueDate', 'due_date'])),
     itemRemark: pickFirst(item, ['itemRemark', 'item_remark', 'remark', 'note', 'memo'])
   };
-  if (!mapped.totalAmount && quantity && unitPrice) mapped.totalAmount = calculateAmount(quantity, unitPrice);
+  if (!mapped.totalAmount && quantity && unitPrice) mapped.totalAmount = calculateAmount(quantity, unitPrice, mapped.unit, mapped.priceUnit);
   const compact = {};
   Object.keys(mapped).forEach((key) => {
     if (mapped[key] !== undefined && mapped[key] !== null && mapped[key] !== '') compact[key] = mapped[key];
@@ -344,7 +612,12 @@ function normalizeDateValue(value) {
   const source = String(value).trim();
   const numeric = source.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
   if (numeric) {
-    return formatDate(new Date(Number(numeric[1]), Number(numeric[2]) - 1, Number(numeric[3])));
+    const year = Number(numeric[1]);
+    const month = Number(numeric[2]);
+    const day = Number(numeric[3]);
+    return isValidCalendarDate(year, month, day)
+      ? formatDate(new Date(year, month - 1, day))
+      : '';
   }
   const parsed = parseChineseDate(source);
   return parsed || source;
@@ -363,12 +636,15 @@ function normalizeFields(fields = {}) {
     productName: pickFirst(fields, ['productName', 'product_name', 'product.name', 'product', 'itemName', 'item_name', 'item.name', 'goodsName', 'goods_name']),
     spec: pickFirst(fields, ['spec', 'specification', 'product.spec', 'product.specification']),
     quantity: pickFirst(fields, ['quantity', 'qty', 'product.quantity', 'item.quantity']),
-    unit: pickFirst(fields, ['unit', 'product.unit', 'item.unit']),
+    unit: normalizeUnit(pickFirst(fields, ['unit', 'product.unit', 'item.unit'])),
     unitPrice: pickFirst(fields, ['unitPrice', 'unit_price', 'price.unitPrice', 'price.unit_price', 'price.perUnit', 'price.per_unit', 'unitAmount']),
+    priceUnit: normalizeUnit(pickFirst(fields, ['priceUnit', 'price_unit', 'unitPriceUnit', 'unit_price_unit', 'price.unit', 'price.perUnitName'])),
     paymentAmount: pickFirst(fields, ['paymentAmount', 'payment_amount', 'paidAmount', 'paid_amount', 'receivedAmount', 'received_amount', 'collectionAmount', 'collection_amount', 'payment.amount']),
     depositAmount: pickFirst(fields, ['depositAmount', 'deposit_amount', 'deposit', 'deposit.amount', 'advanceAmount', 'advance_amount', 'prepaidAmount', 'prepaid_amount']),
     amount: pickFirst(fields, ['amount', 'totalAmount', 'total_amount', 'totalPrice', 'total_price', 'price.amount', 'price.totalAmount', 'money.amount', 'receivable.amount', 'payment.amount']),
     totalAmount: pickFirst(fields, ['totalAmount', 'total_amount', 'totalPrice', 'total_price', 'price.totalAmount']),
+    statedAmount: pickFirst(fields, ['statedAmount', 'stated_amount', 'spokenAmount', 'spoken_amount', 'explicitAmount', 'explicit_amount']),
+    calculatedAmount: pickFirst(fields, ['calculatedAmount', 'calculated_amount', 'computedAmount', 'computed_amount']),
     remainingAmount: pickFirst(fields, ['remainingAmount', 'remaining_amount', 'leftAmount', 'left_amount', 'unpaidAmount', 'unpaid_amount', 'balance', 'balanceAmount', 'balance_amount', 'payment.remainingAmount']),
     paymentMethod: pickFirst(fields, ['paymentMethod', 'payment_method', 'payment.method']),
     paymentKind: pickFirst(fields, ['paymentKind', 'payment_kind', 'kind', 'payment.kind']),
@@ -387,6 +663,7 @@ function normalizeFields(fields = {}) {
     mapped.quantity = mapped.quantity || first.quantity || '';
     mapped.unit = mapped.unit || first.unit || '';
     mapped.unitPrice = mapped.unitPrice || first.unitPrice || '';
+    mapped.priceUnit = mapped.priceUnit || first.priceUnit || '';
     mapped.amount = mapped.amount || itemsTotal || first.totalAmount || '';
     mapped.totalAmount = mapped.totalAmount || itemsTotal || mapped.amount || '';
   }
@@ -419,6 +696,8 @@ function compactBusinessContext(state = {}) {
     quantity: quotation.quantity || '',
     unit: quotation.unit || '',
     unitPrice: quotation.unitPrice || '',
+    priceUnit: quotation.priceUnit || '',
+    items: (quotation.items || []).map((item) => Object.assign({}, item)),
     totalAmount: quotation.totalAmount || '',
     deliveryDate: quotation.deliveryDate || '',
     quoteDate: quotation.quoteDate || '',
@@ -433,6 +712,8 @@ function compactBusinessContext(state = {}) {
     quantity: order.quantity || '',
     unit: order.unit || '',
     unitPrice: order.unitPrice || '',
+    priceUnit: order.priceUnit || '',
+    items: (order.items || []).map((item) => Object.assign({}, item)),
     totalAmount: order.totalAmount || '',
     requiredDeliveryDate: order.requiredDeliveryDate || '',
     status: order.status || ''
@@ -488,7 +769,7 @@ function getContextPolicy(text, localResult = {}) {
   if (/定金|订金|预付|预付款/.test(source) && (intent === 'payment' || fields.paymentKind === 'deposit' || fields.depositAmount)) return 'order_deposit';
   if (intent === 'payment' || /还我|还了|还剩|剩下|剩余|结清|到账|转了|付了|收了|未收|没收/.test(source)) return 'receivable_history';
 
-  const needsHistoryPrice = /上次|上图|原价|还是|按上次|照旧|老价/.test(source);
+  const needsHistoryPrice = /上次|上图|原价|还是|按上次|按原来|照旧|老价/.test(source);
   const repeatOrder = /补|返单|再来|追加/.test(source);
   const quoteOrOrder = ['quotation', 'order'].includes(intent);
   if (quoteOrOrder && (needsHistoryPrice || (repeatOrder && (!fields.unitPrice || !fields.dueDate || !fields.productName)))) {
@@ -512,15 +793,49 @@ function originalContainsName(originalText, name) {
   return source.includes(current) || (compactName.length >= 2 && source.includes(compactName));
 }
 
+function isGenericBossAddress(name) {
+  return /^老板(?:今|明|昨|后|早|晚|今天|明天|后天|大后天)?$/.test(String(name || '').trim());
+}
+
+function isCustomerNameSupportedBySource(originalText, name) {
+  const source = String(originalText || '');
+  const current = String(name || '').trim();
+  if (!current || isGenericBossAddress(current) || !originalContainsName(source, current)) return false;
+  if (/(?:总|老板|经理|姐|哥|先生|女士)$/.test(current)) return true;
+  if (/^老(?!板)[\u4e00-\u9fa5]{1,2}$/.test(current)) return true;
+
+  // 没有称呼后缀的名字，只有在原文中紧跟业务动作时才保留，避免“老板今天”被截成名字。
+  const index = source.indexOf(current);
+  const after = index >= 0 ? source.slice(index + current.length) : '';
+  return /^(?:那边|这边|说|问|欠|付|转|打款|到账|返单|补|做|收|尾款|货款|下单|下|要|订|定|买|拿|报)/.test(after);
+}
+
+function localCustomerHasFieldIssue(localResult = {}) {
+  const safety = localResult.local_parse_safety || {};
+  const validations = safety.field_validations || {};
+  const invalid = toArray(validations.invalid_fields || []);
+  const low = uniqueStrings(localResult.low_confidence_fields || []);
+  const conflicts = toArray(localResult.field_conflicts || []).map((item) => (item && item.field) || item);
+  return invalid.includes('customerName') || low.includes('customerName') || conflicts.includes('customerName');
+}
+
+function canProtectLocalCustomer(localResult = {}) {
+  const fields = localResult.fields || {};
+  return Boolean(
+    fields.customerName
+    && !localCustomerHasFieldIssue(localResult)
+    && isCustomerNameSupportedBySource(localResult.original_text || '', fields.customerName)
+  );
+}
+
 function extractMentionedCustomerName(text, localResult = {}) {
   const source = String(text || localResult.original_text || '');
   const localName = localResult.fields && localResult.fields.customerName;
-  if (localName && originalContainsName(source, localName)) return localName;
-  if (localName) return localName;
+  if (localName && isCustomerNameSupportedBySource(source, localName)) return localName;
   const direct = source.match(/([\u4e00-\u9fa5A-Za-z]{1,8}(?:总|老板|经理|姐|哥|先生|女士))/);
-  if (direct) return direct[1];
-  const oldName = source.match(/(老[\u4e00-\u9fa5]{1,2})/);
-  return oldName ? oldName[1] : '';
+  if (direct && isCustomerNameSupportedBySource(source, direct[1])) return direct[1];
+  const oldName = source.match(/(老(?!板)[\u4e00-\u9fa5]{1,2})/);
+  return oldName && isCustomerNameSupportedBySource(source, oldName[1]) ? oldName[1] : '';
 }
 
 function customerMatchesMention(customer, mentionedName) {
@@ -575,6 +890,8 @@ function findScopedHistory(state = {}, mentionedCustomerName, policy) {
       quantity: quotation.quantity || '',
       unit: quotation.unit || '',
       unitPrice: quotation.unitPrice || '',
+      priceUnit: quotation.priceUnit || '',
+      items: (quotation.items || []).map((item) => Object.assign({}, item)),
       totalAmount: quotation.totalAmount || '',
       deliveryDate: quotation.deliveryDate || '',
       quoteDate: quotation.quoteDate || '',
@@ -592,6 +909,8 @@ function findScopedHistory(state = {}, mentionedCustomerName, policy) {
       quantity: order.quantity || '',
       unit: order.unit || '',
       unitPrice: order.unitPrice || '',
+      priceUnit: order.priceUnit || '',
+      items: (order.items || []).map((item) => Object.assign({}, item)),
       totalAmount: order.totalAmount || '',
       requiredDeliveryDate: order.requiredDeliveryDate || '',
       orderDate: order.orderDate || '',
@@ -690,6 +1009,7 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
   const requestPayload = {
     text: payload.text,
     source: payload.source,
+    reviewMode: payload.reviewMode === 'deep' ? 'deep' : 'standard',
     context: payload.context,
     rawText: payload.rawText || localResult.original_text || '',
     extractedText: payload.extractedText || payload.text || '',
@@ -706,7 +1026,8 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
       field_sources: localResult.field_sources || {},
       local_parse_safety: localResult.local_parse_safety || null,
       unsafe_reasons: localResult.unsafe_reasons || []
-    }
+    },
+    routeDecision: localResult.parse_route || null
   };
   if (localResult.history_status === 'found') {
     requestPayload.customerCandidates = scopedHistory.customers;
@@ -725,8 +1046,9 @@ function toCleanNumber(value) {
   return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(4)));
 }
 
-function calculateAmount(quantity, unitPrice) {
+function calculateAmount(quantity, unitPrice, quantityUnit = '', priceUnit = '') {
   if (!quantity || !unitPrice) return '';
+  if (!unitsMatch(quantityUnit, priceUnit)) return '';
   const quantityNumber = Number(quantity);
   const unitPriceNumber = Number(unitPrice);
   if (!Number.isFinite(quantityNumber) || !Number.isFinite(unitPriceNumber)) return '';
@@ -836,32 +1158,207 @@ function getConflictFields(conflicts) {
     .filter(Boolean);
 }
 
+function normalizeIntentCandidates(value, fallbackIntent) {
+  return uniqueStrings([].concat(toStringArray(value), fallbackIntent || []))
+    .filter((intent) => validIntents.includes(intent) && intent !== 'unknown' && intent !== 'query');
+}
+
+function getAiIntentCandidates(normalized = {}, fallbackIntent = '') {
+  return normalizeIntentCandidates(
+    normalized.intent_candidates || normalized.intentCandidates,
+    validIntents.includes(normalized.intent) ? normalized.intent : fallbackIntent
+  );
+}
+
+function hasFieldEvidence(normalized = {}, field) {
+  const evidence = normalizeObject(normalized.field_evidence || normalized.fieldEvidence, {});
+  const value = evidence[field];
+  return Array.isArray(value) ? value.length > 0 : Boolean(value);
+}
+
+function hasExplicitConflictResolution(normalized = {}, field, aiIntentCandidates = []) {
+  // "我已经解决了" 不是证据。只有给出“旧值被新值替代”的记录，且能指出
+  // 原话来源，才允许深度 AI 清除本地已经发现的普通字段冲突。
+  if (['customerName', 'intent', 'items'].includes(field) || aiIntentCandidates.length > 1) return false;
+  const facts = toArray(normalized.superseded_facts || normalized.supersededFacts);
+  return facts.some((item) => item && item.field === field && (item.newValue || item.new_value))
+    && hasFieldEvidence(normalized, field);
+}
+
+function mergeConflictEntries(...groups) {
+  const seen = {};
+  return groups.flat().filter((item) => {
+    const field = typeof item === 'string' ? item : (item && item.field);
+    const values = item && typeof item === 'object' && Array.isArray(item.values) ? item.values.join('|') : '';
+    const message = item && typeof item === 'object' ? String(item.message || '') : String(item || '');
+    const key = `${field || ''}|${values}|${message}`;
+    if (!field || seen[key]) return false;
+    seen[key] = true;
+    return true;
+  });
+}
+
+function getLocalHardSafety(localResult = {}, normalized = {}) {
+  const localConflicts = toArray(localResult.field_conflicts || []);
+  const aiIntentCandidates = getAiIntentCandidates(normalized, localResult.intent);
+  const customerConflict = localConflicts.find((item) => item && item.field === 'customerName');
+  const customerValues = customerConflict && Array.isArray(customerConflict.values)
+    ? uniqueStrings(customerConflict.values)
+    : [];
+  const localRoute = localResult.parse_route || {};
+  const localSafety = localResult.local_parse_safety || {};
+  const hasSeveralCustomers = customerValues.length > 1;
+  const hasSeveralIntents = aiIntentCandidates.length > 1;
+  const localHasNoStableIntent = localResult.intent === 'unknown'
+    && (localRoute.decision === ROUTE_PENDING || localSafety.status === 'NO_RECORD');
+
+  return {
+    aiIntentCandidates,
+    hasSeveralCustomers,
+    hasSeveralIntents,
+    hasNoStableIntent: localHasNoStableIntent,
+    needsBusinessSplit: hasSeveralCustomers || hasSeveralIntents,
+    localConflicts
+  };
+}
+
+function hasJoinedMultiItemValue(fields = {}) {
+  return ['productName', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'amount', 'totalAmount']
+    .some((field) => typeof fields[field] === 'string' && /[，,、；;]/.test(fields[field]));
+}
+
+function applyAiItemStructureGuard(localResult = {}, aiFields = {}) {
+  const localFields = localResult.fields || {};
+  const localItems = normalizeAiItems(localFields.items || []);
+  const aiItems = normalizeAiItems(aiFields.items || []);
+  const joined = hasJoinedMultiItemValue(aiFields);
+  const malformed = joined && aiItems.length < 2;
+  const fields = Object.assign({}, localFields, aiFields);
+
+  if (localItems.length > 1 && aiItems.length < 2) {
+    // 本地已经按条目拆开时，AI 的单条/逗号拼接输出不能反过来把它覆盖掉。
+    fields.items = localItems;
+    const first = localItems[0] || {};
+    ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'].forEach((field) => {
+      if (first[field] !== undefined && first[field] !== null && first[field] !== '') fields[field] = localFields[field] || first[field];
+    });
+  }
+
+  return {
+    fields,
+    malformed: malformed || (localItems.length > 1 && aiItems.length < 2),
+    conflict: (malformed || (localItems.length > 1 && aiItems.length < 2))
+      ? {
+        field: 'items',
+        message: 'AI 没有逐项返回多件商品，不能把多件商品合并成一条保存。'
+      }
+      : null
+  };
+}
+
+const PRODUCT_TRANSCRIPTION_HINTS = {
+  水怀: '水杯',
+  保温怀: '保温杯',
+  礼合: '礼品盒',
+  礼品和: '礼品盒',
+  收纳合: '收纳盒',
+  饰品合: '饰品盒',
+  钥匙口: '钥匙扣'
+};
+
+function getProductTranscriptionHint(originalText, productName) {
+  const source = String(originalText || '');
+  const current = String(productName || '');
+  const raw = Object.keys(PRODUCT_TRANSCRIPTION_HINTS).find((value) => source.includes(value));
+  if (!raw) return null;
+  const suggestion = PRODUCT_TRANSCRIPTION_HINTS[raw];
+  if (!current || (!current.includes(raw) && current !== suggestion)) return null;
+  return { raw, suggestion };
+}
+
+function applyProductTranscriptionSafety(result = {}) {
+  const fields = Object.assign({}, result.fields || {});
+  const hint = getProductTranscriptionHint(result.original_text, fields.productName);
+  if (!hint) return result;
+
+  const lowConfidenceFields = uniqueStrings([].concat(result.low_confidence_fields || [], 'productName'));
+  const existingMessage = String(result.confirm_message || '').trim();
+  const hintMessage = fields.productName === hint.suggestion
+    ? `原话写的是“${hint.raw}”，当前整理为“${hint.suggestion}”，请确认商品名称。`
+    : `商品“${hint.raw}”可能想说“${hint.suggestion}”，请确认或在下方改正。`;
+  const localSafety = result.local_parse_safety || {};
+  const evidenceMissing = uniqueStrings(localSafety.evidence_missing_fields || []);
+  const unsafeFields = uniqueStrings(localSafety.unsafe_fields || []);
+  // 这是老板确认一次商品名的问题，不是让 AI 再猜一次的问题。否则既会白等，
+  // 又会把“AI 已返回但不确定”误显示成“AI 没有返回”。
+  const onlyProductNeedsConfirmation = localSafety.status === 'NEEDS_AI'
+    && evidenceMissing.length === 1
+    && evidenceMissing[0] === 'productName'
+    && unsafeFields.every((field) => field === 'productName');
+  const nextSafety = onlyProductNeedsConfirmation
+    ? Object.assign({}, localSafety, {
+      status: NEEDS_USER_CONFIRM,
+      safe_to_auto_accept: false,
+      reason_texts: uniqueReasonTexts([].concat(
+        localSafety.reason_texts || [],
+        '商品名称可能是语音转写或错别字，需要你确认一次。'
+      ))
+    })
+    : localSafety;
+  return Object.assign({}, result, {
+    low_confidence_fields: lowConfidenceFields,
+    local_parse_safety: nextSafety,
+    ai_fallback: onlyProductNeedsConfirmation
+      ? Object.assign({}, result.ai_fallback || {}, { needed: false })
+      : result.ai_fallback,
+    field_suggestions: Object.assign({}, result.field_suggestions || {}, {
+      productName: { value: hint.suggestion, source: hint.raw, text: hintMessage }
+    }),
+    confirm_message: existingMessage.includes(hintMessage)
+      ? existingMessage
+      : [existingMessage, hintMessage].filter(Boolean).join(' ')
+  });
+}
+
 function applyPostAiConsistency(result, normalized) {
   const fields = Object.assign({}, result.fields || {});
   const fieldSources = Object.assign({}, result.field_sources || {});
   const itemsTotal = getItemsTotal(fields.items || []);
-  if (itemsTotal) {
-    fields.amount = itemsTotal;
-    fields.totalAmount = itemsTotal;
-    fieldSources.amount = fieldSources.amount || 'computed:items_total';
-    fieldSources.totalAmount = fieldSources.totalAmount || fieldSources.amount;
-  } else if (hasFieldValue(fields, 'quantity') && hasFieldValue(fields, 'unitPrice')) {
-    const amount = calculateAmount(fields.quantity, fields.unitPrice);
-    if (amount) {
-      fields.amount = amount;
-      fields.totalAmount = fields.totalAmount || amount;
-      fieldSources.amount = fieldSources.amount || 'computed:quantity*unitPrice';
+  const calculatedAmount = itemsTotal || (hasFieldValue(fields, 'quantity') && hasFieldValue(fields, 'unitPrice')
+    ? calculateAmount(fields.quantity, fields.unitPrice, fields.unit, fields.priceUnit)
+    : '');
+  const statedAmount = fields.statedAmount || '';
+  if (calculatedAmount) {
+    fields.calculatedAmount = calculatedAmount;
+    fieldSources.calculatedAmount = itemsTotal ? 'computed:items_total' : 'computed:quantity*unitPrice';
+    if (statedAmount) {
+      fields.amount = statedAmount;
+      fields.totalAmount = statedAmount;
+      fieldSources.amount = fieldSources.statedAmount || fieldSources.amount || 'rule:explicit_amount';
+      fieldSources.totalAmount = fieldSources.amount;
+    } else {
+      fields.amount = calculatedAmount;
+      fields.totalAmount = calculatedAmount;
+      fieldSources.amount = fieldSources.calculatedAmount;
+      fieldSources.totalAmount = fieldSources.calculatedAmount;
     }
   }
   if ((fields.paymentKind === 'deposit' || fields.depositAmount) && !fields.paymentAmount && fields.depositAmount) {
     fields.paymentAmount = fields.depositAmount;
     fieldSources.paymentAmount = fieldSources.paymentAmount || fieldSources.depositAmount || 'computed:depositAmount';
   }
-  const hasAiConflicts = normalized.field_conflicts !== undefined || normalized.fieldConflicts !== undefined;
   const supersededFacts = toArray(normalized.superseded_facts || normalized.supersededFacts || result.superseded_facts);
-  const fieldConflicts = hasAiConflicts
-    ? toArray(normalized.field_conflicts || normalized.fieldConflicts)
-    : (supersededFacts.length ? [] : toArray(result.field_conflicts));
+  // field_conflicts 已在合并阶段根据“是否有可核对的解决证据”处理过。
+  // 这里绝不能再因为 AI 返回了空数组而清掉本地发现的风险。
+  const fieldConflicts = toArray(result.field_conflicts);
+  if (statedAmount && calculatedAmount && Math.abs(Number(statedAmount) - Number(calculatedAmount)) >= 0.005
+    && !fieldConflicts.some((item) => item && item.field === 'amount')) {
+    fieldConflicts.push({
+      field: 'amount',
+      values: [statedAmount, calculatedAmount],
+      message: `原话总金额${statedAmount}元，与数量×单价计算的${calculatedAmount}元不一致，必须确认。`
+    });
+  }
   const conflictFields = getConflictFields(fieldConflicts);
   return Object.assign({}, result, {
     fields,
@@ -902,7 +1399,7 @@ function applyCustomerHistoryDefaults(localResult, policy, scopedHistory) {
   if (!defaultedFields.length) return localResult;
 
   if (hasFieldValue(fields, 'quantity') && hasFieldValue(fields, 'unitPrice')) {
-    const amount = calculateAmount(fields.quantity, fields.unitPrice);
+    const amount = calculateAmount(fields.quantity, fields.unitPrice, fields.unit, fields.priceUnit);
     if (amount && !hasFieldValue(fields, 'amount')) {
       fields.amount = amount;
       fieldSources.amount = 'computed:quantity*history_unitPrice';
@@ -928,8 +1425,7 @@ function protectLocalFacts(localResult, fields) {
   const localRequirementRemark = buildRemarkFromItems(localResult.remark_items || []);
 
   if (
-    localFields.customerName
-    && originalContainsName(originalText, localFields.customerName)
+    canProtectLocalCustomer(localResult)
     && (!nextFields.customerName || !originalContainsName(originalText, nextFields.customerName))
   ) {
     nextFields.customerName = localFields.customerName;
@@ -951,6 +1447,14 @@ function protectLocalFacts(localResult, fields) {
     }
   }
 
+  // AI 可以帮助理解语义，但不能改写老板原话中已经明确出现的总金额。
+  // 数量×单价的计算值仍保留在 calculatedAmount，供确认卡显示矛盾。
+  if (hasFieldValue(localFields, 'statedAmount')) {
+    nextFields.statedAmount = localFields.statedAmount;
+    nextFields.amount = localFields.statedAmount;
+    nextFields.totalAmount = localFields.statedAmount;
+  }
+
   nextFields.remark = aiRemark || localRequirementRemark || localFields.remark || originalText;
   return nextFields;
 }
@@ -959,7 +1463,8 @@ function applyAiCustomerEvidenceSafety(result) {
   const fields = Object.assign({}, result.fields || {});
   const originalText = result.original_text || '';
   const lowConfidenceFields = uniqueStrings(result.low_confidence_fields || []);
-  if (fields.customerName && !originalContainsName(originalText, fields.customerName)) {
+  if (fields.customerName && !isCustomerNameSupportedBySource(originalText, fields.customerName)) {
+    delete fields.customerName;
     delete fields.customerId;
     lowConfidenceFields.push('customerName');
   }
@@ -973,16 +1478,54 @@ function normalizeAiResult(localResult, aiResult) {
   const normalized = unwrapAiResult(aiResult);
   const aiFields = normalizeFields(normalized.fields || normalized);
   const intent = mergeAiIntent(localResult, normalized);
+  const hardSafety = getLocalHardSafety(localResult, normalized);
+  const itemStructure = applyAiItemStructureGuard(localResult, aiFields);
+  const aiMissingFields = toStringArray(normalized.missing_fields || normalized.missingFields);
+  const aiLowFields = toStringArray(normalized.low_confidence_fields || normalized.lowConfidenceFields);
+  const aiConflicts = toArray(normalized.field_conflicts || normalized.fieldConflicts);
+  const preservedLocalConflicts = hardSafety.localConflicts.filter((conflict) => {
+    const field = typeof conflict === 'string' ? conflict : conflict && conflict.field;
+    if (!field) return false;
+    if (hardSafety.needsBusinessSplit && ['customerName', 'intent'].includes(field)) return true;
+    return !hasExplicitConflictResolution(normalized, field, hardSafety.aiIntentCandidates);
+  });
+  const hardSafetyConflicts = [];
+  if (hardSafety.needsBusinessSplit) {
+    hardSafetyConflicts.push({
+      field: 'intent',
+      values: hardSafety.aiIntentCandidates,
+      message: '这一句话里包含多笔不同业务，请拆成多条后分别确认。'
+    });
+  }
+  if (itemStructure.conflict) hardSafetyConflicts.push(itemStructure.conflict);
   let merged = Object.assign({}, localResult, normalized, {
-    intent
+    intent,
+    formal_save_blocked: Boolean(localResult.formal_save_blocked),
+    block_reason: localResult.block_reason || '',
+    requires_existing_record: Boolean(localResult.requires_existing_record),
+    mixed_business: Boolean(localResult.mixed_business),
+    date_detail: localResult.date_detail || null
   });
   merged.id = normalized.id || localResult.id;
   merged.source = localResult.source;
   merged.original_text = localResult.original_text;
-  merged.fields = protectLocalFacts(localResult, Object.assign({}, localResult.fields, aiFields));
-  merged.missing_fields = toStringArray(normalized.missing_fields || normalized.missingFields)
-    .filter((field) => !hasFieldValue(merged.fields, field));
-  merged.low_confidence_fields = toArray(normalized.low_confidence_fields || normalized.lowConfidenceFields);
+  merged.fields = protectLocalFacts(localResult, itemStructure.fields);
+  merged.missing_fields = uniqueStrings([].concat(
+    aiMissingFields.filter((field) => !hasFieldValue(merged.fields, field)),
+    toStringArray(localResult.missing_fields || []).filter((field) => {
+      if (!hasFieldValue(merged.fields, field)) return true;
+      return hardSafety.needsBusinessSplit && ['intent', 'customerName', 'productName', 'quantity', 'unitPrice', 'paymentAmount', 'amount'].includes(field);
+    })
+  ));
+  merged.low_confidence_fields = uniqueStrings([].concat(
+    aiLowFields,
+    toStringArray(localResult.low_confidence_fields || []).filter((field) => {
+      if (hardSafety.needsBusinessSplit && ['intent', 'customerName', 'productName', 'quantity', 'unitPrice', 'paymentAmount', 'amount'].includes(field)) return true;
+      return preservedLocalConflicts.some((conflict) => (conflict && conflict.field) === field);
+    }),
+    itemStructure.malformed ? ['items'] : []
+  ));
+  merged.field_conflicts = mergeConflictEntries(aiConflicts, preservedLocalConflicts, hardSafetyConflicts);
   merged.customer_candidates = toArray(normalized.customer_candidates || normalized.customerCandidates);
   merged.computed_fields = toArray(normalized.computed_fields || normalized.computedFields || localResult.computed_fields);
   merged.computed_tips = toArray(normalized.computed_tips || normalized.computedTips || localResult.computed_tips);
@@ -993,14 +1536,20 @@ function normalizeAiResult(localResult, aiResult) {
   );
   merged.field_evidence = normalizeObject(normalized.field_evidence || normalized.fieldEvidence, localResult.field_evidence || {});
   merged.remark_items = mergeRemarkItems(localResult.remark_items, normalized.remark_items || normalized.remarkItems);
-  merged.intent_candidates = toStringArray(
-    normalized.intent_candidates || normalized.intentCandidates || localResult.intent_candidates || intent
-  );
+  merged.intent_candidates = uniqueStrings([].concat(
+    hardSafety.aiIntentCandidates,
+    toStringArray(localResult.intent_candidates || []),
+    intent
+  )).filter((candidate) => validIntents.includes(candidate) && candidate !== 'unknown' && candidate !== 'query');
   merged.confidence = normalized.confidence !== undefined ? normalized.confidence : localResult.confidence;
   merged.confirm_message = normalized.confirm_message || normalized.confirmMessage || localResult.confirm_message || '我识别成下面这样，你确认后再保存。';
   merged.ai_fallback = {
     needed: true,
-    status: normalized.provider === 'mock' ? 'mock_used' : 'used'
+    status: normalized.provider === 'mock' ? 'mock_used' : 'used',
+    attempted: true,
+    reason: normalized.provider === 'mock'
+      ? '服务返回的是模拟整理结果。'
+      : 'AI 已成功返回整理结果。'
   };
   merged.provider = normalized.provider || 'server';
   merged.context_policy = localResult.context_policy || 'none';
@@ -1011,40 +1560,142 @@ function normalizeAiResult(localResult, aiResult) {
   merged.suggested_operation = localResult.suggested_operation || '';
   merged.raw_messages = localResult.raw_messages || [];
   merged = applyPostAiConsistency(merged, normalized);
-  return applyAiCustomerEvidenceSafety(merged);
+  merged = applyAiCustomerEvidenceSafety(merged);
+  return applyProductTranscriptionSafety(merged);
 }
 
-function withAiStatus(localResult, status) {
+function getAiFailureReason(error) {
+  const code = String((error && error.code) || '').toUpperCase();
+  const message = String((error && (error.errMsg || error.message)) || '').toLowerCase();
+  const statusCode = Number(error && error.statusCode);
+  if (code === 'AI_TOTAL_TIMEOUT') return '智能快速核对在 8 秒内没有完成，这条先放待整理。';
+  if (code === 'AI_FAST_TIMEOUT') return '智能快速核对超时，这条先放待整理。';
+  if (code === 'AUTH_SESSION_NOT_READY') return '智能核对正在准备登录，请稍后点“重新生成确认卡”。';
+  if (code === 'AUTH_SESSION_EXPIRED' || code === 'AUTH_REQUIRED' || statusCode === 401) return '智能核对的登录准备还没完成，这条先放待整理。';
+  if (statusCode === 429 || code === 'RATE_LIMITED') return '请求太频繁，AI 暂时没有返回结果。';
+  if (code === 'AI_RESPONSE_INVALID') return 'AI 已返回，但关键内容不够确定；这条保留原话，等你确认后再保存。';
+  if (code === 'AI_PROVIDER_UNAVAILABLE') return '智能核对服务暂时不可用，这条先放待整理。';
+  if (message.includes('timeout') || message.includes('超时')) return '等待 AI 返回超时，当前只按基础规则整理。';
+  if (message.includes('network') || message.includes('request:fail') || message.includes('网络')) {
+    return '网络请求没有成功，当前只按基础规则整理。';
+  }
+  return 'AI 没有返回可用结果，当前只按基础规则整理。';
+}
+
+function withAiStatus(localResult, status, metadata = {}) {
   const result = Object.assign({}, localResult);
-  result.ai_fallback = Object.assign({}, localResult.ai_fallback, { status });
+  result.ai_fallback = Object.assign({}, localResult.ai_fallback, {
+    status,
+    attempted: Boolean(metadata.attempted),
+    reason: metadata.reason || '',
+    code: metadata.code || ''
+  });
   return result;
 }
 
 function parseHybridInput(payload) {
+  const totalStartedAt = Date.now();
   const localParsedResult = parseInput(payload);
   const policy = getContextPolicy(payload.text, localParsedResult);
   const mentionedCustomerName = extractMentionedCustomerName(payload.text, localParsedResult);
   const scopedHistory = findScopedHistory(payload.state || {}, mentionedCustomerName, policy);
-  const localReviewedResult = applyLocalParseSafety(
+  const localReviewedResult = applyProductTranscriptionSafety(applyLocalParseSafety(
     attachConversationReview(attachHistoryInfo(localParsedResult, policy, scopedHistory), payload),
     {
-      normalizedText: payload.rawText || payload.text || localParsedResult.original_text || '',
+      normalizedText: normalizeBusinessText(payload.rawText || payload.text || localParsedResult.original_text || ''),
       originalText: payload.rawText || localParsedResult.original_text || '',
       source: payload.source || localParsedResult.source
     }
+  ));
+  const localDurationMs = Date.now() - totalStartedAt;
+  const route = getParseRouteDecision(payload, localReviewedResult, policy);
+  const shouldRequestAi = [ROUTE_AI_STANDARD, ROUTE_AI_DEEP].includes(route.decision);
+  const localResult = attachParseTrace(
+    shouldRequestAi ? markAiNeeded(localReviewedResult, route) : Object.assign({}, localReviewedResult, { parse_route: route }),
+    route,
+    {
+      localDurationMs,
+      totalDurationMs: localDurationMs,
+      localDraft: getBusinessDraftSummary(localReviewedResult)
+    }
   );
-  const forceAi = shouldForceAi(payload, localReviewedResult);
-  const localResult = forceAi ? markAiNeeded(localReviewedResult) : localReviewedResult;
-  if (!forceAi && policy === 'none' && (!localResult.ai_fallback || localResult.ai_fallback.needed === false)) {
-    return Promise.resolve(withAiStatus(localResult, 'not_requested'));
+
+  if (route.decision === ROUTE_PENDING) {
+    return Promise.resolve(withAiStatus(localResult, 'not_requested', {
+      attempted: false,
+      reason: route.deep_review_available
+        ? '这条内容需要深度核对；未主动点击前不会调用慢速 AI。'
+        : '这段内容还不能确定是一笔什么业务，先放待整理。'
+    }));
   }
-  if (typeof wx === 'undefined' || !getApiBaseUrl()) {
-    return Promise.resolve(withAiStatus(localResult, 'skipped_no_endpoint'));
+  if (!shouldRequestAi) {
+    return Promise.resolve(withAiStatus(localResult, 'not_requested', {
+      attempted: false,
+      reason: '这条内容可先按基础规则整理。'
+    }));
+  }
+  if (typeof wx === 'undefined') {
+    return Promise.resolve(withAiStatus(localResult, 'skipped_no_endpoint', {
+      attempted: false,
+      reason: '当前不是微信小程序环境，无法发起 AI 请求。'
+    }));
+  }
+  if (!getApiBaseUrl()) {
+    return Promise.resolve(withAiStatus(localResult, 'skipped_no_endpoint', {
+      attempted: false,
+      reason: '没有配置 AI 服务地址，无法发起 AI 请求。'
+    }));
   }
 
-  return requestJson(getAiParseEndpoint(), buildAiRequestPayload(payload, localResult, scopedHistory), AI_PARSE_TIMEOUT_MS)
-    .then((aiResult) => normalizeAiResult(localResult, aiResult))
-    .catch(() => withAiStatus(localResult, 'failed'));
+  const aiStartedAt = Date.now();
+  const networkWaitLimitMs = getAiWaitLimitMs(route);
+  const remainingWaitMs = Math.max(0, networkWaitLimitMs - localDurationMs);
+  const requestPath = route.decision === ROUTE_AI_DEEP
+    ? `${getAiParseEndpoint().replace(/\/$/, '')}/deep`
+    : getAiParseEndpoint();
+  const requestTimeoutMs = route.decision === ROUTE_AI_DEEP
+    ? AI_DEEP_REQUEST_TIMEOUT_MS
+    : AI_STANDARD_REQUEST_TIMEOUT_MS;
+  return requestWithDeadline(
+    requestJson(requestPath, buildAiRequestPayload(payload, localResult, scopedHistory), requestTimeoutMs, {
+      retryAuth: route.decision === ROUTE_AI_DEEP,
+      requireReadyAuth: route.decision === ROUTE_AI_STANDARD
+    }),
+    remainingWaitMs
+  )
+    .then((aiResult) => attachParseTrace(
+      normalizeAiResult(localResult, aiResult),
+      route,
+      {
+        localDurationMs,
+        aiDurationMs: Date.now() - aiStartedAt,
+        totalDurationMs: Date.now() - totalStartedAt,
+        networkWaitLimitMs,
+        localDraft: getBusinessDraftSummary(localReviewedResult),
+        aiDraft: getAiDraftSummary(aiResult),
+        aiRequestId: aiResult && aiResult.ai_request_id,
+        aiServerElapsedMs: aiResult && aiResult.ai_server_elapsed_ms,
+        aiServerDeadlineMs: aiResult && aiResult.ai_deadline_ms,
+        aiModelTier: aiResult && aiResult.ai_model_tier
+      }
+    ))
+    .catch((error) => attachParseTrace(withAiStatus(
+      localResult,
+      error && error.code === 'AI_RESPONSE_INVALID' ? 'returned_uncertain' : 'failed',
+      {
+      attempted: true,
+      reason: getAiFailureReason(error),
+      code: error && error.code
+      }
+    ), route, {
+      localDurationMs,
+      aiDurationMs: Date.now() - aiStartedAt,
+      totalDurationMs: Date.now() - totalStartedAt,
+      networkWaitLimitMs,
+      localDraft: getBusinessDraftSummary(localReviewedResult),
+      aiDraft: null,
+      aiFailureCode: error && error.code
+    }));
 }
 
 module.exports = {
@@ -1053,6 +1704,15 @@ module.exports = {
   extractMentionedCustomerName,
   findScopedHistory,
   getContextPolicy,
+  getAiFailureReason,
+  getParseRouteDecision,
+  getBusinessDraftSummary,
+  getAiWaitLimitMs,
   normalizeAiResult,
-  parseHybridInput
+  parseHybridInput,
+  requestWithDeadline,
+  ROUTE_AI_DEEP,
+  ROUTE_AI_STANDARD,
+  ROUTE_LOCAL,
+  ROUTE_PENDING
 };

@@ -1,6 +1,6 @@
 <view class="page profile-page">
   <view class="page-title">我的</view>
-  <view class="page-subtitle">先把状态讲清楚，少放复杂设置。</view>
+  <view class="page-subtitle">记录都在这台手机里，简单看一眼就够了。</view>
 
   <view class="profile-card">
     <view class="profile-name">货小玲</view>
@@ -8,7 +8,7 @@
   </view>
 
   <view class="card">
-    <view class="card-title">本地数据</view>
+    <view class="card-title">这台手机里的记录</view>
     <view class="profile-grid">
       <view class="profile-stat">
         <view class="profile-number">{{stats.customers}}</view>
@@ -30,20 +30,68 @@
   </view>
 
   <view class="card">
-    <view class="card-title">识别状态</view>
+    <view class="card-title">当前状态</view>
     <view class="status-line">
-      <text>文字识别</text>
+      <text>记录整理</text>
       <text class="status-pill">{{parseStatus}}</text>
     </view>
     <view class="status-line">
-      <text>语音转文字</text>
+      <text>语音输入</text>
       <text class="{{voiceStatusClass}}">{{voiceStatus}}</text>
     </view>
-    <view class="muted status-note">没有配置语音转文字时，录音不会自动保存，避免记错账。</view>
+    <view class="muted status-note">语音会先转成文字；金额、客户和日期请在确认卡里核对。</view>
+  </view>
+
+  <view class="card catalog-card">
+    <view class="row-between">
+      <view>
+        <view class="card-title">我的商品规格库 {{catalogProducts.length}}</view>
+        <view class="muted catalog-intro">确认保存的订单和报价会自动记住商品、规格和常用单位。</view>
+      </view>
+      <button class="catalog-add-button" bindtap="startAddCatalog">添加</button>
+    </view>
+
+    <view wx:if="{{showCatalogEditor}}" class="catalog-editor">
+      <view class="field">
+        <text class="label">商品名称</text>
+        <input class="input" value="{{catalogName}}" data-field="catalogName" bindinput="updateCatalogField" placeholder="例如：耳饰" />
+      </view>
+      <view class="field">
+        <text class="label">常用规格</text>
+        <textarea class="input catalog-textarea" value="{{catalogSpecsText}}" data-field="catalogSpecsText" bindinput="updateCatalogField" placeholder="例如：紫色、红色、珍珠款（用逗号分开）"></textarea>
+      </view>
+      <view class="catalog-editor-grid">
+        <view class="field">
+          <text class="label">数量单位</text>
+          <input class="input" value="{{catalogUnitsText}}" data-field="catalogUnitsText" bindinput="updateCatalogField" placeholder="个、盒" />
+        </view>
+        <view class="field">
+          <text class="label">计价单位</text>
+          <input class="input" value="{{catalogPriceUnitsText}}" data-field="catalogPriceUnitsText" bindinput="updateCatalogField" placeholder="个、打" />
+        </view>
+      </view>
+      <view class="button-row catalog-editor-actions">
+        <button class="secondary-button" bindtap="cancelCatalogEdit">取消</button>
+        <button class="primary-button" bindtap="saveCatalog">保存商品资料</button>
+      </view>
+    </view>
+
+    <view wx:if="{{!catalogProducts.length && !showCatalogEditor}}" class="catalog-empty">还没有商品资料。确认第一笔订单后会自动出现在这里，也可以手动添加。</view>
+    <view wx:for="{{catalogProducts}}" wx:key="id" class="catalog-item">
+      <view class="catalog-item-head">
+        <view class="catalog-item-name">{{item.productName}}</view>
+        <view class="catalog-item-actions">
+          <text data-id="{{item.id}}" bindtap="editCatalog">修改</text>
+          <text class="catalog-delete" data-id="{{item.id}}" bindtap="deleteCatalog">移除</text>
+        </view>
+      </view>
+      <view class="catalog-item-line">规格：{{item.specText || '暂未记录'}}</view>
+      <view class="catalog-item-line">单位：{{item.unitText || '-'}} · 计价：{{item.priceUnitText || '-'}} · 已使用 {{item.useCount || 0}} 次</view>
+    </view>
   </view>
 
   <view class="card">
-    <view class="card-title">版本说明</view>
+    <view class="card-title">记录提醒</view>
     <view class="muted">当前记录保存在这台设备；换手机或清理小程序数据前请谨慎。</view>
   </view>
 </view>

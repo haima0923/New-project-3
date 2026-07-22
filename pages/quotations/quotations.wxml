@@ -1,6 +1,6 @@
 <view class="page">
   <view class="page-title">报价</view>
-  <view class="page-subtitle">报价先进入待确认，到跟进时间会提醒。</view>
+  <view class="page-subtitle">报完价先放这里，到跟进时间会提醒你。</view>
 
   <view wx:if="{{allQuotations.length}}" class="compact-filter-bar">
     <input class="compact-search-input" value="{{filterKeyword}}" data-field="filterKeyword" bindinput="changeTextFilter" confirm-type="search" placeholder="搜客户或产品" />
@@ -9,7 +9,7 @@
 
   <view wx:if="{{allQuotations.length && showFilters}}" class="filter-panel">
     <view class="filter-panel-header">
-      <view class="filter-panel-title">高级筛选</view>
+      <view class="filter-panel-title">更多筛选</view>
       <button class="filter-panel-close" bindtap="toggleFilters">完成</button>
     </view>
     <view class="filter-grid">
@@ -53,7 +53,7 @@
 
   <view wx:if="{{!allQuotations.length}}" class="empty">
     <view class="card-title">还没有报价</view>
-    <view class="muted">客户问什么价，统一去“记一笔”说一句或粘贴聊天。</view>
+    <view class="muted">客户问什么价，去“记一笔”打字或粘贴聊天。</view>
     <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
   </view>
 
@@ -65,7 +65,7 @@
 
   <view wx:for="{{quotations}}" wx:key="id" class="card">
     <view class="row-between">
-      <view class="card-title">{{item.customerDisplay || '临时客户'}}</view>
+      <view class="card-title">{{item.customerDisplay || '未填客户'}}</view>
       <view class="pill {{item.needFollowup ? 'pill-warning' : ''}}">{{item.statusLabel || item.status}}</view>
     </view>
     <view class="muted">{{item.itemsSummary || item.productName || '未填产品'}}</view>
@@ -78,23 +78,34 @@
         class="detail-line item-detail-line"
       >
         {{lineItem.productName || '未填产品'}}
+        <text wx:if="{{lineItem.spec}}"> · {{lineItem.spec}}</text>
         <text wx:if="{{lineItem.quantity || lineItem.unit}}">：{{lineItem.quantity || '-'}}{{lineItem.unit || ''}}</text>
-        <text wx:if="{{lineItem.unitPrice}}">，单价{{lineItem.unitPrice}}</text>
+        <text wx:if="{{lineItem.unitPrice}}">，单价{{lineItem.unitPrice}}/{{lineItem.priceUnit || lineItem.unit || '单位'}}</text>
         <text wx:if="{{lineItem.totalAmount}}">，小计{{lineItem.totalAmount}}</text>
       </view>
     </view>
     <block wx:else>
       <view class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
-      <view class="detail-line">单价：{{item.unitPrice || '-'}}</view>
+      <view class="detail-line">单价：{{item.unitPrice || '-'}}<text wx:if="{{item.unitPrice}}">/{{item.priceUnit || item.unit || '单位'}}</text></view>
     </block>
     <view class="detail-line">总价：{{item.totalAmount || '-'}}</view>
     <view class="detail-line">报价日期：{{item.quoteDate || '-'}}</view>
     <view class="detail-line">跟进日期：{{item.followupDate || '-'}}</view>
     <view wx:if="{{item.convertedOrderId}}" class="detail-line converted-line">关联订单：{{item.convertedOrderId}}</view>
-    <view wx:if="{{item.needFollowup}}" class="followup-box">这个报价到了跟进时间，建议跟一下。</view>
+    <view wx:if="{{item.needFollowup}}" class="followup-box">这个报价该跟一下了。</view>
+    <view wx:if="{{convertingQuotationId === item.id}}" class="convert-order-panel">
+      <view class="convert-order-title">客户确认下单后，先补订单交期</view>
+      <picker mode="date" value="{{conversionDeliveryDate}}" bindchange="changeConversionDeliveryDate">
+        <view class="convert-date-input">{{conversionDeliveryDate || '选择交期'}}</view>
+      </picker>
+      <view class="button-row">
+        <button class="secondary-button" bindtap="cancelConvert">取消</button>
+        <button class="primary-button" data-id="{{item.id}}" bindtap="confirmConvert">确认转订单</button>
+      </view>
+    </view>
     <view class="button-row">
       <button class="secondary-button" data-id="{{item.id}}" bindtap="copyFollowup">复制跟进话术</button>
-      <button wx:if="{{!item.isConverted}}" class="primary-button" data-id="{{item.id}}" bindtap="convert">转订单</button>
+      <button wx:if="{{!item.isConverted && convertingQuotationId !== item.id}}" class="primary-button" data-id="{{item.id}}" bindtap="startConvert">转订单</button>
       <button wx:else class="secondary-button converted-button" disabled>{{item.convertedText}}</button>
     </view>
   </view>

@@ -6,14 +6,14 @@
 }
 
 .money {
-  color: #101828;
+  color: #1677FF;
   font-size: 38rpx;
   font-weight: 800;
   line-height: 1.4;
 }
 
 .detail-line {
-  color: #344054;
+  color: #3B4E5B;
   font-size: 28rpx;
   line-height: 1.7;
 }

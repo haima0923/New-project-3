@@ -1,8 +1,8 @@
 .tab-shell {
   background: rgba(255, 255, 255, 0.98);
-  border-top: 1rpx solid #E5E7EB;
+  border-top: 1rpx solid #E1E8EC;
   bottom: 0;
-  box-shadow: 0 -8rpx 26rpx rgba(31, 41, 55, 0.07);
+  box-shadow: 0 -8rpx 24rpx rgba(20, 47, 65, 0.06);
   left: 0;
   position: fixed;
   right: 0;
@@ -34,7 +34,7 @@
 .tab-icon {
   align-items: center;
   border-radius: 16rpx;
-  color: #667085;
+  color: #687782;
   display: flex;
   font-size: 28rpx;
   font-weight: 700;
@@ -51,7 +51,7 @@
     radial-gradient(circle at 34% 30%, #B8DCFF 0%, #5FA4FF 34%, #1677FF 72%, #0B5ED7 100%);
   border: 10rpx solid #FFFFFF;
   border-radius: 999rpx;
-  box-shadow: 0 14rpx 34rpx rgba(22, 119, 255, 0.42), 0 0 0 9rpx rgba(22, 119, 255, 0.11);
+  box-shadow: 0 14rpx 34rpx rgba(22, 119, 255, 0.38), 0 0 0 9rpx rgba(22, 119, 255, 0.10);
   display: flex;
   height: 136rpx;
   justify-content: center;

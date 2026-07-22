@@ -1,8 +1,11 @@
 const { saveConfirmedDraft, savePendingNote } = require('../../utils/business');
 const { INPUT_SOURCE_LABELS, INTENT_LABELS } = require('../../utils/constants');
 const { parseHybridInput } = require('../../utils/ai-parser');
+const { prewarmAiAuth } = require('../../utils/api-client');
+const { buildParseEvidence } = require('../../utils/parse-evidence');
 const { buildRecentRecords, buildTodayTasks } = require('../../utils/home-workbench');
 const { requestOrderFilterReset, setNextOrderFilter, setNextRecordFilter } = require('../../utils/navigation-state');
+const { getRecordDetailUrl } = require('../../utils/record-detail');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
 const { getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
@@ -134,31 +137,35 @@ function hydrateQuickPaymentResult(parseResult) {
     const orders = (state.orders || [])
       .filter((item) => item.customerId === customer.id && activeOrderStatuses.includes(item.status || ''))
       .filter((item) => {
-        if (!fields.productName && !sourceText) return true;
+        if (!fields.productName) return true;
         const product = String(item.productName || '');
         return !product || String(fields.productName || '').includes(product) || sourceText.includes(product);
       });
-    if (!fields.orderId && orders.length === 1) {
-      fields.orderId = orders[0].id;
-    }
     return Object.assign({}, parseResult, {
       operation: 'record_order_deposit',
-      fields
+      fields,
+      requiresFullInputReason: orders.length
+        ? (orders.length > 1
+          ? '这个客户有多笔进行中订单，请打开完整记一笔选择定金属于哪一单。'
+          : '已匹配到一笔进行中订单，请打开完整记一笔确认是否关联，或选择不关联订单。')
+        : ''
     });
   }
   const receivables = (state.receivables || [])
     .filter((item) => item.customerId === customer.id && activeReceivableStatuses.includes(item.status));
   const low = uniqueFields(parseResult.low_confidence_fields || []);
-  if (!fields.receivableId && receivables.length === 1) {
-    fields.receivableId = receivables[0].id;
-  }
   const selected = receivables.find((item) => item.id === fields.receivableId);
   if (selected && toMoney(fields.paymentAmount) > getReceivableRemaining(selected)) {
     low.push('paymentAmount');
   }
   return Object.assign({}, parseResult, {
     fields,
-    low_confidence_fields: uniqueFields(low)
+    low_confidence_fields: uniqueFields(low),
+    requiresFullInputReason: receivables.length
+      ? (receivables.length > 1
+        ? '这个客户有多笔待收款，请打开完整记一笔选择本次收哪一笔。'
+        : '已匹配到一笔待收款，请打开完整记一笔确认是否核销，或选择不关联本次收款。')
+      : ''
   });
 }
 
@@ -213,6 +220,7 @@ function normalizeEditableParseResult(parseResult) {
 function buildConfirmFields(parseResult) {
   const normalized = normalizeEditableParseResult(parseResult);
   const fields = normalized.fields || {};
+  const suggestions = normalized.field_suggestions || {};
   const missingMap = (normalized.missing_fields || []).reduce((map, field) => {
     map[field] = true;
     return map;
@@ -221,14 +229,19 @@ function buildConfirmFields(parseResult) {
     map[field] = true;
     return map;
   }, {});
-  return getEditableFields(normalized).map((field) => ({
+  return getEditableFields(normalized).map((field) => {
+    const suggestion = suggestions[field] || {};
+    return {
     field,
     label: getFieldLabel(field),
     value: fields[field] || '',
     inputType: digitFields.includes(field) ? 'digit' : (field === 'phone' ? 'number' : 'text'),
     kind: dateFields.includes(field) ? 'date' : (field === 'remark' ? 'textarea' : 'input'),
-    warning: missingMap[field] ? '缺少这项' : (lowMap[field] ? '请确认这项' : '')
-  }));
+    warning: missingMap[field] ? '缺少这项' : (lowMap[field] ? '请确认这项' : ''),
+    suggestionText: suggestion.text || '',
+    suggestionValue: suggestion.value || ''
+    };
+  });
 }
 
 function buildWarningText(parseResult) {
@@ -239,7 +252,7 @@ function buildWarningText(parseResult) {
   if (safetyBlockText) return safetyBlockText;
   if (conflicts.length) return '聊天里有互相覆盖或冲突的信息，请先确认最终字段。';
   if (!missing.length && !low.length) return '';
-  if (missing.length) return '有信息还没补齐，可以先补字段，也可以点“待处理”。';
+  if (missing.length) return '有信息还没补齐，可以先补字段，也可以先放待整理。';
   return '有信息不太确定，请改一下字段后再保存。';
 }
 
@@ -247,17 +260,12 @@ function getQuickSaveSafetyBlockText(parseResult = {}) {
   const safety = parseResult.local_parse_safety || {};
   const aiFallback = parseResult.ai_fallback || {};
   const aiStatus = aiFallback.status || 'not_requested';
-  const hasFinalFieldIssue = Boolean(
-    (parseResult.missing_fields || []).length
-    || (parseResult.low_confidence_fields || []).length
-    || (parseResult.field_conflicts || []).length
-  );
-  const sourceNeedsAiResult = ['paste', 'voice'].includes(parseResult.source);
+  const route = parseResult.parse_route || {};
+  if (route.deep_review_available) return '这条内容需要深度核对；未核对前不能直接保存。';
   if (safety.status === 'NEEDS_AI' && !resolvedAiFallbackStatuses.includes(aiStatus)) {
-    if (!sourceNeedsAiResult && !hasFinalFieldIssue) return '';
-    if (aiStatus === 'failed') return 'AI 解析暂不可用，这条先点“待处理”更安全。';
-    if (aiStatus === 'skipped_no_endpoint') return '这条需要 AI 判断，当前没有可用 AI 结果，先点“待处理”。';
-    return '这条需要 AI 或人工重点核对，先点“待处理”。';
+    if (aiStatus === 'failed') return '智能快速核对没有完成，这条先放待整理。';
+    if (aiStatus === 'skipped_no_endpoint') return '这段内容比较复杂，建议先放待整理，稍后再补。';
+    return '这段内容需要你重点核对，建议先放待整理。';
   }
   if (safety.status === 'NO_RECORD') return '没有识别到可直接保存的业务记录。';
   return '';
@@ -305,16 +313,30 @@ function formatRemarkItems(items) {
   return (items || []).map(getMetaText).filter(Boolean);
 }
 
-function needsFullInputConfirmation(parseResult = {}) {
+function getFullInputConfirmationReason(parseResult = {}) {
   const fields = parseResult.fields || {};
-  return ['quotation', 'order'].includes(parseResult.intent)
-    && Array.isArray(fields.items)
-    && fields.items.filter((item) => item && typeof item === 'object').length > 1;
+  const items = Array.isArray(fields.items) ? fields.items.filter((item) => item && typeof item === 'object') : [];
+  if (parseResult.requiresFullInputReason) return parseResult.requiresFullInputReason;
+  if (parseResult.suggested_operation === 'create_receivable_with_payment') {
+    return '这笔没有匹配到旧待收，请打开完整记一笔确认是否新建待收并记录本次收款。';
+  }
+  if (['quotation', 'order'].includes(parseResult.intent) && items.length > 1) {
+    return '这笔有多件商品，请打开完整记一笔逐项确认，首页不会漏存。';
+  }
+  if (['quotation', 'order'].includes(parseResult.intent) && items.some((item) => item.spec)) {
+    return '这笔带规格，请打开完整记一笔核对商品和规格。';
+  }
+  if (['quotation', 'order'].includes(parseResult.intent)
+    && items.some((item) => item.unit && item.priceUnit && item.unit !== item.priceUnit && !item.totalAmount)) {
+    return '数量单位和计价单位不同，请打开完整记一笔确认该项金额。';
+  }
+  return '';
 }
 
 function buildHomeConfirmState(parseResult) {
   const normalized = normalizeEditableParseResult(parseResult);
-  const needsFullInput = needsFullInputConfirmation(normalized);
+  const fullInputReason = getFullInputConfirmationReason(normalized);
+  const needsFullInput = Boolean(fullInputReason);
   const quickReady = canQuickSave(normalized) && !needsFullInput;
   const safetyBlockText = getQuickSaveSafetyBlockText(normalized);
   const fieldConflictLines = formatFieldConflicts(normalized.field_conflicts || []);
@@ -322,10 +344,12 @@ function buildHomeConfirmState(parseResult) {
   const remarkItemLines = formatRemarkItems(normalized.remark_items || []);
   return {
     parseResult: normalized,
+    parseEvidence: buildParseEvidence(normalized),
+    showParseEvidence: false,
     confirmFields: buildConfirmFields(normalized),
     intentLabel: INTENT_LABELS[normalized.intent] || '待确认',
     sourceLabel: INPUT_SOURCE_LABELS[normalized.source] || '输入',
-    warningText: needsFullInput ? '这笔包含多件商品，请到完整“记一笔”逐项确认，首页不会只保存第一件。' : buildWarningText(normalized),
+    warningText: fullInputReason || buildWarningText(normalized),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
     supersededFactLines,
@@ -335,7 +359,10 @@ function buildHomeConfirmState(parseResult) {
     quickSaveText: quickReady ? '确认保存' : '补齐后保存',
     disableQuickSave: !quickReady,
     showPendingButton: Boolean(needsFullInput || safetyBlockText || (normalized.missing_fields || []).length || (normalized.low_confidence_fields || []).length || fieldConflictLines.length),
-    showContinueInput: needsFullInput
+    showContinueInput: needsFullInput,
+    // 多商品、聊天记录等内容先进入完整确认页，避免首页确认卡堆叠过多操作。
+    // 在完整页里仍可由用户主动选择“深度核对”。
+    showDeepReviewButton: Boolean((normalized.parse_route || {}).deep_review_available) && !needsFullInput
   };
 }
 
@@ -356,6 +383,57 @@ function refreshTabBarSelected(page) {
   }
 }
 
+function clearParseProgress(page) {
+  (page.parseProgressTimers || []).forEach((timer) => clearTimeout(timer));
+  page.parseProgressTimers = [];
+  if (page.parseProgressRevealTimer) clearTimeout(page.parseProgressRevealTimer);
+  page.parseProgressRevealTimer = null;
+}
+
+function startParseProgress(page, source) {
+  clearParseProgress(page);
+  const copy = source === 'paste'
+    ? [
+      ['正在整理聊天内容', '先找出客户、产品和最终说法'],
+      ['正在核对前后说法', '避免把旧价格或旧数量记进去'],
+      ['聊天内容比较复杂，正在复核关键内容', '请稍等，确认前不会自动保存'],
+      ['网络有点慢，正在继续整理', '当前内容还留在输入框，可继续等待']
+    ]
+    : [
+      ['正在整理这条记录', '先核对客户、金额和交期'],
+      ['正在核对关键信息', '避免把金额或数量记错'],
+      ['内容比较复杂，正在复核', '请稍等，确认前不会自动保存'],
+      ['网络有点慢，正在继续整理', '当前内容还留在输入框，可继续等待']
+    ];
+  const show = () => page.setData({
+    voiceOverlayVisible: true,
+    voiceOverlayMode: 'processing',
+    voiceOverlayTitle: copy[0][0],
+    voiceOverlaySubtitle: copy[0][1],
+    voiceGesture: 'send'
+  });
+  if (source === 'voice' || page.data.voiceOverlayVisible) {
+    show();
+  } else {
+    // 本地规则能立即完成时不闪出遮罩，只有真的在等待时才展示过程。
+    page.parseProgressRevealTimer = setTimeout(show, 180);
+  }
+  [2600, 7600, 15000].forEach((delay, index) => {
+    page.parseProgressTimers.push(setTimeout(() => {
+      if (!page.data.parsing) return;
+      page.setData({
+        voiceOverlayTitle: copy[index + 1][0],
+        voiceOverlaySubtitle: copy[index + 1][1]
+      });
+    }, delay));
+  });
+}
+
+function finishParseProgress(page) {
+  clearParseProgress(page);
+  page.setData({ voiceOverlayVisible: false });
+}
+
 Page({
   data: {
     tasks: [],
@@ -372,6 +450,8 @@ Page({
     voiceGesture: 'send',
     voiceTip: '',
     parseResult: null,
+    parseEvidence: null,
+    showParseEvidence: false,
     intentLabel: '',
     sourceLabel: '',
     confirmFields: [],
@@ -385,13 +465,21 @@ Page({
     quickSaveText: '确认保存',
     disableQuickSave: false,
     showPendingButton: false,
-    showContinueInput: false
+    showContinueInput: false,
+    showDeepReviewButton: false
   },
 
   onShow() {
     refreshTabBarSelected(this);
     requestOrderFilterReset();
+    // 先准备微信登录，避免用户说完后才把登录时间挤进 8 秒快速核对。
+    prewarmAiAuth();
     this.load();
+  },
+
+  onUnload() {
+    clearParseProgress(this);
+    stopVoiceRecognition();
   },
 
   load() {
@@ -420,6 +508,8 @@ Page({
 
   beginVoiceRecognition() {
     if (this.data.voiceRecording) return;
+    // 登录准备和录音并行，不占用户松手后生成确认卡的 8 秒。
+    prewarmAiAuth();
     vibrateOnVoiceStart();
     this.setData({
       voiceRecording: true,
@@ -484,7 +574,7 @@ Page({
         }
         this.setData({
           voiceRecording: false,
-          composerText: '',
+          composerText: text,
           voiceTip: '已识别成文字，请确认后保存。'
         });
         this.runQuickParse(text, 'voice');
@@ -499,7 +589,7 @@ Page({
         if (partialText) {
           this.setData({
             voiceRecording: false,
-            composerText: '',
+            composerText: partialText,
             voiceTip: '已识别成文字，请确认后保存。'
           });
           this.runQuickParse(partialText, 'voice');
@@ -612,7 +702,9 @@ Page({
   },
 
   onComposerInput(event) {
-    this.setData({ composerText: event.detail.value });
+    const composerText = event.detail.value;
+    if (String(composerText || '').trim()) prewarmAiAuth();
+    this.setData({ composerText });
   },
 
   pasteClipboard() {
@@ -675,36 +767,43 @@ Page({
     this.runQuickParse(text, 'typed');
   },
 
-  runQuickParse(text, source, pasteAnalysis) {
+  runQuickParse(text, source, pasteAnalysis, reviewMode = 'standard') {
     const state = getState();
     const payload = {
       text,
       source,
       context: 'home',
-      state
+      state,
+      reviewMode
     };
     if (source === 'paste' && pasteAnalysis) {
       payload.rawText = pasteAnalysis.rawText;
       payload.extractedText = pasteAnalysis.extractedText || text;
       payload.pasteMeta = getPasteMeta(pasteAnalysis);
+    } else if (reviewMode === 'deep' && this.data.parseResult) {
+      const previous = this.data.parseResult;
+      payload.rawText = previous.raw_text || previous.original_text || text;
+      payload.extractedText = previous.extracted_text || text;
+      payload.rawMessages = previous.raw_messages || [];
     }
     this.setData({
       parsing: true,
       voiceTip: source === 'voice' ? this.data.voiceTip : ''
     });
+    startParseProgress(this, source);
     parseHybridInput(payload)
       .then((parseResult) => {
         const confirmState = buildHomeConfirmState(parseResult);
+        finishParseProgress(this);
         this.setData(Object.assign({}, confirmState, {
           parsing: false,
-          voiceOverlayVisible: false,
           voiceTip: ''
         }));
       })
       .catch(() => {
+        finishParseProgress(this);
         this.setData({
           parsing: false,
-          voiceOverlayVisible: false
         });
         wx.showToast({ title: '识别失败，请稍后再试', icon: 'none' });
       });
@@ -729,6 +828,27 @@ Page({
     this.setData(buildHomeConfirmState(nextResult));
   },
 
+  applyConfirmSuggestion(event) {
+    const field = event.currentTarget.dataset.field;
+    const value = event.currentTarget.dataset.value;
+    if (!field || !value) return;
+    this.updateConfirmField({
+      currentTarget: { dataset: { field } },
+      detail: { value }
+    });
+  },
+
+  toggleParseEvidence() {
+    this.setData({ showParseEvidence: !this.data.showParseEvidence });
+  },
+
+  requestDeepReview() {
+    const parseResult = this.data.parseResult;
+    if (!parseResult || !(parseResult.parse_route || {}).deep_review_available) return;
+    const text = parseResult.extracted_text || parseResult.original_text || this.data.composerText;
+    this.runQuickParse(text, parseResult.source || 'typed', null, 'deep');
+  },
+
   changeConfirmDate(event) {
     if (!this.data.parseResult) return;
     const field = event.currentTarget.dataset.field || 'dueDate';
@@ -741,6 +861,29 @@ Page({
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || []).filter((item) => item !== field)
     });
     this.setData(buildHomeConfirmState(nextResult));
+  },
+
+  closeConfirmCard() {
+    clearParseProgress(this);
+    this.setData({
+      parseResult: null,
+      parseEvidence: null,
+      showParseEvidence: false,
+      confirmFields: [],
+      warningText: '',
+      fieldConflictLines: [],
+      showFieldConflicts: false,
+      supersededFactLines: [],
+      showSupersededFacts: false,
+      remarkItemLines: [],
+      showRemarkItems: false,
+      quickSaveText: '确认保存',
+      disableQuickSave: false,
+      showPendingButton: false,
+      showContinueInput: false,
+      showDeepReviewButton: false,
+      voiceTip: this.data.composerText ? '已关闭确认卡，原内容还在输入框里。' : ''
+    });
   },
 
   confirmQuickSave() {
@@ -761,6 +904,8 @@ Page({
     this.setData({
       composerText: '',
       parseResult: null,
+      parseEvidence: null,
+      showParseEvidence: false,
       confirmFields: [],
       warningText: '',
       fieldConflictLines: [],
@@ -772,7 +917,8 @@ Page({
       quickSaveText: '确认保存',
       disableQuickSave: false,
       showPendingButton: false,
-      showContinueInput: false
+      showContinueInput: false,
+      showDeepReviewButton: false
     });
     this.load();
   },
@@ -787,6 +933,8 @@ Page({
     this.setData({
       composerText: '',
       parseResult: null,
+      parseEvidence: null,
+      showParseEvidence: false,
       confirmFields: [],
       warningText: '',
       fieldConflictLines: [],
@@ -798,7 +946,8 @@ Page({
       quickSaveText: '确认保存',
       disableQuickSave: false,
       showPendingButton: false,
-      showContinueInput: false
+      showContinueInput: false,
+      showDeepReviewButton: false
     });
     this.load();
   },
@@ -866,7 +1015,12 @@ Page({
     }
   },
 
-  openRecent() {
+  openRecent(event) {
+    const url = getRecordDetailUrl(event.currentTarget.dataset.type, event.currentTarget.dataset.id);
+    if (url) {
+      wx.navigateTo({ url });
+      return;
+    }
     wx.switchTab({ url: '/pages/records/records' });
   }
 });

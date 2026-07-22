@@ -3,9 +3,11 @@
 }
 
 .profile-card {
-  background: linear-gradient(135deg, #1677FF, #63A6FF);
-  border-radius: 32rpx;
-  box-shadow: 0 16rpx 36rpx rgba(22, 119, 255, 0.22);
+  background:
+    radial-gradient(circle at 85% 8%, rgba(164, 211, 255, 0.54) 0%, rgba(164, 211, 255, 0) 30%),
+    linear-gradient(135deg, #4A9CFF 0%, #1677FF 72%, #0B5ED7 100%);
+  border-radius: 28rpx;
+  box-shadow: 0 14rpx 30rpx rgba(22, 119, 255, 0.20);
   color: #FFFFFF;
   margin-bottom: 24rpx;
   padding: 34rpx 30rpx;
@@ -32,8 +34,8 @@
 }
 
 .profile-stat {
-  background: #F6F7FB;
-  border-radius: 22rpx;
+  background: #F6F8FC;
+  border-radius: 16rpx;
   padding: 20rpx 10rpx;
   text-align: center;
 }
@@ -81,4 +83,98 @@
 
 .status-note {
   margin-top: 6rpx;
+}
+
+.catalog-card .row-between {
+  align-items: flex-start;
+  gap: 16rpx;
+}
+
+.catalog-intro {
+  line-height: 1.5;
+  margin-top: 6rpx;
+}
+
+.catalog-add-button {
+  background: #EAF2FF;
+  border: 0;
+  border-radius: 999rpx;
+  color: #1677FF;
+  flex: 0 0 auto;
+  font-size: 24rpx;
+  line-height: 1;
+  margin: 0;
+  min-height: 58rpx;
+  padding: 16rpx 22rpx;
+}
+
+.catalog-editor {
+  background: #F8FAFC;
+  border: 1rpx solid #DDE3EA;
+  border-radius: 18rpx;
+  margin-top: 18rpx;
+  padding: 18rpx;
+}
+
+.catalog-textarea {
+  box-sizing: border-box;
+  min-height: 130rpx;
+  width: 100%;
+}
+
+.catalog-editor-grid {
+  display: grid;
+  gap: 14rpx;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.catalog-editor-actions {
+  margin-top: 4rpx;
+}
+
+.catalog-empty {
+  background: #F8FAFC;
+  border-radius: 14rpx;
+  color: #667085;
+  font-size: 25rpx;
+  line-height: 1.55;
+  margin-top: 18rpx;
+  padding: 18rpx;
+}
+
+.catalog-item {
+  border-top: 1rpx solid #EAECF0;
+  margin-top: 18rpx;
+  padding-top: 18rpx;
+}
+
+.catalog-item-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.catalog-item-name {
+  color: #1D2939;
+  font-size: 29rpx;
+  font-weight: 800;
+}
+
+.catalog-item-actions {
+  color: #1677FF;
+  display: flex;
+  font-size: 24rpx;
+  gap: 20rpx;
+}
+
+.catalog-delete {
+  color: #D92D20;
+}
+
+.catalog-item-line {
+  color: #667085;
+  font-size: 24rpx;
+  line-height: 1.55;
+  margin-top: 7rpx;
+  overflow-wrap: anywhere;
 }

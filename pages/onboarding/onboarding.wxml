@@ -1,17 +1,120 @@
-<view class="page onboarding">
-  <view class="page-title">货小玲</view>
-  <view class="page-subtitle">谁欠钱、哪单要交、哪个报价要跟，打开就知道。</view>
-
-  <view class="card">
-    <view class="card-title">你主要做什么品类？</view>
-    <view class="muted">这一步可以跳过，后面也能补。首版不会强制你填复杂资料。</view>
-    <picker mode="selector" range="{{industries}}" bindchange="chooseIndustry">
-      <view class="input industry-picker">
-        {{selectedIndustry || '选择行业'}}
-      </view>
-    </picker>
+<view
+  wx:if="{{showPage}}"
+  class="hxl-onboarding"
+  style="padding-top: {{pageTop}}px;"
+  aria-label="货小玲新用户首屏"
+>
+  <view class="hxl-brand-row">
+    <view class="hxl-brand-mark" aria-hidden="true">
+      <image
+        class="hxl-brand-icon"
+        src="/assets/onboarding/brand-sparkles.png"
+        mode="aspectFit"
+      />
+    </view>
+    <view class="hxl-brand-copy">
+      <text class="hxl-brand-name">货小玲</text>
+      <text class="hxl-brand-position">义乌老板的 AI 生意助理</text>
+    </view>
   </view>
 
-  <button class="primary-button" bindtap="start">开始记第一笔</button>
-  <button class="secondary-button skip-button" bindtap="skip">先跳过</button>
+  <view class="hxl-hero">
+    <text class="hxl-pain-line">该收的钱、该交的货、该跟的单</text>
+    <view class="hxl-hero-title">
+      <text class="hxl-say-accent">说一句</text>
+      <text>，小玲帮你</text>
+      <text class="hxl-watch-accent">盯着</text>
+    </view>
+    <view class="hxl-support-copy">
+      <text>店里、厂里、路上——想到什么就说一句。</text>
+      <text>小玲整理好，等你确认。</text>
+    </view>
+  </view>
+
+  <view class="hxl-scene-well">
+    <view
+      class="hxl-scene phase-{{phase}}"
+      aria-label="老板说一句，小玲整理成确认卡"
+    >
+      <image
+        class="hxl-scene-art"
+        src="/assets/onboarding/xiaoling-dialogue.webp"
+        mode="aspectFill"
+      />
+
+      <view class="hxl-scene-shade" aria-hidden="true"></view>
+
+      <view class="hxl-boss-voice" aria-hidden="true">
+        <image
+          class="hxl-boss-voice-icon"
+          src="/assets/onboarding/audio-lines.png"
+          mode="aspectFit"
+        />
+      </view>
+
+      <view
+        class="hxl-speech-surface"
+        style="width: {{speechWidth}}%;"
+      >
+        <text class="hxl-speech-label">{{speechLabel}}</text>
+        <view class="hxl-speech-text">
+          <text>{{speechText}}</text>
+          <text wx:if="{{isTyping}}" class="hxl-typing-cursor"></text>
+        </view>
+      </view>
+
+      <view class="hxl-organizing-surface" aria-hidden="true">
+        <image
+          class="hxl-organizing-icon"
+          src="/assets/onboarding/audio-lines.png"
+          mode="aspectFit"
+        />
+        <text>小玲正在整理</text>
+        <view class="hxl-organizing-dots">
+          <text>·</text><text>·</text><text>·</text>
+        </view>
+      </view>
+
+      <view
+        class="hxl-result-surface"
+        style="left: {{resultLeft}}%; width: {{resultWidth}}%;"
+      >
+        <text class="hxl-result-kicker" style="color: {{sceneAccent}};">{{resultKicker}}</text>
+        <text class="hxl-result-type">{{resultType}}</text>
+        <view class="hxl-field-list">
+          <view class="hxl-field-row">
+            <text class="hxl-field-label">时间</text>
+            <text class="hxl-field-value">{{cardTime}}</text>
+          </view>
+          <view class="hxl-field-row">
+            <text class="hxl-field-label">内容</text>
+            <text class="hxl-field-value">{{cardContent}}</text>
+          </view>
+        </view>
+        <text class="hxl-confirm-note">{{confirmNote}}</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="hxl-below-scene">
+    <view class="hxl-trust-line">
+      <image
+        class="hxl-trust-icon"
+        src="/assets/onboarding/shield-check.png"
+        mode="aspectFit"
+      />
+      <text>每一笔，都经你确认。</text>
+    </view>
+    <button class="hxl-play-control" bindtap="replayMotion">重看动画</button>
+  </view>
+
+  <view class="hxl-actions">
+    <view
+      class="hxl-primary-cta {{isStarting ? 'is-disabled' : ''}}"
+      role="button"
+      aria-disabled="{{isStarting}}"
+      bindtap="start"
+    >开始记第一笔</view>
+    <button class="hxl-learn-link" bindtap="replayMotion">了解怎么用</button>
+  </view>
 </view>

@@ -81,7 +81,9 @@ Page({
     filterDueDate: '',
     hasActiveFilters: false,
     hasAdvancedFilters: false,
-    showFilters: false
+    showFilters: false,
+    convertingQuotationId: '',
+    conversionDeliveryDate: ''
   },
 
   onShow() {
@@ -161,20 +163,46 @@ Page({
     });
   },
 
-  convert(event) {
+  startConvert(event) {
     const id = event.currentTarget.dataset.id;
     const quotation = this.data.quotations.find((item) => item.id === id);
     if (quotation && quotation.isConverted) {
       wx.showToast({ title: '已转订单', icon: 'none' });
       return;
     }
+    this.setData({
+      convertingQuotationId: id,
+      conversionDeliveryDate: ''
+    });
+  },
+
+  changeConversionDeliveryDate(event) {
+    this.setData({ conversionDeliveryDate: event.detail.value });
+  },
+
+  cancelConvert() {
+    this.setData({
+      convertingQuotationId: '',
+      conversionDeliveryDate: ''
+    });
+  },
+
+  confirmConvert(event) {
+    const id = event.currentTarget.dataset.id;
+    if (!this.data.conversionDeliveryDate) {
+      wx.showToast({ title: '转订单前请先选交期', icon: 'none' });
+      return;
+    }
     const state = getState();
-    const order = convertQuotationToOrder(state, id);
+    const order = convertQuotationToOrder(state, id, {
+      requiredDeliveryDate: this.data.conversionDeliveryDate
+    });
     saveState(state);
     wx.showToast({
       title: order ? '已转订单' : '转换失败',
       icon: order ? 'success' : 'none'
     });
+    if (order) this.cancelConvert();
     this.load();
   }
 });

@@ -12,7 +12,8 @@
     "pages/todos/todos",
     "pages/pending/pending",
     "pages/query/query",
-    "pages/customer/customer"
+    "pages/customer/customer",
+    "pages/record-detail/record-detail"
   ],
   "window": {
     "navigationBarTitleText": "货小玲",
@@ -53,7 +54,7 @@
       },
       {
         "pagePath": "pages/finance/finance",
-        "text": "财务"
+        "text": "收款"
       },
       {
         "pagePath": "pages/profile/profile",

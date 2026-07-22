@@ -1,6 +1,6 @@
 <view class="page">
   <view class="page-title">待整理记录</view>
-  <view class="page-subtitle">AI 没听全或你还不确定的内容，先放在这里，不会丢。</view>
+  <view class="page-subtitle">信息不完整或你还拿不准的内容，先放这里，不会丢。</view>
 
   <view wx:if="{{!notes.length}}" class="empty">
     <view class="card-title">没有待整理记录</view>

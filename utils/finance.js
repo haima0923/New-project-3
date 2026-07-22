@@ -32,18 +32,20 @@ function getReceivableSource(receivable) {
 
 function getSourceLabel(source) {
   return {
-    order: '订单应收',
-    legacy: '历史应收',
-    manual: '手动应收'
-  }[source] || '应收';
+    order: '订单待收',
+    legacy: '历史待收',
+    manual: '手动待收'
+  }[source] || '待收款';
 }
 
 function getPaymentKindLabel(kind) {
   return {
     deposit: '定金',
     final_payment: '尾款',
-    receivable_payment: '应收收款',
-    legacy_payment: '历史欠款收款'
+    receivable_payment: '待收回款',
+    legacy_payment: '历史欠款回款',
+    unlinked_payment: '待核对收款',
+    unlinked_deposit: '待核对定金'
   }[kind] || '收款';
 }
 
@@ -139,15 +141,20 @@ function buildFinanceViewModel(state) {
   const productionOrders = settlementRows.filter((item) => productionOrderStatuses.includes(item.status));
   const shippedPendingOrders = settlementRows.filter((item) => item.status === '已发货');
   const overdueRows = activeReceivables.filter((item) => item.isOverdue);
-  const monthlyReceivableAmount = (safeState.receivables || [])
+  const monthlyReceivableAmount = activeReceivables
     .filter((item) => isSameMonth(item.dueDate, monthPrefix))
+    .reduce((sum, item) => sum + item.remainingAmount, 0);
+  const monthlyPayments = (safeState.paymentRecords || [])
+    .filter((item) => isSameMonth(item.paidAt || item.createdAt, monthPrefix));
+  const monthlyPaymentAmount = monthlyPayments
     .reduce((sum, item) => sum + toMoney(item.amount), 0);
-  const monthlyPaymentAmount = (safeState.paymentRecords || [])
-    .filter((item) => isSameMonth(item.paidAt || item.createdAt, monthPrefix))
+  const monthlyUnlinkedPayments = monthlyPayments
+    .filter((item) => ['unlinked_payment', 'unlinked_deposit'].includes(item.kind || item.paymentKind));
+  const monthlyUnlinkedPaymentAmount = monthlyUnlinkedPayments
     .reduce((sum, item) => sum + toMoney(item.amount), 0);
   const overdueAmount = overdueRows.reduce((sum, item) => sum + item.remainingAmount, 0);
   const productionSettlementAmount = productionOrders.reduce((sum, item) => sum + toMoney(item.remainingSettlementAmount), 0);
-  const productionQuantity = productionOrders.reduce((sum, item) => sum + toMoney(item.quantity), 0);
+  const productionOrderCount = productionOrders.length;
   const shippedPendingAmount = shippedPendingOrders.reduce((sum, item) => sum + toMoney(item.remainingSettlementAmount), 0);
   const partialRemainingAmount = activeReceivables
     .filter((item) => item.status === '部分收款')
@@ -162,14 +169,17 @@ function buildFinanceViewModel(state) {
       monthlyReceivableText: formatMoney(monthlyReceivableAmount),
       monthlyPaymentAmount,
       monthlyPaymentText: formatMoney(monthlyPaymentAmount),
+      monthlyPaymentHint: monthlyUnlinkedPayments.length
+        ? `其中 ${formatMoney(monthlyUnlinkedPaymentAmount)} 元待核对`
+        : '含订单定金',
       overdueAmount,
       overdueText: formatMoney(overdueAmount),
       productionSettlementAmount,
       productionSettlementText: formatMoney(productionSettlementAmount)
     },
     stats: {
-      productionQuantity,
-      productionQuantityText: formatMoney(productionQuantity),
+      productionOrderCount,
+      productionOrderCountText: String(productionOrderCount),
       shippedPendingAmount,
       shippedPendingText: formatMoney(shippedPendingAmount),
       partialRemainingAmount,

@@ -52,6 +52,14 @@ function parseSection(section) {
   const source = normalizeNumberText(section);
   if (isNumericText(source)) return Number(source);
   if (isNumericText(section)) return Number(section);
+  // 生意口语里“三千二”“一百五”通常分别是 3200、150，不能按 3002、105 处理。
+  const colloquialTail = String(source || '').match(/^([零一二两三四五六七八九])(千|百|十)([零一二两三四五六七八九])$/);
+  if (colloquialTail) {
+    const left = DIGIT_MAP[colloquialTail[1]];
+    const right = DIGIT_MAP[colloquialTail[3]];
+    const unit = UNIT_MAP[colloquialTail[2]];
+    return left * unit + right * (unit / 10);
+  }
   let total = 0;
   let number = 0;
   const chars = String(source || '').split('');

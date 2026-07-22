@@ -2,13 +2,34 @@
   "description": "Yiwu factory owner AI assistant MVP",
   "packOptions": {
     "ignore": [
-      {"type": "folder", "value": "docs"},
-    {"type": "folder", "value": "promptfoo"},
-    {"type": "folder", "value": "reports"},
-    {"type": "folder", "value": "scripts"},
-    {"type": "folder", "value": "server"},
-    {"type": "folder", "value": "temp"},
-    {"type": "folder", "value": "node_modules"}
+      {
+        "value": "docs",
+        "type": "folder"
+      },
+      {
+        "value": "promptfoo",
+        "type": "folder"
+      },
+      {
+        "value": "reports",
+        "type": "folder"
+      },
+      {
+        "value": "scripts",
+        "type": "folder"
+      },
+      {
+        "value": "server",
+        "type": "folder"
+      },
+      {
+        "value": "temp",
+        "type": "folder"
+      },
+      {
+        "value": "node_modules",
+        "type": "folder"
+      }
     ],
     "include": []
   },
@@ -38,7 +59,7 @@
     }
   },
   "compileType": "miniprogram",
-  "libVersion": "3.15.1",
+  "libVersion": "3.17.0",
   "appid": "wx975fd5297d4c13e7",
   "projectname": "货小玲",
   "condition": {},

@@ -1,10 +1,27 @@
-const { decorateRecords, getDashboard, getItemsSummary, getOrderDepositAmount, getOrderRemainingSettlement } = require('./business');
+const { decorateRecords, getDashboard, getItemsSummary, getOrderDepositAmount, getOrderRemainingSettlement, getRecordItems } = require('./business');
 const { diffDays, today } = require('./date');
 
 function toMoneyText(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return '0';
   return Number.isInteger(number) ? String(number) : String(Number(number.toFixed(2)));
+}
+
+function hasValue(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+function getQuantitySummary(record) {
+  const items = getRecordItems(record).filter((item) => hasValue(item.quantity) || hasValue(item.unit));
+  if (!items.length) return '未填写';
+  if (items.length === 1) return `${hasValue(items[0].quantity) ? items[0].quantity : '-'}${items[0].unit || ''}`;
+  const units = Array.from(new Set(items.map((item) => item.unit || '')));
+  const quantities = items.map((item) => Number(item.quantity));
+  if (units.length === 1 && units[0] && items.every((item) => hasValue(item.quantity)) && quantities.every(Number.isFinite)) {
+    const total = quantities.reduce((sum, value) => sum + value, 0);
+    return `${Number(total.toFixed(2))}${units[0]}（${items.length}项）`;
+  }
+  return `${items.length}项`;
 }
 
 function shortCustomerName(value) {
@@ -199,6 +216,8 @@ function buildRecordItem(type, item, state) {
     const depositAmount = getOrderDepositAmount(state, item.id);
     const remainingSettlement = getOrderRemainingSettlement(state, item);
     const itemsSummary = getItemsSummary(item);
+    const quantityPart = `数量 ${getQuantitySummary(item)}`;
+    const amountPart = hasValue(item.totalAmount) ? `金额 ¥${toMoneyText(item.totalAmount)}` : '金额未填写';
     const moneyPart = depositAmount > 0
       ? `已收定金 ¥${toMoneyText(depositAmount)}，待收尾款 ¥${toMoneyText(remainingSettlement)}`
       : `状态 ${item.status || '-'}`;
@@ -206,7 +225,7 @@ function buildRecordItem(type, item, state) {
       id: item.id,
       type,
       title: `${shortCustomerName(decorated.customerDisplay)} · ${itemsSummary || item.productName || '未填产品'}`,
-      summary: `交期 ${item.requiredDeliveryDate || '-'}，${moneyPart}`,
+      summary: `${quantityPart}，${amountPart}，交期 ${item.requiredDeliveryDate || '-'}，${moneyPart}`,
       time: formatDateTime(item.createdAt || item.orderDate),
       createdAt: item.createdAt || item.orderDate || ''
     });

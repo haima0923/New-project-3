@@ -1,11 +1,16 @@
 const { INPUT_SOURCE_LABELS, INTENT_LABELS } = require('../../utils/constants');
-const { findCustomerMatches, getOrderDepositAmount, saveConfirmedDraft, savePendingNote } = require('../../utils/business');
+const { buildOrderEditDraft, findCustomerMatches, getItemsSummary, getOrderDepositAmount, getRecordItems, saveConfirmedDraft, savePendingNote } = require('../../utils/business');
 const { parseHybridInput } = require('../../utils/ai-parser');
+const { prewarmAiAuth } = require('../../utils/api-client');
+const { buildParseEvidence } = require('../../utils/parse-evidence');
 const { addDays, diffDays, today } = require('../../utils/date');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
+const { getCatalogCheck, getProductSuggestions, getSpecSuggestions } = require('../../utils/product-catalog');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
+const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
+const { normalizeUnit, unitsMatch } = require('../../utils/units');
 const {
   analyzeClipboardText,
   buildNoBusinessPasteResult,
@@ -19,6 +24,8 @@ const {
 
 const intentOptions = ['quotation', 'order', 'receivable', 'payment', 'dunning', 'todo', 'unknown'];
 const NEW_CUSTOMER_OPTION_ID = '__new_customer__';
+const UNLINKED_RECEIVABLE_OPTION_ID = '__unlinked_receivable__';
+const UNLINKED_ORDER_OPTION_ID = '__unlinked_order__';
 const DEFAULT_QUOTATION_FOLLOWUP_DAYS = 2;
 const FOLLOWUP_DAY_VALUES = Array.from({ length: 30 }, (_, index) => index + 1);
 const FOLLOWUP_DAY_RANGE = FOLLOWUP_DAY_VALUES.map((days) => `${days} 天`);
@@ -42,18 +49,18 @@ const requiredFields = {
   unknown: ['intent']
 };
 const warningFieldsByOperation = {
-  create_quotation: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice'],
-  create_order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'depositAmount', 'paymentAmount'],
-  update_quotation: ['quotationId', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
-  update_order: ['orderId', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
+  create_quotation: ['customerName', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'],
+  create_order: ['customerName', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'depositAmount', 'paymentAmount'],
+  update_quotation: ['quotationId', 'customerName', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'dueDate'],
+  update_order: ['orderId', 'customerName', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'dueDate'],
   create_receivable: ['customerName', 'amount'],
   create_receivable_with_payment: ['customerName', 'amount', 'paymentAmount', 'remainingAmount'],
-  record_payment: ['customerName', 'paymentAmount'],
-  record_order_deposit: ['customerName', 'paymentAmount', 'depositAmount'],
+  record_payment: ['customerName', 'receivableId', 'paymentAmount'],
+  record_order_deposit: ['customerName', 'orderId', 'paymentAmount', 'depositAmount'],
   create_todo: ['todoTitle', 'customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate'],
   pending: ['intent'],
-  quotation: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice'],
-  order: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'depositAmount', 'paymentAmount'],
+  quotation: ['customerName', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'],
+  order: ['customerName', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'depositAmount', 'paymentAmount'],
   receivable: ['customerName', 'amount'],
   payment: ['customerName', 'paymentAmount', 'depositAmount', 'remainingAmount'],
   dunning: ['customerName'],
@@ -222,17 +229,12 @@ function getFormalSaveSafetyBlockText(parseResult = {}) {
   const safety = parseResult.local_parse_safety || {};
   const aiFallback = parseResult.ai_fallback || {};
   const aiStatus = aiFallback.status || 'not_requested';
-  const hasFinalFieldIssue = Boolean(
-    (parseResult.missing_fields || []).length
-    || (parseResult.low_confidence_fields || []).length
-    || (parseResult.field_conflicts || []).length
-  );
-  const sourceNeedsAiResult = ['paste', 'voice'].includes(parseResult.source);
+  const route = parseResult.parse_route || {};
+  if (route.deep_review_available) return '这条内容需要深度核对；未核对前不能直接保存。';
   if (safety.status === 'NEEDS_AI' && !resolvedAiFallbackStatuses.includes(aiStatus)) {
-    if (!sourceNeedsAiResult && !hasFinalFieldIssue) return '';
-    if (aiStatus === 'failed') return 'AI 解析暂不可用，这条先存到待整理更安全。';
-    if (aiStatus === 'skipped_no_endpoint') return '这条需要 AI 判断，当前没有可用 AI 结果，先存到待整理。';
-    return '这条需要 AI 或人工重点核对，先存到待整理。';
+    if (aiStatus === 'failed') return '智能快速核对没有完成，这条先放待整理。';
+    if (aiStatus === 'skipped_no_endpoint') return '这条信息需要你多看一眼，确认后再保存。';
+    return '这条信息有几处需要你确认，拿不准可以先放待整理。';
   }
   if (safety.status === 'NO_RECORD') return '没有识别到可直接保存的业务记录。';
   return '';
@@ -275,7 +277,7 @@ function formatRemarkItems(items) {
 }
 
 function hasConfirmItemValue(item) {
-  return ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'totalAmount', 'itemDeliveryDate', 'itemRemark']
+  return ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'totalAmount', 'itemDeliveryDate', 'itemRemark']
     .some((field) => hasFieldValue(item, field));
 }
 
@@ -284,8 +286,9 @@ function normalizeConfirmItem(item = {}) {
     productName: item.productName || item.product_name || item.name || '',
     spec: item.spec || '',
     quantity: item.quantity || '',
-    unit: item.unit || '',
+    unit: normalizeUnit(item.unit || ''),
     unitPrice: item.unitPrice || item.unit_price || '',
+    priceUnit: normalizeUnit(item.priceUnit || item.price_unit || item.unitPriceUnit || item.unit_price_unit || ''),
     totalAmount: item.totalAmount || item.total_amount || item.amount || '',
     itemDeliveryDate: item.itemDeliveryDate || item.deliveryDate || item.dueDate || '',
     itemRemark: item.itemRemark || item.remark || ''
@@ -299,6 +302,7 @@ function buildItemFromLegacyFields(fields = {}) {
     quantity: fields.quantity,
     unit: fields.unit,
     unitPrice: fields.unitPrice,
+    priceUnit: fields.priceUnit,
     totalAmount: fields.totalAmount || fields.amount,
     itemDeliveryDate: fields.itemDeliveryDate,
     itemRemark: fields.itemRemark
@@ -335,38 +339,64 @@ function calculateConfirmItemsTotalAmount(items = []) {
   return formatMoneyValue(items.reduce((sum, item) => sum + Number(item.totalAmount), 0));
 }
 
-function syncFirstItemToLegacyFields(fields = {}) {
+function syncFirstItemToLegacyFields(fields = {}, options = {}) {
   const next = Object.assign({}, fields);
   const items = normalizeConfirmItems(next, { ensureFirst: true });
   const first = items[0] || {};
   const firstItemTotal = items.length <= 1 ? first.totalAmount : '';
-  const totalAmount = calculateConfirmItemsTotalAmount(items) || next.totalAmount || next.amount || firstItemTotal || '';
+  const calculatedAmount = calculateConfirmItemsTotalAmount(items) || firstItemTotal || '';
+  // 老板原话里明确说出的总价，或者在确认卡里亲手改过的金额，优先级必须
+  // 高于“数量 × 单价”的机器计算值。计算值只作为核对依据，不能在确认页
+  // 悄悄把“总价 90”重新覆盖成 100。
+  const preserveConfirmedAmount = hasFieldValue(next, 'statedAmount') || options.preserveConfirmedAmount === true;
+  const confirmedAmount = preserveConfirmedAmount
+    ? (next.amount || next.totalAmount || next.statedAmount || calculatedAmount || '')
+    : (calculatedAmount || next.amount || next.totalAmount || '');
   next.items = items;
   next.productName = first.productName || '';
   next.spec = first.spec || '';
   next.quantity = first.quantity || '';
   next.unit = first.unit || '';
   next.unitPrice = first.unitPrice || '';
-  next.amount = totalAmount;
-  next.totalAmount = totalAmount;
+  next.priceUnit = first.priceUnit || '';
+  next.calculatedAmount = calculatedAmount || next.calculatedAmount || '';
+  next.amount = confirmedAmount;
+  next.totalAmount = confirmedAmount;
   return next;
 }
 
-function buildConfirmItemCards(fields = {}, intent) {
-  return normalizeConfirmItems(fields, { ensureFirst: true }).map((item, index) => Object.assign({}, item, {
-    itemKey: `${index}-${item.productName || 'item'}`,
-    indexLabel: `商品${index + 1}`,
-    showItemDeliveryDate: intent === 'order' && Boolean(item.itemDeliveryDate)
-  }));
+function buildConfirmItemCards(fields = {}, intent, state = {}) {
+  const items = normalizeConfirmItems(fields, { ensureFirst: true });
+  return items.map((item, index) => {
+    const check = getCatalogCheck(state, item.productName, item.spec);
+    const productSuggestions = check.item || item.productName
+      ? []
+      : getProductSuggestions(state, '', 6);
+    const specSuggestions = check.item
+      ? getSpecSuggestions(state, item.productName, '', 8)
+      : [];
+    return Object.assign({}, item, {
+      itemKey: `${index}-${item.productName || 'item'}`,
+      indexLabel: `商品${index + 1}`,
+      canRemove: items.length > 1,
+      showItemDeliveryDate: intent === 'order' && Boolean(item.itemDeliveryDate),
+      catalogHint: check.hint,
+      catalogHintClass: ['known_product', 'known_spec'].includes(check.status) ? 'catalog-check-known' : 'catalog-check-new',
+      productSuggestions,
+      showProductCatalogSuggestions: productSuggestions.length > 0,
+      specSuggestions,
+      showSpecCatalogSuggestions: specSuggestions.length > 0
+    });
+  });
 }
 
 function formatLocalParseSafety(safety) {
   if (!safety || safety.status === 'SAFE_LOCAL') return [];
   const statusText = {
-    NEEDS_AI: '本地规则判断这条需要 AI 解析或人工重点核对。',
-    NEEDS_USER_CONFIRM: '本地规则只生成草稿，需要补齐或确认字段。',
-    NO_RECORD: '本地规则没有识别到可直接保存的业务记录。'
-  }[safety.status] || '本地规则结果需要确认。';
+    NEEDS_AI: '这条信息比较复杂，请重点核对下面内容。',
+    NEEDS_USER_CONFIRM: '有些信息还需要你补齐或确认。',
+    NO_RECORD: '暂时没有整理成可直接保存的记录。'
+  }[safety.status] || '这条记录需要你确认。';
   return uniqueFields([statusText].concat(safety.reason_texts || [])).slice(0, 6);
 }
 
@@ -472,14 +502,14 @@ function getCustomerBusinessHistory(state, customerId, operation) {
   if (operation === 'create_order' && orders.length) {
     return {
       title: `这个客户已有 ${orders.length} 笔订单`,
-      lines: orders.slice(0, 3).map((item) => `${item.productName || '未填产品'}，${item.quantity || '-'}${item.unit || ''}，交期 ${item.requiredDeliveryDate || '-'}`),
+      lines: orders.slice(0, 3).map((item) => `${getItemsSummary(item) || '未填产品'}，交期 ${item.requiredDeliveryDate || '-'}`),
       requiresConfirm: true
     };
   }
   if (operation === 'create_quotation' && quotations.length) {
     return {
       title: `这个客户已有 ${quotations.length} 条报价`,
-      lines: quotations.slice(0, 3).map((item) => `${item.productName || '未填产品'}，报价 ${item.totalAmount || '-'}元，状态 ${item.status || '-'}`),
+      lines: quotations.slice(0, 3).map((item) => `${getItemsSummary(item) || '未填产品'}，报价 ${item.totalAmount || '-'}元，状态 ${item.status || '-'}`),
       requiresConfirm: true
     };
   }
@@ -598,6 +628,8 @@ function hydrateQuotationFields(state, fields) {
     quantity: quotation.quantity || '',
     unit: quotation.unit || '',
     unitPrice: quotation.unitPrice || '',
+    priceUnit: quotation.priceUnit || '',
+    items: getRecordItems(quotation),
     amount: quotation.totalAmount || '',
     followupDays: quotation.followupDays || '',
     dueDate: quotation.deliveryDate || '',
@@ -620,6 +652,8 @@ function hydrateOrderFields(state, fields) {
     quantity: order.quantity || '',
     unit: order.unit || '',
     unitPrice: order.unitPrice || '',
+    priceUnit: order.priceUnit || '',
+    items: getRecordItems(order),
     amount: order.totalAmount || '',
     dueDate: order.requiredDeliveryDate || '',
     remark: order.remark || ''
@@ -668,6 +702,10 @@ function productMatches(inputProduct, orderProduct) {
 }
 
 function getOrderRemainingSettlement(state, order) {
+  const receivable = (state.receivables || []).find((item) => item.orderId === order.id);
+  if (receivable) {
+    return Math.max(0, toMoney(receivable.amount) - toMoney(receivable.paidAmount));
+  }
   return Math.max(0, toMoney(order.totalAmount) - getOrderDepositAmount(state, order.id));
 }
 
@@ -679,7 +717,7 @@ function getFieldVisibility(intent, operation, fields = {}) {
   const quoteOrOrder = ['quotation', 'order'].includes(intent);
   const todo = ['todo', 'dunning'].includes(intent);
   const createReceivable = operation === 'create_receivable';
-  const recordPayment = operation === 'record_payment';
+  const recordPayment = ['record_payment', 'create_receivable_with_payment'].includes(operation);
   const recordOrderDeposit = operation === 'record_order_deposit';
   const quoteOperation = ['create_quotation', 'update_quotation'].includes(operation);
   const editableBusiness = operation !== 'pending' && intent !== 'unknown';
@@ -695,7 +733,7 @@ function getFieldVisibility(intent, operation, fields = {}) {
     showPriceFields: todo && Boolean(fields.unitPrice || fields.amount),
     showAmountField: createReceivable,
     showPaymentAmountField: recordPayment || recordOrderDeposit || (intent === 'order' && Boolean(fields.paymentAmount || fields.depositAmount)),
-    showRemainingAmountField: false,
+    showRemainingAmountField: operation === 'create_receivable_with_payment',
     showDueDateField: ['create_order', 'update_order', 'create_receivable', 'create_todo'].includes(operation),
     showRemarkField: editableBusiness,
     showGenericDraft: !editableBusiness
@@ -725,9 +763,15 @@ function normalizeOrderDepositMissing(missingFields, fields) {
 
 function buildOrderDepositState(state, fields, aiMissingFields, lowConfidenceFields) {
   const nextFields = Object.assign({}, fields);
-  const low = uniqueFields(lowConfidenceFields)
-    .map((field) => (field === 'depositAmount' ? 'paymentAmount' : field))
-    .filter((field) => field !== 'orderId');
+  let low = uniqueFields(lowConfidenceFields)
+    .map((field) => (field === 'depositAmount' ? 'paymentAmount' : field));
+  const explicitlyUnlinked = nextFields.orderId === UNLINKED_ORDER_OPTION_ID
+    || nextFields.allowUnlinkedOrderDeposit === true;
+  const orderSelectionConfirmed = nextFields.orderSelectionConfirmed === true;
+  if (nextFields.orderId === UNLINKED_ORDER_OPTION_ID) {
+    delete nextFields.orderId;
+    nextFields.allowUnlinkedOrderDeposit = true;
+  }
   if (!hasFieldValue(nextFields, 'paymentAmount') && hasFieldValue(nextFields, 'depositAmount')) {
     nextFields.paymentAmount = nextFields.depositAmount;
   }
@@ -736,39 +780,59 @@ function buildOrderDepositState(state, fields, aiMissingFields, lowConfidenceFie
   }
 
   const customer = findCustomerForFields(state, nextFields);
-  if (customer) nextFields.customerId = customer.id;
-  const hasReceivableOrderMap = (state.receivables || []).reduce((map, receivable) => {
-    if (receivable.orderId) map[receivable.orderId] = true;
-    return map;
-  }, {});
+  if (customer) {
+    nextFields.customerId = customer.id;
+    if (explicitlyUnlinked) nextFields.unlinkedOrderDepositCustomerId = customer.id;
+  }
   const orders = customer
     ? (state.orders || [])
       .filter((item) => item.customerId === customer.id)
       .filter((item) => activeOrderStatuses.includes(item.status))
-      .filter((item) => !hasReceivableOrderMap[item.id])
       .filter((item) => productMatches(nextFields.productName, item.productName))
     : [];
 
-  const existingSelected = orders.find((item) => item.id === nextFields.orderId);
-  if (!existingSelected && orders.length === 1) nextFields.orderId = orders[0].id;
   const selected = orders.find((item) => item.id === nextFields.orderId) || null;
-  const selectedIndex = selected ? orders.findIndex((item) => item.id === selected.id) : -1;
-  const orderOptions = orders.map((item) => ({
+  if (!explicitlyUnlinked && nextFields.orderId && !selected) {
+    delete nextFields.orderId;
+    delete nextFields.orderSelectionConfirmed;
+  }
+  const matchedOrderOptions = orders.map((item) => ({
     id: item.id,
     label: formatOrderOption(state, item)
   }));
+  const orderOptions = orders.length
+    ? [{ id: UNLINKED_ORDER_OPTION_ID, label: '不关联订单（仅记一笔定金）' }].concat(matchedOrderOptions)
+    : matchedOrderOptions;
   const orderRange = orderOptions.map((item) => item.label);
+  const selectedIndex = explicitlyUnlinked
+    ? orderOptions.findIndex((item) => item.id === UNLINKED_ORDER_OPTION_ID)
+    : orderOptions.findIndex((item) => selected && item.id === selected.id);
   const paymentAmount = toMoney(nextFields.paymentAmount);
   const orderDepositPreview = [];
   let orderDepositWarningText = '';
 
-  if (!orders.length) {
+  if (explicitlyUnlinked) {
+    low = low.filter((field) => field !== 'orderId');
+    delete nextFields.orderId;
+    orderDepositPreview.push(`本次定金：${formatMoney(paymentAmount)}元`);
+    orderDepositPreview.push('将仅记录一笔未关联订单定金，不会挂到任何订单或自动核销。');
+    orderDepositWarningText = '已明确选择不关联订单；后续如需核对，请在记录详情中查看原始内容。';
+  } else if (!orders.length) {
+    delete nextFields.unlinkedOrderDepositCustomerId;
     orderDepositWarningText = customer
       ? '没有找到可关联订单，确认后会先保存为未关联订单定金，不会挂错订单。'
       : '请先确认客户；确认后可先保存为未关联订单定金。';
-  } else if (!selected) {
-    orderDepositWarningText = '这个客户有多笔进行中订单；选择后会挂到该订单，不选择则保存为未关联订单定金。';
+  } else if (!selected || !orderSelectionConfirmed) {
+    delete nextFields.unlinkedOrderDepositCustomerId;
+    low.push('orderId');
+    orderDepositWarningText = selected
+      ? '已匹配到订单；请在下方点选确认，或选择不关联订单。'
+      : (orders.length === 1
+        ? '已找到一笔可关联订单；请确认定金属于这单，或选择不关联订单。'
+        : '这个客户有多笔进行中订单；请先选择定金属于哪一单，避免挂错订单。');
   } else {
+    delete nextFields.unlinkedOrderDepositCustomerId;
+    low = low.filter((field) => field !== 'orderId');
     const paidBefore = getOrderDepositAmount(state, selected.id);
     const paidAfter = toMoney(paidBefore + paymentAmount);
     const remainingAfter = Math.max(0, toMoney(toMoney(selected.totalAmount) - paidAfter));
@@ -800,11 +864,18 @@ function buildOrderDepositState(state, fields, aiMissingFields, lowConfidenceFie
   };
 }
 
-function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields) {
+function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields, suggestedOperation) {
   const nextFields = Object.assign({}, fields);
   const low = uniqueFields(lowConfidenceFields)
     .map((field) => (field === 'amount' ? 'paymentAmount' : field))
     .filter((field) => field !== 'receivableId');
+  const explicitlyUnlinked = nextFields.receivableId === UNLINKED_RECEIVABLE_OPTION_ID
+    || nextFields.allowUnlinkedPayment === true;
+  const receivableSelectionConfirmed = nextFields.receivableSelectionConfirmed === true;
+  if (nextFields.receivableId === UNLINKED_RECEIVABLE_OPTION_ID) {
+    delete nextFields.receivableId;
+    nextFields.allowUnlinkedPayment = true;
+  }
   const hadPaymentAmount = hasFieldValue(nextFields, 'paymentAmount');
   if (!hadPaymentAmount && hasFieldValue(nextFields, 'amount')) {
     nextFields.paymentAmount = nextFields.amount;
@@ -820,34 +891,64 @@ function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields) 
 
   if (customer) {
     nextFields.customerId = customer.id;
-  }
-
-  const existingSelected = receivables.find((item) => item.id === nextFields.receivableId);
-  if (!existingSelected && receivables.length === 1) {
-    nextFields.receivableId = receivables[0].id;
+    if (explicitlyUnlinked) nextFields.unlinkedPaymentCustomerId = customer.id;
   }
 
   const selected = receivables.find((item) => item.id === nextFields.receivableId) || null;
   const paymentAmount = toMoney(nextFields.paymentAmount);
-  const selectedIndex = selected ? receivables.findIndex((item) => item.id === selected.id) : -1;
-  const receivableOptions = receivables.map((item) => ({
+  const matchedReceivableOptions = receivables.map((item) => ({
     id: item.id,
     label: formatReceivableOption(item)
   }));
+  const receivableOptions = receivables.length
+    ? [{ id: UNLINKED_RECEIVABLE_OPTION_ID, label: '不关联本次收款（仅记一笔收款）' }].concat(matchedReceivableOptions)
+    : matchedReceivableOptions;
   const receivableRange = receivableOptions.map((item) => item.label);
+  const selectedIndex = explicitlyUnlinked
+    ? receivableOptions.findIndex((item) => item.id === UNLINKED_RECEIVABLE_OPTION_ID)
+    : receivableOptions.findIndex((item) => selected && item.id === selected.id);
   const paymentPreview = [];
   const newReceivablePreview = [];
   let paymentWarningText = '';
   let newReceivableWarningText = '';
   let operation = 'record_payment';
+  const remainingAmount = toMoney(nextFields.remainingAmount);
+  const shouldCreateReceivableWithPayment = suggestedOperation === 'create_receivable_with_payment'
+    && !receivables.length
+    && paymentAmount > 0
+    && remainingAmount > 0;
 
-  if (!receivables.length) {
+  if (shouldCreateReceivableWithPayment) {
+    operation = 'create_receivable_with_payment';
+    nextFields.amount = String(toMoney(paymentAmount + remainingAmount));
+    delete nextFields.receivableId;
+    newReceivablePreview.push(`将新建待收总额：${formatMoney(nextFields.amount)}元`);
+    newReceivablePreview.push(`本次已收：${formatMoney(paymentAmount)}元`);
+    newReceivablePreview.push(`还差：${formatMoney(remainingAmount)}元`);
+    newReceivableWarningText = '这笔没有匹配到旧待收；确认后会新建待收并记录本次收款。';
+  } else if (explicitlyUnlinked) {
+    delete nextFields.receivableId;
+    paymentPreview.push('将仅记录一笔未关联收款，不会核销任何待收款 / 欠款。');
+    if (paymentAmount > 0) paymentPreview.push(`本次收款：${formatMoney(paymentAmount)}元`);
+    paymentWarningText = '已明确选择不关联；后续如需核对，请在记录详情中查看原始内容。';
+  } else if (!receivables.length) {
+    delete nextFields.unlinkedPaymentCustomerId;
     delete nextFields.receivableId;
     paymentPreview.push('没有匹配到旧待收款 / 欠款，将保存为未关联收款，不会自动核销或新建欠款。');
     if (paymentAmount > 0) paymentPreview.push(`本次收款：${formatMoney(paymentAmount)}元`);
-  } else if (!selected) {
-    paymentWarningText = '这个客户有多笔未结清待收款 / 欠款；选择后会核销对应记录，不选择则保存为未关联收款。';
+  } else if (!selected || !receivableSelectionConfirmed) {
+    delete nextFields.unlinkedPaymentCustomerId;
+    low.push('receivableId');
+    paymentWarningText = selected
+      ? '已匹配到待收款 / 欠款；请在下方点选确认，或选择不关联本次收款。'
+      : (receivables.length === 1
+        ? '已找到一笔可关联待收款 / 欠款；请确认是否核销，或选择不关联本次收款。'
+        : '这个客户有多笔未结清待收款 / 欠款；选择后会核销对应记录，不选择则保存为未关联收款。');
   } else {
+    delete nextFields.unlinkedPaymentCustomerId;
+    const selectedLow = low.filter((field) => field !== 'receivableId');
+    low.length = 0;
+    low.push(...selectedLow);
     const paidBefore = toMoney(selected.paidAmount);
     const remainingBefore = getRemainingAmount(selected);
     const paidAfter = toMoney(paidBefore + paymentAmount);
@@ -943,7 +1044,17 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   }
 
   if (['quotation', 'order'].includes(intent)) {
-    nextFields = syncFirstItemToLegacyFields(nextFields);
+    nextFields = syncFirstItemToLegacyFields(nextFields, {
+      preserveConfirmedAmount: (parseResult.manual_fields || []).includes('amount')
+    });
+  }
+
+  if (intent === 'order' && operation === 'create_order') {
+    const totalAmount = toMoney(nextFields.totalAmount || nextFields.amount);
+    const depositAmount = toMoney(nextFields.depositAmount || nextFields.paymentAmount);
+    if (depositAmount > 0 && (totalAmount <= 0 || depositAmount > totalAmount)) {
+      lowConfidenceFields.push('depositAmount');
+    }
   }
 
   const isOrderDeposit = parseResult.operation === 'record_order_deposit'
@@ -957,7 +1068,13 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     missingFields = orderDepositState.missingFields;
     lowConfidenceFields = orderDepositState.lowConfidenceFields;
   } else if (intent === 'payment') {
-    paymentState = buildPaymentState(state, nextFields, parseResult.missing_fields || [], lowConfidenceFields);
+    paymentState = buildPaymentState(
+      state,
+      nextFields,
+      parseResult.missing_fields || [],
+      lowConfidenceFields,
+      parseResult.suggested_operation
+    );
     operation = paymentState.operation;
     nextFields = paymentState.fields;
     missingFields = paymentState.missingFields;
@@ -994,10 +1111,11 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   const fieldConflictLines = formatFieldConflicts(normalizedParseResult.field_conflicts || []);
   const supersededFactLines = formatSupersededFacts(normalizedParseResult.superseded_facts || []);
   const remarkItemLines = formatRemarkItems(normalizedParseResult.remark_items || []);
-  const confirmItems = ['quotation', 'order'].includes(intent) ? buildConfirmItemCards(nextFields, intent) : [];
+  const confirmItems = ['quotation', 'order'].includes(intent) ? buildConfirmItemCards(nextFields, intent, state) : [];
   const orderAmountSummaryLines = intent === 'order' ? buildOrderAmountSummary(nextFields) : [];
   const localParseSafetyLines = formatLocalParseSafety(normalizedParseResult.local_parse_safety);
   const safetyBlockText = getFormalSaveSafetyBlockText(normalizedParseResult);
+  const productSuggestion = (normalizedParseResult.field_suggestions || {}).productName || {};
   const finalWarningState = safetyBlockText
     ? Object.assign({}, warningState, {
       showWarning: true,
@@ -1014,6 +1132,8 @@ function buildConfirmationState(state, parseResult, intent, fields) {
 
   return Object.assign({
     parseResult: normalizedParseResult,
+    parseEvidence: buildParseEvidence(normalizedParseResult),
+    showParseEvidence: false,
     fields: nextFields,
     confirmItems,
     operation,
@@ -1038,18 +1158,24 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showOrderAmountSummary: Boolean(orderAmountSummaryLines.length),
     localParseSafetyLines,
     showLocalParseSafety: Boolean(localParseSafetyLines.length),
+    productSuggestionText: productSuggestion.text || '',
+    productSuggestionValue: productSuggestion.value || '',
+    showProductSuggestion: Boolean(productSuggestion.text && productSuggestion.value),
     supersededFactLines,
     showSupersededFacts: Boolean(supersededFactLines.length),
     remarkItemLines,
     showRemarkItems: Boolean(remarkItemLines.length),
     historyDefaultFieldMap: getFieldFlagMap(historyDefaultedFields),
-    formalButtonText: canFormalSave ? '确认保存' : '补齐后保存',
+    formalButtonText: canFormalSave
+      ? (operation === 'update_order' ? '确认更新订单' : '确认保存')
+      : (operation === 'update_order' ? '补齐后更新' : '补齐后保存'),
     disableFormalSave: !canFormalSave,
     showPaymentConfirm: operation === 'record_payment',
     showNewReceivableWithPayment: operation === 'create_receivable_with_payment',
     showReceivablePicker: operation === 'record_payment' && paymentState.receivableOptions.length > 1,
     showOrderDepositConfirm: operation === 'record_order_deposit',
-    showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1
+    showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1,
+    showDeepReviewButton: Boolean((normalizedParseResult.parse_route || {}).deep_review_available)
   }, visibility, finalWarningState, paymentState, orderDepositState, customerMatchState);
 }
 
@@ -1068,6 +1194,9 @@ function getEmptyConfirmationData() {
   return {
     text: '',
     parseResult: null,
+    parseEvidence: null,
+    showParseEvidence: false,
+    showDeepReviewButton: false,
     fields: {},
     confirmItems: [],
     intent: 'unknown',
@@ -1162,12 +1291,58 @@ function refreshTabBarSelected(page) {
   }
 }
 
+function clearParseProgress(page) {
+  (page.parseProgressTimers || []).forEach((timer) => clearTimeout(timer));
+  page.parseProgressTimers = [];
+  if (page.parseProgressRevealTimer) clearTimeout(page.parseProgressRevealTimer);
+  page.parseProgressRevealTimer = null;
+}
+
+function startParseProgress(page, source) {
+  clearParseProgress(page);
+  const copy = source === 'paste'
+    ? [
+      ['正在整理聊天内容', '先找出客户、产品和最终说法'],
+      ['正在核对前后说法', '避免把旧价格或旧数量记进去'],
+      ['聊天内容比较复杂，正在复核关键内容', '请稍等，确认前不会自动保存'],
+      ['网络有点慢，正在继续整理', '当前内容还留在输入框，可继续等待']
+    ]
+    : [
+      ['正在整理这条记录', '先核对客户、金额和交期'],
+      ['正在核对关键信息', '避免把金额或数量记错'],
+      ['内容比较复杂，正在复核', '请稍等，确认前不会自动保存'],
+      ['网络有点慢，正在继续整理', '当前内容还留在输入框，可继续等待']
+    ];
+  const show = () => page.setData({
+    showParseProgress: true,
+    parseProgressTitle: copy[0][0],
+    parseProgressDetail: copy[0][1]
+  });
+  page.parseProgressRevealTimer = setTimeout(show, 180);
+  [2600, 7600, 15000].forEach((delay, index) => {
+    page.parseProgressTimers.push(setTimeout(() => {
+      if (!page.data.parsing) return;
+      page.setData({
+        parseProgressTitle: copy[index + 1][0],
+        parseProgressDetail: copy[index + 1][1]
+      });
+    }, delay));
+  });
+}
+
+function finishParseProgress(page) {
+  clearParseProgress(page);
+  page.setData({ showParseProgress: false });
+}
+
 Page({
   data: {
     source: 'typed',
     sourceLabels: INPUT_SOURCE_LABELS,
     text: '',
     parseResult: null,
+    parseEvidence: null,
+    showParseEvidence: false,
     fields: {},
     confirmItems: [],
     intent: 'unknown',
@@ -1182,12 +1357,15 @@ Page({
     intentLabels: INTENT_LABELS,
     sourceLabel: INPUT_SOURCE_LABELS.typed,
     voiceRecording: false,
-    voiceTip: '按住录音，松开后可接入后端语音转文字；当前也可以手动校对文字。',
-    voiceButtonClass: 'secondary-button',
+    voiceTip: '按住说出客户、产品和金额；松开后我会先转成文字给你确认。',
+    voiceButtonClass: 'voice-button-idle',
     voiceButtonText: '按住说一句',
     parsing: false,
-    parseButtonText: '识别成确认卡片',
+    parseButtonText: '生成确认卡',
     parseAssistText: '',
+    showParseProgress: false,
+    parseProgressTitle: '',
+    parseProgressDetail: '',
     pasteAnalysis: null,
     editingPendingId: '',
     intentCandidatesText: '',
@@ -1258,16 +1436,23 @@ Page({
     if (options.pendingId) {
       this.loadPendingForEdit(options.pendingId);
     }
-    this.setupRecorder();
   },
 
   onShow() {
     refreshTabBarSelected(this);
     requestOrderFilterReset();
+    // 页面一出现就准备登录；普通快速核对不会在 8 秒内临时等待登录。
+    prewarmAiAuth();
     const pendingId = wx.getStorageSync('pending_to_edit');
     if (pendingId) {
       wx.removeStorageSync('pending_to_edit');
       this.loadPendingForEdit(pendingId);
+      return;
+    }
+    const recordToEdit = wx.getStorageSync('record_to_edit');
+    if (recordToEdit && recordToEdit.type === 'order' && recordToEdit.id) {
+      wx.removeStorageSync('record_to_edit');
+      this.loadOrderForEdit(recordToEdit.id);
       return;
     }
     const forceTextInput = wx.getStorageSync('force_text_input');
@@ -1276,7 +1461,7 @@ Page({
       this.setData(Object.assign(getEmptyConfirmationData(), {
         source: 'typed',
         sourceLabel: INPUT_SOURCE_LABELS.typed,
-        parseButtonText: '识别成确认卡片',
+        parseButtonText: '生成确认卡',
         parseAssistText: ''
       }, getSourceState('typed')));
       return;
@@ -1289,9 +1474,22 @@ Page({
         text: draft.text,
         source,
         sourceLabel: INPUT_SOURCE_LABELS[source] || INPUT_SOURCE_LABELS.typed,
-        parseButtonText: '识别成确认卡片',
+        parseButtonText: '生成确认卡',
         parseAssistText: ''
       }, getSourceState(source)));
+    }
+  },
+
+  onHide() {
+    this.cancelVoice();
+    finishParseProgress(this);
+  },
+
+  onUnload() {
+    clearParseProgress(this);
+    if (this.data.voiceRecording) {
+      this.voiceCancelled = true;
+      stopVoiceRecognition();
     }
   },
 
@@ -1309,28 +1507,6 @@ Page({
     }
   },
 
-  setupRecorder() {
-    if (!wx.getRecorderManager) return;
-    const recorder = wx.getRecorderManager();
-    recorder.onStop((res) => {
-      this.setData({
-        voiceRecording: false,
-        voiceButtonClass: 'secondary-button',
-        voiceButtonText: '按住说一句',
-        voiceTip: `录音已保存：${res.tempFilePath ? '待语音转文字' : '未获得录音文件'}。请检查下方文字后再识别。`
-      });
-    });
-    recorder.onError(() => {
-      this.setData({
-        voiceRecording: false,
-        voiceButtonClass: 'secondary-button',
-        voiceButtonText: '按住说一句',
-        voiceTip: '录音失败，可以切换到手动输入或粘贴聊天。'
-      });
-    });
-    this.recorder = recorder;
-  },
-
   setSource(event) {
     const source = event.currentTarget.dataset.source;
     this.setData(Object.assign({
@@ -1342,6 +1518,7 @@ Page({
 
   onTextInput(event) {
     const text = event.detail.value;
+    if (String(text || '').trim()) prewarmAiAuth();
     if (isWechatChatText(text)) {
       const analysis = analyzeClipboardText(text);
       const diagnosticText = getClipboardDiagnostics(analysis);
@@ -1418,40 +1595,113 @@ Page({
       parseAssistText: analysis.warning || '没有识别到可保存的业务内容。',
       intentCandidatesText: '',
       parsing: false,
-      parseButtonText: '识别成确认卡片',
+      parseButtonText: '生成确认卡',
       pasteAnalysis: analysis
     }, getSourceState('paste')));
   },
 
   startVoice() {
-    if (!this.recorder) {
-      wx.showToast({ title: '当前环境不支持录音', icon: 'none' });
-      return;
-    }
+    if (this.data.voiceRecording) return;
+    // 录音期间预先完成登录；失败不打断录音，真正解析时会给出明确原因。
+    prewarmAiAuth();
+    this.voiceCancelled = false;
     this.setData(Object.assign({
       source: 'voice',
       sourceLabel: INPUT_SOURCE_LABELS.voice,
       voiceRecording: true,
-      voiceButtonClass: 'danger-button',
+      voiceButtonClass: 'voice-button-recording',
       voiceButtonText: '松开结束',
-      voiceTip: '正在录音，松开结束。'
+      voiceTip: '正在听，请说清客户、产品、数量或金额。',
+      parseAssistText: ''
     }, getSourceState('voice')));
-    this.recorder.start({
+
+    startVoiceRecognition({
       duration: 60000,
-      sampleRate: 16000,
-      numberOfChannels: 1,
-      encodeBitRate: 48000,
-      format: 'mp3'
+      lang: 'zh_CN',
+      onRecognize: (result) => {
+        const partialText = String((result && result.text) || '').trim();
+        if (!this.data.voiceRecording || !partialText) return;
+        this.setData({ voiceTip: `正在听：${partialText}` });
+      },
+      onStop: () => {
+        if (this.voiceCancelled) return;
+        this.setData({
+          voiceRecording: false,
+          voiceButtonClass: 'voice-button-idle',
+          voiceButtonText: '正在整理…',
+          voiceTip: '已收到，正在转成文字。'
+        });
+      },
+      onResult: (result) => {
+        const text = String((result && result.text) || '').trim();
+        if (this.voiceCancelled) {
+          this.setData({
+            voiceRecording: false,
+            voiceButtonClass: 'voice-button-idle',
+            voiceButtonText: '按住说一句',
+            voiceTip: '已取消，可以再按住说一次。'
+          });
+          return;
+        }
+        this.setData(Object.assign({
+          text,
+          source: 'voice',
+          sourceLabel: INPUT_SOURCE_LABELS.voice,
+          voiceRecording: false,
+          voiceButtonClass: 'voice-button-idle',
+          voiceButtonText: '按住说一句',
+          voiceTip: '已转成文字，正在整理成确认卡。',
+          pasteAnalysis: null
+        }, getSourceState('voice')), () => this.runParse());
+      },
+      onError: (error) => {
+        this.setData({
+          voiceRecording: false,
+          voiceButtonClass: 'voice-button-idle',
+          voiceButtonText: '按住说一句',
+          voiceTip: (error && error.message) || '没有听清楚，请再说一次。'
+        });
+      }
     });
   },
 
-  stopVoice() {
-    if (this.recorder && this.data.voiceRecording) {
-      this.recorder.stop();
+  loadOrderForEdit(orderId) {
+    const state = getState();
+    const parseResult = buildOrderEditDraft(state, orderId);
+    if (!parseResult) {
+      wx.showToast({ title: '没有找到这笔订单', icon: 'none' });
+      return;
     }
+    const confirmationState = buildConfirmationState(state, parseResult, 'order', parseResult.fields);
+    this.setData(Object.assign({}, getEmptyConfirmationData(), confirmationState, {
+      text: parseResult.original_text || '',
+      source: 'typed',
+      sourceLabel: INPUT_SOURCE_LABELS.typed,
+      intent: 'order',
+      intentLabel: INTENT_LABELS.order,
+      formalButtonText: confirmationState.disableFormalSave ? '补齐后更新' : '确认更新订单',
+      parseAssistText: '正在修改这笔订单。保存后会记录修改日志，原始内容仍会保留。'
+    }, getSourceState('typed')));
   },
 
-  runParse() {
+  stopVoice() {
+    if (!this.data.voiceRecording) return;
+    stopVoiceRecognition();
+  },
+
+  cancelVoice() {
+    if (!this.data.voiceRecording) return;
+    this.voiceCancelled = true;
+    stopVoiceRecognition();
+    this.setData({
+      voiceRecording: false,
+      voiceButtonClass: 'voice-button-idle',
+      voiceButtonText: '按住说一句',
+      voiceTip: '已取消，可以再按住说一次。'
+    });
+  },
+
+  runParse(reviewMode = 'standard') {
     let text = this.data.text.trim();
     let pasteAnalysis = null;
     let source = this.data.source;
@@ -1478,12 +1728,14 @@ Page({
       parseButtonText: '正在识别',
       parseAssistText: '正在识别，请稍等。'
     });
+    startParseProgress(this, source);
     const state = getState();
     const payload = {
       text,
       source,
       context: 'home',
-      state
+      state,
+      reviewMode
     };
     if (pasteAnalysis) {
       payload.rawText = pasteAnalysis.rawText;
@@ -1492,19 +1744,23 @@ Page({
     }
     parseHybridInput(payload)
       .then((parseResult) => {
+      finishParseProgress(this);
       const confirmationState = buildConfirmationState(state, parseResult, parseResult.intent, parseResult.fields);
       const aiStatus = (parseResult.ai_fallback && parseResult.ai_fallback.status) || 'not_requested';
       const safetyStatus = parseResult.local_parse_safety && parseResult.local_parse_safety.status;
-      const aiStatusText = (safetyStatus === 'NEEDS_AI' && ['failed', 'skipped_no_endpoint'].includes(aiStatus))
-        ? '这条内容需要 AI 判断最终信息；当前 AI 暂不可用，请重点核对安全提示里的字段，或先存到待整理。'
+      const deepReviewAvailable = Boolean((parseResult.parse_route || {}).deep_review_available);
+      const aiStatusText = deepReviewAvailable
+          ? '这条内容需要深度核对；未点击前不会自动等待慢速 AI。'
+        : (safetyStatus === 'NEEDS_AI' && ['failed', 'skipped_no_endpoint'].includes(aiStatus))
+          ? '这条内容比较复杂，请重点核对带提示的字段，拿不准就先放待整理。'
         : (safetyStatus === 'NEEDS_USER_CONFIRM'
-          ? '本地规则已生成草稿，但有字段需要你补齐或确认。'
+          ? '我先帮你整理成草稿了，还有几项需要你确认。'
           : {
-        not_requested: '本地高频规则已完成识别。',
-        skipped_no_endpoint: '本地规则先完成识别；这类输入以后可接真实 AI 继续增强。',
-        mock_used: '已通过测试后端 mock 识别，结果仍需你确认。',
-        used: '已调用 AI 解析，结果仍需你确认。',
-        failed: 'AI 解析暂不可用，已使用本地规则结果。'
+        not_requested: '已整理好，请确认后保存。',
+        skipped_no_endpoint: '已整理出一张草稿，请确认后保存。',
+        mock_used: '已整理出一张草稿，请确认后保存。',
+        used: '已整理出一张草稿，请确认后保存。',
+        failed: '暂时没能自动整理完整，请核对后再保存。'
       }[aiStatus]);
       this.setData(Object.assign({}, confirmationState, {
         intent: confirmationState.parseResult.intent,
@@ -1515,19 +1771,42 @@ Page({
           .map((item) => INTENT_LABELS[item] || item)
           .join(' / '),
         parsing: false,
-        parseButtonText: '识别成确认卡片',
+        parseButtonText: '生成确认卡',
         showComputedTips: Boolean(confirmationState.parseResult.computed_tips && confirmationState.parseResult.computed_tips.length),
         computedTips: confirmationState.parseResult.computed_tips || []
       }));
       })
       .catch(() => {
+      finishParseProgress(this);
       this.setData({
         parsing: false,
-        parseButtonText: '识别成确认卡片',
+        parseButtonText: '生成确认卡',
         parseAssistText: ''
       });
       wx.showToast({ title: '识别失败，请稍后再试', icon: 'none' });
       });
+  },
+
+  requestDeepReview() {
+    if (!this.data.parseResult || !((this.data.parseResult.parse_route || {}).deep_review_available)) return;
+    this.runParse('deep');
+  },
+
+  toggleParseEvidence() {
+    this.setData({ showParseEvidence: !this.data.showParseEvidence });
+  },
+
+  closeConfirmCard() {
+    const text = this.data.text;
+    const source = this.data.source;
+    clearParseProgress(this);
+    this.setData(Object.assign(getEmptyConfirmationData(), {
+      text,
+      source,
+      sourceLabel: INPUT_SOURCE_LABELS[source] || INPUT_SOURCE_LABELS.typed,
+      parseButtonText: '生成确认卡',
+      parseAssistText: text ? '已关闭确认卡，原内容还在输入框里。' : ''
+    }, getSourceState(source)));
   },
 
   changeIntent(event) {
@@ -1563,10 +1842,21 @@ Page({
         delete nextFields.customerId;
         delete nextFields.receivableId;
         delete nextFields.orderId;
+        delete nextFields.allowUnlinkedPayment;
+        delete nextFields.allowUnlinkedOrderDeposit;
+        delete nextFields.unlinkedPaymentCustomerId;
+        delete nextFields.unlinkedOrderDepositCustomerId;
+        delete nextFields.receivableSelectionConfirmed;
+        delete nextFields.orderSelectionConfirmed;
         delete nextFields.customerHistoryConfirmed;
         if (field === 'customerName') delete nextFields.forceNewCustomer;
       }
-      if (field === 'productName') delete nextFields.orderId;
+      if (field === 'productName') {
+        delete nextFields.orderId;
+        delete nextFields.allowUnlinkedOrderDeposit;
+        delete nextFields.unlinkedOrderDepositCustomerId;
+        delete nextFields.orderSelectionConfirmed;
+      }
       const baseResult = Object.assign({}, markManualField(this.data.parseResult, field), {
         missing_fields: [],
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
@@ -1584,17 +1874,42 @@ Page({
     const field = event.currentTarget.dataset.field;
     const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
     if (!items[index] || !field) return;
+    const value = ['unit', 'priceUnit'].includes(field) ? normalizeUnit(event.detail.value) : event.detail.value;
     items[index] = Object.assign({}, items[index], {
-      [field]: event.detail.value
+      [field]: value
     });
+    const manualFields = this.data.parseResult.manual_fields || [];
+    if (['quantity', 'unit', 'unitPrice', 'priceUnit'].includes(field)
+      && !manualFields.includes('totalAmount')
+      && hasMoneyValue(items[index].quantity)
+      && hasMoneyValue(items[index].unitPrice)) {
+      items[index].totalAmount = unitsMatch(items[index].unit, items[index].priceUnit)
+        ? formatMoneyValue(Number(items[index].quantity) * Number(items[index].unitPrice))
+        : '';
+    }
     const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, {
       items
-    }));
-    if (field === 'productName') delete fields.orderId;
-    const baseResult = Object.assign({}, markManualField(this.data.parseResult, field), {
+    }), {
+      preserveConfirmedAmount: manualFields.includes('amount')
+    });
+    if (field === 'productName') {
+      delete fields.orderId;
+      delete fields.allowUnlinkedOrderDeposit;
+      delete fields.orderSelectionConfirmed;
+    }
+    let manualResult = markManualField(this.data.parseResult, field);
+    if (['unit', 'priceUnit'].includes(field)) manualResult = markManualField(manualResult, 'priceUnit');
+    // 数量单位和计价单位不同的时候不自动换算；如果老板手工填写了该规格小计，
+    // 这表示他已经确认了金额，可以解除单位不一致的阻断提示。
+    if (field === 'totalAmount' && hasMoneyValue(value)) {
+      manualResult = markManualField(manualResult, 'priceUnit');
+    }
+    const baseResult = Object.assign({}, manualResult, {
       missing_fields: [],
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
-        .filter((item) => item !== field)
+        .filter((item) => item !== field && !(['unit', 'totalAmount'].includes(field) && item === 'priceUnit')),
+      field_conflicts: (this.data.parseResult.field_conflicts || [])
+        .filter((item) => !(item && item.field === 'priceUnit' && ['unit', 'priceUnit', 'totalAmount'].includes(field)))
     });
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
@@ -1640,6 +1955,14 @@ Page({
     const selected = this.data.customerMatchOptions[Number(event.detail.value)];
     if (!selected) return;
     const fields = Object.assign({}, this.data.fields);
+    delete fields.receivableId;
+    delete fields.orderId;
+    delete fields.allowUnlinkedPayment;
+    delete fields.allowUnlinkedOrderDeposit;
+    delete fields.unlinkedPaymentCustomerId;
+    delete fields.unlinkedOrderDepositCustomerId;
+    delete fields.receivableSelectionConfirmed;
+    delete fields.orderSelectionConfirmed;
     if (selected.id === NEW_CUSTOMER_OPTION_ID) {
       delete fields.customerId;
       fields.forceNewCustomer = true;
@@ -1674,6 +1997,13 @@ Page({
     const fields = Object.assign({}, this.data.fields);
     delete fields.customerId;
     delete fields.receivableId;
+    delete fields.orderId;
+    delete fields.allowUnlinkedPayment;
+    delete fields.allowUnlinkedOrderDeposit;
+    delete fields.unlinkedPaymentCustomerId;
+    delete fields.unlinkedOrderDepositCustomerId;
+    delete fields.receivableSelectionConfirmed;
+    delete fields.orderSelectionConfirmed;
     delete fields.customerHistoryConfirmed;
     fields.forceNewCustomer = true;
     const baseResult = Object.assign({}, this.data.parseResult, {
@@ -1695,6 +2025,13 @@ Page({
     const fields = Object.assign({}, this.data.fields, {
       receivableId: selected.id
     });
+    if (selected.id === UNLINKED_RECEIVABLE_OPTION_ID) {
+      delete fields.receivableSelectionConfirmed;
+    } else {
+      delete fields.allowUnlinkedPayment;
+      delete fields.unlinkedPaymentCustomerId;
+      fields.receivableSelectionConfirmed = true;
+    }
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
@@ -1710,12 +2047,82 @@ Page({
     const fields = Object.assign({}, this.data.fields, {
       orderId: selected.id
     });
+    if (selected.id === UNLINKED_ORDER_OPTION_ID) {
+      delete fields.orderSelectionConfirmed;
+    } else {
+      delete fields.allowUnlinkedOrderDeposit;
+      delete fields.unlinkedOrderDepositCustomerId;
+      fields.orderSelectionConfirmed = true;
+    }
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
+  },
+
+  addConfirmItem() {
+    if (!this.data.parseResult) return;
+    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    const previous = items[items.length - 1] || {};
+    items.push(normalizeConfirmItem({
+      productName: previous.productName || '',
+      unit: previous.unit || '',
+      unitPrice: previous.unitPrice || '',
+      priceUnit: previous.priceUnit || previous.unit || ''
+    }));
+    const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+    const baseResult = markManualField(this.data.parseResult, 'items');
+    this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
+  },
+
+  removeConfirmItem(event) {
+    if (!this.data.parseResult) return;
+    const index = Number(event.currentTarget.dataset.index || 0);
+    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    if (items.length <= 1 || !items[index]) return;
+    items.splice(index, 1);
+    const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+    const baseResult = markManualField(this.data.parseResult, 'items');
+    this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
+  },
+
+  applyProductSuggestion(event) {
+    const value = event.currentTarget.dataset.value;
+    if (!this.data.parseResult || !value) return;
+    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: false });
+    if (items.length) {
+      this.updateItemField({
+        currentTarget: { dataset: { index: 0, field: 'productName' } },
+        detail: { value }
+      });
+      return;
+    }
+    this.updateField({
+      currentTarget: { dataset: { field: 'productName' } },
+      detail: { value }
+    });
+  },
+
+  applyCatalogProduct(event) {
+    const index = Number(event.currentTarget.dataset.index || 0);
+    const value = event.currentTarget.dataset.value;
+    if (!value) return;
+    this.updateItemField({
+      currentTarget: { dataset: { index, field: 'productName' } },
+      detail: { value }
+    });
+  },
+
+  applyCatalogSpec(event) {
+    const index = Number(event.currentTarget.dataset.index || 0);
+    const value = event.currentTarget.dataset.value;
+    if (!value) return;
+    this.updateItemField({
+      currentTarget: { dataset: { index, field: 'spec' } },
+      detail: { value }
+    });
   },
 
   returnToInput() {
@@ -1755,6 +2162,10 @@ Page({
     }
     const result = confirmationState.parseResult;
     const saved = saveConfirmedDraft(state, result);
+    if (saved.type === 'error') {
+      wx.showToast({ title: saved.error || '订单没有更新，请核对后重试', icon: 'none' });
+      return;
+    }
     if (saved.type === 'pending' && this.data.editingPendingId) {
       const original = updatePendingNote(state, this.data.editingPendingId, result, (saved.record && saved.record.reason) || '信息仍不完整，需要稍后整理');
       if (original && saved.record && saved.record.id && saved.record.id !== original.id) {

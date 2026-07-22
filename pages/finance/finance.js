@@ -1,17 +1,19 @@
 const {
   generateDunningMessage,
   generateReceivableFromOrder,
+  getReceivablePaymentError,
   recordDunning,
   recordPayment
 } = require('../../utils/business');
-const { buildFinanceViewModel, getRemainingAmount } = require('../../utils/finance');
+const { buildFinanceViewModel } = require('../../utils/finance');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
+const { getRecordDetailUrl } = require('../../utils/record-detail');
 const { getState, saveState } = require('../../utils/storage');
 
 const segmentOptions = [
   { key: 'receivable', label: '待收' },
   { key: 'paid', label: '已收' },
-  { key: 'settlement', label: '待结算' },
+  { key: 'settlement', label: '订单待收' },
   { key: 'overdue', label: '逾期' }
 ];
 
@@ -105,17 +107,18 @@ Page({
     }
     const state = getState();
     const receivable = (state.receivables || []).find((item) => item.id === id);
-    if (!receivable) {
-      wx.showToast({ title: '没有找到这笔应收', icon: 'none' });
+    const error = getReceivablePaymentError(receivable, number);
+    if (error) {
+      wx.showToast({ title: error, icon: 'none' });
       return;
     }
-    if (number > getRemainingAmount(receivable)) {
-      wx.showToast({ title: '金额大于剩余应收', icon: 'none' });
+    const payment = recordPayment(state, id, amount);
+    if (!payment) {
+      wx.showToast({ title: '这笔收款没有保存，请重试', icon: 'none' });
       return;
     }
-    recordPayment(state, id, amount);
     saveState(state);
-    wx.showToast({ title: '收款已记录', icon: 'success' });
+    wx.showToast({ title: payment.completedOrderId ? '订单已完成' : '收款已记录', icon: 'success' });
     const paymentAmounts = Object.assign({}, this.data.paymentAmounts);
     delete paymentAmounts[id];
     this.setData({ paymentAmounts });
@@ -149,7 +152,7 @@ Page({
     const receivable = generateReceivableFromOrder(state, id);
     saveState(state);
     wx.showToast({
-      title: receivable ? '已生成应收' : '生成失败',
+        title: receivable ? '已生成待收' : '生成失败',
       icon: receivable ? 'success' : 'none'
     });
     this.setData({ selectedSegment: 'receivable' });
@@ -160,7 +163,12 @@ Page({
     wx.switchTab({ url: '/pages/input/input' });
   },
 
-  goOrders() {
-    wx.navigateTo({ url: '/pages/orders/orders' });
+  goOrders(event) {
+    const url = getRecordDetailUrl('order', event.currentTarget.dataset.id);
+    if (!url) {
+      wx.showToast({ title: '没有找到关联订单', icon: 'none' });
+      return;
+    }
+    wx.navigateTo({ url });
   }
 });

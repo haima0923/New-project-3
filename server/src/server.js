@@ -10,13 +10,44 @@ const aiRateLimiter = createRateLimiter({
   windowMs: config.aiRateLimitWindowMs,
   maxRequests: config.aiRateLimitMaxRequests
 });
+const deepAiRateLimiter = createRateLimiter({
+  windowMs: config.aiRateLimitWindowMs,
+  maxRequests: config.aiDeepRateLimitMaxRequests
+});
 const authLoginRateLimiter = createRateLimiter({
   windowMs: config.aiRateLimitWindowMs,
   maxRequests: config.authLoginRateLimitMaxRequests
 });
 
 function isAiRoute(req) {
-  return req.method === 'POST' && ['/api/ai/parse', '/api/ai/query', '/api/ai/transcribe'].includes(req.url);
+  return req.method === 'POST' && ['/api/ai/parse', '/api/ai/parse/deep', '/api/ai/query', '/api/ai/transcribe'].includes(req.url);
+}
+
+function isDeepParseRoute(req) {
+  return req.method === 'POST' && req.url === '/api/ai/parse/deep';
+}
+
+function createRequestId() {
+  return `ai_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getParseErrorStatus(error) {
+  const code = String((error && error.code) || 'AI_PARSE_FAILED');
+  if (code === 'AI_FAST_TIMEOUT' || code === 'AI_DEEP_TIMEOUT') return 504;
+  if (code === 'AI_RESPONSE_INVALID') return 422;
+  if (code === 'AI_PROVIDER_UNAVAILABLE') return 502;
+  return 500;
+}
+
+function toSafeParseError(error) {
+  const code = String((error && error.code) || 'AI_PARSE_FAILED');
+  const messages = {
+    AI_FAST_TIMEOUT: '智能快速核对超时。',
+    AI_RESPONSE_INVALID: '智能核对没有给出可核对的结果。',
+    AI_PROVIDER_UNAVAILABLE: '智能核对服务暂时不可用。',
+    AI_DEEP_TIMEOUT: '深度核对超时。'
+  };
+  return { error: code, message: messages[code] || '智能核对暂时不可用。' };
 }
 
 function isWechatLoginRoute(req) {
@@ -78,7 +109,7 @@ function handleRequest(req, res) {
   if (isAiRoute(req)) {
     const claims = authenticateAiRequest(req, res, origin);
     if (!claims) return;
-    const rate = aiRateLimiter.consume(req, Date.now(), claims.sub);
+    const rate = (isDeepParseRoute(req) ? deepAiRateLimiter : aiRateLimiter).consume(req, Date.now(), claims.sub);
     if (!rate.allowed) {
       sendJson(res, 429, {
         error: 'RATE_LIMITED',
@@ -90,13 +121,38 @@ function handleRequest(req, res) {
   }
 
   if (req.method === 'POST' && req.url === '/api/ai/parse') {
+    const requestId = createRequestId();
+    const startedAt = Date.now();
     readJsonBody(req)
-      .then((body) => parseWithAi(config, body))
-      .then((payload) => sendJson(res, 200, payload, origin))
-      .catch((error) => sendJson(res, 500, {
-        error: 'AI_PARSE_FAILED',
-        message: error.message
-      }, origin));
+      .then((body) => parseWithAi(config, Object.assign({}, body, { reviewMode: 'standard' })))
+      .then((payload) => sendJson(res, 200, Object.assign({}, payload, {
+        ai_request_id: requestId,
+        ai_server_elapsed_ms: Date.now() - startedAt,
+        ai_deadline_ms: config.aiFastRequestTimeoutMs
+      }), origin))
+      .catch((error) => sendJson(res, getParseErrorStatus(error), Object.assign(toSafeParseError(error), {
+        ai_request_id: requestId,
+        ai_server_elapsed_ms: Date.now() - startedAt,
+        ai_deadline_ms: config.aiFastRequestTimeoutMs
+      }), origin));
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/api/ai/parse/deep') {
+    const requestId = createRequestId();
+    const startedAt = Date.now();
+    readJsonBody(req)
+      .then((body) => parseWithAi(config, Object.assign({}, body, { reviewMode: 'deep' })))
+      .then((payload) => sendJson(res, 200, Object.assign({}, payload, {
+        ai_request_id: requestId,
+        ai_server_elapsed_ms: Date.now() - startedAt,
+        ai_deadline_ms: config.aiQualityRequestTimeoutMs
+      }), origin))
+      .catch((error) => sendJson(res, getParseErrorStatus(error), Object.assign(toSafeParseError(error), {
+        ai_request_id: requestId,
+        ai_server_elapsed_ms: Date.now() - startedAt,
+        ai_deadline_ms: config.aiQualityRequestTimeoutMs
+      }), origin));
     return;
   }
 
@@ -128,7 +184,7 @@ function handleRequest(req, res) {
 
 const server = http.createServer(handleRequest);
 assertAuthConfig(config);
-server.listen(config.port, () => {
+server.listen(config.port, '127.0.0.1', () => {
   console.log(`AI assistant server listening on ${config.port}`);
   console.log(`Mode: ${isRealAiEnabled(config) ? 'AI' : 'mock'}`);
 });

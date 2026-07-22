@@ -1,15 +1,40 @@
 <view class="page">
   <view class="page-title">订单</view>
-  <view class="page-subtitle">交期前 3 天和逾期订单会进入首页提醒。</view>
+  <view class="page-subtitle">先看交期和进度，临近交期的订单会在首页提醒。</view>
 
-  <view wx:if="{{allOrders.length}}" class="compact-filter-bar">
-    <input class="compact-search-input" value="{{filterKeyword}}" data-field="filterKeyword" bindinput="changeTextFilter" confirm-type="search" placeholder="搜客户或产品" />
-    <button class="compact-filter-button {{hasAdvancedFilters ? 'compact-filter-button-active' : ''}}" bindtap="toggleFilters">{{showFilters ? '收起' : '筛选'}}</button>
+  <view wx:if="{{allOrders.length}}" class="order-list-tools">
+    <view class="compact-filter-bar order-search-row">
+      <input class="compact-search-input" value="{{filterKeyword}}" data-field="filterKeyword" bindinput="changeTextFilter" confirm-type="search" placeholder="搜客户、产品或规格" />
+    </view>
+    <view class="order-tool-row">
+      <button class="compact-filter-button {{showCustomerStats ? 'compact-filter-button-active' : ''}}" bindtap="toggleCustomerStats">按客户看</button>
+      <picker mode="selector" range="{{orderSortRange}}" value="{{selectedSortIndex}}" bindchange="changeSort">
+        <view class="compact-filter-button order-picker-button">排序</view>
+      </picker>
+      <button class="compact-filter-button {{hasAdvancedFilters ? 'compact-filter-button-active' : ''}}" bindtap="toggleFilters">{{showFilters ? '收起' : '筛选'}}</button>
+    </view>
+  </view>
+
+  <view wx:if="{{allOrders.length && showCustomerStats}}" class="customer-stats-panel">
+    <view class="filter-panel-header">
+      <view>
+        <view class="filter-panel-title">按客户统计</view>
+        <view class="muted">按当前筛选结果统计，点客户可只看他的订单</view>
+      </view>
+      <button class="filter-panel-close" bindtap="toggleCustomerStats">完成</button>
+    </view>
+    <view wx:for="{{customerStats}}" wx:key="customerId" class="customer-stat-row" data-name="{{item.customerName}}" bindtap="filterByCustomerStat">
+      <view class="customer-stat-main">
+        <view class="customer-stat-name">{{item.customerName}}</view>
+        <view class="muted">{{item.orderCount}} 笔订单 · 已收 {{item.receivedAmountText}} 元</view>
+      </view>
+      <view class="customer-stat-amount">{{item.orderAmountText}} 元</view>
+    </view>
   </view>
 
   <view wx:if="{{allOrders.length && showFilters}}" class="filter-panel">
     <view class="filter-panel-header">
-      <view class="filter-panel-title">高级筛选</view>
+      <view class="filter-panel-title">更多筛选</view>
       <button class="filter-panel-close" bindtap="toggleFilters">完成</button>
     </view>
     <view class="filter-grid">
@@ -22,7 +47,21 @@
         <input class="input" value="{{filterProduct}}" data-field="filterProduct" bindinput="changeTextFilter" placeholder="输入产品名" />
       </view>
       <view class="field">
-        <text class="label">订单日期</text>
+        <text class="label">订单状态</text>
+        <picker mode="selector" range="{{orderStatusFilterRange}}" value="{{selectedStatusIndex}}" bindchange="changeStatusFilter">
+          <view class="filter-date-input">{{orderStatusFilterRange[selectedStatusIndex]}}</view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="label">最低金额</text>
+        <input class="input" value="{{filterMinAmount}}" data-field="filterMinAmount" bindinput="changeTextFilter" type="digit" placeholder="不限" />
+      </view>
+      <view class="field">
+        <text class="label">最高金额</text>
+        <input class="input" value="{{filterMaxAmount}}" data-field="filterMaxAmount" bindinput="changeTextFilter" type="digit" placeholder="不限" />
+      </view>
+      <view class="field">
+        <text class="label">下单日期</text>
         <picker mode="date" value="{{filterOrderDate}}" data-field="filterOrderDate" bindchange="changeDateFilter">
           <view class="filter-date-input">
             <text wx:if="{{filterOrderDate}}">{{filterOrderDate}}</text>
@@ -35,6 +74,24 @@
         <picker mode="date" value="{{filterDueDate}}" data-field="filterDueDate" bindchange="changeDateFilter">
           <view class="filter-date-input">
             <text wx:if="{{filterDueDate}}">{{filterDueDate}}</text>
+            <text wx:else class="filter-placeholder">选择日期</text>
+          </view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="label">实际发货日</text>
+        <picker mode="date" value="{{filterShipDate}}" data-field="filterShipDate" bindchange="changeDateFilter">
+          <view class="filter-date-input">
+            <text wx:if="{{filterShipDate}}">{{filterShipDate}}</text>
+            <text wx:else class="filter-placeholder">选择日期</text>
+          </view>
+        </picker>
+      </view>
+      <view class="field">
+        <text class="label">最近收款日</text>
+        <picker mode="date" value="{{filterPaymentDate}}" data-field="filterPaymentDate" bindchange="changeDateFilter">
+          <view class="filter-date-input">
+            <text wx:if="{{filterPaymentDate}}">{{filterPaymentDate}}</text>
             <text wx:else class="filter-placeholder">选择日期</text>
           </view>
         </picker>
@@ -53,7 +110,7 @@
 
   <view wx:if="{{!allOrders.length}}" class="empty">
     <view class="card-title">还没有订单</view>
-    <view class="muted">客户确认要做了，统一去“记一笔”说一句或粘贴聊天。</view>
+    <view class="muted">客户确认要做了，去“记一笔”打字或粘贴聊天。</view>
     <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
   </view>
 
@@ -65,11 +122,22 @@
 
   <view wx:for="{{orders}}" wx:key="id" class="card">
     <view class="row-between">
-      <view class="card-title">{{item.customerDisplay || '临时客户'}}</view>
+      <view class="card-title">{{item.customerDisplay || '未填客户'}}</view>
       <view class="pill {{item.urgent ? 'pill-danger' : ''}}">{{item.status}}</view>
     </view>
     <view class="muted">{{item.itemsSummary || item.productName || '未填产品'}}</view>
+    <view class="order-key-metrics">
+      <view class="order-key-metric">
+        <text class="order-key-label">数量</text>
+        <text class="order-key-value">{{item.quantitySummary}}</text>
+      </view>
+      <view class="order-key-metric">
+        <text class="order-key-label">金额</text>
+        <text class="order-key-value order-key-money">{{item.totalAmountDisplay}}</text>
+      </view>
+    </view>
     <view class="divider"></view>
+    <view class="order-time-line">下单 {{item.orderDate || '-'}} · 实际发货 {{item.actualShipDate || '未发货'}} · 最近收款 {{item.lastPaymentDate || '未收款'}}</view>
     <view wx:if="{{item.hasMultipleItems}}" class="item-lines">
       <view
         wx:for="{{item.displayItems}}"
@@ -78,14 +146,15 @@
         class="detail-line item-detail-line"
       >
         {{lineItem.productName || '未填产品'}}
+        <text wx:if="{{lineItem.spec}}"> · {{lineItem.spec}}</text>
         <text wx:if="{{lineItem.quantity || lineItem.unit}}">：{{lineItem.quantity || '-'}}{{lineItem.unit || ''}}</text>
-        <text wx:if="{{lineItem.unitPrice}}">，单价{{lineItem.unitPrice}}</text>
+        <text wx:if="{{lineItem.unitPrice}}">，单价{{lineItem.unitPrice}}/{{lineItem.priceUnit || lineItem.unit || '单位'}}</text>
         <text wx:if="{{lineItem.totalAmount}}">，小计{{lineItem.totalAmount}}</text>
       </view>
     </view>
-    <view wx:else class="detail-line">数量：{{item.quantity || '-'}}{{item.unit || ''}}</view>
-    <view class="detail-line">总价：{{item.totalAmount || '-'}}</view>
-    <view class="detail-line">要求交货：{{item.requiredDeliveryDate || '-'}}</view>
+    <picker mode="date" value="{{item.requiredDeliveryDate}}" data-id="{{item.id}}" bindchange="changeDeliveryDate">
+      <view class="detail-line delivery-date-picker">交期：{{item.requiredDeliveryDate || '点击补交期'}}</view>
+    </picker>
     <view class="detail-line">预计发货：{{item.expectedShipDate || '-'}}</view>
     <view wx:if="{{item.hasOriginalText}}" class="original-text-box">
       <view class="original-text-toggle" data-id="{{item.id}}" bindtap="toggleOriginalText">
@@ -98,7 +167,9 @@
       <view class="input status-picker">更新进度：{{item.status}}</view>
     </picker>
     <view class="button-row">
-      <button class="secondary-button" data-id="{{item.id}}" bindtap="createReceivable">生成应收款</button>
+      <button class="secondary-button" data-id="{{item.id}}" bindtap="editOrder">修改订单</button>
+      <button wx:if="{{item.canGenerateReceivable}}" class="secondary-button" data-id="{{item.id}}" bindtap="createReceivable">生成待收</button>
+      <text wx:else class="muted">订单已取消，不能生成待收</text>
     </view>
   </view>
 </view>

@@ -15,27 +15,29 @@
         <view class="voice-ripple voice-ripple-left"></view>
         <view class="voice-ripple voice-ripple-right"></view>
         <view class="hero-wave-core">
-          <view class="mic-symbol">
-            <view class="mic-body"></view>
-            <view class="mic-stem"></view>
-            <view class="mic-base"></view>
-          </view>
+          <image
+            class="hero-assistant-image"
+            src="/assets/characters/xiaoling/xiaoling-home-listening-v1.jpg"
+            mode="aspectFill"
+            aria-hidden="true"
+          />
         </view>
+        <view class="hero-voice-hint">{{voiceRecording ? '小玲在听' : '按住和小玲说'}}</view>
       </view>
     </view>
 
     <view class="quick-row">
       <view class="quick-button" bindtap="goInput">
         <view class="quick-icon quick-icon-write"></view>
-        <text>记一笔</text>
+        <text>打字记一笔</text>
+      </view>
+      <view class="quick-button" bindtap="pasteClipboard">
+        <view class="quick-icon quick-icon-chat"></view>
+        <text>粘贴聊天</text>
       </view>
       <view class="quick-button" bindtap="goQuery">
         <view class="quick-icon quick-icon-search"></view>
-        <text>查一下</text>
-      </view>
-      <view class="quick-button" bindtap="goReminder">
-        <view class="quick-icon quick-icon-bell"></view>
-        <text>提醒我</text>
+        <text>问一句</text>
       </view>
     </view>
   </view>
@@ -44,30 +46,47 @@
 
   <view wx:if="{{parseResult}}" class="confirm-modal">
     <view class="card home-confirm-card confirm-modal-card">
-      <view class="row-between">
-        <view>
-          <view class="card-title">{{intentLabel}}</view>
+      <view class="confirm-card-header">
+        <view class="confirm-card-heading">
+          <view class="card-title">请确认，再保存</view>
           <view class="muted">{{parseResult.confirm_message}}</view>
         </view>
-        <view class="pill">{{sourceLabel}}</view>
+        <view class="confirm-card-header-actions">
+          <view class="pill">{{sourceLabel}}</view>
+          <button class="confirm-close-button" bindtap="closeConfirmCard" aria-label="关闭确认卡">×</button>
+        </view>
       </view>
+      <scroll-view scroll-y="true" class="confirm-modal-body">
       <view wx:if="{{parseResult.extracted_text}}" class="confirm-original">
-        <view class="confirm-original-label">提取内容</view>
+        <view class="confirm-original-label">整理出的内容</view>
         <view class="confirm-original-text">{{parseResult.extracted_text}}</view>
       </view>
       <view class="confirm-original">
-        <view class="confirm-original-label">{{parseResult.raw_text ? '原始聊天' : '原话'}}</view>
+        <view class="confirm-original-label">{{parseResult.raw_text ? '原始聊天内容' : '你刚才输入的内容'}}</view>
         <view class="confirm-original-text">{{parseResult.original_text}}</view>
+      </view>
+      <view wx:if="{{parseEvidence}}" class="parse-evidence-card">
+        <view class="parse-evidence-title">本次整理说明</view>
+        <view class="parse-evidence-line">{{parseEvidence.routeLabel}} · <text class="parse-evidence-status parse-evidence-status-{{parseEvidence.aiTone}}">{{parseEvidence.aiStatusText}}</text> · {{parseEvidence.totalDurationText}}</view>
+        <view class="parse-evidence-toggle" bindtap="toggleParseEvidence">{{showParseEvidence ? '收起整理说明' : '查看整理说明'}}</view>
+        <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">{{parseEvidence.sourceTextLabel}}：</text>{{parseEvidence.sourceText}}</view>
+        <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">为什么这样处理：</text>{{parseEvidence.routeReasons}}</view>
+        <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">本地先整理成：</text>{{parseEvidence.localSummary}}</view>
+        <view wx:if="{{showParseEvidence && parseEvidence.aiSummary}}" class="parse-evidence-detail"><text class="parse-evidence-label">AI 回答：</text>{{parseEvidence.aiSummary}}</view>
+        <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail"><text class="parse-evidence-label">等待时间：</text>本地 {{parseEvidence.localDurationText}}；联网整理 {{parseEvidence.aiDurationText}}；总共 {{parseEvidence.totalDurationText}}{{parseEvidence.networkWaitLimitText ? '；最多等 ' + parseEvidence.networkWaitLimitText : ''}}</view>
+        <view wx:if="{{showParseEvidence && parseEvidence.aiRequestId}}" class="parse-evidence-detail"><text class="parse-evidence-label">本次核对编号：</text>{{parseEvidence.aiRequestId}}{{parseEvidence.aiModelTier ? '；方式：' + parseEvidence.aiModelTier : ''}}{{parseEvidence.aiServerElapsedText ? '；服务端：' + parseEvidence.aiServerElapsedText : ''}}</view>
+        <view wx:if="{{showParseEvidence}}" class="parse-evidence-detail">{{parseEvidence.aiDetail}}</view>
+        <view wx:if="{{showParseEvidence}}" class="parse-evidence-check">核对提醒：{{parseEvidence.checkText}}</view>
       </view>
       <view wx:if="{{showFieldConflicts}}" class="confirm-warning">
         <view wx:for="{{fieldConflictLines}}" wx:key="*this">{{item}}</view>
       </view>
       <view wx:if="{{showSupersededFacts}}" class="confirm-conversation">
-        <view class="confirm-original-label">已被后续聊天覆盖</view>
+        <view class="confirm-original-label">后面的聊天有新说法</view>
         <view wx:for="{{supersededFactLines}}" wx:key="*this" class="confirm-conversation-line">{{item}}</view>
       </view>
       <view wx:if="{{showRemarkItems}}" class="confirm-conversation">
-        <view class="confirm-original-label">客户特殊要求</view>
+        <view class="confirm-original-label">客户特别交代</view>
         <view wx:for="{{remarkItemLines}}" wx:key="*this" class="confirm-conversation-line">{{item}}</view>
       </view>
       <view wx:if="{{confirmFields.length}}" class="confirm-fields">
@@ -107,12 +126,15 @@
             placeholder="请补充"
           />
           <view wx:if="{{item.warning}}" class="confirm-field-tip">{{item.warning}}</view>
+          <view wx:if="{{item.suggestionText}}" class="confirm-field-tip" data-field="{{item.field}}" data-value="{{item.suggestionValue}}" bindtap="applyConfirmSuggestion">{{item.suggestionText}} 点这里采用建议</view>
         </view>
       </view>
       <view wx:if="{{warningText}}" class="confirm-warning">{{warningText}}</view>
-      <view class="button-row">
-        <button wx:if="{{showContinueInput}}" class="secondary-button" bindtap="continueInput">到完整记一笔确认</button>
-        <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePendingFromConfirm">待处理</button>
+      </scroll-view>
+      <view class="button-row confirm-action-row">
+        <button wx:if="{{showDeepReviewButton}}" class="secondary-button" bindtap="requestDeepReview">深度核对</button>
+        <button wx:if="{{showContinueInput}}" class="secondary-button" bindtap="continueInput">打开完整记一笔</button>
+        <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePendingFromConfirm">先放待整理</button>
         <button class="primary-button" disabled="{{disableQuickSave}}" bindtap="confirmQuickSave">{{quickSaveText}}</button>
       </view>
     </view>
@@ -169,7 +191,7 @@
     </view>
 
     <view wx:else class="recent-list">
-      <view wx:for="{{recentRecords}}" wx:key="id" class="recent-line" data-type="{{item.type}}" bindtap="openRecent">
+      <view wx:for="{{recentRecords}}" wx:key="id" class="recent-line" data-type="{{item.type}}" data-id="{{item.sourceId || item.id}}" bindtap="openRecent">
         <view class="recent-icon-shell recent-icon-type-{{item.type}}">
           <view class="recent-mini-icon"></view>
         </view>
@@ -196,26 +218,12 @@
         class="composer-input"
         value="{{composerText}}"
         maxlength="-1"
-        placeholder="打字 / 粘贴聊天记录..."
+        placeholder="记下报价、订单、收款，或粘贴聊天..."
         confirm-type="send"
         bindinput="onComposerInput"
         bindconfirm="submitComposer"
       />
       <button class="composer-plus" bindtap="pasteClipboard">+</button>
-    </view>
-  </view>
-
-  <view
-    class="home-mic-dock {{voiceRecording ? 'home-mic-active' : ''}}"
-    bindtouchstart="startVoice"
-    bindtouchmove="moveVoice"
-    bindtouchend="stopVoice"
-    bindtouchcancel="cancelVoice"
-  >
-    <view class="mic-symbol mic-symbol-large">
-      <view class="mic-body"></view>
-      <view class="mic-stem"></view>
-      <view class="mic-base"></view>
     </view>
   </view>
 

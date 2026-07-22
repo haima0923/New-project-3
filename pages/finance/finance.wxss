@@ -1,5 +1,5 @@
 .finance-page {
-  background: #F6F7FB;
+  background: #F6F8FC;
   padding-bottom: calc(180rpx + env(safe-area-inset-bottom));
 }
 
@@ -46,7 +46,7 @@
 .finance-summary-card {
   border: 1rpx solid #DCE9FF;
   border-radius: 28rpx;
-  box-shadow: 0 10rpx 26rpx rgba(31, 41, 55, 0.055);
+  box-shadow: 0 10rpx 24rpx rgba(31, 41, 55, 0.05);
   min-height: 158rpx;
   overflow: hidden;
   padding: 22rpx;
@@ -66,6 +66,7 @@
 
 .summary-blue {
   background: linear-gradient(135deg, #FFFFFF 0%, #EAF2FF 100%);
+  border-color: #D7E8FF;
 }
 
 .summary-blue::after {
@@ -73,8 +74,8 @@
 }
 
 .summary-green {
-  background: linear-gradient(135deg, #FFFFFF 0%, #EAFBF1 100%);
-  border-color: #CBEFD8;
+  background: #FFFFFF;
+  border-color: #D9E9DE;
 }
 
 .summary-green::after {
@@ -82,7 +83,7 @@
 }
 
 .summary-red {
-  background: linear-gradient(135deg, #FFFFFF 0%, #FFF1F2 100%);
+  background: #FFFFFF;
   border-color: #FFD1D6;
 }
 
@@ -91,8 +92,8 @@
 }
 
 .summary-purple {
-  background: linear-gradient(135deg, #FFFFFF 0%, #F6EDFF 100%);
-  border-color: #E7D3FF;
+  background: linear-gradient(135deg, #FFFFFF 0%, #F3EEFF 100%);
+  border-color: #E5D8FF;
 }
 
 .summary-purple::after {
@@ -121,11 +122,18 @@
   margin-top: 2rpx;
 }
 
+.summary-hint {
+  color: #6B7280;
+  font-size: 20rpx;
+  line-height: 1.35;
+  margin-top: 6rpx;
+}
+
 .finance-stat-strip {
   background: #FFFFFF;
   border: 1rpx solid #E7ECF4;
   border-radius: 28rpx;
-  box-shadow: 0 8rpx 22rpx rgba(31, 41, 55, 0.045);
+  box-shadow: none;
   display: grid;
   gap: 0;
   grid-template-columns: repeat(4, 1fr);
@@ -146,7 +154,7 @@
 }
 
 .stat-value {
-  color: #1F2937;
+  color: #1677FF;
   font-size: 28rpx;
   font-weight: 900;
   line-height: 1.25;
@@ -156,7 +164,7 @@
 }
 
 .stat-label {
-  color: #6B7280;
+  color: #687782;
   font-size: 20rpx;
   font-weight: 700;
   margin-top: 8rpx;
@@ -194,8 +202,8 @@
 .finance-card {
   background: #FFFFFF;
   border: 1rpx solid #E7ECF4;
-  border-radius: 28rpx;
-  box-shadow: 0 8rpx 22rpx rgba(31, 41, 55, 0.055);
+  border-radius: 26rpx;
+  box-shadow: 0 8rpx 22rpx rgba(31, 41, 55, 0.045);
   margin-bottom: 18rpx;
   overflow: hidden;
   padding: 22rpx;
@@ -229,7 +237,7 @@
 }
 
 .settlement-card {
-  background: linear-gradient(135deg, #FFFFFF 0%, #EAF2FF 100%);
+  background: #FFFFFF;
 }
 
 .settlement-card::before {
@@ -308,13 +316,13 @@
 }
 
 .money-label {
-  color: #6B7280;
+  color: #687782;
   font-size: 22rpx;
   font-weight: 700;
 }
 
 .money-value {
-  color: #374151;
+  color: #3B4E5B;
   font-size: 27rpx;
   font-weight: 800;
   line-height: 1.35;
@@ -323,11 +331,11 @@
 }
 
 .money-value.strong {
-  color: #1F2937;
+  color: #1677FF;
 }
 
 .finance-detail-line {
-  color: #4B5563;
+  color: #4E606B;
   font-size: 25rpx;
   line-height: 1.55;
   margin-top: 12rpx;
@@ -351,7 +359,7 @@
 }
 
 .finance-payment-input {
-  background: #FFFFFF;
+  background: #F6F8FC;
   border: 1rpx solid #D7E5FF;
   border-radius: 18rpx;
   color: #1F2937;

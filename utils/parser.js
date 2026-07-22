@@ -1,11 +1,10 @@
-const { parseChineseDate, today } = require('./date');
+const { parseChineseDate, parseChineseDateDetail, today } = require('./date');
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
 const { simpleFingerprint } = require('./storage');
 const { normalizeBusinessText } = require('./text-normalize');
 const { applyLocalParseSafety } = require('./parse-safety');
+const { RAW_UNIT_PATTERN, UNIT_PATTERN, isSupportedUnit, normalizeUnit, unitsMatch } = require('./units');
 
-const UNITS = ['个', '件', '箱', '套', '只', '条', '批', '双', '张', '本', '斤', '公斤', '米', '包', '盒', '袋', '组', '把', '台'];
-const UNIT_PATTERN = `(?:万)?(?:${UNITS.join('|')})`;
 const PRODUCT_STOP_WORDS = /(价格|报价|报架|单价|订单|交货|发货|生产|做好|到期|月底|月结|结款|付款|欠款|定金|订金|预付|先记|记一下|三天后|下周|礼拜|星期|周[一二三四五六日天]).*$/;
 const KNOWN_PRODUCTS = [
   '卡通水杯',
@@ -21,10 +20,14 @@ const KNOWN_PRODUCTS = [
   '饰品盒',
   '玩具车',
   '钥匙扣',
+  '拖鞋',
   '礼品盒',
   '饭盒',
   '发夹',
+  '发圈',
+  '椅子',
   '水杯',
+  '保温杯',
   '杯垫',
   '杯子',
   '勺子',
@@ -48,7 +51,11 @@ const DEPOSIT_PATTERN = /定金|订金|预付|预付款/;
 const DEPOSIT_PAYMENT_PATTERN = /定金|订金|预付|预付款|先付|先打|先转/;
 const DECIMAL_DIGIT = '\\d|[零一二两三四五六七八九]';
 const ITEM_BAD_PRODUCT_PATTERN = /(?:价格|单价|报价|多少钱|颜色|色差|包装(?!袋|盒|纸)|外箱|内盒|logo|特殊|要求|备注|交期|交货|发货|到期|明天|后天|下周|月底|月末|定金|订金|预付|尾款|货款)/i;
-const ITEM_EXACT_BAD_PRODUCT_PATTERN = /^(?:块|元|毛|角|分|钱|一个|每个|单价|价格|报价|老板|客户|我|对方|客服|买家|卖家|厂家|工厂|业务员)$/;
+const ITEM_EXACT_BAD_PRODUCT_PATTERN = /^(?:块|块钱|元|元钱|毛|毛钱|角|分钱|分|钱|一个|每个|可以|能不能|单价|价格|报价|老板|客户|我|对方|客服|买家|卖家|厂家|工厂|业务员)$/;
+const EXPLICIT_NON_RECORD_PATTERN = /(?:电话你有吗|等会儿看看仓库|还有没有位置|价格以后再谈|样品找出来|先不要做|先别做|暂时别做|等(?:明天|后天|下周|周[一二三四五六日天]|通知)|(?:另外|还有).{0,24}(?:刚(?:微信)?打了|刚转了|打了|转了|收了|付了|还差))/;
+const TERMINATION_PATTERN = /(?:取消(?:了|掉)?|客户取消|不要做了?|不用做了?|不做了?|不要了|别做了?|先别做|先不要做|先停(?:一下)?|停一下|停止|暂停|作废|撤销|撤回|先别发|暂时别发|等通知|等(?:他|她|客户)?重新确认)/;
+const REPLACEMENT_AFTER_TERMINATION_PATTERN = /(?:取消|不要|别做|先别做|撤回)[^。；;\n]{0,30}(?:改成|改为|换成|变成)|(?:改成|改为|换成|变成)[^。；;\n]{0,30}(?:取消|不要|别做|撤回)/;
+const SPEC_TOKEN_PATTERN = '(?:紫色|红色|蓝色|绿色|黄色|橙色|粉色|黑色|白色|灰色|金色|银色|透明|本色|米色|咖色|棕色|藏青|酒红|玫红|大号|中号|小号|加大|加小|长款|短款|圆形|方形|新款|老款|[A-Za-zＡ-Ｚａ-ｚ0-9０-９]{1,6}款|(?:XS|S|M|L|XL|XXL|XXXL)码?)';
 
 function normalizeText(text) {
   return normalizeBusinessText(text)
@@ -95,6 +102,7 @@ function extractPhone(text) {
 
 function cleanCustomerName(value) {
   let cleaned = String(value || '')
+    .replace(/^(?:(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)\s*)?(?:元|块)/, '')
     .replace(/^(今天|明天|明日|后天|大后天|晚上|上午|下午|礼拜[一二三四五六日天]|星期[一二三四五六日天]|周[一二三四五六日天]|下周[一二三四五六日天]?|下个月\d{1,2}号?|号)/, '')
     .replace(/^(刚才|刚刚|别忘了|提醒我|提醒|记得|报给|报价给|发给|卖给|转给|给|帮|找|问|回一下|回|催|联系|那个|这个|义乌|客户)/, '')
     .replace(/(那单|那笔|上一笔|上次).*$/, '')
@@ -107,10 +115,21 @@ function cleanCustomerName(value) {
   const oldNameWithAction = cleaned.match(/^(老[\u4e00-\u9fa5]{1,2}?)(?:要|问|欠|付|转|补|返单|做|收)$/);
   if (oldNameWithAction) cleaned = oldNameWithAction[1];
   if (!cleaned) return '';
-  if (/^(客户|老客户|这个客户|那个客户|今天|明天|后天|刚才|刚刚|义乌|那笔|上一笔)$/.test(cleaned)) return '';
+  // “老板今天要……”里的“老板”是说话对象，不是客户名。不能把日期的一部分吞进客户名。
+  if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天|大后天)/.test(cleaned)) return '';
+  if (/^(客户|老客户|这个客户|那个客户|老板|今天|明天|后天|刚才|刚刚|义乌|那笔|上一笔|不|不要|先|再|还有|另外|那个|这个)$/.test(cleaned)) return '';
   if (/客户/.test(cleaned) && !/(总|老板|经理|姐|哥|先生|女士)$/.test(cleaned)) return '';
   if (/^(今天|明天|后天|月底|下周|下个月)$/.test(cleaned)) return '';
   return cleaned;
+}
+
+function extractShortCustomerName(text) {
+  const source = String(text || '');
+  // “老王 / 阿强”没有称呼后缀时，只在紧挨业务动作、价格或聊天位置的场景下识别。
+  const match = source.match(/(?:^|[，,：:\s给催元])((?:老(?!板)|阿)[\u4e00-\u9fa5]{1,2})(?=(?:那个|那边|这边|这单|那批|上次|的|刚|要|说|下|订|定|报|问|欠|还差|付|转|打|收|回|催|提醒|来|今天|明天|后天|下周|这周|周[一二三四五六日天]|水杯|礼品盒|钥匙扣|杯垫|包装袋|收纳盒|头绳|饰品盒|五金挂件|椅子|拖鞋|纸袋|\d|[，,。；;\s]|$))/);
+  if (!match) return { value: '', source: '' };
+  const value = cleanCustomerName(match[1]);
+  return value ? { value, source: 'rule:customer_short_name' } : { value: '', source: '' };
 }
 
 function extractCustomerName(text) {
@@ -118,11 +137,13 @@ function extractCustomerName(text) {
     return { value: '', source: '' };
   }
 
-  const oldPrefix = text.match(/^(?:刚才|刚刚|那个|这个|义乌)?(老[\u4e00-\u9fa5]{1,2})(?=[\u4e00-\u9fa5]{0,10}(?:那单|那笔|问|要|再来|欠|付|转|打款|到账|返单|补|做|收|尾款|货款|玩具|杯垫|杯子))/);
+  const oldPrefix = text.match(/^(?:刚才|刚刚|那个|这个|义乌)?(老(?!板)[\u4e00-\u9fa5]{1,2}?)(?=[\u4e00-\u9fa5]{0,10}(?:那单|那笔|问|要|再来|欠|付|转|打款|到账|返单|补|做|收|尾款|货款|玩具|杯垫|杯子))/);
   if (oldPrefix) {
     const name = cleanCustomerName(oldPrefix[1]);
     if (name) return { value: name, source: 'rule:customer_old_prefix' };
   }
+  const shortName = extractShortCustomerName(text);
+  if (shortName.value) return shortName;
   const directed = text.match(/(?:报价给|报给|发给|卖给|转给|给|帮|找)\s*([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
   if (directed) {
     const name = cleanCustomerName(directed[1]);
@@ -133,7 +154,7 @@ function extractCustomerName(text) {
     const name = cleanCustomerName(direct[1]);
     if (name) return { value: name, source: 'rule:customer_title' };
   }
-  const oldName = text.match(new RegExp(`(老[\\u4e00-\\u9fa5]{1,2}?)(?:${CUSTOMER_ACTION_PATTERN})`));
+  const oldName = text.match(new RegExp(`(老(?!板)[\\u4e00-\\u9fa5]{1,2}?)(?:${CUSTOMER_ACTION_PATTERN})`));
   if (oldName) {
     const name = cleanCustomerName(oldName[1]);
     if (name) return { value: name, source: 'rule:customer_action' };
@@ -154,11 +175,10 @@ function extractQuantity(text) {
 
   const changeMatch = text.match(new RegExp(`(?:改成|改)\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})`));
   if (changeMatch) {
-    const unitHasWan = changeMatch[2].startsWith('万');
-    const parsed = parseChineseNumber(changeMatch[1]) * (unitHasWan ? 10000 : 1);
+    const parsed = parseQuantityWithUnit(changeMatch[1], changeMatch[2]);
     return {
-      quantity: toCleanNumber(parsed),
-      unit: changeMatch[2].replace(/^万/, ''),
+      quantity: parsed.quantity,
+      unit: parsed.unit,
       source: 'rule:changed_quantity'
     };
   }
@@ -166,20 +186,19 @@ function extractQuantity(text) {
   const explicitQuantity = text.match(new RegExp(`(?:数量|数)\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})?`));
   if (explicitQuantity) {
     const rawUnit = explicitQuantity[2] || '';
-    const unitHasWan = rawUnit.startsWith('万');
-    const parsed = parseChineseNumber(explicitQuantity[1]) * (unitHasWan ? 10000 : 1);
+    const parsed = parseQuantityWithUnit(explicitQuantity[1], rawUnit);
     return {
-      quantity: toCleanNumber(parsed),
-      unit: rawUnit.replace(/^万/, ''),
+      quantity: parsed.quantity,
+      unit: parsed.unit,
       source: 'rule:explicit_quantity'
     };
   }
 
   const matches = Array.from(text.matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')));
   const match = matches.find((item) => {
-    const rawUnit = item[2].replace(/^万/, '');
-    const unitHasWan = item[2].startsWith('万');
-    const parsed = parseChineseNumber(item[1]) * (unitHasWan ? 10000 : 1);
+    const parsedQuantity = parseQuantityWithUnit(item[1], item[2]);
+    const rawUnit = parsedQuantity.unit;
+    const parsed = Number(parsedQuantity.quantity);
     const prefix = text.slice(Math.max(0, item.index - 8), item.index);
     if (!Number.isInteger(parsed) && parsed > 0 && parsed < 100 && /^(?:个|件|只|条|套|双|张|本|箱)$/.test(rawUnit)) return false;
     if (/(?:价格|单价|块|元|毛|角|分)$/.test(prefix)) return false;
@@ -188,13 +207,10 @@ function extractQuantity(text) {
     return !(rawUnit === '批' && parsed === 1);
   });
   if (!match) return { quantity: '', unit: '', source: '' };
-  const rawNumber = match[1];
-  const rawUnit = match[2];
-  const unitHasWan = rawUnit.startsWith('万');
-  const parsed = parseChineseNumber(rawNumber) * (unitHasWan ? 10000 : 1);
+  const parsed = parseQuantityWithUnit(match[1], match[2]);
   return {
-    quantity: toCleanNumber(parsed),
-    unit: rawUnit.replace(/^万/, ''),
+    quantity: parsed.quantity,
+    unit: parsed.unit,
     source: 'rule:quantity_unit'
   };
 }
@@ -208,25 +224,40 @@ function extractPackageQuantity(text) {
   if (!Number.isFinite(outer) || !Number.isFinite(inner)) return { quantity: '', unit: '', source: '' };
   return {
     quantity: toCleanNumber(outer * inner),
-    unit: match[4].replace(/^万/, ''),
+    unit: normalizeUnit(match[4]),
     source: 'rule:package_multiplier_quantity'
   };
 }
 
 function extractFinalQuantity(text) {
+  const correction = text.match(new RegExp(`(?:哦\s*)?(?:不对|不是)\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})?`));
+  if (correction) {
+    const rawUnit = correction[2] || '';
+    // “不是 4.8，最后按 3.8 一个”是在改价格；没有数量单位的小数不能抢走原数量。
+    if (!rawUnit && String(correction[1] || '').includes('.')) return { quantity: '', unit: '', source: '' };
+    const parsed = parseQuantityWithUnit(correction[1], rawUnit);
+    return {
+      quantity: parsed.quantity,
+      unit: parsed.unit,
+      source: 'rule:corrected_quantity'
+    };
+  }
   const matches = Array.from(text.matchAll(new RegExp(`(?:最后(?:确认)?|最终|一共|总共|合计|改成|改为|变成|确认)\\D{0,12}?(${numberPattern()})\\s*(${UNIT_PATTERN})?`, 'g')));
   const match = matches.find((item) => /一共|总共|合计|最后|最终/.test(item[0])) || matches[matches.length - 1];
   if (!match) return { quantity: '', unit: '', source: '' };
   const prefix = text.slice(Math.max(0, match.index - 12), match.index + match[0].length);
-  if (/(?:价格|单价|块|元|毛|角|分)/.test(prefix) && (!match[2] || /^(?:个|件|只|条|套|双|张|本|箱)$/.test(match[2].replace(/^万/, '')))) {
+  const after = text.slice(match.index + match[0].length, match.index + match[0].length + 8);
+  if (/^\s*(?:块|元|毛|角|分|钱)\s*(?:一|每|\/)/.test(after)) return { quantity: '', unit: '', source: '' };
+  if (/(?:价格|单价|块|元|毛|角|分)/.test(prefix) && (!match[2] || isSupportedUnit(match[2]))) {
     return { quantity: '', unit: '', source: '' };
   }
   const rawUnit = match[2] || '';
-  const unitHasWan = rawUnit.startsWith('万');
-  const parsed = parseChineseNumber(match[1]) * (unitHasWan ? 10000 : 1);
+  // “最终 20 / 最终 0.08”没有数量单位时不够安全，常见含义是最终单价；不能抢走前面的数量。
+  if (!rawUnit) return { quantity: '', unit: '', source: '' };
+  const parsed = parseQuantityWithUnit(match[1], rawUnit);
   return {
-    quantity: toCleanNumber(parsed),
-    unit: rawUnit.replace(/^万/, ''),
+    quantity: parsed.quantity,
+    unit: parsed.unit,
     source: 'rule:final_quantity'
   };
 }
@@ -263,7 +294,7 @@ function parseFenPriceNumber(fen, li) {
 }
 
 function extractUnitPrice(text) {
-  const priceUnit = '(?:个|件|只|条|套|双|张|本|箱)';
+  const priceUnit = RAW_UNIT_PATTERN;
   const chunk = numberPattern();
   const correctedUnitPrice = text.match(new RegExp(`(?:价格|单价|报价|价)[^，,。；;]{0,16}?(?:不是|不对)\\s*(?:${chunk})\\s*(?:块|元|毛|角|分)?\\s*(?:是|改成|应为)?\\s*(${chunk})`))
     || text.match(new RegExp(`(?:不是|不对)\\s*(?:${chunk})\\s*(?:块|元|毛|角|分)?\\s*(?:是|改成|应为)\\s*(${chunk})(?=\\s*(?:，|,|。|；|;|周|明天|后天|月底|月末|\\d{1,2}号|天后|交|发|出|拿|$))`));
@@ -271,6 +302,54 @@ function extractUnitPrice(text) {
     return {
       value: toCleanNumber(parseChineseNumber(correctedUnitPrice[1])),
       source: 'rule:corrected_unit_price'
+    };
+  }
+
+  // 改价、改量后的“最后按 3.8”“最终 0.08”“价格还是 1.2”优先使用最终价格。
+  const finalPrice = text.match(new RegExp(`(?:最后按|最终|价格(?:还是|仍是)|单价(?:还是|仍是))\\s*(${chunk})\\s*(?:块|元)?(?=\\s*(?:(?:一|每|/)?${priceUnit}|[，,。；;]|今天|明天|后天|月底|月末|下周|这周|周[一二三四五六日天]|交|发|出|拿|$))`));
+  if (finalPrice) {
+    return { value: toCleanNumber(parseChineseNumber(finalPrice[1])), source: 'rule:final_unit_price' };
+  }
+
+  const priceAfterCue = text.match(new RegExp(`(?:价钱|价格|单价|报价)\\s*(${chunk})\\s*(?:(?:块钱|元钱)|(?:块|元)\\s*(${DECIMAL_DIGIT})?)`));
+  if (priceAfterCue) {
+    return { value: toCleanNumber(parsePriceNumber(priceAfterCue[1], priceAfterCue[2])), source: 'rule:price_after_cue' };
+  }
+
+  // 口语里常说“20块钱一个”。“块钱”不能被拆成一件商品，也不能漏掉价格。
+  const moneyWordWithUnit = text.match(new RegExp(`(${chunk})\\s*(?:块钱|元钱)\\s*(?:一|每|/)${priceUnit}`));
+  if (moneyWordWithUnit) {
+    return {
+      value: toCleanNumber(parseChineseNumber(moneyWordWithUnit[1])),
+      source: 'rule:money_word_unit_price'
+    };
+  }
+
+  // 口语里“二十块钱，周日发”常省略“一个”；已有商品数量时仍可作为单价草稿，之后由 AI/确认卡核对。
+  const moneyWordWithoutUnit = text.match(new RegExp(`(${chunk})\\s*(?:块钱|元钱)(?=\\s*(?:[，,。；;]|今天|明天|后天|月底|月末|下周|这周|周[一二三四五六日天]|礼拜|交|发|出|拿|$))`));
+  if (moneyWordWithoutUnit) {
+    return { value: toCleanNumber(parseChineseNumber(moneyWordWithoutUnit[1])), source: 'rule:money_word_price' };
+  }
+
+  const yuanJiaoFenWithUnit = text.match(new RegExp(`(${chunk})\\s*(?:块|元)\\s*(${DECIMAL_DIGIT})\\s*(?:毛|角)\\s*(${DECIMAL_DIGIT})\\s*(?:一|每|/)${priceUnit}`));
+  if (yuanJiaoFenWithUnit) {
+    const yuan = parseChineseNumber(yuanJiaoFenWithUnit[1]);
+    const jiao = parseChineseNumber(yuanJiaoFenWithUnit[2]);
+    const fen = parseChineseNumber(yuanJiaoFenWithUnit[3]);
+    return {
+      value: toCleanNumber(yuan + jiao / 10 + fen / 100),
+      source: 'rule:yuan_jiao_fen_unit_price'
+    };
+  }
+
+  const yuanJiaoFen = text.match(new RegExp(`(${chunk})\\s*(?:块|元)\\s*(${DECIMAL_DIGIT})\\s*(?:毛|角)\\s*(${DECIMAL_DIGIT})(?![\\d零一二两三四五六七八九十百千万俩])`));
+  if (yuanJiaoFen) {
+    const yuan = parseChineseNumber(yuanJiaoFen[1]);
+    const jiao = parseChineseNumber(yuanJiaoFen[2]);
+    const fen = parseChineseNumber(yuanJiaoFen[3]);
+    return {
+      value: toCleanNumber(yuan + jiao / 10 + fen / 100),
+      source: 'rule:yuan_jiao_fen_price'
     };
   }
 
@@ -345,6 +424,22 @@ function extractUnitPrice(text) {
     return {
       value: toCleanNumber(parseChineseNumber(afterQuantityPrice[1])),
       source: 'rule:price_after_quantity'
+    };
+  }
+
+  const compactCurrencyBeforeCustomer = text.match(new RegExp(`(${chunk})\\s*(?:块|元)(?=[\\u4e00-\\u9fa5]{1,8}(?:总|老板|经理|姐|哥|先生|女士))`));
+  if (compactCurrencyBeforeCustomer) {
+    return {
+      value: toCleanNumber(parseChineseNumber(compactCurrencyBeforeCustomer[1])),
+      source: 'rule:compact_currency_before_customer'
+    };
+  }
+
+  const compactCurrencyBeforeShortCustomer = text.match(new RegExp(`(${chunk})\\s*(?:块|元)(?=(?:老(?!板)|阿)[\\u4e00-\\u9fa5]{1,2})`));
+  if (compactCurrencyBeforeShortCustomer) {
+    return {
+      value: toCleanNumber(parseChineseNumber(compactCurrencyBeforeShortCustomer[1])),
+      source: 'rule:compact_currency_before_short_customer'
     };
   }
 
@@ -463,7 +558,7 @@ function extractUnitPrice(text) {
 
 function extractAmount(text) {
   const correction = text.match(new RegExp(`(?:是|应为|改成)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?\\s*不是\\s*(?:${numberPattern()})`));
-  const explicit = text.match(new RegExp(`(?:总价|总共|一共|合计|金额|欠(?:我|款)?|应收|还差|尾款|定金|订金|预付款?|收了|收到|先收|付了|先付|付款|刚?转了?|刚转|先转|打款|到账|已经到账|先打|给了|还我|还了)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还|后|后面|剩)`));
+  const explicit = text.match(new RegExp(`(?:总价|总共|一共|合计|金额|欠(?:我|款)?|应收|还差|尾款|定金|订金|预付款?|收了|收到|先收|付了|先付|付款|刚?转了?|刚转|先转|打了|刚打|打款|到账|已经到账|先打|给了|还我|还了)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还|后|后面|剩)`));
   const fallback = correction || explicit
     || text.match(new RegExp(`(?:付|收|给|转|打)?\\s*(?:定金|订金|预付款?)\\D{0,4}?(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还)`))
     || text.match(new RegExp(`(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=\\s*(?:定金|订金|预付款?))`))
@@ -513,6 +608,7 @@ function extractProduct(text) {
     .sort((left, right) => right.length - left.length)
     .map((item) => ({ item, index: text.indexOf(item) }))
     .filter((item) => item.index >= 0)
+    .filter((item) => item.item !== '笔' || new RegExp(`笔\\s*(${numberPattern()})\\s*${UNIT_PATTERN}`).test(text))
     .sort((left, right) => left.index - right.index || right.item.length - left.item.length)[0];
   if (known) return { value: known.item, source: 'rule:known_product' };
 
@@ -554,6 +650,7 @@ function extractKnownProducts(text) {
     .sort((left, right) => right.length - left.length)
     .map((item) => ({ item, index: source.indexOf(item) }))
     .filter((entry) => entry.index >= 0)
+    .filter((entry) => entry.item !== '笔' || new RegExp(`笔\\s*(${numberPattern()})\\s*${UNIT_PATTERN}`).test(source))
     .sort((left, right) => left.index - right.index || right.item.length - left.item.length)
     .reduce((list, entry) => {
       const overlaps = list.some((existing) => (
@@ -633,9 +730,15 @@ function cleanItemProductName(value, customerName = '') {
   if (hadTrailingAction && cleaned.length <= 4) return '';
   if (!cleaned || cleaned.length > 12) return '';
   if (ITEM_EXACT_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
+  if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天)/.test(cleaned)) return '';
+  if (/^(?:这?周(?:[一二三四五六日天]|拿|交|发|出)|下周(?:[一二三四五六日天]|拿|交|发|出)|(?:明天|后天|今天|月底|月末|礼拜|星期).*(?:交|拿|发|出)?)$/.test(cleaned)) return '';
+  // “20块钱一个”会被商品+数量规则误切成“块钱 + 1个”；这是一段价格，不是一件商品。
+  if (/^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)?(?:块钱|元钱|毛钱|分钱)$/.test(cleaned)) return '';
   if (/^(?:定|订|要|问|报|报价|做|发|下|补|货|客户|产品|这个|那个|先|再|还有|另外)$/.test(cleaned)) return '';
   if (ITEM_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
   if (/^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分|钱)?$/.test(cleaned)) return '';
+  // “一块二”“五块五”“三毛五”都是价格口语，不能在“一个”前被当成第二个商品。
+  if (/^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)(?:块|元|毛|角|分)(?:\d|[零〇一二两三四五六七八九十百千万俩])?$/.test(cleaned)) return '';
   return cleaned;
 }
 
@@ -652,13 +755,101 @@ function cleanCustomerCandidateName(value) {
 
 function parseQuantityWithUnit(rawNumber, rawUnit) {
   const unit = String(rawUnit || '');
+  const rawNumberText = String(rawNumber || '').trim();
+  // “千支”是五金批发里的完整计量单位。数字规则会优先把“2千支”切成
+  // “2千 + 支”，这里恢复为“2 + 千支”；“2千个”仍保持 2000 个。
+  if (normalizeUnit(unit) === '支' && /千$/.test(rawNumberText)) {
+    const quantity = parseChineseNumber(rawNumberText.slice(0, -1) || '一');
+    if (!Number.isFinite(quantity) || quantity <= 0) return { quantity: '', unit: '' };
+    return {
+      quantity: toCleanNumber(quantity),
+      unit: '千支'
+    };
+  }
   const unitHasWan = unit.startsWith('万');
-  const parsed = parseChineseNumber(rawNumber) * (unitHasWan ? 10000 : 1);
+  const parsed = parseChineseNumber(rawNumberText) * (unitHasWan ? 10000 : 1);
   if (!Number.isFinite(parsed) || parsed <= 0) return { quantity: '', unit: '' };
   return {
     quantity: toCleanNumber(parsed),
-    unit: unit.replace(/^万/, '')
+    unit: normalizeUnit(unit)
   };
+}
+
+function extractPriceUnit(text) {
+  const source = String(text || '');
+  const chunk = numberPattern();
+  const afterPrice = source.match(new RegExp(`(?:${chunk})\\s*(?:块钱|元钱|块|元|毛|角|分)?\\s*(?:一|每|/)\\s*(${RAW_UNIT_PATTERN})`));
+  if (afterPrice) return normalizeUnit(afterPrice[1]);
+  const beforePrice = source.match(new RegExp(`(?:每|一)\\s*(${RAW_UNIT_PATTERN})\\s*(?:${chunk})`));
+  if (beforePrice) return normalizeUnit(beforePrice[1]);
+  return '';
+}
+
+const COLLOQUIAL_SINGLE_COUNT_UNITS = new Set([
+  '只', '支', '件', '套', '台', '盒', '瓶', '罐', '桶',
+  '张', '匹', '令', '条', '头', '双', '对', '本', '组', '把'
+]);
+
+function resolveColloquialPriceUnit(quantityUnit, priceUnit, sourceText) {
+  const quantity = normalizeUnit(quantityUnit);
+  const price = normalizeUnit(priceUnit);
+  if (price !== '个' || !COLLOQUIAL_SINGLE_COUNT_UNITS.has(quantity)) return price;
+  // “每个”“/个”是明确按个计价，不能擅自改单位；“3.8元一个”则是老板常用的
+  // 泛指说法，结合前面的“100套/600双/1000把”按当前计数单位理解。
+  if (/(?:每|\/)\s*个/.test(String(sourceText || ''))) return price;
+  return quantity;
+}
+
+function extractSpec(text) {
+  const match = String(text || '').match(new RegExp(`(${SPEC_TOKEN_PATTERN})(?:的)?`));
+  return match ? match[1].replace(/的$/, '') : '';
+}
+
+function removeSpecFromProduct(productName, spec) {
+  if (!productName || !spec) return productName;
+  const escaped = escapeRegExp(spec);
+  const cleaned = String(productName)
+    .replace(new RegExp(`^${escaped}(?:的)?`), '')
+    .replace(new RegExp(`${escaped}(?:的)?$`), '')
+    .trim();
+  return cleaned || productName;
+}
+
+function extractVariantItems(text, customerName = '') {
+  const source = String(text || '');
+  const pattern = new RegExp(`(${SPEC_TOKEN_PATTERN})(?:的)?\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g');
+  const matches = Array.from(source.matchAll(pattern));
+  if (matches.length < 2) return [];
+  const prefixParts = source.slice(0, matches[0].index).split(/[，,。；;]+/).map((part) => part.trim()).filter(Boolean);
+  let productText = prefixParts[prefixParts.length - 1] || '';
+  if (customerName) productText = productText.replace(new RegExp(`^${escapeRegExp(customerName)}`), '');
+  productText = productText.replace(/^.*?(?:要|订|定|下单|做|报|报价|问价|来|补)\s*/, '');
+  const productName = cleanItemProductName(productText, customerName);
+  if (!productName) return [];
+
+  const sharedUnitPrice = extractUnitPrice(source);
+  const sharedPriceUnit = extractPriceUnit(source);
+  return matches.map((match, index) => {
+    const next = matches[index + 1];
+    const segment = source.slice(match.index, next ? next.index : source.length);
+    const localUnitPrice = extractUnitPrice(segment);
+    const unitPrice = localUnitPrice.value || sharedUnitPrice.value;
+    const parsedQuantity = parseQuantityWithUnit(match[2], match[3]);
+    const priceUnit = resolveColloquialPriceUnit(
+      parsedQuantity.unit,
+      extractPriceUnit(segment) || sharedPriceUnit,
+      segment
+    );
+    return normalizeItem({
+      productName,
+      spec: match[1],
+      quantity: parsedQuantity.quantity,
+      unit: parsedQuantity.unit,
+      unitPrice,
+      priceUnit,
+      totalAmount: calculateAmount(parsedQuantity.quantity, unitPrice, parsedQuantity.unit, priceUnit)
+    });
+  });
 }
 
 function compactItemCandidates(candidates) {
@@ -683,8 +874,21 @@ function extractItemCandidates(text, customerName = '') {
   const productFirst = new RegExp(`([\\u4e00-\\u9fa5A-Za-z]{1,20})\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g');
 
   const pushCandidate = (match, rawProduct, rawQuantity, rawUnit, sourceName) => {
-    const productName = cleanItemProductName(rawProduct, customerName);
-    const quantity = parseQuantityWithUnit(rawQuantity, rawUnit);
+    let productText = rawProduct;
+    let quantityText = rawQuantity;
+    if (sourceName === 'rule:item_product_quantity') {
+      // 正则在“礼品盒五百套”里可能把“百”单独当数量、把“礼品盒五”当商品。
+      // 把被截走的中文数字拼回去，再判断商品名。
+      const splitQuantity = String(productText || '').match(/([零〇一二两三四五六七八九十百千万俩]+)$/);
+      if (splitQuantity && /^[零〇一二两三四五六七八九十百千万俩]+$/.test(String(quantityText || ''))) {
+        productText = productText.slice(0, -splitQuantity[1].length);
+        quantityText = `${splitQuantity[1]}${quantityText}`;
+      }
+      const hasKnownProduct = KNOWN_PRODUCTS.some((product) => productText.includes(product));
+      if (!hasKnownProduct && /(?:今天|明天|后天|要|订|下单|先整|先来|说|给|问|客户|老板|总|姐|哥)/.test(productText)) return;
+    }
+    const productName = cleanItemProductName(productText, customerName);
+    const quantity = parseQuantityWithUnit(quantityText, rawUnit);
     if (!productName || !quantity.quantity) return;
     candidates.push({
       index: match.index,
@@ -711,15 +915,18 @@ function normalizeItem(item = {}) {
   const productName = cleanItemProductName(item.productName || item.product_name || item.name || '');
   const quantity = item.quantity ? toCleanNumber(item.quantity) : '';
   const unitPrice = item.unitPrice || item.unit_price ? toCleanNumber(item.unitPrice || item.unit_price) : '';
+  const unit = normalizeUnit(item.unit || '');
+  const priceUnit = normalizeUnit(item.priceUnit || item.price_unit || item.unitPriceUnit || item.unit_price_unit || '');
   const totalAmount = item.totalAmount || item.total_amount || item.amount
     ? toCleanNumber(item.totalAmount || item.total_amount || item.amount)
-    : calculateAmount(quantity, unitPrice);
+    : calculateAmount(quantity, unitPrice, unit, priceUnit);
   return {
     productName,
     spec: item.spec || '',
     quantity,
-    unit: item.unit || '',
+    unit,
     unitPrice,
+    priceUnit,
     totalAmount,
     itemDeliveryDate: item.itemDeliveryDate || item.deliveryDate || item.dueDate || '',
     itemRemark: item.itemRemark || item.remark || ''
@@ -727,7 +934,7 @@ function normalizeItem(item = {}) {
 }
 
 function hasItemValue(item) {
-  return Boolean(item && (item.productName || item.quantity || item.unitPrice || item.totalAmount));
+  return Boolean(item && (item.productName || item.spec || item.quantity || item.unitPrice || item.totalAmount));
 }
 
 function normalizeItems(items = []) {
@@ -737,19 +944,47 @@ function normalizeItems(items = []) {
 }
 
 function extractItems(text, customerName = '') {
+  const variantItems = extractVariantItems(text, customerName);
+  if (variantItems.length) return variantItems;
   const candidates = extractItemCandidates(text, customerName);
   return candidates.map((candidate, index) => {
     const next = candidates[index + 1];
     const itemText = text.slice(candidate.index, next ? next.index : text.length);
     const unitPrice = extractUnitPrice(itemText);
-    const totalAmount = calculateAmount(candidate.quantity, unitPrice.value);
+    const inferredSpec = extractSpec(itemText);
+    const spec = isKnownProductName(candidate.productName) && candidate.productName.startsWith(inferredSpec)
+      ? ''
+      : inferredSpec;
+    const productName = removeSpecFromProduct(candidate.productName, spec);
+    const priceUnit = resolveColloquialPriceUnit(candidate.unit, extractPriceUnit(itemText), itemText);
+    const totalAmount = calculateAmount(candidate.quantity, unitPrice.value, candidate.unit, priceUnit);
     return normalizeItem(Object.assign({}, candidate, {
+      productName,
+      spec,
       unitPrice: unitPrice.value,
+      priceUnit,
       totalAmount,
       itemRemark: '',
       source: [candidate.source, unitPrice.source].filter(Boolean).join('+')
     }));
   });
+}
+
+function isKnownProductName(value) {
+  return KNOWN_PRODUCTS.includes(String(value || ''));
+}
+
+function repairItemDrafts(items, text, fallbackProduct) {
+  const list = Array.isArray(items) ? items.map((item) => Object.assign({}, item)) : [];
+  const known = extractKnownProducts(text);
+  const onlyKnownProduct = known.length === 1 ? known[0] : (isKnownProductName(fallbackProduct) ? fallbackProduct : '');
+  if (!onlyKnownProduct) return list;
+  return list
+    .filter((item) => !/^(?:这?周|下周|明天|后天|今天|月底|月末|礼拜|星期)/.test(String(item.productName || '')))
+    .map((item) => {
+      if (!isKnownProductName(item.productName)) item.productName = onlyKnownProduct;
+      return item;
+    });
 }
 
 function buildLegacyItem(fields = {}) {
@@ -759,6 +994,7 @@ function buildLegacyItem(fields = {}) {
     quantity: fields.quantity,
     unit: fields.unit,
     unitPrice: fields.unitPrice,
+    priceUnit: fields.priceUnit,
     totalAmount: fields.totalAmount || fields.amount
   });
 }
@@ -778,22 +1014,37 @@ function sameMoney(left, right) {
 function countQuantityUnitPairs(text) {
   return Array.from(String(text || '').matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')))
     .filter((match) => {
-      const unit = match[2].replace(/^万/, '');
-      const parsed = parseChineseNumber(match[1]) * (match[2].startsWith('万') ? 10000 : 1);
+      const parsedQuantity = parseQuantityWithUnit(match[1], match[2]);
+      const unit = parsedQuantity.unit;
+      const parsed = Number(parsedQuantity.quantity);
       const prefix = text.slice(Math.max(0, match.index - 8), match.index);
+      const suffix = text.slice(match.index + match[0].length, match.index + match[0].length + 8);
       if (!Number.isFinite(parsed) || parsed <= 0) return false;
       if (parsed === 1 && /(?:块|元|毛|角|分|钱|单价|价格|报价|\d+\.\d+|\d)$/.test(prefix)) return false;
-      return /^(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台)$/.test(unit);
+      // “一个五块五 / 一套两块三”里的“一 个/套”是价格单位，不是第二件商品。
+      if (parsed === 1 && /^(?:\d|[零〇一二两三四五六七八九十百千万俩])(?:块|元|毛|角|分|钱)/.test(suffix)) return false;
+      return isSupportedUnit(unit);
     })
     .length;
 }
 
 function extractCustomerNameCandidates(text) {
   const source = String(text || '');
-  const names = [];
+  const shortName = extractShortCustomerName(source);
+  if (shortName.value) return [shortName.value];
+  const titledNames = [];
   const titled = source.match(/[\u4e00-\u9fa5A-Za-z]{1,8}(?:总|老板|经理|姐|哥|先生|女士)/g) || [];
-  titled.forEach((name) => names.push(cleanCustomerCandidateName(name)));
+  titled.forEach((name) => titledNames.push(cleanCustomerCandidateName(name)));
 
+  // 原文已经有“王总 / 李姐”这类明确称呼时，不再用宽泛的动作词规则补猜一次。
+  // 否则“给王总记订单”会额外截出“王总记”，被误判为两个客户。
+  const cleanTitledNames = titledNames
+    .map((name) => String(name || '').trim())
+    .filter(Boolean)
+    .filter((name, index, array) => array.indexOf(name) === index);
+  if (cleanTitledNames.length) return cleanTitledNames;
+
+  const names = [];
   const actionPattern = new RegExp(`([\\u4e00-\\u9fa5]{1,4})(?:${CUSTOMER_ACTION_PATTERN})`, 'g');
   let match;
   while ((match = actionPattern.exec(source)) !== null) {
@@ -805,6 +1056,7 @@ function extractCustomerNameCandidates(text) {
     .filter(Boolean)
     .filter((name) => !/^(先|先付|已付|刚付|再|另外|还有|都|客户|产品|这个|那个|正式|确认|这单|那单|订单|单|到|个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台)$/.test(name))
     .filter((name) => !/(?:这单|那单|订单|下单|定金|订金|尾款|货款|礼品|品盒)$/.test(name))
+    .filter((name) => !/(?:收到|收了|已收|刚收|转了|刚转|打了|到账|付了|已付)$/.test(name))
     .filter((name) => !/(?:以前|之前|原来|过去|历史|老账|旧账|去年|上个月)$/.test(name))
     .filter((name) => !KNOWN_PRODUCTS.some((product) => name.includes(product) || product.includes(name)))
     .filter((name, index, array) => array.indexOf(name) === index);
@@ -866,6 +1118,21 @@ function extractTodoTitle(text, fields = {}) {
 
 function scoreIntent(text, context) {
   if (context === 'query') return { intent: 'query', candidates: ['query'] };
+  if (EXPLICIT_NON_RECORD_PATTERN.test(text)) {
+    return { intent: 'unknown', candidates: ['unknown'] };
+  }
+  if (/(?:先按|按).{0,12}(?:不对|不是).{0,12}(?:最后|最终).{0,12}(?:块|元|价)/.test(text)) {
+    return { intent: 'quotation', candidates: ['quotation'] };
+  }
+  if (/(?:不对|不是|改成).*(?:带走|交货|发货|做|订)|(?:带走|交货|发货|做|订).*(?:照上回|按上回|上次)/.test(text)) {
+    return { intent: 'order', candidates: ['order'] };
+  }
+  if (/(?:数量\s*改成|数量改为|先别按旧价|最后按|最终).*(?:个|件|箱|套|只|条|交|发|出|拿)/.test(text)) {
+    return { intent: 'order', candidates: ['order'] };
+  }
+  if (/(?:提醒我|别忘了|记得).*(?:回|回复|答复|联系|跟进)/.test(text) && !/(?:催.*(?:款|货款|尾款)|(?:款|货款|尾款).*催)/.test(text)) {
+    return { intent: 'todo', candidates: ['todo'] };
+  }
   if (/售后|断了|坏了|破了|质量问题/.test(text) && /处理|跟进|先/.test(text)) {
     return { intent: 'todo', candidates: ['todo', 'unknown'] };
   }
@@ -875,10 +1142,13 @@ function scoreIntent(text, context) {
   if (/只是参考|别录|先别录|不要录|等确认|撤回|上个月的记录|旧记录|货价先不报|不用录/.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
   }
-  if (/(?:不要做了?|别做|取消|先别发|暂时别发|等通知|客户取消)/.test(text)) {
+  if (/(?:不要做了?|别做|取消|先别发|暂时别发|等通知|客户取消)/.test(text) && !/(?:改这次|改成|改为|换成)/.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
   }
-  if (/库存|有没有库存|还有库存|打样|样品|不是大货/.test(text) && !/先下|下单|确认了|定了|订了|先做|做货|要货/.test(text) && extractProduct(text).value) {
+  const hasClearOrderFacts = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)
+    && /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)/.test(text)
+    && /交|发|拿|出/.test(text);
+  if (/库存|有没有库存|还有库存|打样|样品|不是大货/.test(text) && !/先下|下单|确认了|定了|订了|先做|做货|要货/.test(text) && !hasClearOrderFacts && extractProduct(text).value) {
     return { intent: 'quotation', candidates: ['quotation', 'todo', 'unknown'] };
   }
   const recordLikeQuestion = /我[:：]|给我发|报|单价|价格|块|元|毛|分|个|件|箱|套|只|条|张|本|交|发|定|订|做|欠|付|转|到账/.test(text);
@@ -898,14 +1168,15 @@ function scoreIntent(text, context) {
   const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text);
   const hasTodoSignal = new RegExp(`提醒我|提醒|别忘了|待会|等下|记得|发.*?对账单|回一下|(?:今天|明天|明日|后天|大后天|上午|中午|下午|晚上|今晚|月底|月末|下周|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\\d{1,2}号|\\d{1,2}日).*?(?:${TODO_ACTION_WORDS})|给(?:他|她|客户|[\\u4e00-\\u9fa5]{1,4}(?:总|姐|哥|老板|经理))?(?:回|回复)|(?:回|回复)(?:他|她|客户)`).test(text);
   const hasDeliverySignal = /交货|发货|要发|要货|月底交|月末交|给我发|今天.*发|明天.*发|后天.*发|下午发|交|拿|出/.test(text) || /给(?:他|她)(?!回|回复)/.test(text);
-  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台|月|号|日))`).test(text);
-  const hasPriceSignal = /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)|(?:一|每)(?:个|件|只|条|套|双|张|本|箱)|单价/.test(text)
+  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(text);
+  const hasPriceSignal = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(text)
     || hasBareUnitPrice;
   const hasStrongQuotationSignal = /报价|报架|报个价|问价|多少钱|问.*(?:价格|价|多少钱)/.test(text);
+  const hasExplicitQuotePlan = /(?:问[^，,。；;]{0,12}(?:价|报)|(?:先)?给(?:他|她)?报|先看看价|看(?:看)?价)/.test(text);
 
   if (hasTodoSignal) scores.todo += 7;
   if (/问/.test(text) && /(回|回复|答复)/.test(text) && parseChineseDate(text)) scores.todo += 3;
-  if (/收了|已收|收到|先收|转了|刚转|先转|转账|已付款|已付|打款|到账|已经到账|还我|还了|给了|定金|订金|预付|预付款/.test(text)) scores.payment += 5;
+  if (/收了|已收|收到|先收|转了|刚转|先转|转账|打了|刚打|已付款|已付|打款|到账|已经到账|还我|还了|给了|定金|订金|预付|预付款/.test(text)) scores.payment += 5;
   if (DEPOSIT_PATTERN.test(text) && new RegExp(`(${numberPattern()})`).test(text) && !hasQuantity) scores.payment += 4;
   if (DEPOSIT_PATTERN.test(text) && /转了|付了|收了|收到|打了|打款|到账/.test(text) && !hasQuantity) scores.payment += 3;
   if (new RegExp(`(${numberPattern()})\\s*(?:已经到账|到账|已到账)`).test(text)) scores.payment += 5;
@@ -913,11 +1184,13 @@ function scoreIntent(text, context) {
   if (/收款.*写错|(?:金额|款).*写错.*不是/.test(text)) scores.payment += 5;
   if (/(?:价格|单价|报价|价).*写错|写错了.*(?:价格|单价|报价|价)/.test(text)) scores.quotation += 7;
   if (/催|提醒.*款|要款/.test(text)) scores.dunning += 5;
-  if (/欠|欠款|应收|还差|先记账|记账|月底结|月底给|月结|尾款|货款/.test(text)) scores.receivable += 4;
+  if (/欠|欠款|应收|还差|先记账|记账|月底结|月结|尾款|货款/.test(text)) scores.receivable += 4;
   if (/(?:今天|明天|后天|下周|月底|月末).*付款/.test(text)) scores.receivable += 5;
   if (/没结|未结|挂账/.test(text)) scores.receivable += 6;
   if (/还有一笔没结|没结.*(?:\d|[零一二两三四五六七八九十百千万俩])/.test(text)) scores.receivable += 4;
-  if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|周[一二三四五六日天].*(?:拿|出)/.test(text)) scores.order += 4;
+  if (/来一单/.test(text)) scores.order += 4;
+  if (hasQuantity && extractProduct(text).value && /(?:下(?!周)|先整|先来|要货)/.test(text)) scores.order += 4;
+  if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|整|周[一二三四五六日天].*(?:拿|出)/.test(text)) scores.order += 4;
   if (/(?:按上次价格|按上回|照旧价|价格照旧).*?(?:做|补|再来|返单)/.test(text) && hasQuantity) scores.order += 6;
   if (DEPOSIT_PAYMENT_PATTERN.test(text) && (hasQuantity || hasDeliverySignal)) scores.order += 4;
   if (DEPOSIT_PAYMENT_PATTERN.test(text) && hasQuantity && extractProduct(text).value) {
@@ -929,11 +1202,18 @@ function scoreIntent(text, context) {
   if ((/交|拿|出/.test(text) || /给(?:他|她)(?!回|回复)/.test(text)) && new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)) scores.order += 4;
   if (hasQuantity && hasDeliverySignal && hasPriceSignal && !hasStrongQuotationSignal) scores.order += 4;
   if (hasStrongQuotationSignal || /单价|要个价格/.test(text)) scores.quotation += 4;
-  if (/报/.test(text) && hasQuantity && hasPriceSignal) scores.quotation += 4;
+  if (hasExplicitQuotePlan) {
+    scores.quotation += 10;
+    scores.order = Math.max(0, scores.order - 6);
+  }
+  if (/报/.test(text) && hasQuantity && hasPriceSignal) {
+    scores.quotation += /报价|报架|报个价|问价|多少钱|跟进|单价|价格/.test(text) ? 9 : 4;
+  }
   if (/问/.test(text) && hasQuantity && hasPriceSignal && !hasDeliverySignal) scores.quotation += 4;
   if (/报价|价格|单价/.test(text) && /改|补一下/.test(text)) scores.quotation += 6;
   if (/报/.test(text) && !hasQuantity) scores.quotation += 1;
-  if (/要|订|定|买|拿|补|先下|做|出/.test(text)) scores.order += 1;
+  if (/要|订|定|买|拿|补|先下|先整|做|整|出/.test(text)) scores.order += 1;
+  if (/带走/.test(text)) scores.order += 4;
   if (/刚转|到账|已到账|付了|已付|收了|收到/.test(text) && /剩|还剩|剩余|还差|补/.test(text) && !extractProduct(text).value) {
     scores.payment += 5;
     scores.order = 0;
@@ -1014,8 +1294,9 @@ function buildMissingFields(intent, fields, operation = '') {
   return missing;
 }
 
-function calculateAmount(quantity, unitPrice) {
+function calculateAmount(quantity, unitPrice, quantityUnit = '', priceUnit = '') {
   if (!quantity || !unitPrice) return '';
+  if (!unitsMatch(quantityUnit, priceUnit)) return '';
   const quantityNumber = Number(quantity);
   const unitPriceNumber = Number(unitPrice);
   if (!Number.isFinite(quantityNumber) || !Number.isFinite(unitPriceNumber)) return '';
@@ -1080,11 +1361,33 @@ function getDraftFieldSource(draft, field, fallback) {
 
 function hasExplicitQuotationSignal(text) {
   const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text);
-  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台|月|号|日))`).test(text);
-  const hasPrice = /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)|(?:一|每)(?:个|件|只|条|套|双|张|本|箱)|单价/.test(text)
+  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(text);
+  const hasPrice = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(text)
     || hasBareUnitPrice;
   return /报价|报架|报个价|问价|多少钱|要个价格|先报|一起报|报给客户/.test(text)
     || (/报/.test(text) && hasQuantity && hasPrice);
+}
+
+function detectMixedBusiness(text) {
+  const source = String(text || '');
+  const hasSeparator = /(?:另外|还有一笔|同时|再说一笔|另一边|除此之外)/.test(source);
+  const kinds = [];
+  const hasItemQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(source);
+  const hasTodoSignal = /提醒我|别忘了|记得/.test(source);
+  const hasQuotationSignal = /报价|报个价|问价|多少钱|先报/.test(source)
+    && !(hasTodoSignal && /报价单/.test(source) && !hasItemQuantity);
+  if (hasQuotationSignal) kinds.push('quotation');
+  const hasExplicitNoOrder = /(?:还没|没有|没|未)(?:正式)?下单/.test(source);
+  if ((!hasExplicitNoOrder && /下单|订单|订|定了|先做|做货|要货|交货|发货/.test(source))
+    || (hasItemQuantity && /(?:明天|后天|本周|这周|下周|周[一二三四五六日天]|交|拿|发)/.test(source))) kinds.push('order');
+  if (/(?:刚|已经|已)?(?:微信)?(?:打了|转了|付了|收了|收到|到账)|收款/.test(source) && !/(?:定金|订金|预付)/.test(source)) kinds.push('payment');
+  if (/欠款|还差|未结|没结|尾款|待收/.test(source)) kinds.push('receivable');
+  if (hasTodoSignal) kinds.push('todo');
+  const uniqueKinds = Array.from(new Set(kinds));
+  if (hasSeparator) return uniqueKinds.length > 1;
+  const hasProductBusiness = uniqueKinds.some((kind) => ['order', 'quotation'].includes(kind));
+  const hasOtherBusiness = uniqueKinds.some((kind) => ['payment', 'receivable', 'todo'].includes(kind));
+  return hasProductBusiness && hasOtherBusiness;
 }
 
 function parseInput({ text, source = 'typed', context = 'home', state, rawText = '', extractedText = '', pasteMeta = null }) {
@@ -1092,6 +1395,12 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const originalText = normalizeOriginalText(rawText || text);
   const extractedOriginalText = normalizeOriginalText(recognitionText);
   const normalized = normalizeText(recognitionText);
+  const hasTerminationSignal = TERMINATION_PATTERN.test(normalized);
+  const requiresExistingRecord = hasTerminationSignal && REPLACEMENT_AFTER_TERMINATION_PATTERN.test(normalized);
+  const mixedBusiness = detectMixedBusiness(normalized);
+  const explicitNoRecord = EXPLICIT_NON_RECORD_PATTERN.test(normalized)
+    || (hasTerminationSignal && !requiresExistingRecord)
+    || mixedBusiness;
   const structuredDraft = source === 'paste' ? getPasteStructuredDraft(pasteMeta) : null;
   const scoredIntent = scoreIntent(normalized, context);
   const customer = extractCustomerName(normalized);
@@ -1099,9 +1408,9 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const customerName = chooseCustomerName(chatCustomerName, customer.value, normalized);
   const structuredItems = normalizeItems(structuredDraft && structuredDraft.items);
   const extractedItems = extractItems(normalized, customerName);
-  const itemDrafts = structuredItems.length ? structuredItems : extractedItems;
+  const rawItemDrafts = structuredItems.length ? structuredItems : extractedItems;
   const multiProductNames = extractMultiProductNames(normalized);
-  const hasMultiProductDraft = multiProductNames.length > 1 || itemDrafts.length > 1;
+  const hasMultiProductDraft = multiProductNames.length > 1 || rawItemDrafts.length > 1;
   const explicitQuotationSignal = hasExplicitQuotationSignal(normalized);
   const structuredIntent = structuredDraft && structuredDraft.intent;
   const intent = structuredIntent
@@ -1112,26 +1421,40 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   const quantity = extractQuantity(normalized);
   const productNumberQuantity = quantity.quantity ? { quantity: '', unit: '', source: '' } : extractQuantityAfterKnownProduct(normalized);
   const unitPrice = extractUnitPrice(normalized);
+  const priceUnit = extractPriceUnit(normalized);
   const explicitAmount = extractAmount(normalized);
   const depositAmount = extractDepositAmount(normalized);
   const remainingAmount = extractRemainingAmount(normalized);
   const product = extractProduct(normalized);
+  const itemDrafts = repairItemDrafts(rawItemDrafts, normalized, product.value);
   const useItems = ['quotation', 'order'].includes(intent);
   const singleItemDraft = useItems && itemDrafts.length ? itemDrafts[0] : null;
-  const quantityValue = (singleItemDraft && singleItemDraft.quantity) || (structuredDraft && structuredDraft.quantity) || quantity.quantity || productNumberQuantity.quantity;
+  // “不对八百”“最后确认 500”这类明确更正必须覆盖前面商品旁边的旧数量。
+  const quantityValue = (structuredDraft && structuredDraft.quantity) || quantity.quantity || (singleItemDraft && singleItemDraft.quantity) || productNumberQuantity.quantity;
   const unitValue = (singleItemDraft && singleItemDraft.unit) || (structuredDraft && structuredDraft.unit) || quantity.unit || productNumberQuantity.unit;
   const unitPriceValue = (singleItemDraft && singleItemDraft.unitPrice) || (structuredDraft && structuredDraft.unitPrice) || unitPrice.value;
-  const computedAmount = calculateAmount(quantityValue, unitPriceValue);
-  const itemTotalAmount = useItems ? getItemsTotal(itemDrafts) : '';
+  const priceUnitValue = resolveColloquialPriceUnit(
+    unitValue,
+    (singleItemDraft && singleItemDraft.priceUnit) || priceUnit,
+    normalized
+  );
+  const computedAmount = calculateAmount(quantityValue, unitPriceValue, unitValue, priceUnitValue);
+  // 单商品以已确认的全句数量 × 单价计算，不能让倒装句里局部候选的“1 个”覆盖真实数量。
+  const itemTotalAmount = useItems && itemDrafts.length > 1 ? getItemsTotal(itemDrafts) : '';
   const hasDepositSignal = DEPOSIT_PAYMENT_PATTERN.test(normalized);
   const paymentAmount = (intent === 'payment' || /先收|收了|已收|先付|已付|先转|已转|定金|订金|预付|预付款/.test(normalized)) ? (depositAmount.value || explicitAmount.value) : '';
   const receivableAmount = explicitAmount.value || (intent === 'receivable' ? remainingAmount.value : '');
   const explicitAmountIsDeposit = hasDepositSignal && depositAmount.value && explicitAmount.value === depositAmount.value;
-  const amount = itemTotalAmount || computedAmount || (intent === 'payment' ? '' : (explicitAmountIsDeposit ? '' : receivableAmount));
-  const productName = ['quotation', 'order', 'todo', 'dunning'].includes(intent)
+  const calculatedAmount = itemTotalAmount || computedAmount;
+  const statedAmount = intent === 'payment' || explicitAmountIsDeposit ? '' : receivableAmount;
+  // 老板明确说出的整单总价优先保留。数量×单价只是核对值，两个数不同时
+  // 必须展示冲突，不能先把原话金额覆盖掉。
+  const amount = statedAmount || calculatedAmount;
+  const productName = ['quotation', 'order', 'todo', 'dunning', 'unknown'].includes(intent)
     ? ((singleItemDraft && singleItemDraft.productName) || (hasMultiProductDraft ? multiProductNames.join('、') : ((structuredDraft && structuredDraft.productName) || product.value)))
     : '';
-  const date = parseChineseDate((structuredDraft && structuredDraft.dueText) || normalized);
+  const dateDetail = parseChineseDateDetail((structuredDraft && structuredDraft.dueText) || normalized);
+  const date = dateDetail.date;
   const todoTitle = ['todo', 'dunning'].includes(intent) ? extractTodoTitle(normalized, {
     customerName,
     productName
@@ -1141,11 +1464,14 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     phone: extractPhone(normalized),
     todoTitle: todoTitle.value,
     productName,
-    spec: '',
+    spec: (singleItemDraft && singleItemDraft.spec) || extractSpec(normalized),
     quantity: quantityValue,
     unit: unitValue,
     unitPrice: unitPriceValue,
+    priceUnit: priceUnitValue,
     totalAmount: amount,
+    statedAmount,
+    calculatedAmount,
     paymentAmount,
     depositAmount: hasDepositSignal ? (depositAmount.value || paymentAmount) : '',
     paymentKind: hasDepositSignal ? 'deposit' : '',
@@ -1158,17 +1484,37 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   };
   if (useItems) {
     const items = itemDrafts.length ? itemDrafts : [buildLegacyItem(fields)].filter(hasItemValue);
+    if (items.length === 1 && /^(?:rule:corrected_quantity|rule:final_quantity)$/.test(quantity.source || '')) {
+      items[0].quantity = quantityValue;
+      items[0].unit = unitValue || items[0].unit || '';
+      items[0].totalAmount = calculateAmount(items[0].quantity, items[0].unitPrice, items[0].unit, items[0].priceUnit);
+    }
     if (items.length) {
+      if (items.length === 1) {
+        if (quantityValue) items[0].quantity = quantityValue;
+        if (unitValue) items[0].unit = unitValue;
+        if (unitPriceValue) items[0].unitPrice = unitPriceValue;
+        if (priceUnitValue) items[0].priceUnit = priceUnitValue;
+        items[0].totalAmount = calculateAmount(items[0].quantity, items[0].unitPrice, items[0].unit, items[0].priceUnit);
+      }
       fields.items = items;
       const itemsTotal = getItemsTotal(items);
       if (itemsTotal) {
-        fields.amount = itemsTotal;
-        fields.totalAmount = itemsTotal;
+        fields.calculatedAmount = itemsTotal;
+        if (!fields.statedAmount) {
+          fields.amount = itemsTotal;
+          fields.totalAmount = itemsTotal;
+        }
       }
     }
   }
   if (remainingAmount.value && !String(fields.remark || '').includes(`剩余${remainingAmount.value}`)) {
     fields.remark = [fields.remark, `剩余${remainingAmount.value}`].filter(Boolean).join('\n');
+  }
+  if (explicitNoRecord) {
+    // 多笔混在一起、取消/等待通知、普通聊天都不能偷偷形成一笔正式业务草稿。
+    ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'totalAmount', 'statedAmount', 'calculatedAmount', 'paymentAmount', 'depositAmount', 'paymentKind', 'amount', 'remainingAmount', 'dueDate', 'todoTitle'].forEach((field) => delete fields[field]);
+    delete fields.items;
   }
   let operation = detectOperation(normalized, intent);
   if (intent === 'payment' && hasDepositSignal) operation = 'record_order_deposit';
@@ -1183,12 +1529,27 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
       message: `一句话里出现多个客户：${customerNameCandidates.join('、')}，请拆开记录。`
     });
   }
+  if (mixedBusiness) {
+    fieldConflicts.push({
+      field: 'intent',
+      values: scoredIntent.candidates,
+      message: '这一句话里包含多件不同业务，必须拆开后分别确认。'
+    });
+  }
   const itemsTotal = getItemsTotal(fields.items || []);
   if (itemsTotal && explicitAmount.value && !explicitAmountIsDeposit && !sameMoney(itemsTotal, explicitAmount.value)) {
     fieldConflicts.push({
       field: 'amount',
       values: [itemsTotal, explicitAmount.value],
       message: `商品明细合计${itemsTotal}元，原文总金额${explicitAmount.value}元，不一致，请确认。`
+    });
+  }
+  const unitPriceMismatches = (fields.items || []).filter((item) => item.unit && item.priceUnit && !unitsMatch(item.unit, item.priceUnit));
+  if (unitPriceMismatches.length) {
+    fieldConflicts.push({
+      field: 'priceUnit',
+      values: unitPriceMismatches.map((item) => `${item.quantity || '-'}${item.unit}，单价按${item.priceUnit}`),
+      message: '数量单位和计价单位不同，系统没有自动换算金额，请确认每种规格的小计或改正计价单位。'
     });
   }
   const hasUnclearMultiItem = useItems
@@ -1205,7 +1566,10 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
   if (customerCandidates.length > 1) lowConfidenceFields.push('customerName');
   if (customerNameCandidates.length > 1) lowConfidenceFields.push('customerName');
   if (hasUnclearMultiItem) lowConfidenceFields.push('productName', 'quantity', 'unitPrice');
+  if (unitPriceMismatches.length) lowConfidenceFields.push('priceUnit');
+  if ((dateDetail.ambiguous || dateDetail.invalid) && dateDetail.matchedText) lowConfidenceFields.push('dueDate');
   if (!fields.dueDate && /月底|明天|今天|后|下周|下个月|号|日|交|结|到期/.test(normalized)) lowConfidenceFields.push('dueDate');
+  if (mixedBusiness) lowConfidenceFields.push('intent');
   if (!fields.unitPrice && /上次|上图|原价|老价|老款报价|旧价|照旧|价格不变|按上回|还是|按上次/.test(normalized)) lowConfidenceFields.push('unitPrice');
 
   const confidence = Math.max(
@@ -1219,8 +1583,10 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     ? Number(structuredDraft.extractionConfidence)
     : 0;
   const finalConfidence = draftConfidence ? Math.min(0.98, Math.max(confidence, draftConfidence)) : confidence;
-  const computedFields = computedAmount ? ['amount'] : [];
-  const computedTips = computedAmount ? ['总价由数量 × 单价自动计算，可修改。'] : [];
+  const computedFields = calculatedAmount ? [statedAmount ? 'calculatedAmount' : 'amount'] : [];
+  const computedTips = calculatedAmount ? [statedAmount
+    ? `按数量和单价计算为${calculatedAmount}元，已与原话总金额核对。`
+    : '总价由数量 × 单价自动计算，可修改。'] : [];
   const intentCandidates = structuredDraft && structuredDraft.intent
     ? [structuredDraft.intent].concat(scoredIntent.candidates.filter((item) => item !== structuredDraft.intent))
     : scoredIntent.candidates;
@@ -1238,6 +1604,13 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
     confirm_message: buildConfirmMessage(intent, missingFields),
     source,
     original_text: originalText,
+    date_detail: dateDetail,
+    formal_save_blocked: hasTerminationSignal || mixedBusiness,
+    block_reason: mixedBusiness
+      ? '一句话里包含多件业务，不能合成一笔正式记录。'
+      : (hasTerminationSignal ? '这是取消、暂停或撤回旧记录的操作，必须先找到原记录并再次确认。' : ''),
+    requires_existing_record: requiresExistingRecord,
+    mixed_business: mixedBusiness,
     computed_fields: computedFields,
     computed_tips: computedTips,
     field_sources: {
@@ -1247,18 +1620,21 @@ function parseInput({ text, source = 'typed', context = 'home', state, rawText =
       quantity: getDraftFieldSource(structuredDraft, 'quantity', quantity.source || productNumberQuantity.source),
       unit: getDraftFieldSource(structuredDraft, 'unit', quantity.source || productNumberQuantity.source),
       unitPrice: getDraftFieldSource(structuredDraft, 'unitPrice', unitPrice.source),
+      priceUnit: priceUnitValue ? 'rule:unit_price_unit' : '',
       items: fields.items && fields.items.length ? (structuredItems.length ? 'paste_meta:structuredDraft.items' : 'rule:item_details') : '',
       paymentAmount: paymentAmount ? explicitAmount.source : '',
       depositAmount: hasDepositSignal && (depositAmount.value || paymentAmount) ? (depositAmount.source || explicitAmount.source) : '',
       paymentKind: hasDepositSignal ? 'rule:deposit_keyword' : '',
-      amount: computedAmount ? 'rule:quantity_times_unit_price' : (amount ? explicitAmount.source : ''),
+      amount: statedAmount ? explicitAmount.source : (calculatedAmount ? 'rule:quantity_times_unit_price' : ''),
+      statedAmount: statedAmount ? explicitAmount.source : '',
+      calculatedAmount: calculatedAmount ? 'rule:quantity_times_unit_price' : '',
       remainingAmount: remainingAmount.source,
       dueDate: getDraftFieldSource(structuredDraft, 'dueText', date ? 'rule:date_phrase' : '')
     },
     multi_products: hasMultiProductDraft ? multiProductNames : [],
     intent_candidates: intentCandidates,
     ai_fallback: {
-      needed: shouldSuggestAiFallback({
+      needed: !explicitNoRecord && shouldSuggestAiFallback({
         text: normalized,
         confidence: finalConfidence,
         missingFields,

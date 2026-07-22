@@ -24,11 +24,8 @@ Page({
     askHybridQuery(this.data.question, state)
       .then((answer) => {
         const statusText = {
-          used: '已通过后端 AI 查询。',
-          mock_used: '已通过测试后端 mock 查询。',
-          failed: '后端暂不可用，已使用本地查询兜底。',
-          skipped_no_endpoint: '还未配置后端地址，已使用本地查询兜底。'
-        }[answer.aiStatus || 'used'];
+          local: '按已记录的内容查到如下。'
+        }[answer.aiStatus || 'local'];
         this.setData({
           answer,
           asking: false,

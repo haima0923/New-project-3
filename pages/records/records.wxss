@@ -32,11 +32,65 @@
 }
 
 .record-card {
-  border: 1rpx solid #E7ECF4;
-  box-shadow: 0 8rpx 22rpx rgba(31, 41, 55, 0.055);
+  background: #FFFFFF;
+  border: 1rpx solid #E1E8EC;
+  box-shadow: 0 8rpx 20rpx rgba(20, 47, 65, 0.045);
+  margin-bottom: 0;
+  overflow: hidden;
+  position: relative;
+  transform: translateX(0);
+  transition: transform 180ms ease;
+  width: 100%;
+  z-index: 2;
+}
+
+.record-swipe-shell {
+  border-radius: 24rpx;
   margin-bottom: 18rpx;
   overflow: hidden;
   position: relative;
+}
+
+.record-swipe-actions {
+  align-items: stretch;
+  bottom: 0;
+  display: flex;
+  left: 0;
+  position: absolute;
+  top: 0;
+  width: 264rpx;
+  z-index: 1;
+}
+
+.record-swipe-actions button {
+  align-items: center;
+  border-radius: 0;
+  display: flex;
+  flex: 1;
+  font-size: 26rpx;
+  font-weight: 700;
+  justify-content: center;
+  line-height: 1;
+  margin: 0;
+  padding: 0;
+}
+
+.record-swipe-actions button::after {
+  border: 0;
+}
+
+.record-swipe-cancel {
+  background: #E8EEF5;
+  color: #344054;
+}
+
+.record-swipe-delete {
+  background: #D92D20;
+  color: #FFFFFF;
+}
+
+.record-card-swiped {
+  transform: translateX(264rpx);
 }
 
 .record-card::before {
@@ -50,8 +104,8 @@
 }
 
 .record-card-quotation {
-  background: linear-gradient(135deg, #FCF8FF 0%, #F6EDFF 100%);
-  border-color: #E7D3FF;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-quotation::before {
@@ -59,8 +113,8 @@
 }
 
 .record-card-order {
-  background: linear-gradient(135deg, #F8FBFF 0%, #EAF2FF 100%);
-  border-color: #CFE1FF;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-order::before {
@@ -68,8 +122,8 @@
 }
 
 .record-card-receivable {
-  background: linear-gradient(135deg, #F8FFFB 0%, #EAFBF1 100%);
-  border-color: #CBEFD8;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-receivable::before {
@@ -77,8 +131,8 @@
 }
 
 .record-card-payment {
-  background: linear-gradient(135deg, #F7FDFF 0%, #E0F6FE 100%);
-  border-color: #BEEBFF;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-payment::before {
@@ -86,8 +140,8 @@
 }
 
 .record-card-todo {
-  background: linear-gradient(135deg, #FFFDF8 0%, #FFF4DC 100%);
-  border-color: #FFE1A8;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-todo::before {
@@ -95,8 +149,8 @@
 }
 
 .record-card-pending {
-  background: linear-gradient(135deg, #FFFFFF 0%, #F3F4F6 100%);
-  border-color: #DDE3EA;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-pending::before {
@@ -104,8 +158,8 @@
 }
 
 .record-card-log {
-  background: linear-gradient(135deg, #FBFCFF 0%, #EEF2FF 100%);
-  border-color: #D9DFFF;
+  background: #FFFFFF;
+  border-color: #E1E8EC;
 }
 
 .record-card-log::before {
@@ -207,7 +261,7 @@
 }
 
 .record-title {
-  color: #1F2937;
+  color: #1D2D38;
   font-size: 32rpx;
   font-weight: 800;
   line-height: 1.35;
@@ -215,7 +269,7 @@
 }
 
 .record-summary {
-  color: #6B7280;
+  color: #687782;
   font-size: 26rpx;
   line-height: 1.5;
   margin-top: 8rpx;

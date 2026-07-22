@@ -1,7 +1,4 @@
-const { getApiBaseUrl, requestJson } = require('./api-client');
 const { answerQuery } = require('./query');
-
-const AI_QUERY_TIMEOUT_MS = 30000;
 
 function unwrapAnswer(answer) {
   if (!answer || typeof answer !== 'object') return {};
@@ -50,22 +47,10 @@ function normalizeAiAnswer(localAnswer, rawAnswer) {
 
 function askHybridQuery(question, state) {
   const localAnswer = answerQuery(question, state);
-  if (typeof wx === 'undefined' || !getApiBaseUrl()) {
-    return Promise.resolve(Object.assign({}, localAnswer, {
-      provider: 'local',
-      aiStatus: 'skipped_no_endpoint'
-    }));
-  }
-
-  return requestJson('/api/ai/query', {
-    question,
-    state
-  }, AI_QUERY_TIMEOUT_MS)
-    .then((answer) => normalizeAiAnswer(localAnswer, answer))
-    .catch(() => Object.assign({}, localAnswer, {
-      provider: 'local',
-      aiStatus: 'failed'
-    }));
+  return Promise.resolve(Object.assign({}, localAnswer, {
+    provider: 'local',
+    aiStatus: 'local'
+  }));
 }
 
 module.exports = {

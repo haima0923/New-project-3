@@ -1,0 +1,51 @@
+<view class="page record-detail-page">
+  <view wx:if="{{notFound}}" class="empty record-detail-empty">
+    <view class="card-title">没有找到这条记录</view>
+    <view class="muted">它可能已经被删除，或记录内容暂时不可用。</view>
+    <button class="secondary-button empty-button" bindtap="goBack">返回上一页</button>
+  </view>
+
+  <block wx:elif="{{detail}}">
+    <view class="record-detail-hero">
+      <view class="record-detail-type">{{detail.typeLabel}}</view>
+      <view class="record-detail-title">{{detail.title}}</view>
+      <view class="pill record-detail-status">{{detail.status}}</view>
+    </view>
+
+    <view wx:if="{{detail.items.length}}" class="card record-detail-card">
+      <view class="record-detail-section-title">商品明细</view>
+      <view wx:for="{{detail.items}}" wx:key="key" class="record-detail-item">
+        <view class="row-between record-detail-item-head">
+          <view class="record-detail-item-title">{{item.title}}</view>
+          <view wx:if="{{item.spec}}" class="record-detail-spec">{{item.spec}}</view>
+        </view>
+        <view class="record-detail-grid">
+          <view><text class="muted">数量</text><view>{{item.quantityText}}</view></view>
+          <view><text class="muted">单价</text><view>{{item.unitPriceText}}</view></view>
+          <view><text class="muted">金额</text><view>{{item.totalAmountText}}</view></view>
+          <view wx:if="{{item.deliveryDate}}"><text class="muted">单项交期</text><view>{{item.deliveryDate}}</view></view>
+        </view>
+        <view wx:if="{{item.remark}}" class="record-detail-item-remark">{{item.remark}}</view>
+      </view>
+    </view>
+
+    <view class="card record-detail-card">
+      <view class="record-detail-section-title">记录内容</view>
+      <view wx:for="{{detail.fields}}" wx:key="label" class="record-detail-field">
+        <view class="record-detail-label">{{item.label}}</view>
+        <view class="record-detail-value">{{item.value}}</view>
+      </view>
+    </view>
+
+    <view wx:if="{{detail.originalText}}" class="card record-detail-card">
+      <view class="record-detail-section-title">原始内容</view>
+      <view class="record-detail-original">{{detail.originalText}}</view>
+    </view>
+
+    <view class="record-detail-actions">
+      <button wx:if="{{detail.customerId}}" class="secondary-button" bindtap="openCustomer">看客户</button>
+      <button wx:if="{{detail.type === 'order'}}" class="primary-button" bindtap="editOrder">修改订单</button>
+      <button wx:if="{{detail.relatedOrderId}}" class="primary-button" bindtap="openOrder">看订单</button>
+    </view>
+  </block>
+</view>

@@ -1,5 +1,5 @@
 page {
-  background: #F6F7FB;
+  background: #F6F8FC;
   color: #1F2937;
   font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
   font-size: 30rpx;
@@ -37,9 +37,9 @@ textarea {
 
 .card {
   background: #ffffff;
-  border: 1rpx solid #E5E7EB;
-  border-radius: 32rpx;
-  box-shadow: 0 8rpx 24rpx rgba(31, 41, 55, 0.05);
+  border: 1rpx solid #E5EAF2;
+  border-radius: 28rpx;
+  box-shadow: 0 8rpx 22rpx rgba(31, 41, 55, 0.045);
   margin-bottom: 24rpx;
   padding: 24rpx;
 }
@@ -144,8 +144,8 @@ textarea {
 .compact-filter-bar {
   align-items: center;
   background: #ffffff;
-  border: 1rpx solid #E5E7EB;
-  border-radius: 28rpx;
+  border: 1rpx solid #E1E8EC;
+  border-radius: 22rpx;
   display: flex;
   gap: 12rpx;
   margin-bottom: 16rpx;
@@ -153,10 +153,10 @@ textarea {
 }
 
 .compact-search-input {
-  background: #F6F7FB;
-  border: 1rpx solid #E5E7EB;
-  border-radius: 20rpx;
-  color: #1F2937;
+  background: #F6F8FC;
+  border: 1rpx solid #E5EAF2;
+  border-radius: 18rpx;
+  color: #1D2D38;
   flex: 1;
   font-size: 28rpx;
   min-height: 72rpx;
@@ -198,8 +198,8 @@ textarea {
 .filter-card,
 .filter-panel {
   background: #ffffff;
-  border: 1rpx solid #E5E7EB;
-  border-radius: 28rpx;
+  border: 1rpx solid #E1E8EC;
+  border-radius: 22rpx;
   margin-bottom: 20rpx;
   padding: 20rpx;
 }
@@ -216,7 +216,7 @@ textarea {
 }
 
 .filter-panel-title {
-  color: #1F2937;
+  color: #1D2D38;
   font-size: 30rpx;
   font-weight: 700;
 }
@@ -291,9 +291,9 @@ textarea {
 .input,
 .textarea {
   background: #ffffff;
-  border: 1rpx solid #D1D5DB;
-  border-radius: 22rpx;
-  color: #1F2937;
+  border: 1rpx solid #C7D5DD;
+  border-radius: 18rpx;
+  color: #1D2D38;
   font-size: 30rpx;
   min-height: 84rpx;
   padding: 20rpx;
@@ -308,9 +308,9 @@ textarea {
 .empty {
   align-items: center;
   background: #ffffff;
-  border: 1rpx dashed #BBD6FF;
-  border-radius: 32rpx;
-  color: #4B5563;
+  border: 1rpx dashed #C7D5DD;
+  border-radius: 24rpx;
+  color: #4E606B;
   display: flex;
   flex-direction: column;
   justify-content: center;

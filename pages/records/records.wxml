@@ -1,4 +1,4 @@
-<view class="page records-page" bindtouchstart="touchStart" bindtouchend="touchEnd">
+<view class="page records-page">
   <view class="page-title">记录</view>
   <view class="page-subtitle">报价、订单、收款、提醒都在这里，想细看就点进去。</view>
 
@@ -22,15 +22,29 @@
     <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
   </view>
 
-  <view wx:for="{{records}}" wx:key="id" class="card record-card record-card-{{item.type}}" data-type="{{item.type}}" bindtap="openRecord">
-    <view class="row-between">
-      <view class="record-type record-type-{{item.type}}">
-        <view class="record-type-icon">{{item.typeIcon}}</view>
-        <view>{{item.typeLabel}}</view>
-      </view>
-      <view class="record-time">{{item.time}}</view>
+  <view wx:for="{{records}}" wx:key="id" class="record-swipe-shell">
+    <view class="record-swipe-actions">
+      <button class="record-swipe-cancel" catchtap="closeSwipe">取消</button>
+      <button class="record-swipe-delete" data-type="{{item.type}}" data-id="{{item.sourceId || item.id}}" catchtap="deleteRecord">删除</button>
     </view>
-    <view class="record-title">{{item.title}}</view>
-    <view class="record-summary">{{item.summary}}</view>
+    <view
+      class="card record-card record-card-{{item.type}} {{openSwipeKey === item.swipeKey ? 'record-card-swiped' : ''}}"
+      data-key="{{item.swipeKey}}"
+      data-type="{{item.type}}"
+      data-id="{{item.sourceId || item.id}}"
+      bindtouchstart="recordTouchStart"
+      bindtouchend="recordTouchEnd"
+      bindtap="openRecord"
+    >
+      <view class="row-between">
+        <view class="record-type record-type-{{item.type}}">
+          <view class="record-type-icon">{{item.typeIcon}}</view>
+          <view>{{item.typeLabel}}</view>
+        </view>
+        <view class="record-time">{{item.time}}</view>
+      </view>
+      <view class="record-title">{{item.title}}</view>
+      <view class="record-summary">{{item.summary}}</view>
+    </view>
   </view>
 </view>

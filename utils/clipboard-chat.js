@@ -1,5 +1,6 @@
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
 const { normalizeBusinessText } = require('./text-normalize');
+const { RAW_UNIT_PATTERN, normalizeUnit } = require('./units');
 
 function normalizeClipboardText(text) {
   return normalizeBusinessText(text)
@@ -68,6 +69,7 @@ const PRODUCT_WORDS = [
   '杯子',
   '拖鞋',
   '发夹',
+  '发圈',
   '勺子',
   '箱包',
   '箱子',
@@ -85,7 +87,7 @@ const PRODUCT_WORDS = [
   '样品'
 ];
 
-const UNIT_WORDS = '个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|码|包|盒|袋|组|把|台';
+const UNIT_WORDS = RAW_UNIT_PATTERN;
 const SIMPLE_NUMBER = numberPattern();
 const DECIMAL_DIGIT = '\\d|[零一二两三四五六七八九]';
 
@@ -202,7 +204,7 @@ function parseQuantitySignal(value) {
   if (!match) return { quantity: '', unit: '' };
   return {
     quantity: toCleanNumber(parseChineseNumber(match[1])),
-    unit: match[2] || ''
+    unit: normalizeUnit(match[2] || '')
   };
 }
 
@@ -240,7 +242,7 @@ function hasOrderSignal(text) {
 function formatUnitPrice(number, unit = '个') {
   const value = toCleanNumber(number);
   if (!value) return '';
-  return `${value}一${unit || '个'}`;
+  return `${value}一${normalizeUnit(unit) || '个'}`;
 }
 
 function parseYuanDecimal(whole, decimal) {
@@ -262,7 +264,7 @@ function parseFenDecimal(fen, li) {
 function extractPriceSignal(text, awaitingPrice) {
   const source = normalizeBusinessText(text).trim();
   if (!source) return '';
-  const unitPriceWord = '(?:一|每|/)(?:个|件|只|条|套|双|张|本|箱)';
+  const unitPriceWord = `(?:一|每|/)${RAW_UNIT_PATTERN}`;
   const compactPriceDate = new RegExp(`(?:^|[，,\\s])(?:${SIMPLE_NUMBER})\\s*[，,]?\\s*(?:今天|明天|后天|大后天|月底|月末|下周|这周|周[一二三四五六日天]|星期[一二三四五六日天]|(?:${SIMPLE_NUMBER})\\s*天后|\\d{1,2}\\s*号|\\d{1,2}[/-]\\d{1,2}|交|发|出|拿|能做|可以做|做吗)`);
   const hasExplicitPriceSignal = new RegExp(`报价|单价|价格|报|卖|按|块|元|毛|角|分|${unitPriceWord}|能做|可以做|做吗`).test(source)
     || compactPriceDate.test(source);
@@ -271,19 +273,19 @@ function extractPriceSignal(text, awaitingPrice) {
   const bareNumber = source.match(new RegExp(`^(${SIMPLE_NUMBER})(?:呢|吧|可以吗|行吗|可以|行)?[？?]?$`));
   if (awaitingPrice && bareNumber) return `${bareNumber[1]}一个`;
 
-  const yuanCentsWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)\\s*([0-9]{1,2}|[零二两三四五六七八九]{1,2})\\s*(?:一|每|/)?\\s*(个|件|只|条|套|双|张|本|箱)`));
+  const yuanCentsWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)\\s*([0-9]{1,2}|[零二两三四五六七八九]{1,2})\\s*(?:一|每|/)?\\s*(${RAW_UNIT_PATTERN})`));
   if (yuanCentsWithUnit) {
     const value = parseYuanDecimal(yuanCentsWithUnit[1], yuanCentsWithUnit[2]);
     if (Number.isFinite(value)) return formatUnitPrice(value, yuanCentsWithUnit[3]);
   }
 
-  const yuanWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)\\s*(?:一|每|/)\\s*(个|件|只|条|套|双|张|本|箱)`));
+  const yuanWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)\\s*(?:一|每|/)\\s*(${RAW_UNIT_PATTERN})`));
   if (yuanWithUnit) {
     const left = parseChineseNumber(yuanWithUnit[1]);
     if (Number.isFinite(left)) return formatUnitPrice(left, yuanWithUnit[2]);
   }
 
-  const colloquialYuan = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)\\s*(${DECIMAL_DIGIT})(?!\\s*(?:个|件|只|条|套|双|张|本|箱|天|号|日|月))`));
+  const colloquialYuan = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)\\s*(${DECIMAL_DIGIT})(?!\\s*(?:${RAW_UNIT_PATTERN}|天|号|日|月))`));
   if (colloquialYuan) {
     const left = parseChineseNumber(colloquialYuan[1]);
     const right = parseChineseNumber(colloquialYuan[2]);
@@ -291,19 +293,19 @@ function extractPriceSignal(text, awaitingPrice) {
     if (Number.isFinite(left) && Number.isFinite(right)) return formatUnitPrice(Number(`${left}.${right}`));
   }
 
-  const maoWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:毛|角)\\s*(?:一|每|/)\\s*(个|件|只|条|套|双|张|本|箱)`));
+  const maoWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:毛|角)\\s*(?:一|每|/)\\s*(${RAW_UNIT_PATTERN})`));
   if (maoWithUnit) {
     const left = parseChineseNumber(maoWithUnit[1]);
     if (Number.isFinite(left)) return formatUnitPrice(left / 10, maoWithUnit[2]);
   }
 
-  const fenWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:分钱|分)\\s*(?:一|每|/)\\s*(个|件|只|条|套|双|张|本|箱)`));
+  const fenWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:分钱|分)\\s*(?:一|每|/)\\s*(${RAW_UNIT_PATTERN})`));
   if (fenWithUnit) {
     const left = parseChineseNumber(fenWithUnit[1]);
     if (Number.isFinite(left)) return formatUnitPrice(left / 100, fenWithUnit[2]);
   }
 
-  const fenDecimalWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:分钱|分)\\s*(${DECIMAL_DIGIT})\\s*(?:一|每|/)?\\s*(个|件|只|条|套|双|张|本|箱)`));
+  const fenDecimalWithUnit = source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:分钱|分)\\s*(${DECIMAL_DIGIT})\\s*(?:一|每|/)?\\s*(${RAW_UNIT_PATTERN})`));
   if (fenDecimalWithUnit) {
     const value = parseFenDecimal(fenDecimalWithUnit[1], fenDecimalWithUnit[2]);
     if (Number.isFinite(value)) return formatUnitPrice(value, fenDecimalWithUnit[3]);
@@ -322,7 +324,7 @@ function extractPriceSignal(text, awaitingPrice) {
     if (Number.isFinite(left) && Number.isFinite(right)) return formatUnitPrice((left * 10 + right) / 100);
   }
 
-  const bareNumberWithUnit = source.match(new RegExp(`^(${SIMPLE_NUMBER})\\s*(个|件|只|条|套|双|张|本|箱)(?:呢|吧|可以吗|行吗|可以|行)?[？?]?$`));
+  const bareNumberWithUnit = source.match(new RegExp(`^(${SIMPLE_NUMBER})\\s*(${RAW_UNIT_PATTERN})(?:呢|吧|可以吗|行吗|可以|行)?[？?]?$`));
   if (awaitingPrice && bareNumberWithUnit) return formatUnitPrice(parseChineseNumber(bareNumberWithUnit[1]), bareNumberWithUnit[2]);
 
   const compactBarePrice = source.match(new RegExp(`(?:^|[，,\\s])(${SIMPLE_NUMBER})(?=\\s*[，,]?\\s*(?:今天|明天|后天|大后天|月底|月末|下周|这周|周[一二三四五六日天]|星期[一二三四五六日天]|(?:${SIMPLE_NUMBER})\\s*天后|\\d{1,2}\\s*号|\\d{1,2}[/-]\\d{1,2}|交|发|出|拿|能做|可以做|做吗))`));
@@ -335,8 +337,8 @@ function extractPriceSignal(text, awaitingPrice) {
     || source.match(new RegExp(`^(${SIMPLE_NUMBER})\\s*(?:呢|吧|可以吗|行不行|行吗|可以|行)[？?]?$`));
   if (awaitingPrice && confirmedBarePrice) return formatUnitPrice(parseChineseNumber(confirmedBarePrice[1]));
 
-  const price = source.match(new RegExp(`(?:报价|单价|价格|报|卖|按)\\s*(${SIMPLE_NUMBER})\\s*(?:块|元)?\\s*(?:一|每|/)?\\s*(个|件|只|条|套|双|张|本|箱)?`))
-    || source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)?\\s*(?:一|每|/)\\s*(个|件|只|条|套|双|张|本|箱)`));
+  const price = source.match(new RegExp(`(?:报价|单价|价格|报|卖|按)\\s*(${SIMPLE_NUMBER})\\s*(?:块|元)?\\s*(?:一|每|/)?\\s*(${RAW_UNIT_PATTERN})?`))
+    || source.match(new RegExp(`(${SIMPLE_NUMBER})\\s*(?:块|元)?\\s*(?:一|每|/)\\s*(${RAW_UNIT_PATTERN})`));
   if (!price) return '';
   const suffix = price[2] || (awaitingPrice ? '个' : '');
   return suffix ? `${price[1]}一${suffix}` : price[1];
@@ -350,7 +352,7 @@ function parsePriceSignal(value) {
   if (!match) return { unitPrice: '', priceUnit: '' };
   return {
     unitPrice: toCleanNumber(parseChineseNumber(match[1])),
-    priceUnit: match[2] || ''
+    priceUnit: normalizeUnit(match[2] || '')
   };
 }
 
@@ -433,7 +435,7 @@ function scoreBusinessText(text) {
   if (/提醒|今天|上午|中午|下午|晚上|明天|后天|下周|跟进|回一下|回复|催一下|联系|确认|待办|对账单/.test(source)) score += 2;
   if (hasCustomerSignal(source)) score += 2;
   if (/\d+(?:\.\d+)?|[一二两三四五六七八九十百千万]+/.test(source)) score += 1;
-  if (/(\d+(?:\.\d+)?|[一二两三四五六七八九十百千万]+)\s*(个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|元|块|毛|分)/.test(source)) score += 2;
+  if (new RegExp(`(\\d+(?:\\.\\d+)?|[一二两三四五六七八九十百千万]+)\\s*(?:${RAW_UNIT_PATTERN}|元|块|毛|分)`).test(source)) score += 2;
   if (/今天|上午|中午|下午|晚上|今晚|明天|后天|大后天|月底|月末|下周|周[一二三四五六日天]|星期[一二三四五六日天]|\d+\s*天后|\d{1,2}\s*月\s*\d{1,2}\s*日|\d{1,2}\s*号/.test(source)) score += 2;
   if (/水杯|杯子|杯垫|礼品盒|包装袋|扣子|挂件|玩具|文具|钥匙扣|饰品|箱包|箱子|货|产品|样品/.test(source)) score += 2;
 
@@ -459,7 +461,7 @@ function buildSummaryText(context, selectedMessages) {
   const product = context.product || '';
   const quantity = context.quantity || '';
   const quantityParts = parseQuantitySignal(quantity);
-  const price = quantityParts.unit && quantityParts.unit !== '个'
+  const price = quantityParts.unit && quantityParts.unit !== '个' && !context.priceUnitExplicit
     ? String(context.price || '').replace(/一个$/, `一${quantityParts.unit}`)
     : (context.price || '');
   const due = context.due || '';
@@ -493,6 +495,7 @@ function inferDraftIntent(context) {
 function buildStructuredDraft(context, score, selectedMessages) {
   const quantity = parseQuantitySignal(context.quantity);
   const price = parsePriceSignal(context.price);
+  const priceUnit = context.priceUnitExplicit ? price.priceUnit : (quantity.unit || price.priceUnit || '');
   const intent = inferDraftIntent(context);
   const customerName = cleanSpeakerName(context.customer);
   const productName = context.product || '';
@@ -501,6 +504,7 @@ function buildStructuredDraft(context, score, selectedMessages) {
     quantity: quantity.quantity,
     unit: quantity.unit || price.priceUnit || '',
     unitPrice: price.unitPrice,
+    priceUnit,
     itemDeliveryDate: context.due || ''
   };
   const filledCount = [
@@ -521,6 +525,7 @@ function buildStructuredDraft(context, score, selectedMessages) {
     quantity: quantity.quantity,
     unit: quantity.unit || price.priceUnit || '',
     unitPrice: price.unitPrice,
+    priceUnit,
     dueText: context.due || '',
     items: productName ? [item] : [],
     extractionConfidence: toCleanNumber(extractionConfidence),
@@ -542,6 +547,7 @@ function buildConversationBusinessExtraction(scored) {
     paymentSignal: false,
     receivableSignal: false,
     depositSignal: false,
+    priceUnitExplicit: false,
     cancelledProduct: false
   };
   const selectedIndexes = {};
@@ -592,7 +598,10 @@ function buildConversationBusinessExtraction(scored) {
       if (receivableSignal) context.receivableSignal = true;
       if (depositSignal) context.depositSignal = true;
       if (orderSignal) context.orderSignal = true;
-      if (price && !quantityQuestion) context.price = price;
+      if (price && !quantityQuestion) {
+        context.price = price;
+        context.priceUnitExplicit = new RegExp(`(?:一|每|/)\\s*${RAW_UNIT_PATTERN}`).test(normalizeBusinessText(content));
+      }
     }
 
     if ((awaitingPrice || awaitingQuantity) && meaningful) {

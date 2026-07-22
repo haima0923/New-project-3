@@ -1,12 +1,121 @@
 .detail-line {
-  color: #344054;
+  color: #3B4E5B;
   font-size: 28rpx;
   line-height: 1.7;
 }
 
+.order-list-tools {
+  margin-bottom: 16rpx;
+}
+
+.order-search-row {
+  margin-bottom: 10rpx;
+}
+
+.order-tool-row {
+  display: grid;
+  gap: 10rpx;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.order-tool-row picker {
+  min-width: 0;
+  width: 100%;
+}
+
+.order-tool-row .compact-filter-button {
+  box-sizing: border-box;
+  display: flex;
+  flex: none;
+  justify-content: center;
+  width: 100%;
+}
+
+.order-picker-button {
+  align-items: center;
+}
+
+.customer-stats-panel {
+  background: #FFFFFF;
+  border: 1rpx solid #DDE8FF;
+  border-radius: 22rpx;
+  margin-bottom: 20rpx;
+  padding: 20rpx;
+}
+
+.customer-stat-row {
+  align-items: center;
+  border-top: 1rpx solid #EAECF0;
+  display: flex;
+  gap: 16rpx;
+  justify-content: space-between;
+  padding: 18rpx 0;
+}
+
+.customer-stat-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.customer-stat-name {
+  color: #1D2939;
+  font-size: 28rpx;
+  font-weight: 700;
+}
+
+.customer-stat-amount {
+  color: #1677FF;
+  font-size: 28rpx;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.order-time-line {
+  color: #667085;
+  font-size: 23rpx;
+  line-height: 1.55;
+  margin: 4rpx 0 12rpx;
+}
+
+.order-key-metrics {
+  display: grid;
+  gap: 12rpx;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 18rpx;
+}
+
+.order-key-metric {
+  background: #F5F8FF;
+  border: 1rpx solid #DDE8FF;
+  border-radius: 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+  min-width: 0;
+  padding: 14rpx 16rpx;
+}
+
+.order-key-label {
+  color: #667085;
+  font-size: 24rpx;
+}
+
+.order-key-value {
+  color: #1D2939;
+  font-size: 32rpx;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.order-key-money {
+  color: #1677FF;
+}
+
 .item-lines {
-  background: #F8FAFC;
-  border-radius: 8rpx;
+  background: #F5F7F8;
+  border-radius: 14rpx;
   margin-bottom: 8rpx;
   padding: 10rpx 14rpx;
 }
@@ -16,8 +125,8 @@
 }
 
 .original-text-box {
-  background: #F8FAFC;
-  border-radius: 8rpx;
+  background: #F5F7F8;
+  border-radius: 14rpx;
   margin-top: 12rpx;
   padding: 12rpx 14rpx;
 }
@@ -50,6 +159,10 @@
 
 .status-picker {
   margin-top: 18rpx;
+}
+
+.delivery-date-picker {
+  color: #1677FF;
 }
 
 .empty-button {

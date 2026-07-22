@@ -6,6 +6,7 @@ function getApiBaseUrl() {
 }
 
 const AI_AUTH_STORAGE_KEY = 'huoxiaoling_ai_auth_session_v1';
+const AI_AUTH_PREWARM_TIMEOUT_MS = 5000;
 let pendingLogin = null;
 
 function getGlobalData() {
@@ -63,7 +64,11 @@ function rawRequestJson(path, data, timeout, header = {}) {
         }
         reject(createRequestError(res.statusCode, res.data));
       },
-      fail: reject
+      fail: (error) => {
+        const next = error instanceof Error ? error : new Error((error && error.errMsg) || 'Network request failed');
+        if (!next.code) next.code = 'NETWORK_REQUEST_FAILED';
+        reject(next);
+      }
     });
   });
 }
@@ -90,14 +95,14 @@ function sessionIsUsable(session) {
   return Boolean(session.token && session.expiresAt && new Date(session.expiresAt).getTime() > Date.now() + 60000);
 }
 
-function getAiAuthToken(forceRefresh = false) {
+function getAiAuthToken(forceRefresh = false, timeoutMs = AI_AUTH_PREWARM_TIMEOUT_MS) {
   if (!isAiAuthEnabled()) return Promise.resolve('');
   const saved = getStoredSession();
   if (!forceRefresh && sessionIsUsable(saved)) return Promise.resolve(saved.token);
   if (pendingLogin) return pendingLogin;
 
   pendingLogin = wxLogin()
-    .then((code) => rawRequestJson('/api/auth/wechat-login', { code }, 12000))
+    .then((code) => rawRequestJson('/api/auth/wechat-login', { code }, timeoutMs))
     .then((session) => {
       if (!session || !session.token || !session.expiresAt) throw new Error('Invalid authentication response');
       saveSession({ token: session.token, expiresAt: session.expiresAt });
@@ -109,15 +114,52 @@ function getAiAuthToken(forceRefresh = false) {
   return pendingLogin;
 }
 
-function requestJson(path, data, timeout) {
+function prewarmAiAuth() {
+  return getAiAuthToken(false, AI_AUTH_PREWARM_TIMEOUT_MS)
+    .then(() => ({ ready: true }))
+    .catch((error) => ({ ready: false, code: (error && error.code) || 'AUTH_SESSION_EXPIRED' }));
+}
+
+function normalizeAuthError(error) {
+  if (!error) {
+    const unknown = new Error('AI authentication is unavailable');
+    unknown.code = 'AUTH_SESSION_EXPIRED';
+    return unknown;
+  }
+  if (!error.code) error.code = 'AUTH_SESSION_EXPIRED';
+  return error;
+}
+
+function createAuthNotReadyError() {
+  const error = new Error('AI authentication is still preparing');
+  error.code = 'AUTH_SESSION_NOT_READY';
+  return error;
+}
+
+function requestJson(path, data, timeout, options = {}) {
   if (path === '/api/auth/wechat-login') return rawRequestJson(path, data, timeout);
-  return getAiAuthToken()
+  // 旧的查询等非快速路径仍保留 401 后重新登录一次的兼容行为。
+  // 快速核对会显式传入 false，避免在 8 秒窗口内再做一次登录和重试。
+  const retryAuth = options.retryAuth !== false;
+  const requireReadyAuth = options.requireReadyAuth === true;
+  // 普通快速核对不能把“首次微信登录”算进 8 秒，也不能在页面已经提示结束后
+  // 继续向服务端发 AI 请求。页面加载、开始录音和开始输入时会提前预热登录；
+  // 若仍未完成，本次立即返回可重试状态。深度核对不受这个限制。
+  if (requireReadyAuth && isAiAuthEnabled() && !sessionIsUsable(getStoredSession())) {
+    return Promise.reject(createAuthNotReadyError());
+  }
+  return getAiAuthToken(false, Math.min(Number(timeout) || AI_AUTH_PREWARM_TIMEOUT_MS, AI_AUTH_PREWARM_TIMEOUT_MS))
+    .catch((error) => { throw normalizeAuthError(error); })
     .then((token) => rawRequestJson(path, data, timeout, token ? { authorization: `Bearer ${token}` } : {}))
     .catch((error) => {
+      if (retryAuth && error && error.statusCode === 401 && error.code === 'AUTH_REQUIRED') {
+        clearSession();
+        return getAiAuthToken(true, AI_AUTH_PREWARM_TIMEOUT_MS)
+          .then((token) => rawRequestJson(path, data, timeout, { authorization: `Bearer ${token}` }));
+      }
       if (error && error.statusCode === 401 && error.code === 'AUTH_REQUIRED') {
         clearSession();
-        return getAiAuthToken(true)
-          .then((token) => rawRequestJson(path, data, timeout, { authorization: `Bearer ${token}` }));
+        error.code = 'AUTH_SESSION_EXPIRED';
       }
       throw error;
     });
@@ -128,5 +170,6 @@ module.exports = {
   clearSession,
   getApiBaseUrl,
   getAiAuthToken,
+  prewarmAiAuth,
   requestJson
 };

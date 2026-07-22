@@ -17,7 +17,7 @@ const baseList = [
   { key: 'home', pagePath: '/pages/dashboard/dashboard', route: 'pages/dashboard/dashboard', text: '首页', icon: '⌂' },
   { key: 'records', pagePath: '/pages/records/records', route: 'pages/records/records', text: '记录', icon: '▤' },
   { key: 'input', pagePath: '/pages/input/input', route: 'pages/input/input', text: '话筒', icon: '', center: true },
-  { key: 'finance', pagePath: '/pages/finance/finance', route: 'pages/finance/finance', text: '财务', icon: '¥' },
+  { key: 'finance', pagePath: '/pages/finance/finance', route: 'pages/finance/finance', text: '收款', icon: '¥' },
   { key: 'profile', pagePath: '/pages/profile/profile', route: 'pages/profile/profile', text: '我的', icon: '人' }
 ];
 

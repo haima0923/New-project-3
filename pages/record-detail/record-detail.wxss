@@ -1,0 +1,140 @@
+.record-detail-page {
+  padding-bottom: calc(48rpx + env(safe-area-inset-bottom));
+}
+
+.record-detail-empty {
+  margin-top: 120rpx;
+}
+
+.record-detail-hero {
+  background: linear-gradient(135deg, #0F4C81 0%, #1677FF 100%);
+  border-radius: 28rpx;
+  box-shadow: 0 16rpx 36rpx rgba(22, 119, 255, 0.2);
+  color: #FFFFFF;
+  margin-bottom: 24rpx;
+  padding: 30rpx;
+}
+
+.record-detail-type {
+  font-size: 24rpx;
+  opacity: 0.82;
+}
+
+.record-detail-title {
+  font-size: 38rpx;
+  font-weight: 800;
+  line-height: 1.35;
+  margin-top: 10rpx;
+  overflow-wrap: anywhere;
+}
+
+.record-detail-status {
+  background: rgba(255, 255, 255, 0.18);
+  color: #FFFFFF;
+  display: inline-flex;
+  margin-top: 18rpx;
+}
+
+.record-detail-card {
+  margin-bottom: 20rpx;
+}
+
+.record-detail-section-title {
+  color: #101828;
+  font-size: 29rpx;
+  font-weight: 800;
+  margin-bottom: 16rpx;
+}
+
+.record-detail-item {
+  background: #F7FAFF;
+  border: 1rpx solid #E1EBF8;
+  border-radius: 18rpx;
+  margin-top: 14rpx;
+  padding: 18rpx;
+}
+
+.record-detail-item-title {
+  color: #101828;
+  flex: 1;
+  font-size: 28rpx;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.record-detail-spec {
+  background: #EAF3FF;
+  border-radius: 999rpx;
+  color: #175EA8;
+  font-size: 23rpx;
+  padding: 8rpx 14rpx;
+}
+
+.record-detail-grid {
+  display: grid;
+  font-size: 26rpx;
+  gap: 16rpx;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  line-height: 1.5;
+  margin-top: 16rpx;
+}
+
+.record-detail-grid .muted {
+  display: block;
+  font-size: 22rpx;
+  margin-bottom: 4rpx;
+}
+
+.record-detail-item-remark {
+  border-top: 1rpx solid #E1EBF8;
+  color: #475467;
+  font-size: 24rpx;
+  line-height: 1.6;
+  margin-top: 16rpx;
+  padding-top: 14rpx;
+}
+
+.record-detail-field {
+  align-items: flex-start;
+  border-bottom: 1rpx solid #EEF2F6;
+  display: grid;
+  gap: 22rpx;
+  grid-template-columns: 176rpx minmax(0, 1fr);
+  padding: 17rpx 0;
+}
+
+.record-detail-field:last-child {
+  border-bottom: 0;
+}
+
+.record-detail-label {
+  color: #667085;
+  font-size: 25rpx;
+}
+
+.record-detail-value {
+  color: #101828;
+  font-size: 26rpx;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.record-detail-original {
+  color: #344054;
+  font-size: 26rpx;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.record-detail-actions {
+  display: grid;
+  gap: 16rpx;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 8rpx;
+}
+
+.record-detail-actions button:only-child {
+  grid-column: 1 / -1;
+}

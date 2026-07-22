@@ -1,22 +1,23 @@
 <view class="page finance-page">
   <view class="finance-hero">
     <view>
-      <view class="page-title finance-title">财务</view>
-      <view class="page-subtitle finance-subtitle">应收、收款、待结算都放在这里，先看钱，再处理人。</view>
+      <view class="page-title finance-title">收款</view>
+      <view class="page-subtitle finance-subtitle">谁还没付、收了多少、哪单还差尾款，都在这里。</view>
     </view>
     <button class="finance-add" bindtap="goInput">记一笔</button>
   </view>
 
   <view class="finance-summary-grid">
     <view class="finance-summary-card summary-blue">
-      <view class="summary-label">本月应收</view>
+      <view class="summary-label">本月到期待收</view>
       <view class="summary-value">{{summary.monthlyReceivableText}}</view>
       <view class="summary-unit">元</view>
     </view>
     <view class="finance-summary-card summary-green">
-      <view class="summary-label">本月收款</view>
+      <view class="summary-label">本月到账</view>
       <view class="summary-value">{{summary.monthlyPaymentText}}</view>
       <view class="summary-unit">元</view>
+      <view class="summary-hint">{{summary.monthlyPaymentHint}}</view>
     </view>
     <view class="finance-summary-card summary-red">
       <view class="summary-label">逾期未收</view>
@@ -24,7 +25,7 @@
       <view class="summary-unit">元</view>
     </view>
     <view class="finance-summary-card summary-purple">
-      <view class="summary-label">生产中待结算</view>
+      <view class="summary-label">生产中还差尾款</view>
       <view class="summary-value">{{summary.productionSettlementText}}</view>
       <view class="summary-unit">元</view>
     </view>
@@ -32,8 +33,8 @@
 
   <view class="finance-stat-strip">
     <view class="finance-stat">
-      <view class="stat-value">{{stats.productionQuantityText}}</view>
-      <view class="stat-label">生产中数量</view>
+      <view class="stat-value">{{stats.productionOrderCountText}}</view>
+      <view class="stat-label">生产中订单</view>
     </view>
     <view class="finance-stat">
       <view class="stat-value">{{stats.shippedPendingText}}</view>
@@ -41,7 +42,7 @@
     </view>
     <view class="finance-stat">
       <view class="stat-value">{{stats.partialRemainingText}}</view>
-      <view class="stat-label">部分收款剩余</view>
+      <view class="stat-label">收了一部分还差</view>
     </view>
     <view class="finance-stat">
       <view class="stat-value">{{stats.settledThisMonthCount}}</view>
@@ -65,7 +66,7 @@
 
   <view wx:if="{{!currentRows.length}}" class="empty finance-empty">
     <view class="card-title">这里还没有数据</view>
-    <view class="muted">订单、应收或收款保存后，会自动进入财务。</view>
+    <view class="muted">订单、待收款或收款保存后，会自动进入这里。</view>
     <button class="primary-button empty-button" bindtap="goInput">去记一笔</button>
   </view>
 
@@ -80,7 +81,7 @@
       </view>
       <view class="finance-money-row">
         <view>
-          <view class="money-label">应收</view>
+          <view class="money-label">待收总额</view>
           <view class="money-value">{{item.amountText}} 元</view>
         </view>
         <view>
@@ -92,7 +93,7 @@
           <view class="money-value strong">{{item.remainingAmountText}} 元</view>
         </view>
       </view>
-      <view class="finance-detail-line">到期日：{{item.dueDate || '-'}}</view>
+      <view class="finance-detail-line">预计收款日：{{item.dueDate || '未设收款日'}}</view>
       <view wx:if="{{item.isOverdue}}" class="finance-warning">已逾期 {{item.overdueDays}} 天</view>
       <view class="finance-detail-line">来源：{{item.sourceLabel}}　已催款 {{item.dunningCount || 0}} 次</view>
       <view class="finance-input-row">
@@ -102,7 +103,7 @@
       <view class="finance-action-row">
         <button class="finance-secondary-action" data-id="{{item.id}}" data-tone="polite" bindtap="copyDunning">催一下</button>
         <button class="finance-secondary-action" data-id="{{item.id}}" bindtap="markDunned">已催款</button>
-        <button wx:if="{{item.orderId}}" class="finance-secondary-action" bindtap="goOrders">看订单</button>
+        <button wx:if="{{item.orderId}}" class="finance-secondary-action" data-id="{{item.orderId}}" bindtap="goOrders">看订单</button>
       </view>
     </view>
   </block>
@@ -118,7 +119,7 @@
       </view>
       <view class="finance-detail-line">收款日期：{{item.paidAtText}}</view>
       <view class="finance-detail-line">类型：{{item.kindLabel}}</view>
-      <view wx:if="{{item.receivableAmountText}}" class="finance-detail-line">关联应收：{{item.receivableAmountText}} 元</view>
+      <view wx:if="{{item.receivableAmountText}}" class="finance-detail-line">关联待收：{{item.receivableAmountText}} 元</view>
       <view wx:if="{{item.remark}}" class="finance-detail-line">备注：{{item.remark}}</view>
     </view>
   </block>
@@ -142,7 +143,7 @@
           <view class="money-value">{{item.depositAmountText}} 元</view>
         </view>
         <view>
-          <view class="money-label">待结算尾款</view>
+          <view class="money-label">还差尾款</view>
           <view class="money-value strong">{{item.remainingSettlementText}} 元</view>
         </view>
         <view>
@@ -152,8 +153,8 @@
       </view>
       <view class="finance-detail-line">交货日：{{item.requiredDeliveryDate || '-'}}</view>
       <view class="finance-action-row">
-        <button class="finance-primary-action" data-id="{{item.id}}" bindtap="createReceivable">生成应收</button>
-        <button class="finance-secondary-action" bindtap="goOrders">看订单</button>
+        <button class="finance-primary-action" data-id="{{item.id}}" bindtap="createReceivable">生成待收</button>
+        <button class="finance-secondary-action" data-id="{{item.id}}" bindtap="goOrders">看订单</button>
       </view>
     </view>
   </block>

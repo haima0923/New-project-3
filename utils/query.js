@@ -3,7 +3,8 @@ const {
   getDashboard,
   getItemsSummary,
   getOrderDepositAmount,
-  getOrderRemainingSettlement
+  getOrderRemainingSettlement,
+  getRecordItems
 } = require('./business');
 const { diffDays, endOfMonth, today } = require('./date');
 
@@ -40,6 +41,47 @@ function toMoneyText(value) {
 function getActiveOrders(state) {
   return decorateRecords(state, state.orders || [])
     .filter((item) => !['已完成', '已取消'].includes(item.status));
+}
+
+function getRecordProductNames(record) {
+  const items = getRecordItems(record || {});
+  const itemNames = items
+    .reduce((list, item) => list.concat(item.productName || '', item.spec || ''), [])
+    .filter(Boolean);
+  return itemNames.length ? itemNames : [record && record.productName, record && record.spec].filter(Boolean);
+}
+
+function formatRecordItemLines(record) {
+  return getRecordItems(record).map((item) => {
+    const name = [item.productName || '未填产品', item.spec].filter(Boolean).join(' · ');
+    const quantity = `${item.quantity || '-'}${item.unit || ''}`;
+    const price = item.unitPrice ? `，单价 ${item.unitPrice}/${item.priceUnit || item.unit || '单位'}` : '';
+    const amount = item.totalAmount ? `，小计 ${item.totalAmount}元` : '';
+    return `${name}：${quantity}${price}${amount}`;
+  });
+}
+
+function matchesProductInQuestion(record, text) {
+  const source = String(text || '').replace(/\s+/g, '');
+  return getRecordProductNames(record).some((name) => {
+    const product = String(name || '').replace(/\s+/g, '');
+    return product && source.includes(product);
+  });
+}
+
+function getActiveReceivables(state, customer) {
+  return decorateRecords(state, state.receivables || [])
+    .filter((item) => !['已结清', '坏账'].includes(item.status))
+    .filter((item) => !customer || item.customerId === customer.id);
+}
+
+function getReceivableRemaining(item) {
+  return Math.max(0, Number(item.amount || 0) - Number(item.paidAmount || 0));
+}
+
+function formatReceivableLine(item) {
+  const remaining = getReceivableRemaining(item);
+  return `${item.customerDisplay}：还差${toMoneyText(remaining)}元，已收 ${toMoneyText(item.paidAmount)}元，到期 ${item.dueDate || '未设收款日'}`;
 }
 
 function getOrderMoneyLine(state, item) {
@@ -84,7 +126,8 @@ function answerQuery(text, state) {
     };
   }
 
-  if (/今天|今日|待办|什么事|有啥事|要干啥/.test(source)) {
+  if (/今天|今日|待办|什么事|有啥事|要干啥/.test(source)
+    && !/交货|要交|订单|欠款|还欠|待收|收款|回款|报价|尾款|要收|哪些款/.test(source)) {
     const dashboard = getDashboard(state);
     return {
       title: `今天有 ${dashboard.totalThings} 件事`,
@@ -108,22 +151,51 @@ function answerQuery(text, state) {
     };
   }
 
-  if (/上次|报价|报多少|价格/.test(source) && customer) {
-    const quotation = decorateRecords(state, state.quotations)
+  if (!customer && /(本月|这个月)/.test(source) && /收了|收到|收款|回款/.test(source) && /多少|合计|总/.test(source)) {
+    const monthPrefix = current.slice(0, 7);
+    const payments = (state.paymentRecords || []).filter((item) => String(item.paidAt || item.createdAt || '').slice(0, 7) === monthPrefix);
+    const total = payments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const unlinked = payments.filter((item) => ['unlinked_payment', 'unlinked_deposit'].includes(item.kind || item.paymentKind));
+    const unlinkedTotal = unlinked.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    return {
+      title: payments.length ? '本月已记录收款' : '本月暂无收款记录',
+      lines: payments.length
+        ? [`合计收到 ${toMoneyText(total)} 元，共 ${payments.length} 笔`]
+          .concat(unlinked.length ? [`其中 ${unlinked.length} 笔、${toMoneyText(unlinkedTotal)} 元还没对应到业务，待核对。`] : [])
+        : ['本月还没有记录到收款。']
+    };
+  }
+
+  if (customer
+    && !/定金|订金|预付/.test(source)
+    && /(?:上次|最近|本月|这个月|今天).*(?:收了|收到|收款|回款)|(?:收了|收到|收款|回款).*(?:多少|几笔|记录|上次|最近)/.test(source)) {
+    const payments = decorateRecords(state, state.paymentRecords || [])
       .filter((item) => item.customerId === customer.id)
+      .sort((a, b) => String(b.paidAt || b.createdAt || '').localeCompare(String(a.paidAt || a.createdAt || '')));
+    const total = payments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    return {
+      title: payments.length ? `${customer.name} 收款记录` : `${customer.name} 暂无收款记录`,
+      lines: payments.length
+        ? [`已收合计 ${toMoneyText(total)} 元，共 ${payments.length} 笔`].concat(payments.slice(0, 7).map((item) => `${item.paidAt || '-'} 收到 ${toMoneyText(item.amount)} 元`))
+        : ['还没有记录到这位客户的收款。']
+    };
+  }
+
+  if (/上次|报价|报多少|价格/.test(source) && customer) {
+    const customerQuotations = decorateRecords(state, state.quotations)
+      .filter((item) => item.customerId === customer.id);
+    const quotations = customerQuotations.filter((item) => matchesProductInQuestion(item, source));
+    const quotation = (quotations.length ? quotations : customerQuotations)
       .sort((a, b) => String(b.quoteDate).localeCompare(String(a.quoteDate)))[0];
     if (!quotation) return { title: `${customer.name} 暂无报价`, lines: ['可以先用“记一笔”录入第一条报价。'] };
     return {
       title: `${customer.name} 上次报价`,
-      lines: [
-        `${getItemsSummary(quotation) || quotation.productName || '未填产品'}，数量 ${quotation.quantity || '-'}${quotation.unit || ''}`,
-        `单价 ${quotation.unitPrice || '-'}，总价 ${quotation.totalAmount || '-'}`,
-        `报价日期 ${quotation.quoteDate || '-'}，状态 ${quotation.status}`
-      ]
+      lines: formatRecordItemLines(quotation)
+        .concat(`总价 ${quotation.totalAmount || '-'}元，报价日期 ${quotation.quoteDate || '-'}，状态 ${quotation.status}`)
     };
   }
 
-  if (/生产中|待结算/.test(source) && /尾款|没收|未收|待收|多少钱|多少/.test(source)) {
+  if ((/生产中|待结算/.test(source) || (customer && /尾款/.test(source))) && /尾款|没收|未收|待收|多少钱|多少|还差/.test(source)) {
     const orders = getActiveOrders(state)
       .filter((item) => ['待生产', '生产中', '待发货', '已发货'].includes(item.status))
       .filter((item) => !customer || item.customerId === customer.id);
@@ -142,7 +214,7 @@ function answerQuery(text, state) {
       .map((item) => Object.assign({}, item, {
         depositAmount: getOrderDepositAmount(state, item.id)
       }))
-      .filter((item) => item.depositAmount > 0 || customer);
+      .filter((item) => item.depositAmount > 0);
     if (!orders.length) return { title: customer ? `${customer.name} 暂无定金记录` : '暂无定金记录', lines: [] };
     const total = orders.reduce((sum, item) => sum + item.depositAmount, 0);
     return {
@@ -152,10 +224,12 @@ function answerQuery(text, state) {
   }
 
   if (customer && /(?:单子|订单|货|进度).*(?:怎么样|咋样|现在|进展|状态)|(?:怎么样|咋样|现在).*(?:单子|订单|货)/.test(source)) {
-    const orders = decorateRecords(state, state.orders)
+    const customerOrders = decorateRecords(state, state.orders)
       .filter((item) => item.customerId === customer.id)
       .filter((item) => !['已完成', '已取消'].includes(item.status))
       .sort((a, b) => String(a.requiredDeliveryDate || '').localeCompare(String(b.requiredDeliveryDate || '')));
+    const productMatches = customerOrders.filter((item) => matchesProductInQuestion(item, source));
+    const orders = productMatches.length ? productMatches : customerOrders;
     if (!orders.length) return { title: `${customer.name} 暂无进行中订单`, lines: ['没有查到未完成订单。'] };
     return {
       title: `${customer.name} 进行中订单`,
@@ -163,41 +237,42 @@ function answerQuery(text, state) {
         const deposit = getOrderDepositAmount(state, item.id);
         const remaining = getOrderRemainingSettlement(state, item);
         const money = deposit > 0 ? `，已收定金${toMoneyText(deposit)}元，待收尾款${toMoneyText(remaining)}元` : '';
-        return `${getItemsSummary(item) || item.productName || '未填产品'}，${item.quantity || '-'}${item.unit || ''}，${item.requiredDeliveryDate || '-'} 交，状态 ${item.status}${money}`;
+        const itemDetail = formatRecordItemLines(item).join('；') || (getItemsSummary(item) || item.productName || '未填产品');
+        return `${itemDetail}，${item.requiredDeliveryDate || '-'} 交，状态 ${item.status}${money}`;
       })
     };
   }
 
-  if (/还欠|欠款|欠.*多少|有没有欠|应收|还剩|没收|未收/.test(source)) {
-    const receivables = decorateRecords(state, state.receivables)
-      .filter((item) => !['已结清', '坏账'].includes(item.status))
-      .filter((item) => !customer || item.customerId === customer.id);
+  if (/还欠|欠款|欠.*多少|有没有欠|应收|还剩|没收|未收|待收/.test(source)) {
+    const receivables = getActiveReceivables(state, customer);
     if (!receivables.length) return { title: customer ? `${customer.name} 暂无未结清欠款` : '当前没有未结清欠款', lines: [] };
+    const totalRemaining = receivables.reduce((sum, item) => sum + getReceivableRemaining(item), 0);
+    const hiddenCount = Math.max(0, receivables.length - 8);
     return {
       title: customer ? `${customer.name} 未结清欠款` : '未结清欠款',
-      lines: receivables.slice(0, 8).map((item) => {
-        const amount = Number(item.amount || 0);
-        const paid = Number(item.paidAmount || 0);
-        const remaining = Math.max(0, amount - paid);
-        return `${item.customerDisplay}：应收${item.amount}元，剩余${remaining}元，到期 ${item.dueDate || '-'}，已收 ${item.paidAmount || 0}元`;
-      })
+      lines: [`共 ${receivables.length} 笔，还没收合计 ${toMoneyText(totalRemaining)} 元`]
+        .concat(receivables.slice(0, 8).map(formatReceivableLine))
+        .concat(hiddenCount ? [`还有 ${hiddenCount} 笔未展开。`] : [])
     };
   }
 
-  if (/月底前|月末前|本月底/.test(source) || /本周|哪些款|收款|要收/.test(source)) {
+  const asksForCollection = /月底前|月末前|本月底|哪些款|要收|待收/.test(source)
+    || /(?:本周|今天|今日).*(?:收款|回款|欠款|款)/.test(source);
+  if (asksForCollection) {
     const limitDate = /月底前|月末前|本月底/.test(source) ? endOfMonth(current) : null;
-    const receivables = decorateRecords(state, state.receivables)
-      .filter((item) => !['已结清', '坏账'].includes(item.status))
+    const onlyToday = /今天|今日/.test(source);
+    const receivables = getActiveReceivables(state, customer)
       .filter((item) => item.dueDate && (
         limitDate
           ? diffDays(item.dueDate, limitDate) <= 0
-          : diffDays(item.dueDate, current) <= 7
+          : (onlyToday ? item.dueDate === current : diffDays(item.dueDate, current) <= 7)
       ));
+    const totalRemaining = receivables.reduce((sum, item) => sum + getReceivableRemaining(item), 0);
     return {
-      title: '近期要处理的款',
+      title: onlyToday ? '今天要收的款' : '近期要处理的款',
       lines: receivables.length
-        ? receivables.slice(0, 8).map((item) => `${item.customerDisplay}：${item.amount}元，到期 ${item.dueDate}`)
-        : ['最近 7 天没有待收款。']
+        ? [`共 ${receivables.length} 笔，还没收合计 ${toMoneyText(totalRemaining)} 元`].concat(receivables.slice(0, 8).map(formatReceivableLine))
+        : [onlyToday ? '今天没有到期的待收款。' : '最近 7 天没有待收款。']
     };
   }
 
@@ -216,7 +291,12 @@ function answerQuery(text, state) {
   if (/交货|要交|订单/.test(source)) {
     const orders = decorateRecords(state, state.orders)
       .filter((item) => !['已完成', '已取消'].includes(item.status))
-      .filter((item) => item.requiredDeliveryDate && diffDays(item.requiredDeliveryDate, current) <= 7);
+      .filter((item) => !customer || item.customerId === customer.id)
+      .filter((item) => item.requiredDeliveryDate && (
+        /今天|今日/.test(source)
+          ? item.requiredDeliveryDate === current
+          : diffDays(item.requiredDeliveryDate, current) <= 7
+      ));
     return {
       title: '近期要交的货',
       lines: orders.length

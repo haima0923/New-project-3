@@ -1,4 +1,10 @@
-const { decorateRecords, generateDunningMessage, recordDunning, recordPayment } = require('../../utils/business');
+const {
+  decorateRecords,
+  generateDunningMessage,
+  getReceivablePaymentError,
+  recordDunning,
+  recordPayment
+} = require('../../utils/business');
 const { diffDays, today } = require('../../utils/date');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { getState, saveState } = require('../../utils/storage');
@@ -16,11 +22,13 @@ Page({
 
   load() {
     const state = getState();
-    const receivables = decorateRecords(state, state.receivables).map((item) => ({
+    const receivables = decorateRecords(state, state.receivables)
+      .filter((item) => ['待收', '部分收款'].includes(item.status))
+      .map((item) => ({
       ...item,
       overdueDays: item.dueDate ? Math.max(0, -diffDays(item.dueDate, today())) : 0,
       remainingAmount: Math.max(0, Number(item.amount || 0) - Number(item.paidAmount || 0))
-    }));
+      }));
     this.setData({ receivables });
   },
 
@@ -43,9 +51,19 @@ Page({
       return;
     }
     const state = getState();
-    recordPayment(state, id, amount);
+    const receivable = (state.receivables || []).find((item) => item.id === id);
+    const error = getReceivablePaymentError(receivable, amount);
+    if (error) {
+      wx.showToast({ title: error, icon: 'none' });
+      return;
+    }
+    const payment = recordPayment(state, id, amount);
+    if (!payment) {
+      wx.showToast({ title: '这笔收款没有保存，请重试', icon: 'none' });
+      return;
+    }
     saveState(state);
-    wx.showToast({ title: '收款已记录', icon: 'success' });
+    wx.showToast({ title: payment.completedOrderId ? '订单已完成' : '收款已记录', icon: 'success' });
     this.setData({
       [`paymentAmounts.${id}`]: ''
     });
