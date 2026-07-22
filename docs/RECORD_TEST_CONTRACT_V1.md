@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿，测试运行器和共享核心尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A 编排门面专项运行器已实现并通过离线回归；完整第一阶段 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -15,6 +15,22 @@
 - 报告、真实 AI canary、环境隔离和后续测试边界。
 
 它不替代生产代码，也不允许测试运行器自行复制 parser、路由、合并、安全或保存逻辑。
+
+### 1.1 Phase 1A 动态验证状态（2026-07-22）
+
+`scripts/record-shared-core-phase1a-tests.js` 当前包含 25 组确定性测试，从 `originalText` 调用真实本地 parser 和真实 route，AI 路径只使用 fake/mock/replay 或本机 fake `wx.request`。覆盖：
+
+- 统一状态和旧值映射、未知值 fail closed；
+- local/pending AI 零调用，standard/deep 单次调用；
+- 请求状态、业务 outcome、采用状态和 canonical/raw 错误码分离；
+- 空业务 JSON、timeout、网络/鉴权/provider 失败、mock 身份和无 endpoint；
+- 多商品与聊天 `pasteMeta/rawMessages/selectedMessages` 保留；
+- 严格原文、trace 隔离、JSON 序列化和基础凭证脱敏；
+- Phase 1A 起始 HEAD `3608a1281d52b8bfa4594b998cbd27d33f17d563` 的 11 类完整关键结果金样本；除运行日期生成的 `quoteDate` 外，字段、items、缺失、低置信、冲突、安全、route、AI outcome 和遗留原文均纳入冻结哈希。
+
+同轮还通过 `ai-safety-regression-tests.js`、`parse-route-observability-tests.js`、`five-step-user-tests.js` 和 `core-feature-tests.js`。所有命令均清除了 AI 环境变量，没有调用真实 AI、生产 endpoint 或生产数据。
+
+这不是完整 V1 runner：尚无 LOCAL_ONLY/AI_ONLY 执行、FrozenClock、固定业务 ID、统一领域 confirmation、savePlan、MemoryStore、state diff、五层报告或页面接入。Phase 1A trace 仅允许内存使用；完整生产脱敏策略未实现。现有保存入口也尚未消费新门面的严格 `originalText`，所以不能把本轮测试写成“最终业务持久化原文合同已验证”。
 
 ## 2. 第一阶段范围
 
@@ -122,7 +138,7 @@ stateBefore / stateAfter / stateDiff
   "initialStateFixture": "blank-v1",
   "aiScenario": { "kind": "none" },
   "steps": ["RUN_PARSE", "REQUEST_FORMAL_SAVE", "COMMIT_MEMORY"],
-  "expectedRoute": { "productionRoute": "local", "executionPath": "production_local" },
+  "expectedRoute": { "productionRoute": "LOCAL", "executionPath": "PRODUCTION_LOCAL" },
   "expectedAiCall": "MUST_NOT_CALL",
   "expectedAiOutcome": { "assert": "EXACT", "value": "NOT_REQUESTED" },
   "expectedResult": {
@@ -153,9 +169,9 @@ stateBefore / stateAfter / stateDiff
 - `MUST_NOT_CALL`：调用次数必须为 0；用于 LOCAL_ONLY、简单 local、pending 未点深度核对。
 - `MAY_CALL`：只用于确有允许分支的非门禁探索题，必须记录实际 route；不得用于掩盖尚未决定的产品规则。
 
-`expectedRoute.productionRoute` 使用 `local / pending / ai_standard / ai_deep`；
-`expectedRoute.executionPath` 使用 `local_only / ai_only_standard / ai_only_deep /
-production_local / production_pending / production_standard / production_deep`。AI 分流指标只统计 `PRODUCTION_ROUTING` 的 productionRoute。
+`expectedRoute.productionRoute` 使用规范枚举 `LOCAL / PENDING / AI_STANDARD / AI_DEEP`；
+`expectedRoute.executionPath` 使用 `LOCAL_ONLY / AI_ONLY_STANDARD / AI_ONLY_DEEP /
+PRODUCTION_LOCAL / PRODUCTION_PENDING / PRODUCTION_STANDARD / PRODUCTION_DEEP`。当前遗留小写值只作为 trace 的 rawValue 和兼容输入，不能写进 V1 题库期望。AI 分流指标只统计 `PRODUCTION_ROUTING` 的 productionRoute。
 
 `expectedRoute` 与 `expectedAiCall` 必须同时存在。只断言结果、不写预期路线的题不得进入正式题库。
 
