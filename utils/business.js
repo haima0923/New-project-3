@@ -1542,6 +1542,7 @@ module.exports = {
   generateReceivableFromOrder,
   getCustomerById,
   getDashboard,
+  getUnresolvedAiReason,
   getReceivablePaymentError,
   getItemsSummary,
   markDuplicateCustomerReviewed,
@@ -1554,6 +1555,7 @@ module.exports = {
   softDeleteRecord,
   getOrderDepositAmount,
   getOrderRemainingSettlement,
+  isFormalReady,
   setOrderDeliveryDate,
   updateOrderStatus
 };

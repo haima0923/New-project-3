@@ -1726,7 +1726,7 @@ function withAiStatus(localResult, status, metadata = {}) {
   return result;
 }
 
-function parseHybridInput(payload) {
+function prepareHybridLocalStage(payload) {
   const totalStartedAt = Date.now();
   const localParsedResult = parseInput(payload);
   const policy = getContextPolicy(payload.text, localParsedResult);
@@ -1753,31 +1753,104 @@ function parseHybridInput(payload) {
     }
   );
 
+  return {
+    totalStartedAt,
+    localParsedResult,
+    localReviewedResult,
+    localResult,
+    localDurationMs,
+    policy,
+    scopedHistory,
+    route,
+    shouldRequestAi
+  };
+}
+
+function finishHybridWithoutAi(prepared) {
+  const { localResult, route, shouldRequestAi } = prepared;
+
   if (route.decision === ROUTE_PENDING) {
-    return Promise.resolve(withAiStatus(localResult, 'not_requested', {
+    return withAiStatus(localResult, 'not_requested', {
       attempted: false,
       reason: route.deep_review_available
         ? '这条内容需要深度核对；未主动点击前不会调用慢速 AI。'
         : '这段内容还不能确定是一笔什么业务，先放待整理。'
-    }));
+    });
   }
   if (!shouldRequestAi) {
-    return Promise.resolve(withAiStatus(localResult, 'not_requested', {
+    return withAiStatus(localResult, 'not_requested', {
       attempted: false,
       reason: '这条内容可先按基础规则整理。'
-    }));
+    });
   }
+  return null;
+}
+
+function requestHybridAiStage(payload, prepared) {
+  const {
+    totalStartedAt,
+    localReviewedResult,
+    localResult,
+    localDurationMs,
+    scopedHistory,
+    route
+  } = prepared;
+  return requestHybridAiRaw({ payload, localResult, route, scopedHistory, localDurationMs })
+    .then(({ aiResult, aiDurationMs, networkWaitLimitMs }) => attachParseTrace(
+      normalizeAiResult(localResult, aiResult),
+      route,
+      {
+        localDurationMs,
+        aiDurationMs,
+        totalDurationMs: Date.now() - totalStartedAt,
+        networkWaitLimitMs,
+        localDraft: getBusinessDraftSummary(localReviewedResult),
+        aiDraft: getAiDraftSummary(aiResult),
+        aiRequestId: aiResult && aiResult.ai_request_id,
+        aiServerElapsedMs: aiResult && aiResult.ai_server_elapsed_ms,
+        aiServerDeadlineMs: aiResult && aiResult.ai_deadline_ms,
+        aiModelTier: aiResult && aiResult.ai_model_tier
+      }
+    ))
+    .catch((error) => {
+      if (error && error.code === 'AI_ENDPOINT_MISSING') {
+        return withAiStatus(localResult, 'skipped_no_endpoint', {
+          attempted: false,
+          reason: error.reason || '没有配置 AI 服务地址，无法发起 AI 请求。'
+        });
+      }
+      return attachParseTrace(withAiStatus(
+      localResult,
+      getAiFailureStatus(error),
+      {
+      attempted: true,
+      reason: getAiFailureReason(error),
+      code: error && error.code
+      }
+      ), route, {
+      localDurationMs,
+      aiDurationMs: Number(error && error.aiDurationMs) || 0,
+      totalDurationMs: Date.now() - totalStartedAt,
+      networkWaitLimitMs: Number(error && error.networkWaitLimitMs) || 0,
+      localDraft: getBusinessDraftSummary(localReviewedResult),
+      aiDraft: null,
+      aiFailureCode: error && error.code
+      });
+    });
+}
+
+function requestHybridAiRaw({ payload, localResult, route, scopedHistory, localDurationMs = 0 }) {
   if (typeof wx === 'undefined') {
-    return Promise.resolve(withAiStatus(localResult, 'skipped_no_endpoint', {
-      attempted: false,
-      reason: '当前不是微信小程序环境，无法发起 AI 请求。'
-    }));
+    const error = new Error('Current runtime has no WeChat AI endpoint');
+    error.code = 'AI_ENDPOINT_MISSING';
+    error.reason = '当前不是微信小程序环境，无法发起 AI 请求。';
+    return Promise.reject(error);
   }
   if (!getApiBaseUrl()) {
-    return Promise.resolve(withAiStatus(localResult, 'skipped_no_endpoint', {
-      attempted: false,
-      reason: '没有配置 AI 服务地址，无法发起 AI 请求。'
-    }));
+    const error = new Error('AI service endpoint is not configured');
+    error.code = 'AI_ENDPOINT_MISSING';
+    error.reason = '没有配置 AI 服务地址，无法发起 AI 请求。';
+    return Promise.reject(error);
   }
 
   const aiStartedAt = Date.now();
@@ -1795,40 +1868,22 @@ function parseHybridInput(payload) {
       requireReadyAuth: route.decision === ROUTE_AI_STANDARD
     }),
     remainingWaitMs
-  )
-    .then((aiResult) => attachParseTrace(
-      normalizeAiResult(localResult, aiResult),
-      route,
-      {
-        localDurationMs,
-        aiDurationMs: Date.now() - aiStartedAt,
-        totalDurationMs: Date.now() - totalStartedAt,
-        networkWaitLimitMs,
-        localDraft: getBusinessDraftSummary(localReviewedResult),
-        aiDraft: getAiDraftSummary(aiResult),
-        aiRequestId: aiResult && aiResult.ai_request_id,
-        aiServerElapsedMs: aiResult && aiResult.ai_server_elapsed_ms,
-        aiServerDeadlineMs: aiResult && aiResult.ai_deadline_ms,
-        aiModelTier: aiResult && aiResult.ai_model_tier
-      }
-    ))
-    .catch((error) => attachParseTrace(withAiStatus(
-      localResult,
-      getAiFailureStatus(error),
-      {
-      attempted: true,
-      reason: getAiFailureReason(error),
-      code: error && error.code
-      }
-    ), route, {
-      localDurationMs,
-      aiDurationMs: Date.now() - aiStartedAt,
-      totalDurationMs: Date.now() - totalStartedAt,
-      networkWaitLimitMs,
-      localDraft: getBusinessDraftSummary(localReviewedResult),
-      aiDraft: null,
-      aiFailureCode: error && error.code
-    }));
+  ).then((aiResult) => ({
+    aiResult,
+    aiDurationMs: Date.now() - aiStartedAt,
+    networkWaitLimitMs
+  })).catch((error) => {
+    error.aiDurationMs = Date.now() - aiStartedAt;
+    error.networkWaitLimitMs = networkWaitLimitMs;
+    throw error;
+  });
+}
+
+function parseHybridInput(payload) {
+  const prepared = prepareHybridLocalStage(payload);
+  const localOnlyResult = finishHybridWithoutAi(prepared);
+  if (localOnlyResult) return Promise.resolve(localOnlyResult);
+  return requestHybridAiStage(payload, prepared);
 }
 
 module.exports = {
@@ -1843,9 +1898,14 @@ module.exports = {
   getParseRouteDecision,
   getBusinessDraftSummary,
   getAiWaitLimitMs,
+  finishHybridWithoutAi,
   normalizeAiResult,
   parseHybridInput,
+  prepareHybridLocalStage,
+  requestHybridAiRaw,
+  requestHybridAiStage,
   requestWithDeadline,
+  withAiStatus,
   ROUTE_AI_DEEP,
   ROUTE_AI_STANDARD,
   ROUTE_LOCAL,
