@@ -1532,6 +1532,8 @@ function decorateRecords(state, records) {
 }
 
 module.exports = {
+  activeOrderStatuses,
+  activeReceivableStatuses,
   appendOperationLog,
   buildOrderEditDraft,
   completeTodo,
@@ -1547,6 +1549,7 @@ module.exports = {
   getItemsSummary,
   markDuplicateCustomerReviewed,
   mergeCustomer,
+  orderMatchesProduct,
   recordDunning,
   recordPayment,
   getRecordItems,

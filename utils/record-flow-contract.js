@@ -1,7 +1,7 @@
 const CORE_CONTRACT_VERSION = 'record-shared-core-v1';
-const CORE_IMPLEMENTATION_VERSION = 'record-flow-phase1c-v1';
+const CORE_IMPLEMENTATION_VERSION = 'record-flow-phase1d-v1';
 const TARGET_TRACE_SCHEMA_VERSION = 'record-trace-v1';
-const TRACE_SCHEMA_VERSION = 'record-trace-phase1c-v1';
+const TRACE_SCHEMA_VERSION = 'record-trace-phase1d-v1';
 
 function freezeEnum(values) {
   return Object.freeze(values.reduce((result, value) => {

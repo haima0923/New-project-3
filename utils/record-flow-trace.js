@@ -202,8 +202,16 @@ function createRecordFlowTrace(input = {}, dependencies = {}) {
     },
     confirmation: {
       available: false,
+      confirmationId: '',
+      revision: 0,
+      contentHash: '',
+      resultScope: input.resultScope || RESULT_SCOPES.NOT_AVAILABLE,
+      surfaceType: '',
       canSaveFormal: false,
       canSavePending: false,
+      surfaceCanCompleteFormal: false,
+      effectiveCanSaveFormal: false,
+      effectiveCanCommitFormal: false,
       needsDeepReview: false,
       needsFullPage: null
     },

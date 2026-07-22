@@ -53,6 +53,10 @@ const {
   DEFAULT_BUSINESS_TIMEZONE,
   resolveRecordFlowRuntime
 } = require('./record-flow-runtime');
+const {
+  buildRecordConfirmation,
+  deriveConfirmationSummary
+} = require('./record-confirmation-builder');
 
 const trustedAdapterDescriptors = new WeakMap();
 
@@ -209,54 +213,14 @@ function buildSaveEligibility(result, options = {}) {
   };
 }
 
-function buildConfirmationSummary(result, route, saveEligibility) {
-  if (!result) {
-    return {
-      canSaveFormal: false,
-      canCommitToMemory: false,
-      canCommitToRealStorage: false,
-      commitScope: 'BLOCKED',
-      canSavePending: false,
-      needsUserConfirmation: false,
-      needsAdditionalFieldConfirmation: false,
-      requiresExplicitSaveAction: false,
-      needsDeepReview: false,
-      needsFullPage: null,
-      requiredFields: null,
-      missingRequiredFields: [],
-      missingFields: [],
-      warnings: []
-    };
-  }
-  const missingFields = Array.isArray(result.missing_fields) ? result.missing_fields.slice() : [];
-  const lowFields = Array.isArray(result.low_confidence_fields) ? result.low_confidence_fields.slice() : [];
-  const conflicts = Array.isArray(result.field_conflicts) ? result.field_conflicts : [];
-  const warnings = Array.from(new Set([].concat(
-    result.unsafe_reasons || [],
-    route && route.reasons ? route.reasons : [],
-    saveEligibility.blockedReasons || []
-  ).filter(Boolean)));
-  return {
-    canSaveFormal: saveEligibility.domainCanSaveFormal,
-    canCommitToMemory: saveEligibility.canCommitToMemory,
-    canCommitToRealStorage: saveEligibility.canCommitToRealStorage,
-    commitScope: saveEligibility.commitScope,
-    canSavePending: true,
-    // All formal saves still require the boss to click. The additional flag below
-    // describes field/risk review and must not be read as auto-save permission.
-    needsUserConfirmation: true,
-    needsAdditionalFieldConfirmation: !saveEligibility.domainCanSaveFormal
-      || missingFields.length > 0 || lowFields.length > 0 || conflicts.length > 0,
-    requiresExplicitSaveAction: true,
-    needsDeepReview: Boolean(route && route.deep_review_available),
-    // The shared full-page navigation rule is intentionally not part of Phase 1B.
-    needsFullPage: null,
-    // The unified per-intent required-field catalogue belongs to a later phase.
-    requiredFields: null,
-    missingRequiredFields: missingFields.slice(),
-    missingFields,
-    warnings
-  };
+function buildConfirmationSummary(result, route, saveEligibility, options = {}) {
+  const confirmation = buildRecordConfirmation(Object.assign({}, options, {
+    finalResult: result,
+    finalSafety: result && result.final_parse_safety,
+    saveEligibility: saveEligibility || buildSaveEligibility(result),
+    deepReviewAvailable: Boolean(route && route.deep_review_available)
+  }));
+  return deriveConfirmationSummary(confirmation);
 }
 
 function registerAiAdapter(execute, descriptor, inspectors = {}) {
@@ -640,6 +604,29 @@ function buildFlowOutput(options = {}) {
     options.productionEligibility || null,
     options.productionEligibilityResolved === true
   );
+  const confirmation = options.confirmation
+    ? safeClone(options.confirmation)
+    : buildRecordConfirmation({
+      mode,
+      resultScope,
+      productionRoute: options.productionRoute || PRODUCTION_ROUTES.UNKNOWN,
+      executionPath: options.executionPath || EXECUTION_PATHS.NOT_EXECUTED,
+      finalResult: result,
+      saveEligibility: modeEligibility,
+      originalText: (result && (result.originalText || result.original_text))
+        || (options.trace && options.trace.input && options.trace.input.originalText)
+        || '',
+      normalizedText: (options.trace && options.trace.input && options.trace.input.normalizedText) || '',
+      inputSource: (options.trace && options.trace.inputSource) || 'typed',
+      businessDate: (options.trace && options.trace.runtime && options.trace.runtime.businessDate) || '',
+      businessTimezone: (options.trace && options.trace.runtime && options.trace.runtime.businessTimezone) || '',
+      surfaceCapabilities: options.surfaceCapabilities,
+      traceReference: options.trace && {
+        runId: options.trace.runId || '',
+        traceId: options.trace.traceId || '',
+        caseId: options.trace.caseId || ''
+      }
+    });
   return {
     schemaVersion: CORE_IMPLEMENTATION_VERSION,
     coreContractVersion: CORE_CONTRACT_VERSION,
@@ -656,8 +643,9 @@ function buildFlowOutput(options = {}) {
       productionResult: mode === FLOW_MODES.PRODUCTION_ROUTING ? result : safeClone(options.productionResult || null)
     },
     trace: safeClone(options.trace),
-    confirmationSummary: safeClone(options.confirmationSummary
-      || buildConfirmationSummary(null, null, buildSaveEligibility(null))),
+    confirmation,
+    // Compatibility summary has exactly one source of truth: the full domain confirmation.
+    confirmationSummary: safeClone(deriveConfirmationSummary(confirmation)),
     saveEligibility: safeClone(modeEligibility),
     eligibility,
     errors: safeClone(options.errors || [])
@@ -1110,11 +1098,36 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       providerKind: trace.ai.providerKind,
       aiRequested: trace.ai.requiredByExecutionMode
     });
-    const confirmationSummary = buildConfirmationSummary(
+    const confirmation = buildRecordConfirmation({
+      mode,
+      resultScope,
+      productionRoute: trace.routing.productionRoute,
+      executionPath: trace.routing.executionPath,
       finalResult,
-      mode === FLOW_MODES.AI_ONLY ? null : route,
-      saveEligibility
-    );
+      localResult: prepared && prepared.localResult,
+      aiResult: trace.ai.normalizedResult,
+      finalSafety: finalResult.final_parse_safety,
+      saveEligibility,
+      originalText,
+      normalizedText,
+      inputSource,
+      businessDate: runtime.businessDate,
+      businessTimezone: runtime.businessTimezone,
+      initialState: input.initialState,
+      candidateContext: input.candidateContext,
+      surfaceCapabilities: input.surfaceCapabilities,
+      previousConfirmation: input.previousConfirmation,
+      confirmationId: input.confirmationId,
+      deepReviewAvailable: mode === FLOW_MODES.AI_ONLY
+        ? false
+        : Boolean(route && route.deep_review_available),
+      traceReference: {
+        runId: trace.runId || '',
+        traceId: trace.traceId || '',
+        caseId: trace.caseId || ''
+      }
+    });
+    const confirmationSummary = deriveConfirmationSummary(confirmation);
     trace.final.result = safeClone(finalResult);
     trace.final.safety = normalizeSafetyStatus((finalResult.final_parse_safety || {}).status);
     trace.final.formalSaveBlocked = Boolean(finalResult.formal_save_blocked);
@@ -1125,6 +1138,14 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     trace.confirmation.canSavePending = confirmationSummary.canSavePending;
     trace.confirmation.needsDeepReview = confirmationSummary.needsDeepReview;
     trace.confirmation.needsFullPage = confirmationSummary.needsFullPage;
+    trace.confirmation.confirmationId = confirmation.confirmationId;
+    trace.confirmation.revision = confirmation.revision;
+    trace.confirmation.contentHash = confirmation.contentHash;
+    trace.confirmation.resultScope = confirmation.resultScope;
+    trace.confirmation.surfaceType = confirmation.surface.surfaceType;
+    trace.confirmation.surfaceCanCompleteFormal = confirmation.surface.surfaceCanCompleteFormal;
+    trace.confirmation.effectiveCanSaveFormal = confirmation.surface.effectiveCanSaveFormal;
+    trace.confirmation.effectiveCanCommitFormal = confirmation.surface.effectiveCanCommitFormal;
     let productionEligibility = null;
     let productionEligibilityResolved = false;
     let productionResult = null;
@@ -1159,7 +1180,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       localResult: prepared && prepared.localResult,
       productionResult,
       trace: finalizedTrace,
-      confirmationSummary,
+      confirmation,
       modeEligibility: saveEligibility,
       productionEligibility,
       productionEligibilityResolved,
