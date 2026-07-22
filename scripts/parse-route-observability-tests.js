@@ -167,7 +167,7 @@ async function main() {
   const blockedSave = saveConfirmedDraft(blockedState, failedButComplete);
   assert.strictEqual(blockedSave.type, 'pending', 'AI 失败后，即使字段看起来齐全，也不能直接正式保存');
   assert.strictEqual(blockedState.orders.length, 0, 'AI 失败后不能生成正式订单');
-  assert(blockedSave.record.reason.includes('联网整理没有成功'), '待整理原因必须告诉老板为什么不能直接保存');
+  assert(blockedSave.record.reason.includes('联网整理等待超时'), '待整理原因必须明确告诉老板本次联网整理已超时');
 
   let deadlineError = null;
   const deadlineStartedAt = Date.now();

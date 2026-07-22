@@ -74,6 +74,13 @@ function hasMeaningfulItem(item) {
     && AI_ITEM_FIELD_KEYS.some((key) => hasBusinessScalar(item[key]));
 }
 
+function normalizeIntentCandidateValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    value = value.intent || value.type || value.value || value.name || value.label || '';
+  }
+  return String(value || '').trim().toLowerCase();
+}
+
 function getAiBusinessResultValidity(aiResult) {
   const result = unwrapAiResult(aiResult);
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
@@ -100,9 +107,17 @@ function getAiBusinessResultValidity(aiResult) {
   const hasSafetyFinding = [
     result.missing_fields || result.missingFields,
     result.low_confidence_fields || result.lowConfidenceFields,
-    result.field_conflicts || result.fieldConflicts,
-    result.intent_candidates || result.intentCandidates
+    result.field_conflicts || result.fieldConflicts
   ].some((value) => hasMeaningfulValue(value));
+  const rawIntentCandidates = result.intent_candidates || result.intentCandidates || [];
+  const intentCandidates = Array.from(new Set(
+    (Array.isArray(rawIntentCandidates) ? rawIntentCandidates : [rawIntentCandidates])
+      .map(normalizeIntentCandidateValue)
+      .filter(Boolean)
+  ));
+  const hasIntentUncertainty = intentCandidates.length > 1
+    || (intentCandidates.length > 0 && (!intent || intent === 'unknown'
+      || intentCandidates.some((candidate) => candidate !== intent)));
   const explicitDecision = String(result.decision || result.status || '').trim().toLowerCase();
   const explicitDecisionReason = result.confirm_message || result.confirmMessage || result.reason || result.message;
   const explicitlyNotRecordable = result.no_record === true
@@ -112,7 +127,7 @@ function getAiBusinessResultValidity(aiResult) {
   const hasUnknownConclusion = intent === 'unknown'
     && hasMeaningfulValue(explicitDecisionReason);
 
-  if (hasSafetyFinding || explicitlyNotRecordable || hasUnknownConclusion
+  if (hasSafetyFinding || hasIntentUncertainty || explicitlyNotRecordable || hasUnknownConclusion
     || (intent === 'unknown' && (hasBusinessField || hasItems))) {
     return { valid: true, kind: 'uncertain', reason: 'AI returned an explicit safety decision' };
   }

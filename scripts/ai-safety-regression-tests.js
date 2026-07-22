@@ -72,6 +72,10 @@ function testAiBusinessResultValidityContract() {
   ];
   const validResults = [
     { intent: 'order', fields: {} },
+    { intent: 'order', fields: {}, intent_candidates: ['order'] },
+    { intent: 'order', fields: {}, intent_candidates: [{ intent: 'order' }] },
+    { intent: 'order', fields: {}, intent_candidates: ['payment'] },
+    { intent_candidates: ['order'] },
     { fields: { customerName: '王总' }, field_evidence: { customerName: [{ text: '王总' }] } },
     { intent: 'unknown', missing_fields: ['intent'] },
     { intent: 'unknown', confirm_message: '信息不足，不能判断业务类型。' },
@@ -97,6 +101,15 @@ function testAiBusinessResultValidityContract() {
     assert.strictEqual(getAiBusinessResultValidity(result).valid, true, `客户端有效样例 ${index + 1} 不应误判为空`);
     assert.strictEqual(getServerAiBusinessResultValidity(result).valid, true, `服务端有效样例 ${index + 1} 不应误判为空`);
   });
+  const contradictoryIntent = { intent: 'order', fields: {}, intent_candidates: ['payment'] };
+  assert.strictEqual(getAiBusinessResultValidity(contradictoryIntent).kind, 'uncertain', '客户端不得忽略相互矛盾的单一intent候选');
+  assert.strictEqual(getServerAiBusinessResultValidity(contradictoryIntent).kind, 'uncertain', '服务端不得忽略相互矛盾的单一intent候选');
+  const contradictoryObjectIntent = { intent: 'order', fields: {}, intent_candidates: [{ intent: 'payment' }] };
+  assert.strictEqual(getAiBusinessResultValidity(contradictoryObjectIntent).kind, 'uncertain', '客户端不得忽略对象格式的矛盾intent候选');
+  assert.strictEqual(getServerAiBusinessResultValidity(contradictoryObjectIntent).kind, 'uncertain', '服务端不得忽略对象格式的矛盾intent候选');
+  const candidateWithoutIntent = { intent_candidates: ['order'] };
+  assert.strictEqual(getAiBusinessResultValidity(candidateWithoutIntent).kind, 'uncertain', '客户端只有候选但无最终intent时必须保持不确定');
+  assert.strictEqual(getServerAiBusinessResultValidity(candidateWithoutIntent).kind, 'uncertain', '服务端只有候选但无最终intent时必须保持不确定');
 }
 
 function buildAiRequiredDraft(intent, route = 'ai_standard') {
@@ -275,6 +288,7 @@ function testClientAndBusinessDefenseInDepth() {
   });
 
   const multiLocal = buildAiRequiredOrder('ai_deep');
+  multiLocal.original_text = '王总订水杯100个5块5一个，礼品盒20套8元一套，明天交';
   multiLocal.fields.items = [
     { productName: '水杯', quantity: '100', unit: '个', unitPrice: '5.5', totalAmount: '550' },
     { productName: '礼品盒', quantity: '20', unit: '套', unitPrice: '8', totalAmount: '160' }
@@ -286,6 +300,10 @@ function testClientAndBusinessDefenseInDepth() {
   });
   assert.strictEqual(multi.ai_fallback.status, 'used', '有效多商品结果不能被误判为空');
   assert.strictEqual(multi.fields.items.length, 2, '有效多商品明细必须保留');
+  const multiState = emptyState();
+  const multiSaved = saveConfirmedDraft(multiState, multi);
+  assert.strictEqual(multiSaved.type, 'order', '有效AI多商品结果必须仍可按现有规则保存');
+  assert.strictEqual(multiSaved.record.items.length, 2, '有效AI多商品保存后不能丢失第二个商品');
 }
 
 function makeLiveRequestHandler(scenario) {
@@ -296,8 +314,15 @@ function makeLiveRequestHandler(scenario) {
         provider: 'live-fake-provider',
         intent: 'order',
         fields: {
-          customerName: '李姐', productName: '椅孑', quantity: '5', unit: '个', unitPrice: '20',
+          customerName: '李姐', productName: '椅子', quantity: '5', unit: '个', unitPrice: '20',
+          amount: '100', dueDate: '2026-07-26',
+          items: [{ productName: '椅子', quantity: '5', unit: '个', unitPrice: '20', amount: '100', dueDate: '2026-07-26' }],
           remark: 'LIVE_RESPONSE_SENTINEL'
+        },
+        intent_candidates: [{ intent: 'order' }],
+        field_evidence: {
+          customerName: [{ text: '李姐' }], productName: [{ text: '椅孑' }],
+          quantity: [{ text: '5个' }], unitPrice: [{ text: '20元一个' }], dueDate: [{ text: '周日交' }]
         }
       });
       return;
@@ -307,8 +332,15 @@ function makeLiveRequestHandler(scenario) {
         provider: 'live-fake-provider',
         intent: 'order',
         fields: {
-          customerName: '李姐', productName: '椅孑', quantity: '5', unit: '个', unitPrice: '20',
+          customerName: '李姐', productName: '椅子', quantity: '5', unit: '个', unitPrice: '20',
+          amount: '100', dueDate: '2026-07-26',
+          items: [{ productName: '椅子', quantity: '5', unit: '个', unitPrice: '20', amount: '100', dueDate: '2026-07-26' }],
           remark: 'DELAYED_LIVE_RESPONSE_SENTINEL'
+        },
+        intent_candidates: [{ intent: 'order' }],
+        field_evidence: {
+          customerName: [{ text: '李姐' }], productName: [{ text: '椅孑' }],
+          quantity: [{ text: '5个' }], unitPrice: [{ text: '20元一个' }], dueDate: [{ text: '周日交' }]
         }
       }), 25);
       return;
@@ -343,7 +375,8 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
     title: 'live模式结果完整性',
     input: '李姐要订5个椅孑，20元一个，周日交',
     source: 'voice',
-    expect: { intent: 'order', allowFormalSave: false }
+    edits: [{ field: 'productName', value: '椅子' }],
+    expect: { intent: 'order' }
   };
   for (const entry of ['input', 'dashboard']) {
     const success = await runOneFlow(baseCase, entry, {
@@ -357,6 +390,11 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
     assert.strictEqual(success.aiProvider, 'live-fake-provider', `${entry} 必须保留真实响应provider`);
     assert.strictEqual(success.aiBusinessResultValid, true, `${entry} live成功必须通过业务有效性检查`);
     assert.strictEqual(success.finalFields.remark, 'LIVE_RESPONSE_SENTINEL', `${entry} 真实响应字段不能被本地stub覆盖`);
+    assert.strictEqual(success.buttonDisabled, false, `${entry} 有效live结果经现有商品确认后必须解锁保存`);
+    assert.strictEqual(success.savedRecordType, 'order', `${entry} 有效live结果必须保存为订单`);
+    assert.strictEqual(success.savedOriginalText, baseCase.input, `${entry} 有效live保存必须保留原文`);
+    assert((success.saveDelta.orders || 0) > 0, `${entry} 有效live结果必须产生订单`);
+    assert.deepStrictEqual(success.failures, [], `${entry} live成功证据不能隐藏失败expectation`);
 
     const delayed = await runOneFlow(baseCase, entry, {
       liveAi: true,
@@ -364,8 +402,16 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
       requestHandler: makeLiveRequestHandler('delayed_success'),
       parseWaitTimeoutMs: 1000
     });
+    assert.strictEqual(delayed.hybridStubInjected, false, `${entry} 延迟live成功也不得注入stub`);
+    assert.strictEqual(delayed.requestCount, 1, `${entry} 延迟live成功应只请求一次`);
     assert.strictEqual(delayed.aiStatus, 'used', `${entry} 必须等待异步live响应完成后再取证`);
+    assert.strictEqual(delayed.aiProvider, 'live-fake-provider', `${entry} 延迟live成功必须保留fake AI来源`);
+    assert.strictEqual(delayed.aiBusinessResultValid, true, `${entry} 延迟live成功必须保留业务有效标记`);
     assert.strictEqual(delayed.finalFields.remark, 'DELAYED_LIVE_RESPONSE_SENTINEL', `${entry} 不能在live响应前提前取证`);
+    assert.strictEqual(delayed.buttonDisabled, false, `${entry} 延迟有效live结果经现有商品确认后必须解锁保存`);
+    assert((delayed.saveDelta.orders || 0) > 0, `${entry} 延迟有效live结果必须产生订单`);
+    assert.strictEqual(delayed.savedOriginalText, baseCase.input, `${entry} 延迟live保存必须保留原文`);
+    assert.deepStrictEqual(delayed.failures, [], `${entry} 延迟live成功证据不能隐藏失败expectation`);
   }
 
   const failures = {
@@ -393,10 +439,11 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
       assert.strictEqual(evidence.aiStatus, expected.status, `${entry}/${scenario} 必须保留真实失败状态`);
       assert.strictEqual(evidence.aiFailureCode, expected.code, `${entry}/${scenario} 必须保留具体失败码`);
       assert.notStrictEqual(evidence.aiStatus, 'used', `${entry}/${scenario} 不能假成功`);
-      assert.strictEqual(evidence.aiBusinessResultValid, false, `${entry}/${scenario} 不能伪造业务有效证明`);
       if (scenario === 'mock') {
+        assert.strictEqual(evidence.aiBusinessResultValid, true, `${entry}/${scenario} 可保留结构有效性，但必须由mock状态隔离`);
         assert.strictEqual(evidence.aiProvider, 'mock', `${entry}/${scenario} 必须保留mock来源`);
       } else {
+        assert.strictEqual(evidence.aiBusinessResultValid, false, `${entry}/${scenario} 不能伪造业务有效证明`);
         assert.strictEqual(evidence.aiProvider, '', `${entry}/${scenario} 不能把本地字段包装成server字段`);
       }
       assert.strictEqual(evidence.buttonDisabled, true, `${entry}/${scenario} 正式保存按钮必须禁用`);
@@ -434,15 +481,32 @@ async function testPageDeepEmptyBusinessIsBlocked() {
 }
 
 async function testLocalOnlyFlowUnaffected() {
+  const text = '王总订水杯100个，5块5一个，明天交';
   const local = await parseHybridInput({
-    text: '王总订水杯100个，5块5一个，明天交',
-    rawText: '王总订水杯100个，5块5一个，明天交',
+    text,
+    rawText: text,
     source: 'typed', context: 'home', state: emptyState()
   });
   assert.strictEqual(local.parse_route.decision, 'local', '清楚输入仍应走local');
   assert.strictEqual(local.ai_fallback.status, 'not_requested', 'local不应被P0修复误标成AI失败');
   const state = emptyState();
   assert.strictEqual(saveConfirmedDraft(state, local).type, 'order', 'local正式保存不应受AI有效标记影响');
+
+  const pageCase = {
+    id: 'p0-local-page-save',
+    title: 'local双入口正常保存',
+    input: text,
+    source: 'typed',
+    expect: { intent: 'order', allowFormalSave: true, recordType: 'order' }
+  };
+  for (const entry of ['input', 'dashboard']) {
+    const evidence = await runOneFlow(pageCase, entry, { liveAi: false });
+    assert.strictEqual(evidence.aiStatus, 'not_requested', `${entry} local页面流程不得请求AI`);
+    assert.strictEqual(evidence.buttonDisabled, false, `${entry} local页面流程必须保持可保存`);
+    assert((evidence.saveDelta.orders || 0) > 0, `${entry} local页面流程必须保存订单`);
+    assert.strictEqual(evidence.savedOriginalText, text, `${entry} local页面保存必须保留原文`);
+    assert.deepStrictEqual(evidence.failures, [], `${entry} local页面回归不得隐藏失败expectation`);
+  }
 }
 
 async function testMixedBusinessCannotBeDowngraded() {
