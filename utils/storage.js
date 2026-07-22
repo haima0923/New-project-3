@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'yiwu_boss_ai_assistant_v1';
+const { maskPhone, simpleFingerprint } = require('./customer-identity');
 
 function createInitialState() {
   return {
@@ -53,24 +54,6 @@ function updateState(mutator) {
 
 function generateId(prefix) {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function simpleFingerprint(value) {
-  const source = String(value || '').replace(/\s+/g, '');
-  if (!source) return '';
-  let hash = 5381;
-  for (let i = 0; i < source.length; i += 1) {
-    hash = ((hash << 5) + hash) + source.charCodeAt(i);
-    hash &= 0xffffffff;
-  }
-  return `fp_${Math.abs(hash)}`;
-}
-
-function maskPhone(phone) {
-  const source = String(phone || '').replace(/\s+/g, '');
-  if (!source) return '';
-  if (source.length < 7) return source;
-  return `${source.slice(0, 3)}****${source.slice(-4)}`;
 }
 
 function normalizeCustomer(raw = {}) {

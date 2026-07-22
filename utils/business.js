@@ -1541,6 +1541,7 @@ module.exports = {
   getUnresolvedAiReason,
   getReceivablePaymentError,
   getItemsSummary,
+  getDraftTotalAmount,
   markDuplicateCustomerReviewed,
   mergeCustomer,
   orderMatchesProduct,

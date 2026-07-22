@@ -58,6 +58,7 @@ const {
   deriveConfirmationSummary
 } = require('./record-confirmation-builder');
 const { evaluateRecordDomainPreflight, isParseSafetyReady } = require('./record-domain-preflight');
+const { prepareRecordSavePlan } = require('./record-save-plan-builder');
 
 const trustedAdapterDescriptors = new WeakMap();
 
@@ -672,6 +673,8 @@ function buildFlowOutput(options = {}) {
     // Compatibility summary has exactly one source of truth: the full domain confirmation.
     confirmationSummary: safeClone(deriveConfirmationSummary(confirmation)),
     saveEligibility: safeClone(modeEligibility),
+    // Phase 1E.1 only prepares an auditable plan. It never commits or creates a store.
+    savePlan: options.savePlan ? safeClone(options.savePlan) : null,
     eligibility,
     errors: safeClone(options.errors || [])
   };
@@ -1191,6 +1194,26 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       }
     });
     const confirmationSummary = deriveConfirmationSummary(confirmation);
+    let savePlan = null;
+    if (input.prepareSavePlan === true) {
+      savePlan = prepareRecordSavePlan({
+        action: input.saveAction,
+        mode,
+        resultScope,
+        confirmation,
+        preflight: confirmation.preflight,
+        finalResult,
+        initialState: input.initialState || {},
+        sourceStateVersion: input.sourceStateVersion,
+        businessDate: runtime.businessDate,
+        businessTimezone: runtime.businessTimezone,
+        nowInstant: runtime.nowInstant,
+        pendingReason: input.pendingReason
+      }, {
+        clock: dependencies.clock,
+        idGenerator: dependencies.idGenerator
+      });
+    }
     trace.final.result = safeClone(finalResult);
     trace.final.safety = normalizeSafetyStatus((finalResult.final_parse_safety || {}).status);
     trace.final.formalSaveBlocked = Boolean(finalResult.formal_save_blocked);
@@ -1245,6 +1268,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       productionResult,
       trace: finalizedTrace,
       confirmation,
+      savePlan,
       modeEligibility: saveEligibility,
       productionEligibility,
       productionEligibilityResolved,
