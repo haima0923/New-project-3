@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A～1D 专项运行器已通过离线回归；统一 Confirmation 和保存前领域预检已具备确定性门禁；savePlan/MemoryStore/state diff 通用 runner 尚未实现；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1E.1 专项运行器已通过离线回归；纯 SavePlan、MemoryStore 原子 Commit 和双层 State Diff 已具备确定性门禁；生产 business 和页面尚未迁移；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -86,6 +86,22 @@ Phase 1D 新增两组离线确定性门禁：
 同轮 Phase 1A 25/25、Phase 1B 24/24、Phase 1C 16/16、AI P0、route、五步用户28/28、核心功能、金融生命周期、模型路由和服务端standard/deep mock回归均通过。未调用真实AI、外网或生产存储。
 
 Phase 1D仍不是完整第一阶段runner：当前副作用回归直接使用隔离的普通内存state，并非通用MemoryStore/stateDiff框架；页面只有限接入领域安全布尔值，尚未迁移共享解析与完整Confirmation展示；用户编辑后的重算、savePlan、事务回滚和五层报告仍待后续实现。
+
+### 1.5 Phase 1E.1 动态验证状态（2026-07-22）
+
+`scripts/record-shared-core-phase1e1-tests.js` 当前为20/20，覆盖：
+
+- SavePlan纯度、Confirmation/Preflight/state绑定、稳定planHash、明确formal/pending动作和默认不生成计划；
+- 22个`saveConfirmedDraft()`/`savePendingNote()`代表场景的隔离全state等价，包括新/已有客户、订单、报价、记一笔关联报价建单、更新、按订单待收、待收+首付款、部分/结清收款、定金、提醒、催款、待整理、多商品无顶层总额、目录缺失回填和100条解析日志截断；
+- MemoryStore深拷贝、版本/指纹隔离，客户、主记录、金融、日志、最终不变量及atomic swap前的失败注入完整回滚；
+- 同计划幂等、planId/幂等键碰撞、过期计划、临时ID依赖、LINK、操作schema、用户授权、非MemoryStore和危险对象fail-closed；
+- business/full diff 的created/updated/deleted、changedFields、顺序、meta、模板和额外顶层状态；严格`originalText`和完整`items[]`；跨客户金融关系、收款增量、既有payment不可变及定金上限。
+
+该等价范围只指记一笔现有`saveConfirmedDraft()`/`savePendingNote()`入口。报价页直接`convertQuotationToOrder()`和订单页直接`generateReceivableFromOrder()`只锁定旧生命周期边界，尚未迁移或宣称SavePlan等价；后者既有直接路径也不在本轮“记一笔严格原文”结论内。
+
+同轮Phase 1A～1D、领域预检、AI P0、route、五步用户、核心/金融生命周期、模型路由、UI结构和服务端fake回归均为0失败。全部命令清除AI环境变量；服务端测试只使用本机回环fake server，没有调用真实AI、外网、生产数据或微信Storage。
+
+Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保存入口；没有微信Storage adapter、统一五层报告、用户编辑后重算、真实AI或微信运行时验证。Phase 1E.2才负责保持页面调用方式与数据结果不变地接入共享SavePlan和Commit。
 
 ## 2. 第一阶段范围
 
@@ -624,8 +640,9 @@ fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JS
 
 | 当前资产 | 可复用内容 | 不能直接当 V1 完整门禁的原因 |
 | --- | --- | --- |
+| `scripts/record-shared-core-phase1e1-tests.js` | 纯SavePlan、MemoryStore原子Commit、幂等/过期/回滚、双层diff和22个legacy保存等价场景 | 仍以合成Confirmation/result为主；生产business、微信Storage、页面点击和统一五层报告尚未接入 |
 | `scripts/record-shared-core-phase1d-tests.js` | 统一Confirmation、domain/surface、三mode、多商品、AI状态、revision/hash和页面事实对照 | 尚非WXML运行；用户编辑重算和savePlan未实现 |
-| `scripts/record-domain-preflight-tests.js` | 客户/历史/金融/目标/AI/mode统一预检、四方一致性和正式副作用零增量 | 部分关系边界使用合成parseResult；通用MemoryStore/stateDiff尚未实现 |
+| `scripts/record-domain-preflight-tests.js` | 客户/历史/金融/目标/AI/mode统一预检、四方一致性和正式副作用零增量 | 部分关系边界使用合成parseResult；MemoryStore/diff由Phase 1E.1独立runner覆盖，尚未合成统一V1 case runner |
 | `scripts/ai-safety-regression-tests.js` | 两个 P0、standard/deep、页面 VM、business 副作用 | 函数级拼装较多，尚无统一 case/trace/stateDiff schema |
 | `scripts/parse-route-observability-tests.js` | 四 route、耗时、失败状态和保存阻断 | 依赖 fake wx，未走统一 adapter/confirmation/savePlan |
 | `scripts/core-feature-tests.js` | parser、业务、历史、页面函数和查询的大量回归 | 大型脚本、不同层混在一起，失败归属不统一 |
