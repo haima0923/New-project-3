@@ -55,7 +55,7 @@ function validAiOrder(fields = {}, extras = {}) {
   return Object.assign({
     intent: 'order',
     operation: 'create_order',
-    original_text: '王总订水杯100个，每个5.5元，明天交',
+    original_text: '王总订水杯100个，每个5.5元，2026年8月1日交',
     fields: Object.assign({
       customerName: '王总',
       productName: '水杯',
@@ -63,14 +63,14 @@ function validAiOrder(fields = {}, extras = {}) {
       unit: '个',
       unitPrice: '5.5',
       priceUnit: '个',
-      dueDate: '2026-07-23'
+      dueDate: '2026-08-01'
     }, fields),
     field_evidence: {
       customerName: ['王总'],
       productName: ['水杯'],
       quantity: ['100个'],
       unitPrice: ['5.5元'],
-      dueDate: ['明天']
+      dueDate: ['2026年8月1日']
     },
     missing_fields: [],
     low_confidence_fields: [],
@@ -86,12 +86,12 @@ function validDeepOrder() {
       { productName: '礼品盒', quantity: '200', unit: '个', unitPrice: '3', priceUnit: '个' }
     ]
   }, {
-    original_text: '王总水杯100个每个5.5元，礼品盒200个每个3元，明天交',
+    original_text: '王总水杯100个每个5.5元，礼品盒200个每个3元，2026年8月1日交',
     field_evidence: {
       customerName: ['王总'],
       productName: ['水杯'],
       items: ['水杯100个；礼品盒200个'],
-      dueDate: ['明天']
+      dueDate: ['2026年8月1日']
     }
   });
 }

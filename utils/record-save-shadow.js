@@ -12,7 +12,7 @@ const RELATION_FIELDS = new Set([
 const TIME_FIELD_PATTERN = /(^|\.)(createdAt|updatedAt|completedAt|convertedAt|actualShipDate|lastDunningDate)$/;
 
 const LEGACY_PAGE_LIFECYCLE_INVENTORY = Object.freeze([
-  { id: 'app-launch-initialize', entry: 'onLaunch getState/saveState', callers: ['app'], sourceFiles: ['app.js'], phase1e1Support: 'OUT_OF_SCOPE', migrationPhase: 'STORAGE_COORDINATION', writeBehavior: 'ALWAYS_REPLACE_BUNDLE' },
+  { id: 'app-launch-initialize', entry: 'onLaunch initializeState', callers: ['app'], sourceFiles: ['app.js'], phase1e1Support: 'OUT_OF_SCOPE', migrationPhase: 'STORAGE_COORDINATION', writeBehavior: 'ALWAYS_REPLACE_BUNDLE' },
   { id: 'record-formal', entry: 'saveConfirmedDraft', callers: ['pages/input', 'pages/dashboard'], sourceFiles: ['pages/input/input.js', 'pages/dashboard/dashboard.js'], phase1e1Support: 'REPRESENTATIVE_ALLOWED_PATHS', migrationPhase: '1E.2B_MAIN', writeBehavior: 'PAGE_REPLACES_BUNDLE' },
   { id: 'record-pending', entry: 'savePendingNote', callers: ['pages/input', 'pages/dashboard'], sourceFiles: ['pages/input/input.js', 'pages/dashboard/dashboard.js'], phase1e1Support: 'REPRESENTATIVE_PATHS', migrationPhase: '1E.2B_MAIN', writeBehavior: 'PAGE_REPLACES_BUNDLE' },
   { id: 'editing-pending-update', entry: 'page-local pending update', callers: ['pages/input'], sourceFiles: ['pages/input/input.js'], phase1e1Support: 'NONE', migrationPhase: '1E.2B_PENDING', writeBehavior: 'PAGE_REPLACES_BUNDLE' },
@@ -35,7 +35,7 @@ const LEGACY_PAGE_LIFECYCLE_INVENTORY = Object.freeze([
 ]);
 
 const LEGACY_BUSINESS_BUNDLE_WRITE_SITES = Object.freeze([
-  { sourceFile: 'app.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['app-launch-initialize'] },
+  { sourceFile: 'app.js', callKind: 'initializeState', occurrence: 1, lifecycleIds: ['app-launch-initialize'] },
   { sourceFile: 'pages/pending/pending.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['pending-ignore'] },
   { sourceFile: 'pages/customer/customer.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['customer-merge'] },
   { sourceFile: 'pages/customer/customer.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['customer-review'] },

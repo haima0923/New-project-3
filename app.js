@@ -1,9 +1,8 @@
-const { getState, saveState } = require('./utils/storage');
+const { initializeState } = require('./utils/storage');
 
 App({
   onLaunch() {
-    const state = getState();
-    saveState(state);
+    initializeState();
   },
   globalData: {
     userId: 'local-user',

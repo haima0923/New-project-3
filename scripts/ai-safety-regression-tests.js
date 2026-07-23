@@ -27,10 +27,10 @@ function buildAiRequiredOrder(route = 'ai_standard') {
   return {
     intent: 'order',
     source: 'voice',
-    original_text: '王总订水杯100个，5块5一个，明天交',
+    original_text: '王总订水杯100个，5块5一个，2026年8月1日交',
     fields: {
       customerName: '王总', productName: '水杯', quantity: '100', unit: '个', unitPrice: '5.5',
-      amount: '550', dueDate: '2026-07-23', items: [{
+      amount: '550', dueDate: '2026-08-01', items: [{
         productName: '水杯', quantity: '100', unit: '个', unitPrice: '5.5', totalAmount: '550'
       }]
     },
@@ -288,7 +288,7 @@ function testClientAndBusinessDefenseInDepth() {
   });
 
   const multiLocal = buildAiRequiredOrder('ai_deep');
-  multiLocal.original_text = '王总订水杯100个5块5一个，礼品盒20套8元一套，明天交';
+  multiLocal.original_text = '王总订水杯100个5块5一个，礼品盒20套8元一套，2026年8月1日交';
   multiLocal.fields.items = [
     { productName: '水杯', quantity: '100', unit: '个', unitPrice: '5.5', totalAmount: '550' },
     { productName: '礼品盒', quantity: '20', unit: '套', unitPrice: '8', totalAmount: '160' }

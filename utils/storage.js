@@ -1,5 +1,8 @@
 const { LEGACY_BUSINESS_STORAGE_KEY: STORAGE_KEY } = require('./record-storage-adapter-contract');
+const { createRecordStorageCoordinator } = require('./record-storage-coordinator');
 const { maskPhone, simpleFingerprint } = require('./customer-identity');
+
+const LEGACY_STORAGE_COORDINATOR = createRecordStorageCoordinator({ mode: 'LEGACY_ONLY' });
 
 function createInitialState() {
   return {
@@ -35,21 +38,19 @@ function createInitialState() {
 }
 
 function getState() {
-  const state = wx.getStorageSync(STORAGE_KEY);
-  if (!state) return createInitialState();
-  return Object.assign(createInitialState(), state);
+  return LEGACY_STORAGE_COORDINATOR.readState(createInitialState);
 }
 
-function saveState(state) {
-  wx.setStorageSync(STORAGE_KEY, state);
-  return state;
+function saveState(state, options) {
+  return LEGACY_STORAGE_COORDINATOR.writeLegacyState(state, options);
 }
 
-function updateState(mutator) {
-  const state = getState();
-  const nextState = mutator(state) || state;
-  saveState(nextState);
-  return nextState;
+function updateState(mutator, options) {
+  return LEGACY_STORAGE_COORDINATOR.updateLegacyState(createInitialState, mutator, options);
+}
+
+function initializeState(options) {
+  return LEGACY_STORAGE_COORDINATOR.initializeLegacyState(createInitialState, options);
 }
 
 function generateId(prefix) {
@@ -93,6 +94,7 @@ module.exports = {
   generateId,
   getCustomerDisplay,
   getState,
+  initializeState,
   maskPhone,
   normalizeCustomer,
   saveState,

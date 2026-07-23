@@ -1,4 +1,6 @@
-const STORAGE_KEY = 'yiwu_boss_ai_assistant_v1';
+function getRootStorageFacade() {
+  return require('../../utils/storage');
+}
 
 function createInitialState() {
   return {
@@ -34,21 +36,15 @@ function createInitialState() {
 }
 
 function getState() {
-  const state = wx.getStorageSync(STORAGE_KEY);
-  if (!state) return createInitialState();
-  return Object.assign(createInitialState(), state);
+  return getRootStorageFacade().getState();
 }
 
-function saveState(state) {
-  wx.setStorageSync(STORAGE_KEY, state);
-  return state;
+function saveState(state, options) {
+  return getRootStorageFacade().saveState(state, options);
 }
 
-function updateState(mutator) {
-  const state = getState();
-  const nextState = mutator(state) || state;
-  saveState(nextState);
-  return nextState;
+function updateState(mutator, options) {
+  return getRootStorageFacade().updateState(mutator, options);
 }
 
 function generateId(prefix) {

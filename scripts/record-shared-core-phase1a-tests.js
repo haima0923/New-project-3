@@ -60,6 +60,8 @@ function toLegacyPayload(input) {
     source: input.inputSource === 'chat' ? 'paste' : input.inputSource,
     context: input.context || 'home',
     reviewMode: input.reviewMode || 'standard',
+    businessDate: input.businessDate,
+    businessTimezone: input.businessTimezone,
     state: JSON.parse(JSON.stringify(input.initialState || {})),
     rawMessages: JSON.parse(JSON.stringify(input.rawMessages || [])),
     pasteMeta: input.pasteMeta || null

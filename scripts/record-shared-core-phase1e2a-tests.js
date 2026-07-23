@@ -442,9 +442,10 @@ test('全部物理业务bundle写入点均有生命周期分类，代表性边�
   const writers = writerFiles.map((file) => ({
     file,
     source: fs.readFileSync(path.join(root, file), 'utf8')
-  })).filter((item) => /\b(?:saveState|updateState)\s*\(/.test(item.source));
+  })).filter((item) => /\b(?:initializeState|saveState|updateState)\s*\(/.test(item.source));
   const callCount = writers.reduce((sum, item) => (
-    sum + (item.source.match(/\bsaveState\s*\(/g) || []).length
+    sum + (item.source.match(/\binitializeState\s*\(/g) || []).length
+      + (item.source.match(/\bsaveState\s*\(/g) || []).length
       + (item.source.match(/\bupdateState\s*\(/g) || []).length
   ), 0);
   assert.strictEqual(callCount, 23);
@@ -452,8 +453,8 @@ test('全部物理业务bundle写入点均有生命周期分类，代表性边�
   const classifiedFiles = new Set(LEGACY_PAGE_LIFECYCLE_INVENTORY.flatMap((item) => item.sourceFiles || []));
   writers.forEach((item) => assert(classifiedFiles.has(item.file), `unclassified bundle writer: ${item.file}`));
   const discoveredSites = writers.flatMap((item) => {
-    const perKind = { saveState: 0, updateState: 0 };
-    return Array.from(item.source.matchAll(/\b(saveState|updateState)\s*\(/g)).map((match) => {
+    const perKind = { initializeState: 0, saveState: 0, updateState: 0 };
+    return Array.from(item.source.matchAll(/\b(initializeState|saveState|updateState)\s*\(/g)).map((match) => {
       perKind[match[1]] += 1;
       return { sourceFile: item.file, callKind: match[1], occurrence: perKind[match[1]] };
     });

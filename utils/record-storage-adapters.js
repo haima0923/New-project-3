@@ -15,8 +15,13 @@ const {
 const { commitRecordSavePlan } = require('./record-save-commit');
 const { createRecordMemoryStore } = require('./record-memory-store');
 const { getStateFingerprint, safeClone } = require('./record-state-diff');
+const {
+  createFakeStorageGateway,
+  createWxStorageGateway,
+  getTrustedGatewayIdentity,
+  utf8ByteLength
+} = require('./record-storage-gateways');
 
-const TRUSTED_GATEWAYS = new WeakMap();
 const TRUSTED_ADAPTERS = new WeakMap();
 const TRUSTED_SNAPSHOTS = new WeakMap();
 
@@ -26,134 +31,6 @@ function adapterError(code, message, details = {}) {
     message,
     details: safeClone(details)
   };
-}
-
-function validateGatewayShape(gateway) {
-  if (!gateway || typeof gateway !== 'object'
-    || typeof gateway.getStorageSync !== 'function'
-    || typeof gateway.setStorageSync !== 'function'
-    || typeof gateway.removeStorageSync !== 'function') {
-    throw Object.assign(new Error('Storage gateway合同不完整。'), {
-      code: STORAGE_ADAPTER_ERROR_CODES.STORAGE_GATEWAY_INVALID
-    });
-  }
-}
-
-function registerGateway(gateway, descriptor) {
-  validateGatewayShape(gateway);
-  TRUSTED_GATEWAYS.set(gateway, Object.freeze(Object.assign({}, descriptor)));
-  return gateway;
-}
-
-function getTrustedGatewayIdentity(gateway) {
-  const descriptor = TRUSTED_GATEWAYS.get(gateway);
-  return descriptor ? safeClone(descriptor) : null;
-}
-
-function createWxStorageGateway() {
-  if (arguments.length > 0) {
-    throw Object.assign(new Error('微信Storage gateway只能在平台组合根绑定真实wx。'), {
-      code: STORAGE_ADAPTER_ERROR_CODES.STORAGE_GATEWAY_INVALID
-    });
-  }
-  const wxApi = typeof globalThis !== 'undefined' ? globalThis.wx : null;
-  validateGatewayShape(wxApi);
-  const gateway = {
-    getStorageSync(key) {
-      return wxApi.getStorageSync(key);
-    },
-    setStorageSync(key, value) {
-      return wxApi.setStorageSync(key, value);
-    },
-    removeStorageSync(key) {
-      return wxApi.removeStorageSync(key);
-    },
-    listStorageKeysSync() {
-      if (typeof wxApi.getStorageInfoSync !== 'function') return null;
-      const result = wxApi.getStorageInfoSync();
-      return result && Array.isArray(result.keys) ? result.keys.slice() : null;
-    }
-  };
-  return registerGateway(gateway, {
-    gatewayKind: STORAGE_TARGET_KINDS.WX_LEGACY,
-    canTouchRealStorage: true,
-    source: 'WX_API'
-  });
-}
-
-function normalizeFailureInjection(value) {
-  if (!value || typeof value !== 'object') return null;
-  return {
-    phase: String(value.phase || ''),
-    key: String(value.key || ''),
-    code: String(value.code || 'FAKE_STORAGE_INJECTED_FAILURE')
-  };
-}
-
-function createFakeStorageGateway(initialEntries = {}, options = {}) {
-  let entries = safeClone(initialEntries || {});
-  let failure = normalizeFailureInjection(options.failureInjection);
-  const events = [];
-  let reads = 0;
-  let writes = 0;
-  let removals = 0;
-
-  function maybeFail(phase, key) {
-    if (!failure || failure.phase !== phase) return;
-    if (failure.key && failure.key !== String(key || '')) return;
-    const error = new Error(failure.code);
-    error.code = failure.code;
-    throw error;
-  }
-
-  const gateway = {
-    getStorageSync(key) {
-      maybeFail('BEFORE_GET', key);
-      reads += 1;
-      events.push({ type: 'GET', key: String(key) });
-      const value = safeClone(entries[key]);
-      maybeFail('AFTER_GET', key);
-      return value;
-    },
-    setStorageSync(key, value) {
-      maybeFail('BEFORE_SET', key);
-      writes += 1;
-      events.push({ type: 'SET', key: String(key) });
-      if (!failure || failure.phase !== 'SILENT_NOOP' || (failure.key && failure.key !== String(key))) {
-        entries[key] = safeClone(value);
-      }
-      maybeFail('AFTER_SET', key);
-      return undefined;
-    },
-    removeStorageSync(key) {
-      maybeFail('BEFORE_REMOVE', key);
-      removals += 1;
-      events.push({ type: 'REMOVE', key: String(key) });
-      delete entries[key];
-      maybeFail('AFTER_REMOVE', key);
-      return undefined;
-    },
-    listStorageKeysSync() {
-      return Object.keys(entries).sort();
-    },
-    getStats() {
-      return { reads, writes, removals, events: safeClone(events) };
-    },
-    getEntries() {
-      return safeClone(entries);
-    },
-    setFailureInjection(value) {
-      failure = normalizeFailureInjection(value);
-    },
-    clearFailureInjection() {
-      failure = null;
-    }
-  };
-  return registerGateway(gateway, {
-    gatewayKind: STORAGE_TARGET_KINDS.FAKE,
-    canTouchRealStorage: false,
-    source: 'IN_MEMORY_FAKE'
-  });
 }
 
 function readGatewayEntries(gateway) {
@@ -343,7 +220,7 @@ function createLegacyStorageAdapter(options = {}) {
     }
   };
   TRUSTED_ADAPTERS.set(adapter, identity);
-  return adapter;
+  return Object.freeze(adapter);
 }
 
 function getTrustedStorageAdapterIdentity(adapter) {
@@ -361,5 +238,6 @@ module.exports = {
   createWxStorageGateway,
   getTrustedGatewayIdentity,
   getTrustedStorageAdapterIdentity,
-  isTrustedStorageAdapter
+  isTrustedStorageAdapter,
+  utf8ByteLength
 };
