@@ -148,7 +148,9 @@ test('23个Legacy Writer和app初始化全部经过统一存储门面且没有�
   const infrastructureWriteAllowlist = new Set([
     'utils/record-storage-coordinator.js',
     'utils/record-storage-gateways.js',
-    'utils/record-storage-transaction.js'
+    'utils/record-storage-runtime-test-gateway.js',
+    'utils/record-storage-transaction.js',
+    'utils/record-storage-wx-runtime-harness.js'
   ]);
   const nonBusinessWriteAllowlist = new Set([
     'pages/dashboard/dashboard.js',
