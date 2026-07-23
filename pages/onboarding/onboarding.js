@@ -257,7 +257,7 @@ Page({
         state.meta = state.meta || {};
         state.meta.onboarded = true;
         return state;
-      });
+      }, { writerSource: 'ONBOARDING_META' });
       wx.switchTab({
         url: '/pages/input/input',
         fail: () => {

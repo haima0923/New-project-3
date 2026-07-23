@@ -306,7 +306,7 @@ Page({
       });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'ORDER_STATUS' });
     wx.showToast({ title: '进度已更新', icon: 'success' });
     this.load();
   },
@@ -320,7 +320,7 @@ Page({
       wx.showToast({ title: '交期没有保存，请重试', icon: 'none' });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'ORDER_DELIVERY' });
     wx.showToast({ title: '交期已更新', icon: 'success' });
     this.load();
   },
@@ -337,7 +337,7 @@ Page({
     const id = event.currentTarget.dataset.id;
     const state = getState();
     const receivable = generateReceivableFromOrder(state, id);
-    saveState(state);
+    saveState(state, { writerSource: 'ORDER_GENERATE_RECEIVABLE' });
     wx.showToast({
       title: receivable ? '已生成应收款' : '生成失败',
       icon: receivable ? 'success' : 'none'

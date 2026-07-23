@@ -56,7 +56,7 @@ Page({
     const state = getState();
     const needsCatalogMigration = !Array.isArray(state.productCatalog);
     const productCatalog = ensureProductCatalog(state);
-    if (needsCatalogMigration) saveState(state);
+    if (needsCatalogMigration) saveState(state, { writerSource: 'CATALOG_AUTO_MIGRATION' });
     const app = typeof getApp === 'function' ? getApp() : null;
     const globalData = app && app.globalData ? app.globalData : {};
     this.setData({
@@ -126,7 +126,7 @@ Page({
       wx.showToast({ title: '商品没有保存，请重试', icon: 'none' });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'CATALOG_MANUAL_SAVE' });
     wx.showToast({ title: '商品规格库已更新', icon: 'success' });
     this.setData({ showCatalogEditor: false, catalogEditId: '' });
     this.onShow();
@@ -148,7 +148,7 @@ Page({
           wx.showToast({ title: '没有找到这个商品', icon: 'none' });
           return;
         }
-        saveState(state);
+        saveState(state, { writerSource: 'CATALOG_MANUAL_DELETE' });
         wx.showToast({ title: '已从商品库移除', icon: 'success' });
         this.onShow();
       }

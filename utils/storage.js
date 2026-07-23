@@ -1,8 +1,12 @@
 const { LEGACY_BUSINESS_STORAGE_KEY: STORAGE_KEY } = require('./record-storage-adapter-contract');
-const { createRecordStorageCoordinator } = require('./record-storage-coordinator');
+const { createWxStorageGateway } = require('./record-storage-gateways');
+const { createRecordStorageReleaseAMonitor } = require('./record-storage-release-monitor');
+const {
+  createLegacyReleaseARecordStorageCoordinator
+} = require('./record-storage-transaction');
 const { maskPhone, simpleFingerprint } = require('./customer-identity');
 
-const LEGACY_STORAGE_COORDINATOR = createRecordStorageCoordinator({ mode: 'LEGACY_ONLY' });
+let RELEASE_A_STORAGE_FACADE = null;
 
 function createInitialState() {
   return {
@@ -37,20 +41,87 @@ function createInitialState() {
   };
 }
 
-function getState() {
-  return LEGACY_STORAGE_COORDINATOR.readState(createInitialState);
+function createReleaseAStorageFacade(options = {}) {
+  const monitor = options.monitor || createRecordStorageReleaseAMonitor(options.monitorOptions);
+  const coordinator = createLegacyReleaseARecordStorageCoordinator(
+    Object.assign({}, options, { monitor })
+  );
+  return Object.freeze({
+    getIdentity() {
+      return coordinator.getIdentity();
+    },
+    getMonitorEvents() {
+      return monitor.getEvents();
+    },
+    getMonitorPolicy() {
+      return monitor.getPolicy();
+    },
+    getState(readOptions) {
+      return coordinator.readState(createInitialState, readOptions);
+    },
+    saveState(state, writeOptions) {
+      return coordinator.writeLegacyState(state, writeOptions);
+    },
+    updateState(mutator, writeOptions) {
+      return coordinator.updateLegacyState(createInitialState, mutator, writeOptions);
+    },
+    initializeState(writeOptions) {
+      return coordinator.initializeLegacyState(createInitialState, writeOptions);
+    },
+    prepareRecordStorageInfrastructure(startupOptions) {
+      return coordinator.startLegacyStorageInfrastructure(createInitialState, startupOptions);
+    },
+    getLastWriteResult() {
+      return coordinator.getLastLegacyWriteResult();
+    },
+    getLastStartupResult() {
+      return coordinator.getLastStartupResult();
+    },
+    isRecoveryLocked() {
+      return coordinator.isRecoveryLocked();
+    }
+  });
+}
+
+function getReleaseAStorageFacade() {
+  if (!RELEASE_A_STORAGE_FACADE) {
+    RELEASE_A_STORAGE_FACADE = createReleaseAStorageFacade({
+      gateway: createWxStorageGateway()
+    });
+  }
+  return RELEASE_A_STORAGE_FACADE;
+}
+
+function getState(options) {
+  return getReleaseAStorageFacade().getState(options);
 }
 
 function saveState(state, options) {
-  return LEGACY_STORAGE_COORDINATOR.writeLegacyState(state, options);
+  return getReleaseAStorageFacade().saveState(state, options);
 }
 
 function updateState(mutator, options) {
-  return LEGACY_STORAGE_COORDINATOR.updateLegacyState(createInitialState, mutator, options);
+  return getReleaseAStorageFacade().updateState(mutator, options);
 }
 
 function initializeState(options) {
-  return LEGACY_STORAGE_COORDINATOR.initializeLegacyState(createInitialState, options);
+  return getReleaseAStorageFacade().initializeState(options);
+}
+
+function prepareRecordStorageInfrastructure(options) {
+  return getReleaseAStorageFacade().prepareRecordStorageInfrastructure(options);
+}
+
+function getRecordStorageInfrastructureStatus() {
+  const facade = getReleaseAStorageFacade();
+  return {
+    identity: facade.getIdentity(),
+    recoveryLocked: facade.isRecoveryLocked(),
+    lastWriteResult: facade.getLastWriteResult(),
+    lastStartupResult: facade.getLastStartupResult(),
+    monitorPolicy: facade.getMonitorPolicy(),
+    monitorEvents: facade.getMonitorEvents()
+  };
 }
 
 function generateId(prefix) {
@@ -90,13 +161,16 @@ function getCustomerDisplay(customer) {
 
 module.exports = {
   STORAGE_KEY,
+  createReleaseAStorageFacade,
   createInitialState,
   generateId,
   getCustomerDisplay,
+  getRecordStorageInfrastructureStatus,
   getState,
   initializeState,
   maskPhone,
   normalizeCustomer,
+  prepareRecordStorageInfrastructure,
   saveState,
   simpleFingerprint,
   updateState

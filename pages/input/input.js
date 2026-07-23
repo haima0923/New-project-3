@@ -2207,7 +2207,7 @@ Page({
     } else {
       markPendingNoteConverted(state, this.data.editingPendingId, saved);
     }
-    saveState(state);
+    saveState(state, { writerSource: 'INPUT_FORMAL' });
     wx.showToast({
       title: saved.type === 'pending' ? '已存到待整理' : '已保存',
       icon: 'success'
@@ -2226,7 +2226,7 @@ Page({
     const reason = confirmationState.parseResult.history_warning_text || '用户选择稍后整理';
     const existingPending = updatePendingNote(state, this.data.editingPendingId, confirmationState.parseResult, reason);
     if (!existingPending) savePendingNote(state, confirmationState.parseResult, reason);
-    saveState(state);
+    saveState(state, { writerSource: 'INPUT_PENDING' });
     wx.showToast({ title: '已存到待整理', icon: 'success' });
     this.setData(getEmptyConfirmationData());
   }

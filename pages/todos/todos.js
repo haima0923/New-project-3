@@ -85,7 +85,7 @@ Page({
       wx.showToast({ title: '待办不存在', icon: 'none' });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'TODO_COMPLETE' });
     wx.showToast({ title: '已完成', icon: 'success' });
     this.load();
   }

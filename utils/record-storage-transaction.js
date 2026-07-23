@@ -27,6 +27,8 @@ const {
 const { safeClone, stableHash, stableSerialize } = require('./record-state-diff');
 
 const HIGH_RISK_LEVELS = new Set(['DANGEROUS', 'ZERO_TOLERANCE', 'FINANCIAL']);
+const LEGACY_RELEASE_A_TRANSACTION_AUTHORITY = Object.freeze({});
+const TRUSTED_TRANSACTION_MANAGERS = new WeakMap();
 
 function utf8ByteLength(value) {
   const text = JSON.stringify(value);
@@ -462,7 +464,7 @@ function verifySealedRecord(record, fingerprintField, prefix) {
     && record[fingerprintField] === recordFingerprint(record, fingerprintField, prefix));
 }
 
-function createPersistentRecordTransactionManager(options = {}) {
+function createTransactionManager(options = {}, authority = null) {
   const gateway = options.gateway;
   const gatewayIdentity = getTrustedGatewayIdentity(gateway);
   const isFake = gatewayIdentity
@@ -472,13 +474,22 @@ function createPersistentRecordTransactionManager(options = {}) {
     && gatewayIdentity.gatewayKind === STORAGE_TARGET_KINDS.WX_ISOLATED_TEST
     && gatewayIdentity.canTouchRealStorage === true
     && gatewayIdentity.runtimeTestOnly === true;
-  if (!isFake && !isIsolatedWxRuntimeTest) {
+  const isLegacyReleaseA = authority === LEGACY_RELEASE_A_TRANSACTION_AUTHORITY
+    && options.mode === RECORD_STORAGE_COORDINATOR_MODES.LEGACY_ONLY
+    && gatewayIdentity
+    && (
+      isFake
+      || isIsolatedWxRuntimeTest
+      || (gatewayIdentity.gatewayKind === STORAGE_TARGET_KINDS.WX_LEGACY
+        && gatewayIdentity.canTouchRealStorage === true)
+    );
+  if (!isFake && !isIsolatedWxRuntimeTest && !isLegacyReleaseA) {
     throw makeError(
       RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_TRANSACTION_MODE_FORBIDDEN,
-      '持久化事务只允许受保护Fake或微信开发者工具隔离测试Gateway。'
+      '持久化事务只允许受保护Fake、微信开发者工具隔离测试Gateway或Release A Legacy生产协调器。'
     );
   }
-  if (options.mode !== RECORD_STORAGE_COORDINATOR_MODES.TRANSACTION_PREVIEW) {
+  if (options.mode !== RECORD_STORAGE_COORDINATOR_MODES.TRANSACTION_PREVIEW && !isLegacyReleaseA) {
     throw makeError(
       RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_TRANSACTION_MODE_FORBIDDEN,
       '生产共享Commit仍禁用；事务只能显式运行于TRANSACTION_PREVIEW。'
@@ -879,7 +890,9 @@ function createPersistentRecordTransactionManager(options = {}) {
         receiptHash,
         status: RECORD_STORAGE_TRANSACTION_STATES.PREPARED,
         createdAt: now,
-        writerSource: String(input.writerSource || 'TEST_TRANSACTION_PREVIEW')
+        writerSource: String(input.writerSource || (isLegacyReleaseA
+          ? 'LEGACY_RELEASE_A'
+          : 'TEST_TRANSACTION_PREVIEW'))
       }, 'journalFingerprint', 'journal1');
       const mainWriteStartedJournal = sealRecord(Object.assign({}, preparedJournal, {
         status: RECORD_STORAGE_TRANSACTION_STATES.MAIN_WRITE_STARTED
@@ -1019,12 +1032,44 @@ function createPersistentRecordTransactionManager(options = {}) {
     }
   }
 
-  return Object.freeze({
+  const manager = Object.freeze({
     commitBundle,
     getPersistentReceipt,
     readTransactionSnapshot: readPrimary,
     recover
   });
+  TRUSTED_TRANSACTION_MANAGERS.set(manager, Object.freeze({
+    gateway,
+    gatewayKind: gatewayIdentity && gatewayIdentity.gatewayKind || 'UNKNOWN',
+    legacyReleaseA: isLegacyReleaseA,
+    mode: options.mode
+  }));
+  return manager;
+}
+
+function createPersistentRecordTransactionManager(options = {}) {
+  return createTransactionManager(options);
+}
+
+function getTrustedRecordStorageTransactionManagerIdentity(manager) {
+  const identity = TRUSTED_TRANSACTION_MANAGERS.get(manager);
+  return identity ? Object.assign({}, identity) : null;
+}
+
+function createLegacyReleaseARecordStorageCoordinator(options = {}) {
+  const transactionManager = createTransactionManager(
+    Object.assign({}, options, { mode: RECORD_STORAGE_COORDINATOR_MODES.LEGACY_ONLY }),
+    LEGACY_RELEASE_A_TRANSACTION_AUTHORITY
+  );
+  // 延迟加载避免 transaction/coordinator 初始化循环。低层 Legacy manager 不导出；
+  // 平台组合根只能取得完整 Coordinator，不能绕过上下文、锁、来源和监测。
+  const {
+    createReleaseARecordStorageCoordinatorFromTransactionManager
+  } = require('./record-storage-coordinator');
+  return createReleaseARecordStorageCoordinatorFromTransactionManager(
+    options,
+    transactionManager
+  );
 }
 
 function recoverRecordStorageTransaction(input = {}) {
@@ -1035,8 +1080,10 @@ function recoverRecordStorageTransaction(input = {}) {
 module.exports = {
   assertPlainSerializable,
   bundleFingerprint,
+  createLegacyReleaseARecordStorageCoordinator,
   createPersistentRecordTransactionManager,
   defaultControl,
+  getTrustedRecordStorageTransactionManagerIdentity,
   recoverRecordStorageTransaction,
   strictClone,
   verifyBundle

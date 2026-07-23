@@ -12,7 +12,7 @@ const RELATION_FIELDS = new Set([
 const TIME_FIELD_PATTERN = /(^|\.)(createdAt|updatedAt|completedAt|convertedAt|actualShipDate|lastDunningDate)$/;
 
 const LEGACY_PAGE_LIFECYCLE_INVENTORY = Object.freeze([
-  { id: 'app-launch-initialize', entry: 'onLaunch initializeState', callers: ['app'], sourceFiles: ['app.js'], phase1e1Support: 'OUT_OF_SCOPE', migrationPhase: 'STORAGE_COORDINATION', writeBehavior: 'ALWAYS_REPLACE_BUNDLE' },
+  { id: 'app-launch-initialize', entry: 'onLaunch prepareRecordStorageInfrastructure', callers: ['app'], sourceFiles: ['app.js'], phase1e1Support: 'OUT_OF_SCOPE', migrationPhase: 'STORAGE_COORDINATION', writeBehavior: 'RECOVER_THEN_CONDITIONAL_TRANSACTION_INITIALIZE' },
   { id: 'record-formal', entry: 'saveConfirmedDraft', callers: ['pages/input', 'pages/dashboard'], sourceFiles: ['pages/input/input.js', 'pages/dashboard/dashboard.js'], phase1e1Support: 'REPRESENTATIVE_ALLOWED_PATHS', migrationPhase: '1E.2B_MAIN', writeBehavior: 'PAGE_REPLACES_BUNDLE' },
   { id: 'record-pending', entry: 'savePendingNote', callers: ['pages/input', 'pages/dashboard'], sourceFiles: ['pages/input/input.js', 'pages/dashboard/dashboard.js'], phase1e1Support: 'REPRESENTATIVE_PATHS', migrationPhase: '1E.2B_MAIN', writeBehavior: 'PAGE_REPLACES_BUNDLE' },
   { id: 'editing-pending-update', entry: 'page-local pending update', callers: ['pages/input'], sourceFiles: ['pages/input/input.js'], phase1e1Support: 'NONE', migrationPhase: '1E.2B_PENDING', writeBehavior: 'PAGE_REPLACES_BUNDLE' },
@@ -35,29 +35,29 @@ const LEGACY_PAGE_LIFECYCLE_INVENTORY = Object.freeze([
 ]);
 
 const LEGACY_BUSINESS_BUNDLE_WRITE_SITES = Object.freeze([
-  { sourceFile: 'app.js', callKind: 'initializeState', occurrence: 1, lifecycleIds: ['app-launch-initialize'] },
-  { sourceFile: 'pages/pending/pending.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['pending-ignore'] },
-  { sourceFile: 'pages/customer/customer.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['customer-merge'] },
-  { sourceFile: 'pages/customer/customer.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['customer-review'] },
-  { sourceFile: 'pages/onboarding/onboarding.js', callKind: 'updateState', occurrence: 1, lifecycleIds: ['onboarding-meta'] },
-  { sourceFile: 'pages/todos/todos.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['todo-complete'] },
-  { sourceFile: 'pages/records/records.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['soft-delete'] },
-  { sourceFile: 'pages/receivables/receivables.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['direct-payment'] },
-  { sourceFile: 'pages/receivables/receivables.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['direct-dunning'] },
-  { sourceFile: 'pages/dashboard/dashboard.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['record-formal'] },
-  { sourceFile: 'pages/dashboard/dashboard.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['record-pending'] },
-  { sourceFile: 'pages/orders/orders.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['order-status'] },
-  { sourceFile: 'pages/orders/orders.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['order-delivery'] },
-  { sourceFile: 'pages/orders/orders.js', callKind: 'saveState', occurrence: 3, lifecycleIds: ['order-generate-receivable'] },
-  { sourceFile: 'pages/finance/finance.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['direct-payment'] },
-  { sourceFile: 'pages/finance/finance.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['direct-dunning'] },
-  { sourceFile: 'pages/finance/finance.js', callKind: 'saveState', occurrence: 3, lifecycleIds: ['order-generate-receivable'] },
-  { sourceFile: 'pages/quotations/quotations.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['quotation-convert'] },
-  { sourceFile: 'pages/profile/profile.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['product-catalog-auto-migration'] },
-  { sourceFile: 'pages/profile/profile.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['product-catalog-manual-save'] },
-  { sourceFile: 'pages/profile/profile.js', callKind: 'saveState', occurrence: 3, lifecycleIds: ['product-catalog-manual-delete'] },
-  { sourceFile: 'pages/input/input.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['record-formal', 'editing-pending-update', 'editing-pending-convert'] },
-  { sourceFile: 'pages/input/input.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['record-pending', 'editing-pending-update'] }
+  { sourceFile: 'app.js', callKind: 'prepareRecordStorageInfrastructure', occurrence: 1, lifecycleIds: ['app-launch-initialize'], writerSource: 'APP_LAUNCH_INITIALIZE' },
+  { sourceFile: 'pages/pending/pending.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['pending-ignore'], writerSource: 'PENDING_IGNORE' },
+  { sourceFile: 'pages/customer/customer.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['customer-merge'], writerSource: 'CUSTOMER_MERGE' },
+  { sourceFile: 'pages/customer/customer.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['customer-review'], writerSource: 'CUSTOMER_DUPLICATE_REVIEW' },
+  { sourceFile: 'pages/onboarding/onboarding.js', callKind: 'updateState', occurrence: 1, lifecycleIds: ['onboarding-meta'], writerSource: 'ONBOARDING_META' },
+  { sourceFile: 'pages/todos/todos.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['todo-complete'], writerSource: 'TODO_COMPLETE' },
+  { sourceFile: 'pages/records/records.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['soft-delete'], writerSource: 'RECORD_SOFT_DELETE' },
+  { sourceFile: 'pages/receivables/receivables.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['direct-payment'], writerSource: 'RECEIVABLE_PAYMENT' },
+  { sourceFile: 'pages/receivables/receivables.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['direct-dunning'], writerSource: 'RECEIVABLE_DUNNING' },
+  { sourceFile: 'pages/dashboard/dashboard.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['record-formal'], writerSource: 'DASHBOARD_FORMAL' },
+  { sourceFile: 'pages/dashboard/dashboard.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['record-pending'], writerSource: 'DASHBOARD_PENDING' },
+  { sourceFile: 'pages/orders/orders.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['order-status'], writerSource: 'ORDER_STATUS' },
+  { sourceFile: 'pages/orders/orders.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['order-delivery'], writerSource: 'ORDER_DELIVERY' },
+  { sourceFile: 'pages/orders/orders.js', callKind: 'saveState', occurrence: 3, lifecycleIds: ['order-generate-receivable'], writerSource: 'ORDER_GENERATE_RECEIVABLE' },
+  { sourceFile: 'pages/finance/finance.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['direct-payment'], writerSource: 'FINANCE_PAYMENT' },
+  { sourceFile: 'pages/finance/finance.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['direct-dunning'], writerSource: 'FINANCE_DUNNING' },
+  { sourceFile: 'pages/finance/finance.js', callKind: 'saveState', occurrence: 3, lifecycleIds: ['order-generate-receivable'], writerSource: 'FINANCE_GENERATE_RECEIVABLE' },
+  { sourceFile: 'pages/quotations/quotations.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['quotation-convert'], writerSource: 'QUOTATION_CONVERT' },
+  { sourceFile: 'pages/profile/profile.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['product-catalog-auto-migration'], writerSource: 'CATALOG_AUTO_MIGRATION' },
+  { sourceFile: 'pages/profile/profile.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['product-catalog-manual-save'], writerSource: 'CATALOG_MANUAL_SAVE' },
+  { sourceFile: 'pages/profile/profile.js', callKind: 'saveState', occurrence: 3, lifecycleIds: ['product-catalog-manual-delete'], writerSource: 'CATALOG_MANUAL_DELETE' },
+  { sourceFile: 'pages/input/input.js', callKind: 'saveState', occurrence: 1, lifecycleIds: ['record-formal', 'editing-pending-update', 'editing-pending-convert'], writerSource: 'INPUT_FORMAL' },
+  { sourceFile: 'pages/input/input.js', callKind: 'saveState', occurrence: 2, lifecycleIds: ['record-pending', 'editing-pending-update'], writerSource: 'INPUT_PENDING' }
 ]);
 
 function diffHasChanges(entry = {}) {

@@ -62,7 +62,7 @@ Page({
       wx.showToast({ title: '这笔收款没有保存，请重试', icon: 'none' });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'RECEIVABLE_PAYMENT' });
     wx.showToast({ title: payment.completedOrderId ? '订单已完成' : '收款已记录', icon: 'success' });
     this.setData({
       [`paymentAmounts.${id}`]: ''
@@ -86,7 +86,7 @@ Page({
     const state = getState();
     const message = generateDunningMessage(state, id, 'polite');
     recordDunning(state, id, message);
-    saveState(state);
+    saveState(state, { writerSource: 'RECEIVABLE_DUNNING' });
     wx.showToast({ title: '已记录催款', icon: 'success' });
     this.load();
   }

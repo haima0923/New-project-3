@@ -91,7 +91,7 @@ Page({
     const mergeId = event.currentTarget.dataset.id;
     const state = getState();
     const merged = mergeCustomer(state, this.data.id, mergeId);
-    saveState(state);
+    saveState(state, { writerSource: 'CUSTOMER_MERGE' });
     wx.showToast({ title: merged ? '已合并客户' : '合并失败', icon: merged ? 'success' : 'none' });
     this.load();
   },
@@ -101,7 +101,7 @@ Page({
     const state = getState();
     markDuplicateCustomerReviewed(state, this.data.id);
     markDuplicateCustomerReviewed(state, candidateId);
-    saveState(state);
+    saveState(state, { writerSource: 'CUSTOMER_DUPLICATE_REVIEW' });
     wx.showToast({ title: '已标记为不同客户', icon: 'success' });
     this.load();
   },

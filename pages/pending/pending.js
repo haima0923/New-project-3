@@ -37,7 +37,7 @@ Page({
     if (note) {
       note.status = '已忽略';
       note.updatedAt = new Date().toISOString();
-      saveState(state);
+      saveState(state, { writerSource: 'PENDING_IGNORE' });
       wx.showToast({ title: '已忽略', icon: 'success' });
       this.load();
     }

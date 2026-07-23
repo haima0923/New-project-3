@@ -120,7 +120,7 @@ Page({
           this.closeSwipe();
           return;
         }
-        saveState(state);
+        saveState(state, { writerSource: 'RECORD_SOFT_DELETE' });
         wx.showToast({ title: '已删除并记录日志', icon: 'success' });
         this.load();
       }

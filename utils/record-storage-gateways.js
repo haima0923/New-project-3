@@ -15,23 +15,31 @@ function createWxStorageGateway() {
   if (arguments.length > 0) {
     throw gatewayError('微信Storage gateway只能在平台组合根绑定真实wx。');
   }
-  const wxApi = typeof globalThis !== 'undefined' ? globalThis.wx : null;
-  validateGatewayShape(wxApi);
+  const initialWxApi = typeof globalThis !== 'undefined' ? globalThis.wx : null;
+  validateGatewayShape(initialWxApi);
+  function getWxApi() {
+    const current = typeof globalThis !== 'undefined' ? globalThis.wx : null;
+    validateGatewayShape(current);
+    return current;
+  }
   const gateway = {
-    getStorageSync(key) { return wxApi.getStorageSync(key); },
-    setStorageSync(key, value) { return wxApi.setStorageSync(key, value); },
-    removeStorageSync(key) { return wxApi.removeStorageSync(key); },
+    getStorageSync(key) { return getWxApi().getStorageSync(key); },
+    setStorageSync(key, value) { return getWxApi().setStorageSync(key, value); },
+    removeStorageSync(key) { return getWxApi().removeStorageSync(key); },
     listStorageKeysSync() {
+      const wxApi = getWxApi();
       if (typeof wxApi.getStorageInfoSync !== 'function') return null;
       const result = wxApi.getStorageInfoSync();
       return result && Array.isArray(result.keys) ? result.keys.slice() : null;
     },
     hasStorageKeySync(key) {
+      const wxApi = getWxApi();
       if (typeof wxApi.getStorageInfoSync !== 'function') return null;
       const result = wxApi.getStorageInfoSync();
       return Boolean(result && Array.isArray(result.keys) && result.keys.includes(String(key)));
     },
     getCapacityInfo() {
+      const wxApi = getWxApi();
       if (typeof wxApi.getStorageInfoSync !== 'function') {
         return { capacityConfirmed: false };
       }

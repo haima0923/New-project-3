@@ -1,14 +1,18 @@
-const { initializeState } = require('./utils/storage');
+const { prepareRecordStorageInfrastructure } = require('./utils/storage');
 
 App({
   onLaunch() {
-    initializeState();
+    const startup = prepareRecordStorageInfrastructure();
+    this.globalData.recordStorageRecoveryLocked = Boolean(startup && startup.writeBlocked);
+    this.globalData.recordStorageStartupStatus = startup && startup.status || '';
   },
   globalData: {
     userId: 'local-user',
     apiBaseUrl: 'https://api.baizeji.com',
     aiAuthEnabled: true,
     aiParseEndpoint: '/api/ai/parse',
-    aiTranscribeEndpoint: ''
+    aiTranscribeEndpoint: '',
+    recordStorageRecoveryLocked: false,
+    recordStorageStartupStatus: ''
   }
 });

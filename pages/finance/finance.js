@@ -117,7 +117,7 @@ Page({
       wx.showToast({ title: '这笔收款没有保存，请重试', icon: 'none' });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'FINANCE_PAYMENT' });
     wx.showToast({ title: payment.completedOrderId ? '订单已完成' : '收款已记录', icon: 'success' });
     const paymentAmounts = Object.assign({}, this.data.paymentAmounts);
     delete paymentAmounts[id];
@@ -141,7 +141,7 @@ Page({
     const state = getState();
     const message = generateDunningMessage(state, id, 'polite');
     recordDunning(state, id, message);
-    saveState(state);
+    saveState(state, { writerSource: 'FINANCE_DUNNING' });
     wx.showToast({ title: '已记录催款', icon: 'success' });
     this.load();
   },
@@ -150,7 +150,7 @@ Page({
     const id = event.currentTarget.dataset.id;
     const state = getState();
     const receivable = generateReceivableFromOrder(state, id);
-    saveState(state);
+    saveState(state, { writerSource: 'FINANCE_GENERATE_RECEIVABLE' });
     wx.showToast({
         title: receivable ? '已生成待收' : '生成失败',
       icon: receivable ? 'success' : 'none'

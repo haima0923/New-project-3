@@ -933,7 +933,7 @@ Page({
       wx.showToast({ title: saved.error || '没有保存，请核对后重试', icon: 'none' });
       return;
     }
-    saveState(state);
+    saveState(state, { writerSource: 'DASHBOARD_FORMAL' });
     wx.showToast({
       title: saved.type === 'pending' ? '已存待整理' : '已保存',
       icon: 'success'
@@ -965,7 +965,7 @@ Page({
     const confirmState = buildHomeConfirmState(this.data.parseResult);
     const state = getState();
     savePendingNote(state, confirmState.parseResult, '用户选择稍后整理');
-    saveState(state);
+    saveState(state, { writerSource: 'DASHBOARD_PENDING' });
     wx.showToast({ title: '已存到待整理', icon: 'success' });
     this.setData({
       composerText: '',

@@ -197,7 +197,7 @@ Page({
     const order = convertQuotationToOrder(state, id, {
       requiredDeliveryDate: this.data.conversionDeliveryDate
     });
-    saveState(state);
+    saveState(state, { writerSource: 'QUOTATION_CONVERT' });
     wx.showToast({
       title: order ? '已转订单' : '转换失败',
       icon: order ? 'success' : 'none'
