@@ -1,6 +1,9 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.2B.1 已通过对应离线回归；微信开发者工具隔离 key 的事务运行时验证已通过；受控切换控制面仅在 Fake/Memory/隔离目标演练；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；没有真实用户 canary、可信远程 kill switch、真机或真实 AI 验证；不是发布基线。**
+> 状态：**合同已定稿；Release A RC1 已把生产 Legacy writer 接入事务 Coordinator
+> 并通过候选回归；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；候选尚未
+> 上传或发布，没有真实用户 canary、可信远程 kill switch、客户端覆盖率、真机或真实
+> AI 验证。**
 >
 > 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
 > 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
@@ -159,6 +162,34 @@ Phase 1E.2B.1 只实现共享保存受控切换控制面和隔离演练，没有
 
 发布顺序必须先是 Release A 基础设施版本并继续固定 `LEGACY_ONLY`；只有能证明活跃客户端升级和旧 writer 退出后，才可设计受控内部设备 Release B canary。详细边界以 `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 为准。
 
+### 1.10 Release A RC1 当前实现状态（2026-07-23）
+
+Release A RC1 只接入 Legacy 基础设施，不启用 Shared：
+
+- `utils/storage.js` 是生产业务 Bundle 的唯一组合根，创建受保护 wx Gateway、
+  Release A Coordinator 和本地有界监测；原有 `getState()`、`saveState()`、
+  `updateState()` 和 `initializeState()` 保持同步调用形态。
+- 23 个生产写入点继续运行原 Legacy 业务 mutation，但统一携带受控
+  `writerSource`，最后经双 fingerprint CAS、容量预检、sealed Backup/Journal、
+  单 Bundle 写入、立即读回、Receipt 与清理。
+- `app.js` 在任何业务初始化前调用恢复入口。已有有效 Bundle 的普通启动只读且不增加
+  revision、Receipt 或 fingerprint；只有 Bundle 不存在时才通过同一 Coordinator
+  事务初始化。
+- 恢复矛盾、readback 不确定或清理后状态不可确认时进入 Recovery Lock；所有 Legacy
+  Bundle writer 同步失败，不能绕过 Coordinator，也不能向页面误报成功。
+- 本地监测仅保留枚举事件、revision、状态和短技术字段，FIFO 有界；不写 Storage、
+  不远程上传，也不记录原文、客户、电话、商品、金额、完整 state、Journal 或 Backup。
+- 22 个代表保存场景已比较旧 Legacy、Shared Memory 和事务 Legacy，业务差异为 0；
+  允许差异仅限 revision、事务控制 meta、Receipt 和本地技术事件。
+- 微信开发者工具候选验证使用仓库外独立 Mini Program 与四个隔离 key：当前 RC
+  不重载测试 16/16，五类跨重新编译恢复/幂等场景累计 6 个新 App Boot；真实业务 key
+  读/写/删与白名单外访问均为 0，最终测试 key 清理为 0。该证据不等于真机、真实
+  断电、真实用户数据或正式版本发布验证。
+
+生产仍固定 `LEGACY_ONLY`，Release A Coordinator 的共享 transaction API 对普通页面
+继续返回 `SHARED_PRODUCTION_COMMIT_DISABLED`。当前没有在线 kill switch 或可信客户
+端版本覆盖率；下一步只能进入人工发布评审，不能开启 Shared。
+
 ## 2. 目标与非目标
 
 ### 2.1 目标
@@ -208,7 +239,7 @@ state diff 与完整 trace
 当前真实流程是：本地 parser 先执行，`getParseRouteDecision()` 决定
 `local`、`pending`、`ai_standard`、`ai_deep`。涉及历史、账款、多轮聊天、多商品、冲突或复杂语义的内容，默认常先进入 `pending`；只有用户明确选择 `reviewMode: 'deep'` 才走深度 AI。共享核心的 `PRODUCTION_ROUTING` 必须先原样复刻这套规则。
 
-当前完整页和首页都传 `context: 'home'`，都调用 `parseHybridInput()` 和 `saveConfirmedDraft()`，但分别在 `pages/input/input.js` 与 `pages/dashboard/dashboard.js` 计算确认态。当前生产保存仍由 `utils/business.js` 直接修改 `utils/storage.js` 的状态；共享 SavePlan、原子 Commit 和 MemoryStore 已具备，但尚未接入两页或生产 business。
+当前完整页和首页都传 `context: 'home'`，都调用 `parseHybridInput()` 和 `saveConfirmedDraft()`，但分别在 `pages/input/input.js` 与 `pages/dashboard/dashboard.js` 计算确认态。生产仍执行现有 Legacy 业务 mutation；Release A 只把最终整包状态写入接到 `utils/storage.js` 的事务 Coordinator。共享 SavePlan、Commit 仍未成为两页或 production business 的主保存路径。
 
 兼容原则：第一阶段抽取必须先做“等价迁移”。任何路由、必填字段、保存准入或业务副作用变化，都必须另立产品任务和回归，不得藏在平台解耦中。
 
@@ -952,7 +983,7 @@ Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`�
 | 1E.2A.1. 单bundle持久化协议与writer协调 | **已实现离线候选范围**；23个writer统一门面，Fake Gateway revision/CAS、sealed journal/backup、读回、恢复、有界receipt和故障矩阵通过 | 真实wx缺key/配额/崩溃/COW余量、跨上下文原子CAS、receipt淘汰后的长期金融幂等未验证；production仍LEGACY_ONLY | 22组专项、11崩溃点、16故障类、700提交receipt压力、22题三方语义等价及旧回归通过 | 高；下一步只做隔离微信运行时验证，不切换生产 |
 | 1E.2A.2. 微信开发者工具隔离事务验证 | **R1已完成**；仓库外独立Mini Program先安装Storage硬白名单，再加载真实wx Gateway和跨Boot恢复Harness；生产App不注册测试页且正式打包忽略测试源码 | 真机断电、真实设备配额/落盘细节、真实用户数据迁移、跨进程原子CAS和生产切换不在本阶段 | 静态专项19/19；开发者工具15/15不重载、5类跨Boot恢复/幂等、真实业务key读写删0、forbidden 0、6个审计Boot、最终4个测试key清理为0 | 高；仅可进入受控切换方案设计，production仍LEGACY_ONLY，共享commit禁用 |
 | 1E.2B.1. 共享保存受控切换控制面 | **已实现本阶段范围**；可信配置合同、受保护隔离证据、Shared资格、路径决策、阶段化回退、Recovery Lock、脱敏内存监测和隔离演练 | 无可信远程配置或在线kill switch；无客户端版本覆盖率；真实transactional Legacy writer和生产Shared路径均未实现 | 12组专项、22个Shadow基线、禁止双写、模式转换协议模拟、旧版本门禁、隐私门禁及旧全套离线回归通过 | 高；production固定LEGACY_ONLY，共享commit禁用，没有真实用户canary |
-| Release A. 基础设施发布候选 | 只准备Coordinator、revision/CAS、恢复与技术监测的LEGACY_ONLY候选，不开启Shared | 必须证明活跃客户端升级覆盖和旧writer退出；当前只能版本级回退 | 发布候选仍硬关闭Shared；建立可信版本覆盖证据并完成稳定性观察 | 高；下一步仅可准备候选，不得直接发布或开启Shared |
+| Release A RC1. 基础设施发布候选 | **候选已实现，尚未上传**；23个Legacy writer统一经Coordinator、revision/CAS、恢复、读回、Receipt和本地脱敏监测，启动恢复先于初始化 | 必须证明活跃客户端升级覆盖和旧writer退出；没有在线kill switch；真机和真实业务key故障行为未验证 | Release A专项、22题三方业务等价、启动/恢复/CAS/旧Bundle/隐私门禁及微信隔离候选通过；production继续硬关闭Shared | 高；下一步仅可人工发布评审，不得开启Shared |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
 | 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |
 | 8. 微信开发者工具自动化 | 页面机器人与测试账号 | 工具和登录不稳定 | 两入口输入、卡片、按钮、保存、跳转可验 | 中；独立环境 |

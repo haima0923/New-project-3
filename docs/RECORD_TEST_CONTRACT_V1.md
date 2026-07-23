@@ -1,6 +1,9 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.2B.1 已通过对应离线回归；微信开发者工具隔离 key 的事务运行时验证已通过；受控切换只在 Fake/Memory/隔离目标演练；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；没有真实用户 canary、可信远程 kill switch、真机或真实 AI 验证；不是发布基线。**
+> 状态：**合同已定稿；Release A RC1 的生产 Legacy 事务基础设施候选已通过离线与
+> 微信开发者工具隔离验证；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；
+> 尚未上传或发布，没有真实用户 canary、可信远程 kill switch、客户端覆盖率、真机或
+> 真实 AI 验证。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -162,6 +165,50 @@ Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保�
 同轮 Phase 1E.2A.2 静态门禁 19/19、Phase 1E.2A.1 22/22、Phase 1E.2A 13/13、Phase 1E.1 20/20、Phase 1D 16/16、领域预检 20/20、Phase 1C 16/16、Phase 1B 24/24、Phase 1A 25/25，以及 AI P0、route、五步用户、本地硬检查、核心/金融、UI结构、模型路由、服务端 fake/auth 回归均通过。控制面没有修改 Transaction、Journal、Recovery、Storage Gateway 或 Runtime Harness，因此本轮没有重跑真实微信 Storage 矩阵；沿用 Phase 1E.2A.2-R1 的隔离运行时证据。
 
 当前没有可信远程配置或客户端版本覆盖率，只能通过构建配置和发布新版本进行全局回退，不能称为在线一键 kill switch。production 仍为 `LEGACY_ONLY`，共享生产 Commit 和真实用户 canary 均未启用。
+
+### 1.10 Release A RC1 动态验证状态（2026-07-23）
+
+`scripts/record-release-a-rc1-tests.js` 当前为 16/16，覆盖：
+
+- 23 个物理业务 Bundle writer 与 20 类生命周期逐点绑定受控
+  `writerSource`，生产代码没有直接写或删除真实业务 key 的旁路；
+- 生产 Coordinator 身份固定 `LEGACY_ONLY`、事务 Legacy 保护启用而 Shared API
+  继续拒绝；页面参数、普通配置和 Shared 请求不能提升生产模式；
+- 已有有效 Bundle 启动零写入；无 Bundle 时只通过 Coordinator 初始化一次；
+  PREPARED、目标主 Bundle、有效 Backup 和矛盾材料恢复顺序均先于初始化；
+- 22 个代表场景按同一初始 state 比较旧 Legacy、Shared Memory 和事务 Legacy，
+  客户、报价、订单、待收、付款、提醒、待整理、原文、items、关系、日志和目录业务
+  差异为 0；
+- 两个页面读取同一 base 时 A 提交成功、B 同步返回 `LEGACY_SAVE_STALE` 且不覆盖；
+  顺序 mutation 每次重读最新 state，失败后临界区可继续使用；
+- transaction manager 已确认提交后不再做会误报失败的附加读取；已消费 state 不能
+  重新绑定到后续 Bundle 或覆盖新数据；
+- 容量不足在主 Bundle 写入前阻断；readback 损坏不返回成功，回滚后后续 writer
+  仍可工作；损坏恢复材料统一分类为 `LEGACY_SAVE_RECOVERY_REQUIRED`，Recovery Lock
+  阻断全部业务 Bundle writer；
+- 无 meta、未知 meta、未知顶层/记录字段和缺少可选集合的旧 Bundle 无损；首次业务
+  写入确定性建立 revision，纯启动不强制升级；
+- Receipt 有界、revision 单调递增；收款、结清、定金、报价转订单、软删除、多商品
+  和严格原文均保持单次副作用；
+- 本地监测有界、脱敏、不持久化、不上传，监测自身失败不影响保存；
+- 低层 Release A transaction manager 不导出；平台组合根只能取得完整 Coordinator；
+  生产写入缺少明确 `writerSource` 时 fail closed；
+- 构建门禁确保 runtime test 不进入生产页面，Shared 不可达且没有报告、快照或临时
+  绝对路径进入候选。
+
+同轮 Phase 1E.2B.1 12/12、Phase 1E.2A.2 静态门禁、Phase 1E.2A.1
+22/22、Phase 1E.2A 13/13、Phase 1E.1 20/20、Phase 1D 16/16、领域预检
+20/20、Phase 1C 16/16、Phase 1B 24/24、Phase 1A 25/25，以及 AI P0、
+route、五步用户、本地硬检查、核心/金融、UI、模型路由和服务端 fake/auth 回归均
+通过。微信候选矩阵只使用仓库外独立 Mini Program 和四个隔离 key：当前 RC 物化
+20 个文件，不重载测试 16/16；PREPARED、主 Bundle 已写、Backup、矛盾状态和幂等
+五类场景均经过真实重新编译进入新 App 实例后验证。整轮累计 6 个审计 Boot，真实
+业务 key 读/写/删均为 0、白名单外访问为 0，最终 revision、Receipt 和测试 key
+数量均清理为 0。
+
+这些测试证明候选代码的应用级事务、恢复和 Legacy 语义，不证明真机断电、真实设备
+持久化绝对原子、真实用户迁移或旧客户端已退出。Release A 尚未上传或发布，Shared
+生产 Commit 和真实用户 canary 均未启用。
 
 ## 2. 第一阶段范围
 

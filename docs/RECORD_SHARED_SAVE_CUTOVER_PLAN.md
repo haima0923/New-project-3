@@ -1,7 +1,7 @@
 # 记一笔共享保存受控切换计划
 
-> 状态：**Phase 1E.2B.1 控制面与隔离演练合同；production 固定
-> `LEGACY_ONLY`；`SHARED_COMMIT` 禁用；没有真实用户 canary；不是发布批准。**
+> 状态：**Release A RC1 基础设施候选已接入生产 Legacy 写入链；production 固定
+> `LEGACY_ONLY`；`SHARED_COMMIT` 禁用；没有真实用户 canary；尚未上传或发布。**
 
 ## 1. 当前真实控制能力
 
@@ -183,7 +183,9 @@ UNKNOWN
 ### Release A：基础设施版本
 
 - 固定 `LEGACY_ONLY`；
-- 只发布 Coordinator、revision/CAS、恢复和技术监测；
+- RC1 候选已让 23 个生产 Legacy writer 经统一 Coordinator、revision/CAS、恢复和
+  本地脱敏技术监测；
+- 启动先恢复，已有 Bundle 纯读取零写入，缺失 Bundle 才事务初始化；
 - 不开启 Shared；
 - 验证现有 Legacy 语义与稳定性；
 - 建立可信 app version 和活跃版本覆盖能力；
@@ -234,6 +236,23 @@ UNKNOWN
 
 ## 14. 当前完成边界
 
-Phase 1E.2B.1 只实现纯控制面、受保护隔离证据、本地脱敏监测和 Fake/Memory 隔离演练。模式切换题中的“事务兼容 Legacy”是同一事务协议上的能力模拟，不代表生产 transactional Legacy writer 已实现。
+Release A RC1 已实现生产 Legacy writer 的事务保护组合根，但仍只是尚未上传的候选：
 
-下一步只能准备 Release A 基础设施候选，继续固定 `LEGACY_ONLY`；不得直接执行 Release A、push、启用 Shared 或建立真实用户 canary。
+- 页面调用方式和 Legacy 业务逻辑不变；
+- Shared SavePlan/Commit 没有成为生产主路径；
+- 监测只在本地内存中有界保存，不远程上传；
+- 没有可信远程配置、在线 kill switch 或客户端版本覆盖率；
+- 微信运行时验证只使用仓库外独立项目和隔离测试 key。
+
+下一步只能进入 Release A 人工发布评审。即使评审通过，也必须由老板另行决定是否
+上传体验版；在客户端基础设施覆盖得到可信证明前，不得开始 Shared canary。
+
+## 15. Release A RC1 回滚边界
+
+当前全局回退仍是版本级回退，不是在线一键回退。兼容回滚版本必须继续理解 Release A
+写入后的 revision、fingerprint、Backup、Journal、Receipt 和 Recovery Lock，不能
+退回会无条件覆盖整包 Bundle 的旧 writer。
+
+事务状态不明确、readback 不确定或处于 Recovery Lock 时，功能级回退也不得绕过
+Coordinator。详细候选范围与人工评审项见
+`docs/RECORD_RELEASE_A_RC1_CHECKLIST.md`。

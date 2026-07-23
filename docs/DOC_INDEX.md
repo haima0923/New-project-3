@@ -48,6 +48,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_TEST_CONTRACT_V1.md` | 第一阶段测试题、fixture、五层评分、零容忍门禁、报告和 canary 的权威合同 |
 | `docs/RECORD_WX_STORAGE_RUNTIME_TEST_PLAYBOOK.md` | Phase 1E.2A.2 微信开发者工具隔离 Storage 事务验证步骤、恢复顺序和清理规则 |
 | `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` | Phase 1E.2B.1 共享保存受控切换、资格、回退、Recovery Lock、监测和 Release A/B/C 计划；不代表生产已开启 |
+| `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` | Release A RC1 的23个Legacy writer、启动恢复、事务失败、旧Bundle升级、回滚兼容和人工发布评审清单；尚未上传或发布 |
 | `docs/PARSER_AI_AUDIT.md` | 记一笔 parser / AI 链路审计 |
 | `docs/BUSINESS_FLOW_AUDIT.md` | 报价、订单、待收款、收款、定金、催款业务流转 |
 | `docs/TEST_AUDIT.md` | 当前测试能力、可运行脚本、缺口和回归建议 |
@@ -63,6 +64,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 - `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
 - `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
 - `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 管共享保存切换控制与发布顺序；它从属于共享核心安全合同，不能覆盖生产固定 `LEGACY_ONLY` 或自行批准 canary。
+- `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` 管 Release A 候选证据和发布前人工检查；它不构成上传、发布或开启 Shared 的授权。
 - `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；
   审计中的历史结论不覆盖较新的合同和当前代码。
 - 合同尚未实现。合同描述的目标能力不能写成当前已上线能力。

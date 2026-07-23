@@ -50,7 +50,7 @@ ELECTRON_RUN_AS_NODE=1 /Applications/wechatwebdevtools.app/Contents/MacOS/Electr
 scripts/prepare-record-storage-wx-runtime-project.js <临时目录>
 ```
 
-4. 命令必须显示已复制 19 个文件。
+4. Release A RC1 候选命令必须显示已复制 20 个文件。
 5. 临时目录内必须有 `runtime-test-build-manifest.json`。
 6. Manifest 中必须显示：
 
@@ -103,10 +103,10 @@ Forbidden访问：0
 点击“运行不重载测试”。应看到：
 
 ```text
-WX_RUNTIME_NON_RELOAD：PASS（15通过 / 0失败）
+WX_RUNTIME_NON_RELOAD：PASS（16通过 / 0失败）
 ```
 
-15 项覆盖：
+16 项覆盖：
 
 - 基础写入、立即读回和删除；
 - 无 meta 旧 Bundle、未知字段、缺少可选集合和较大 Bundle；
@@ -114,6 +114,7 @@ WX_RUNTIME_NON_RELOAD：PASS（15通过 / 0失败）
 - planId 碰撞和容量预检；
 - writer 队列；
 - 损坏值、fingerprint、transactionId 和必要集合异常。
+- Release A Coordinator 的真实 wx 隔离启动、事务 Legacy 写入和 Shared 硬关闭。
 
 结果只显示状态、revision、fingerprint、大小和错误码，不显示客户、金额或原文。
 
@@ -205,14 +206,14 @@ Forbidden访问：0
 只保留不含 Storage value 的截图：
 
 1. 首次信任后独立测试页和三项真实业务 key 计数 0；
-2. 15/15 不重载测试；
+2. 当前 Release A RC1 候选的 16/16 不重载测试；
 3. 五个场景各自重载后的 PASS；
 4. 幂等 `ALREADY_COMMITTED` 和碰撞阻断；
 5. 最终四个测试 key 清理为 0。
 
 不得导出完整 Storage，不得截图真实客户资料。
 
-## 12. 2026-07-23 R1验证记录
+## 12. 2026-07-23 R1历史验证记录
 
 本轮按本手册直接打开仓库外独立项目完成验证：
 
