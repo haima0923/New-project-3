@@ -119,7 +119,8 @@ test('23个Legacy Writer和app初始化全部经过统一存储门面且没有�
   assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 23);
   const expectedApp = LEGACY_BUSINESS_BUNDLE_WRITE_SITES.find((item) => item.sourceFile === 'app.js');
   assert.deepStrictEqual(expectedApp, {
-    sourceFile: 'app.js', callKind: 'initializeState', occurrence: 1, lifecycleIds: ['app-launch-initialize']
+    sourceFile: 'app.js', callKind: 'prepareRecordStorageInfrastructure', occurrence: 1,
+    lifecycleIds: ['app-launch-initialize'], writerSource: 'APP_LAUNCH_INITIALIZE'
   });
   LEGACY_BUSINESS_BUNDLE_WRITE_SITES.forEach((site) => {
     const source = fs.readFileSync(path.join(root, site.sourceFile), 'utf8');
@@ -172,7 +173,7 @@ test('23个Legacy Writer和app初始化全部经过统一存储门面且没有�
   });
   const rootStorage = fs.readFileSync(path.join(root, 'utils/storage.js'), 'utf8');
   const serverStorage = fs.readFileSync(path.join(root, 'server/utils/storage.js'), 'utf8');
-  assert(rootStorage.includes('createRecordStorageCoordinator'));
+  assert(rootStorage.includes('createLegacyReleaseARecordStorageCoordinator'));
   assert(serverStorage.includes('getRootStorageFacade'));
   assert(serverStorage.includes("require('../../utils/storage')"));
   assert.strictEqual(rootStorage.includes('.setStorageSync('), false);

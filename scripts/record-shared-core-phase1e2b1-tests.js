@@ -925,7 +925,8 @@ test('生产硬关闭、页面未接入且控制器不执行保存或远程上�
 
   const storageSource = fs.readFileSync(path.join(ROOT, 'utils/storage.js'), 'utf8');
   const coordinatorSource = fs.readFileSync(path.join(ROOT, 'utils/record-storage-coordinator.js'), 'utf8');
-  assert(storageSource.includes("createRecordStorageCoordinator({ mode: 'LEGACY_ONLY' })"));
+  assert(storageSource.includes('createLegacyReleaseARecordStorageCoordinator'));
+  assert(storageSource.includes('createWxStorageGateway'));
   assert(coordinatorSource.includes('sharedProductionCommitEnabled: false'));
   assert(coordinatorSource.includes('SHARED_PRODUCTION_COMMIT_DISABLED'));
   ['pages/input/input.js', 'pages/dashboard/dashboard.js'].forEach((file) => {

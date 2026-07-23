@@ -195,7 +195,8 @@ test('生产App未注册隔离页且正式打包明确忽略runtime-test', () =>
   const project = JSON.parse(fs.readFileSync(path.join(root, 'project.config.json'), 'utf8'));
   assert.strictEqual(appSource.includes('recordStorageRuntimeTest'), false);
   assert.strictEqual(appSource.includes('runtime-test'), false);
-  assert.strictEqual(appSource.includes('initializeState();'), true);
+  assert.strictEqual(appSource.includes('prepareRecordStorageInfrastructure();'), true);
+  assert.strictEqual(appSource.includes('initializeState();'), false);
   assert.strictEqual(appJson.pages.some((page) => page.includes('__dev__') || page.includes('runtime-test')), false);
   assert(project.packOptions.ignore.some((entry) => (
     entry.type === 'folder' && entry.value === 'runtime-test'
@@ -399,7 +400,7 @@ test('隔离Gateway trace不记录业务值且拒绝错误使用真实key', asyn
   });
 });
 
-test('wx API double下不重载15项全部通过且真实业务key访问为0', async () => {
+test('wx API double下不重载16项含Release A启动结构全部通过且真实业务key访问为0', async () => {
   await withGuardedWx({}, async (storage, guard) => {
     const harness = createRecordStorageWxRuntimeHarness({
       authorizedLaunch: true,
@@ -407,8 +408,12 @@ test('wx API double下不重载15项全部通过且真实业务key访问为0', a
     });
     const result = await harness.runNonReloadSuite();
     assert.strictEqual(result.status, 'PASS');
-    assert.strictEqual(result.passed, 15);
+    assert.strictEqual(result.passed, 16);
     assert.strictEqual(result.failed, 0);
+    assert(result.cases.some((item) => (
+      item.caseId === 'release-a-startup-and-legacy-writer'
+      && item.status === 'PASS'
+    )));
     assert.strictEqual(result.productionMode, STORAGE_MIGRATION_MODES.LEGACY_ONLY);
     assert.strictEqual(result.sharedCommitEnabled, false);
     assert.deepStrictEqual(result.storageAudit.realBusinessKey, {
@@ -526,7 +531,8 @@ test('23个生产Lifecycle继续LEGACY_ONLY且不引用任何隔离测试key', (
     });
   });
   const storageSource = fs.readFileSync(path.join(root, 'utils/storage.js'), 'utf8');
-  assert(storageSource.includes("createRecordStorageCoordinator({ mode: 'LEGACY_ONLY' })"));
+  assert(storageSource.includes('createLegacyReleaseARecordStorageCoordinator'));
+  assert(storageSource.includes('prepareRecordStorageInfrastructure'));
 });
 
 test('独立入口和依赖闭包不包含网络、生产保存入口或敏感结果字段', () => {

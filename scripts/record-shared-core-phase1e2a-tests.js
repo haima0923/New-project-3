@@ -49,7 +49,7 @@ const {
   safeClone,
   stableSerialize
 } = require('../utils/record-state-diff');
-const { getState, saveState } = require('../utils/storage');
+const { createReleaseAStorageFacade } = require('../utils/storage');
 const {
   authorization,
   canonicalState,
@@ -297,27 +297,29 @@ test('Phase 1E.1的22个记一笔场景经Storage投影、Preview和重新投影
       [LEGACY_BUSINESS_STORAGE_KEY]: clone(initialState),
       huoxiaoling_ai_auth_session_v1: { token: `legacy-synthetic-${count}` }
     });
-    const previousWx = global.wx;
-    let legacyReloaded;
-    try {
-      global.wx = legacyGateway;
-      const storageState = getState();
-      withFixedGlobals(() => {
-        if (action === 'SAVE_PENDING') savePendingNote(storageState, clone(prepared.finalResult), '用户选择稍后整理');
-        else saveConfirmedDraft(storageState, clone(prepared.finalResult));
-      });
-      saveState(storageState);
-      legacyReloaded = getState();
-    } finally {
-      if (previousWx === undefined) delete global.wx;
-      else global.wx = previousWx;
-    }
+    const legacyStorage = createReleaseAStorageFacade({
+      gateway: legacyGateway,
+      clock: fixedClock()
+    });
+    const storageState = legacyStorage.getState();
+    withFixedGlobals(() => {
+      if (action === 'SAVE_PENDING') savePendingNote(storageState, clone(prepared.finalResult), '用户选择稍后整理');
+      else saveConfirmedDraft(storageState, clone(prepared.finalResult));
+    });
+    legacyStorage.saveState(storageState, { writerSource: 'RELEASE_A_TEST' });
+    const legacyReloaded = legacyStorage.getState();
     assert.deepStrictEqual(
       canonicalState(legacyReloaded, initialState),
       canonicalState(legacyState, initialState),
       `${name}:legacy storage reload`
     );
-    assert.strictEqual(legacyGateway.getStats().writes, 1, `${name}:legacy storage write count`);
+    assert.strictEqual(
+      legacyGateway.getStats().events.filter((entry) => (
+        entry.type === 'SET' && entry.key === LEGACY_BUSINESS_STORAGE_KEY
+      )).length,
+      1,
+      `${name}:legacy main bundle write count`
+    );
     const { gateway, preview } = previewPrepared(prepared, initialState, {
       huoxiaoling_ai_auth_session_v1: { token: `synthetic-${count}` },
       finance_segment: 'receivable'
@@ -442,9 +444,9 @@ test('全部物理业务bundle写入点均有生命周期分类，代表性边�
   const writers = writerFiles.map((file) => ({
     file,
     source: fs.readFileSync(path.join(root, file), 'utf8')
-  })).filter((item) => /\b(?:initializeState|saveState|updateState)\s*\(/.test(item.source));
+  })).filter((item) => /\b(?:prepareRecordStorageInfrastructure|saveState|updateState)\s*\(/.test(item.source));
   const callCount = writers.reduce((sum, item) => (
-    sum + (item.source.match(/\binitializeState\s*\(/g) || []).length
+    sum + (item.source.match(/\bprepareRecordStorageInfrastructure\s*\(/g) || []).length
       + (item.source.match(/\bsaveState\s*\(/g) || []).length
       + (item.source.match(/\bupdateState\s*\(/g) || []).length
   ), 0);
@@ -453,8 +455,8 @@ test('全部物理业务bundle写入点均有生命周期分类，代表性边�
   const classifiedFiles = new Set(LEGACY_PAGE_LIFECYCLE_INVENTORY.flatMap((item) => item.sourceFiles || []));
   writers.forEach((item) => assert(classifiedFiles.has(item.file), `unclassified bundle writer: ${item.file}`));
   const discoveredSites = writers.flatMap((item) => {
-    const perKind = { initializeState: 0, saveState: 0, updateState: 0 };
-    return Array.from(item.source.matchAll(/\b(initializeState|saveState|updateState)\s*\(/g)).map((match) => {
+    const perKind = { prepareRecordStorageInfrastructure: 0, saveState: 0, updateState: 0 };
+    return Array.from(item.source.matchAll(/\b(prepareRecordStorageInfrastructure|saveState|updateState)\s*\(/g)).map((match) => {
       perKind[match[1]] += 1;
       return { sourceFile: item.file, callKind: match[1], occurrence: perKind[match[1]] };
     });

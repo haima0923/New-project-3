@@ -20,6 +20,7 @@ const RUNTIME_SHARED_FILES = Object.freeze([
   'utils/record-storage-adapter-contract.js',
   'utils/record-storage-coordinator.js',
   'utils/record-storage-gateway-registry.js',
+  'utils/record-storage-release-contract.js',
   'utils/record-storage-runtime-test-contract.js',
   'utils/record-storage-runtime-test-gateway.js',
   'utils/record-storage-transaction-contract.js',

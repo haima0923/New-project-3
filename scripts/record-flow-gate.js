@@ -310,6 +310,17 @@ function createWxHarness({ initialState, apiBaseUrl = '', clipboardText = '', re
     removeStorageSync(key) {
       delete storage[key];
     },
+    getStorageInfoSync() {
+      const bytes = Object.keys(storage).reduce((sum, key) => (
+        sum + Buffer.byteLength(String(key), 'utf8')
+        + Buffer.byteLength(JSON.stringify(storage[key]), 'utf8')
+      ), 0);
+      return {
+        keys: Object.keys(storage),
+        currentSize: bytes / 1024,
+        limitSize: 10240
+      };
+    },
     showToast(options = {}) {
       events.toasts.push(clone(options));
     },

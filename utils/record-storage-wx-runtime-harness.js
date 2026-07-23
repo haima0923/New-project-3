@@ -1,11 +1,16 @@
 const { STORAGE_MIGRATION_MODES } = require('./record-storage-adapter-contract');
-const { createRecordStorageCoordinator } = require('./record-storage-coordinator');
+const {
+  createRecordStorageCoordinator
+} = require('./record-storage-coordinator');
 const { createWxRuntimeTestStorageGateway } = require('./record-storage-runtime-test-gateway');
 const {
   RECORD_STORAGE_RECOVERY_STATES,
   RECORD_STORAGE_TRANSACTION_STATES
 } = require('./record-storage-transaction-contract');
-const { createPersistentRecordTransactionManager } = require('./record-storage-transaction');
+const {
+  createLegacyReleaseARecordStorageCoordinator,
+  createPersistentRecordTransactionManager
+} = require('./record-storage-transaction');
 const {
   getRecordStorageBusinessFingerprint,
   readRecordStorageControl,
@@ -536,6 +541,66 @@ function createRecordStorageWxRuntimeHarness(options = {}) {
     });
   }
 
+  function runReleaseACandidateCase() {
+    resetScenarioStorage();
+    gateway.resetRuntimeTrace();
+    const coordinator = createLegacyReleaseARecordStorageCoordinator({
+      gateway,
+      clock: { now: () => new Date(FIXED_COMMIT_TIME) }
+    });
+    const createInitial = () => createSyntheticBundle('DEFAULT');
+    const firstStartup = coordinator.startLegacyStorageInfrastructure(createInitial);
+    const firstSummary = primarySummary();
+    gateway.resetRuntimeTrace();
+    const secondStartup = coordinator.startLegacyStorageInfrastructure(createInitial);
+    const secondStartupTrace = summarizeGatewayTrace();
+    const writerA = coordinator.readState(createInitial);
+    const writerB = coordinator.readState(createInitial);
+    writerA.runtimeReleaseAMarkers = ['writer-a'];
+    writerB.runtimeReleaseAMarkers = ['writer-b'];
+    coordinator.writeLegacyState(writerA, {
+      writerSource: 'RELEASE_A_TEST',
+      planId: 'runtime-release-a-plan',
+      transactionId: 'runtime-release-a-transaction'
+    });
+    let staleCode = '';
+    try {
+      coordinator.writeLegacyState(writerB, {
+        writerSource: 'RELEASE_A_TEST',
+        planId: 'runtime-release-a-stale-plan',
+        transactionId: 'runtime-release-a-stale-transaction'
+      });
+    } catch (error) {
+      staleCode = String(error && error.code || '');
+    }
+    const finalSummary = primarySummary();
+    const finalBundle = stripRecordStorageControl(
+      gateway.getStorageSync(RECORD_STORAGE_RUNTIME_TEST_KEYS.primary)
+    );
+    const identity = coordinator.getIdentity();
+    const passed = firstStartup.initialized === true
+      && firstSummary.revision === 1
+      && secondStartup.initialized === false
+      && secondStartupTrace.writes === 0
+      && staleCode === 'LEGACY_SAVE_STALE'
+      && finalSummary.revision === 2
+      && stableSerialize(finalBundle.runtimeReleaseAMarkers) === stableSerialize(['writer-a'])
+      && identity.mode === 'LEGACY_ONLY'
+      && identity.legacyTransactionProtectionEnabled === true
+      && identity.sharedProductionCommitEnabled === false;
+    const output = caseResult('release-a-startup-and-legacy-writer', passed ? 'PASS' : 'FAIL', {
+      errorCode: staleCode,
+      revision: finalSummary.revision,
+      receiptCount: finalSummary.receiptCount,
+      writes: secondStartupTrace.writes,
+      mainStateVerified: stableSerialize(finalBundle.runtimeReleaseAMarkers)
+        === stableSerialize(['writer-a']),
+      writerBlocked: staleCode === 'LEGACY_SAVE_STALE'
+    });
+    resetScenarioStorage();
+    return output;
+  }
+
   function runReadbackAnomalyCase(caseId, mutation) {
     resetScenarioStorage();
     const base = createSyntheticBundle();
@@ -632,6 +697,7 @@ function createRecordStorageWxRuntimeHarness(options = {}) {
       runPlanCollisionCase(),
       runCapacityCase(),
       await runWriterQueueCase(),
+      runReleaseACandidateCase(),
       runReadbackAnomalyCase('corrupt-value', () => '{corrupt-json'),
       runReadbackAnomalyCase('fingerprint-mismatch', (bundle) => {
         bundle.meta.runtimeTransactionMarker = 'tampered';
