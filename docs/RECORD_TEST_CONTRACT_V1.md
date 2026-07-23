@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.2A 专项运行器已通过离线回归；旧微信 Storage 投影、零写入 Preview 和 legacy/shared 影子等价已具备确定性门禁；生产共享 Commit 仍禁用；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1E.2A.1 专项运行器已通过离线回归；单业务 Bundle 的 revision/CAS、故障恢复、持久化幂等和 legacy writer 协调已在 Fake Gateway 形成确定性门禁；生产共享 Commit 仍禁用；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -115,6 +115,22 @@ Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保�
 - 源码静态检查确认当前有23处生产业务bundle写入调用，并按文件、调用种类和文件内序号逐点绑定到生命周期；6个非业务key的生产者/消费者也与源码静态核对，且全`pages/utils`扫描未发现清单外直接Storage字面量key。报价转单、订单生成待收、直接收款/催款、订单进度、提醒完成和软删除只做代表性边界验证，其余入口明确标为尚未迁移，不以清单存在冒充SavePlan等价。
 
 原子性结论是“单bundle应用级替换，但微信持久化原子性未验证”。当前没有持久化revision/CAS、写后读回、journal、恢复协议或receipt；app启动和多个legacy writer仍可能覆盖新状态。因此本阶段只证明投影、Preview和隔离等价，不能作为Phase 1E.2B切换依据。未调用真实AI、外网、真实用户数据或真实微信Storage。
+
+### 1.7 Phase 1E.2A.1 动态验证状态（2026-07-23）
+
+`scripts/record-shared-core-phase1e2a1-tests.js` 当前为22/22，验证范围是受保护Fake Gateway和显式`TRANSACTION_PREVIEW`，不包含真实微信Storage：
+
+- 静态逐点核对23个业务bundle writer，全部进入根`utils/storage.js`与`record-storage-coordinator`；server镜像委托根门面，app初始化使用明确入口，当前树没有直接写业务key的旁路。production模式仍硬编码`LEGACY_ONLY`，`SHARED_COMMIT`在coordinator和adapter两层均零写入拒绝。
+- 旧bundle无revision时兼容读取并确定性迁移；未知meta、记录字段、缺失可选集合、删除记录、商品目录和较大bundle不丢失。事务控制槽从DomainState、diff、登录态和页面交接key中排除。
+- revision/baseFingerprint双CAS覆盖两个writer同base、最终主写前外部变化、队列按最新state串行和同plan并发点击；stale writer不覆盖，重复plan只提交一次，planId异内容碰撞阻断。
+- 事务按容量预检、sealed backup、两阶段journal、主bundle、立即读回、receipt和清理执行。11个崩溃检查点经adapter重建恢复后均落在完整旧态或完整目标态；合法未知外部态不被backup覆盖，而是保留材料并`STORAGE_RECOVERY_REQUIRED`。
+- 16类读取、写入、静默不写、损坏、截断和清理故障均验证最终state、revision、receipt和事务材料；持续清理失败保留backup，故障解除后可幂等完成恢复。容量未知或不足在任何journal/backup/主bundle写入前阻断。
+- 700次提交验证receipt账本上限：最近128条完整receipt、最多512条tombstone、至少64条高风险金融记录优先保留；保留窗口内的旧plan在重启后仍返回`ALREADY_COMMITTED`且零写入。测试同时明确：淘汰窗口外的无限期金融幂等尚未解决。
+- Phase 1E.2A的22个业务场景再次比较`Legacy final business state == Shared Memory final state == Transactional target bundle`，业务差异0；事务meta、固定测试时间/ID之外不得豁免客户、金额、关系、items、originalText、状态、日志或目录差异。
+
+同轮Phase 1E.2A 13/13、Phase 1E.1 20/20、Phase 1D 16/16、领域预检20/20、Phase 1C 16/16、Phase 1B 24/24、Phase 1A 25/25，以及AI P0、route、五步用户、本地硬检查、核心/金融、UI结构、模型路由、服务端fake/auth回归均通过。测试使用合成state；服务端测试仅用本机回环fake server。未调用真实AI、外网、真实用户数据或真实微信Storage。
+
+这些结果不证明真实设备持久化原子性。真实wx gateway的缺key、配额、崩溃落盘、copy-on-write空间和跨页面/跨上下文writer排他仍需微信开发者工具隔离验证；当前hash用于非恶意损坏检测，不是密码学认证。生产共享Commit和app启动自动恢复保持禁用，不能据此建立发布结论。
 
 ## 2. 第一阶段范围
 
@@ -655,6 +671,7 @@ fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JS
 | --- | --- | --- |
 | `scripts/record-shared-core-phase1e1-tests.js` | 纯SavePlan、MemoryStore原子Commit、幂等/过期/回滚、双层diff和22个legacy保存等价场景 | 仍以合成Confirmation/result为主；生产business、微信Storage、页面点击和统一五层报告尚未接入 |
 | `scripts/record-shared-core-phase1e2a-tests.js` | 单bundleStorage投影、可信adapter/snapshot、零写入Preview、22题完整bundle影子等价、兼容字段和生命周期writer分类 | 使用fake gateway与合成state；真实wx崩溃/配额/写入原子性、持久化revision/CAS、恢复及生产切换尚未验证 |
+| `scripts/record-shared-core-phase1e2a1-tests.js` | 单bundle持久化revision/CAS、sealed journal/backup、读回恢复、有界receipt、23 writer门禁、11崩溃点、16故障类、700提交压力及22题事务目标等价 | 仅受保护Fake Gateway/TRANSACTION_PREVIEW；真实wx缺key、配额、崩溃、跨上下文CAS、长期金融幂等和生产切换尚未验证 |
 | `scripts/record-shared-core-phase1d-tests.js` | 统一Confirmation、domain/surface、三mode、多商品、AI状态、revision/hash和页面事实对照 | 尚非WXML运行；用户编辑重算和savePlan未实现 |
 | `scripts/record-domain-preflight-tests.js` | 客户/历史/金融/目标/AI/mode统一预检、四方一致性和正式副作用零增量 | 部分关系边界使用合成parseResult；MemoryStore/diff由Phase 1E.1独立runner覆盖，尚未合成统一V1 case runner |
 | `scripts/ai-safety-regression-tests.js` | 两个 P0、standard/deep、页面 VM、business 副作用 | 函数级拼装较多，尚无统一 case/trace/stateDiff schema |

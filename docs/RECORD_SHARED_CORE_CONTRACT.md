@@ -1,6 +1,6 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.2A 已通过离线回归；微信旧 Storage 的只读投影、Preview Commit 和隔离影子等价已实现；共享生产 Commit 仍禁用，legacy 保存仍生效；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1E.2A.1 已通过离线回归；单业务 Bundle 的 revision/CAS、journal/backup、写后读回、恢复和持久化幂等协议已在受保护 Fake Gateway 中验证；23 个 legacy writer 已收敛到统一协调门面；共享生产 Commit 仍禁用，legacy 保存仍生效；真实 AI 未验证；微信运行时未验证；不是发布基线。**
 >
 > 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
 > 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
@@ -118,6 +118,21 @@ Phase 1E.2A 只建立存储边界和影子证据，不切换生产写入：
 | `force_text_input` / `draft_to_input` / `finance_segment` | 页面偏好/草稿交接 | 页面独立写入 | 否 |
 
 页面仍直接调用 legacy business；`saveConfirmedDraft()` / `savePendingNote()` 未接入共享 Commit，WXML/WXSS 未修改。报价转单、订单生成待收、直接收款/催款、订单状态/交期、提醒完成、待整理处理、软删除/撤销、客户合并/复核、目录维护、onboarding 和 app 启动已分类，但除代表性边界外未宣称 SavePlan 等价或完成迁移。Phase 1E.2B 只有在持久化 revision/CAS、写后读回、恢复/回退协议以及所有旧 writer 协调方案明确后才可切换。
+
+### 1.7 Phase 1E.2A.1 当前实现状态（2026-07-23）
+
+Phase 1E.2A.1 在不迁移页面、不切换 production business、不访问真实微信 Storage 的前提下完成事务协议和 writer 协调的离线实现：
+
+- `utils/record-storage-coordinator.js` 成为业务 bundle 的根协调门面；23 个已登记 app/page writer 均继续沿用原调用方式并最终进入根 `utils/storage.js`，`server/utils/storage.js` 动态委托同一根门面，`app.js` 初始化也使用明确的初始化入口。生产模式硬编码为 `LEGACY_ONLY`，正常无竞争写出的旧 bundle 内容不变；每次 legacy 写入前重新读取并比较受签名 read context，过期 writer 返回 `LEGACY_WRITER_STALE`，不覆盖更新后的 bundle。
+- 事务控制信息使用保留顶层槽 `__hxlRecordStorageV1`，不进入 DomainState、业务 diff 或登录/页面 key。旧 bundle 无该槽时按 revision 0 读取；只有成功的事务预演提交才生成单调 revision。控制信息包含 schema/revision、最后 transaction/plan/hash、业务 fingerprint、提交时间和有界 receipt 账本；未知旧 `meta` 与业务记录字段保持原样。
+- `utils/record-storage-transaction.js` 实现受保护 Fake Gateway 上的单 bundle 协议：严格序列化与峰值容量预检 → sealed backup → sealed `PREPARED` journal → CAS → `MAIN_WRITE_STARTED` → 最终 CAS → 主 bundle 写入 → 立即读回校验 revision/transaction/plan/业务与整包 fingerprint/receipt → 先 journal、后 backup 清理。仅 `setStorageSync` 未抛错不算成功。
+- CAS 同时绑定 `baseRevision + baseFingerprint`。在最终主写前发现外部变化会清理本事务材料并返回 `STALE_STORAGE_SNAPSHOT`；重启恢复遇到合法但既非旧态也非目标态的 bundle 会保留现状和恢复材料并返回 `STORAGE_RECOVERY_REQUIRED`，不会猜测或用 backup 覆盖可能较新的数据。
+- 恢复状态机能区分“仅准备且主 bundle 仍旧”“目标 bundle 已写但未清理”“主 bundle 结构损坏且 backup 可验证”“三方矛盾”。前两者分别回滚清理或补齐提交，结构损坏时只在 sealed 材料严格匹配后恢复旧态；矛盾或无法验证时阻断后续写入并保留材料。恢复函数可重复调用，不重复执行业务操作。
+- 持久化 receipt 绑定 planId、planHash、idempotencyKey、transactionId、revision 和目标业务 fingerprint；保留最近 128 条完整 receipt、最多 512 条 tombstone，并优先保留最近 64 条高风险金融 receipt。同计划在保留窗口内跨 adapter 重建返回 `ALREADY_COMMITTED`，相同 planId 不同内容返回 `SAVE_PLAN_ID_COLLISION`。这是有界本地防重，不代表被淘汰后的无限期金融幂等。
+- gateway 与 adapter 身份来自私有注册表且对象被冻结；普通对象、返回 JSON 或方法覆盖不能提升为可信 WX/REAL 写入身份。事务管理器本轮只接受显式 Fake Gateway 的 `TRANSACTION_PREVIEW`；真实 WX adapter、生产 `SHARED_COMMIT` 和 app 启动自动恢复均保持禁用。
+- `scripts/record-shared-core-phase1e2a1-tests.js` 为 22/22：静态核对 23 个 writer 与无旁路、旧 bundle 兼容、legacy stale CAS、队列与并发重复点击、11 个崩溃检查点、16 类读写/损坏/清理故障、容量未知/不足、700 次 receipt 淘汰压力、重启恢复、22 个业务场景的 legacy/shared/事务目标三方语义等价。测试只使用合成 state 和 Fake Gateway。
+
+本实现的威胁边界是“同一受控 JavaScript 协调器内的并发、非恶意异常和存储损坏检测”。当前 hash 不是密码学认证；微信 Storage 缺 key、配额、崩溃持久化和 copy-on-write 余量尚未实测，读-校验-写也不是跨进程/跨上下文的存储层原子 CAS。真实启用前还必须在微信开发者工具的隔离环境验证这些行为，并确认所有 writer 同属排他协调边界。Phase 1E.2A.1 候选不能作为生产切换或发布依据。
 
 ## 2. 目标与非目标
 
@@ -835,9 +850,9 @@ V1 `DomainState` 的空白底座必须显式包含 `meta`、`customers`、`quota
 - `rollback(transactionId)`：仅在 adapter 有可验证事务/恢复协议时提供；不能仅因整状态调用一次 `setStorageSync` 就声明 `supportsAtomicReplace=true`；
 - `capabilities`：是否可写真实数据、是否支持事务和最大状态大小。
 
-核心不能直接调用 `wx.getStorageSync`/`wx.setStorageSync`。wxStorage adapter 可继续使用当前“读完整 state、写完整 state”的兼容方式，但必须先在内存应用并校验完整计划，最后只做一次正式替换；revision 冲突时不得覆盖较新状态。Phase 1E.2A 的 legacy adapter 只开放可信读取和 Preview，`commit()` 固定禁用；当前单 bundle 的写入原子性标记为 `SINGLE_BUNDLE_REPLACE_UNVERIFIED`，不是已验证事务。
+核心不能直接调用 `wx.getStorageSync`/`wx.setStorageSync`。wxStorage adapter 可继续使用当前“读完整 state、写完整 state”的兼容方式，但必须先在内存应用并校验完整计划，最后只做一次正式替换；revision 冲突时不得覆盖较新状态。Phase 1E.2A 的 legacy adapter 只开放可信读取和 Preview，`commit()` 固定禁用；当前真实 wx 单 bundle 的写入原子性仍标记为 `SINGLE_BUNDLE_REPLACE_UNVERIFIED`，不是已验证事务。
 
-Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`、`getFingerprint()`、`previewCommit()`、`commit()` 和 `getCommitReceipt()`。其中逻辑 version 只表示旧 bundle 是否存在，`storageStateVersionResolved=false`，不能承担 CAS；真实可写 adapter 必须新增持久化 revision、写前比较、写后读回及崩溃恢复，普通调用方传入的 `targetKind` 或 gateway 外形不得提升为可信生产身份。
+Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`、`getFingerprint()`、`previewCommit()`、`commit()` 和 `getCommitReceipt()`。Phase 1E.2A.1 已在受保护 Fake Gateway 的事务预演中加入持久化 revision、双 fingerprint CAS、sealed journal/backup、写后读回、恢复和有界 receipt；但真实 wx adapter 仍未开放事务 commit，也没有在微信运行时验证缺 key、容量、崩溃和跨上下文协调。普通调用方传入的 `targetKind` 或 gateway 外形不得提升为可信生产身份。
 
 同一 `planId + idempotencyKey` 再次提交时，adapter 必须返回幂等重放引用且不重复写，不能把第一次的非空 diff 冒充本次写入。不同计划若违反业务唯一性前置条件（例如同一报价重复转订单），必须返回 `BLOCKED`，不能只依赖页面防重。
 
@@ -893,7 +908,7 @@ Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`�
 | 确认 revision 与提交授权 | 是（MemoryStore链） | `utils/record-confirmation-builder.js`、`utils/record-save-plan-builder.js`、`utils/record-save-commit.js` | 已绑定confirmation revision/contentHash、preflight、planId/hash和state；页面真实点击授权尚未接入 | P0 后续集成 |
 | savePlan | 是（未迁移生产） | `utils/record-save-plan-contract.js`、`utils/record-save-plan-builder.js` | Phase 1E.1已表达记一笔主保存与必要副作用；生产business及直接页面生命周期尚未消费 | P0 后续集成 |
 | MemoryStore | 是 | `utils/record-memory-store.js`、`utils/record-save-commit.js` | 原子、回滚、幂等、失败注入已验证；微信旧Storage目前只通过只读adapter投影到MemoryStore Preview，尚无可写事务adapter | P0 后续集成 |
-| Storage adapter / shadow preview | 是（只读） | `utils/record-storage-adapter-contract.js`、`utils/record-storage-state-projector.js`、`utils/record-storage-adapters.js`、`utils/record-save-shadow.js` | Phase 1E.2A 已完成旧单bundle投影、可信snapshot、零写入preview和22题完整bundle影子等价；真实revision/CAS/读回/恢复未实现，生产commit固定禁用 | P0 后续集成 |
+| Storage adapter / shadow preview | 是（只读生产边界；Fake事务预演可写） | `utils/record-storage-adapter-contract.js`、`utils/record-storage-state-projector.js`、`utils/record-storage-adapters.js`、`utils/record-storage-coordinator.js`、`utils/record-storage-transaction.js`、`utils/record-save-shadow.js` | Phase 1E.2A.1 已在Fake Gateway实现revision/CAS、journal/backup、读回、恢复、receipt及writer协调；真实wx事务、跨上下文CAS和容量仍未验证，生产commit固定禁用 | P0 运行时验证 |
 | state diff | 是 | `utils/record-state-diff.js` | business/full diff已稳定；尚未进入统一五层报告和页面 | P1 |
 | 自动报告 | 部分 | `scripts/release-parse-corpus-v2.js` 等 | 会生成独立报告，但 schema、版本和五层归责不统一 | P2 |
 | 真实 AI canary | 部分实验 | real-ai 脚本/promptfoo | prompt 与生产可能分叉，环境/成本合同未统一 | Later |
@@ -909,7 +924,8 @@ Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`�
 | 1D. 统一领域 confirmation 与保存前预检 | **已实现本阶段范围**；Confirmation、领域预检、domain/surface、revision/hash及两页/business有限安全接入 | 页面字段展示和主解析未迁移；用户编辑重算、savePlan绑定、真实微信运行时未验证 | 16组Confirmation、20组preflight及旧全套离线回归通过；preflight/Confirmation/完整页/首页/business五方结论/指纹与阻断零副作用已验证 | 中高；旧错误快捷放行收紧，未改布局、route或保存数据结构 |
 | 1E.1. 纯 SavePlan、Commit 与 MemoryStore | **已实现本阶段范围**；共享计划、MemoryStore事务、receipt和双层diff，不切换生产business | 过渡期保存变换暂与legacy并存；直接页面生命周期不在Confirmation计划范围 | 20组专项、22个记一笔等价场景、6类失败注入、幂等/过期/金融/P0及旧全套回归通过 | 中；页面和生产business未切换 |
 | 1E.2A. Storage适配与影子对照 | **已实现本阶段范围**；旧单bundle投影、可信适配器、零写入Preview、22题完整bundle影子等价和全部writer分类 | 微信写入原子性未证明；无持久化revision/CAS/读回/journal；生命周期入口多数仅分类 | 13组专项、22题Storage层等价、可信snapshot/兼容字段/零写入及旧全套回归通过 | 中；生产始终LEGACY_ONLY，共享commit禁用 |
-| 1E.2B. 生产business接入 | 在一键回退到LEGACY_ONLY前提下，让现有记一笔保存入口消费共享SavePlan与事务Commit | 持久化revision、旧writer协调、崩溃恢复、重复点击和微信运行时 | 页面调用方式与最终数据不变；CAS、写后读回、恢复/回退和真实微信故障测试通过 | 高；当前被Storage原子性证据阻断 |
+| 1E.2A.1. 单bundle持久化协议与writer协调 | **已实现离线候选范围**；23个writer统一门面，Fake Gateway revision/CAS、sealed journal/backup、读回、恢复、有界receipt和故障矩阵通过 | 真实wx缺key/配额/崩溃/COW余量、跨上下文原子CAS、receipt淘汰后的长期金融幂等未验证；production仍LEGACY_ONLY | 22组专项、11崩溃点、16故障类、700提交receipt压力、22题三方语义等价及旧回归通过 | 高；下一步只做隔离微信运行时验证，不切换生产 |
+| 1E.2B. 生产business接入 | 在一键回退到LEGACY_ONLY前提下，让现有记一笔保存入口消费共享SavePlan与事务Commit | 先完成真实微信隔离事务验证、跨上下文writer边界、容量余量和长期高风险幂等政策 | 页面调用方式与最终数据不变；真实微信CAS、写后读回、恢复/回退和故障测试通过 | 高；当前仍被微信运行时证据阻断 |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
 | 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |
 | 8. 微信开发者工具自动化 | 页面机器人与测试账号 | 工具和登录不稳定 | 两入口输入、卡片、按钮、保存、跳转可验 | 中；独立环境 |
