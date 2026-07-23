@@ -46,6 +46,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/XIAOLING_CHARACTER_GUIDE.md` | 小玲角色母版、固定特征、生成流程和验收标准 |
 | `docs/RECORD_SHARED_CORE_CONTRACT.md` | 记一笔共享核心输入、模式、AI adapter、状态、trace、确认态、savePlan 和适配边界的权威合同 |
 | `docs/RECORD_TEST_CONTRACT_V1.md` | 第一阶段测试题、fixture、五层评分、零容忍门禁、报告和 canary 的权威合同 |
+| `docs/RECORD_WX_STORAGE_RUNTIME_TEST_PLAYBOOK.md` | Phase 1E.2A.2 微信开发者工具隔离 Storage 事务验证步骤、恢复顺序和清理规则 |
 | `docs/PARSER_AI_AUDIT.md` | 记一笔 parser / AI 链路审计 |
 | `docs/BUSINESS_FLOW_AUDIT.md` | 报价、订单、待收款、收款、定金、催款业务流转 |
 | `docs/TEST_AUDIT.md` | 当前测试能力、可运行脚本、缺口和回归建议 |

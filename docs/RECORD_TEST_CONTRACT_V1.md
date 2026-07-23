@@ -132,6 +132,19 @@ Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保�
 
 这些结果不证明真实设备持久化原子性。真实wx gateway的缺key、配额、崩溃落盘、copy-on-write空间和跨页面/跨上下文writer排他仍需微信开发者工具隔离验证；当前hash用于非恶意损坏检测，不是密码学认证。生产共享Commit和app启动自动恢复保持禁用，不能据此建立发布结论。
 
+### 1.8 Phase 1E.2A.2-R1 动态验证状态（2026-07-23）
+
+`scripts/record-shared-core-phase1e2a2-static-tests.js` 为19/19；微信开发者工具直接首次打开仓库外独立 Mini Program 后完成真实 wx Storage 隔离验证：
+
+- 独立入口不加载生产 `app.js`、onboarding、`initializeState()` 或业务页面；运行时代码在其他模块执行前安装四 key 硬白名单。生产工程忽略独立入口和运行时专用源码，正式 `app.json` 不暴露测试页面。
+- 首次启动加五次真实“重新进入小程序”共记录6个不同Boot。整轮append-only审计中，真实业务key读取0、写入0、删除0，白名单外访问0。
+- 不重载矩阵15/15通过：基础写入读回、旧bundle兼容、正常CAS、stale writer、无关key、planId碰撞、容量预检、真实coordinator队列和四类写后读回异常均符合合同。
+- 五类跨Boot场景全部通过：`PREPARED → RECOVERED_ROLLED_BACK`；主bundle已写 → `RECOVERED_COMMITTED`；主bundle损坏且backup有效 → `RECOVERED_ROLLED_BACK`；矛盾材料 → `RECOVERY_REQUIRED`；同plan跨Boot → `ALREADY_COMMITTED`，异内容同planId → `SAVE_PLAN_ID_COLLISION`。
+- 容量题读取真实 `wx.getStorageInfoSync()`，不足情形用gateway测试限额在主写入前阻断；没有填满开发者工具Storage。最终清理显示revision 0、receipt 0、test key count 0，四个隔离key均删除。
+- 同轮离线门禁继续通过；未调用真实AI、外网、真实用户数据或真实业务key。production仍为`LEGACY_ONLY`，`SHARED_COMMIT`保持禁用。
+
+本结果只证明微信开发者工具隔离key上的运行时行为，不证明真机断电、真实设备持久化绝对原子、真实用户数据迁移、跨进程原子CAS或生产保存切换。下一阶段只能设计带回退、监测和失败降级的受控切换方案，不能直接启用。
+
 ## 2. 第一阶段范围
 
 ### 2.1 必须覆盖
@@ -672,6 +685,7 @@ fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JS
 | `scripts/record-shared-core-phase1e1-tests.js` | 纯SavePlan、MemoryStore原子Commit、幂等/过期/回滚、双层diff和22个legacy保存等价场景 | 仍以合成Confirmation/result为主；生产business、微信Storage、页面点击和统一五层报告尚未接入 |
 | `scripts/record-shared-core-phase1e2a-tests.js` | 单bundleStorage投影、可信adapter/snapshot、零写入Preview、22题完整bundle影子等价、兼容字段和生命周期writer分类 | 使用fake gateway与合成state；真实wx崩溃/配额/写入原子性、持久化revision/CAS、恢复及生产切换尚未验证 |
 | `scripts/record-shared-core-phase1e2a1-tests.js` | 单bundle持久化revision/CAS、sealed journal/backup、读回恢复、有界receipt、23 writer门禁、11崩溃点、16故障类、700提交压力及22题事务目标等价 | 仅受保护Fake Gateway/TRANSACTION_PREVIEW；真实wx缺key、配额、崩溃、跨上下文CAS、长期金融幂等和生产切换尚未验证 |
+| `scripts/record-shared-core-phase1e2a2-static-tests.js` + 仓库外独立Mini Program | 静态门禁19/19；真实开发者工具独立首次启动、15/15不重载、五类跨Boot恢复/CAS/幂等、容量预检、真实业务key访问0和最终0测试key已验证 | 仅覆盖开发者工具与隔离key；不代表真机断电/配额、真实用户数据迁移、跨进程原子CAS、生产切换或发布通过 |
 | `scripts/record-shared-core-phase1d-tests.js` | 统一Confirmation、domain/surface、三mode、多商品、AI状态、revision/hash和页面事实对照 | 尚非WXML运行；用户编辑重算和savePlan未实现 |
 | `scripts/record-domain-preflight-tests.js` | 客户/历史/金融/目标/AI/mode统一预检、四方一致性和正式副作用零增量 | 部分关系边界使用合成parseResult；MemoryStore/diff由Phase 1E.1独立runner覆盖，尚未合成统一V1 case runner |
 | `scripts/ai-safety-regression-tests.js` | 两个 P0、standard/deep、页面 VM、business 副作用 | 函数级拼装较多，尚无统一 case/trace/stateDiff schema |

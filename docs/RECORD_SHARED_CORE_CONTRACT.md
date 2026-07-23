@@ -134,6 +134,17 @@ Phase 1E.2A.1 在不迁移页面、不切换 production business、不访问真�
 
 本实现的威胁边界是“同一受控 JavaScript 协调器内的并发、非恶意异常和存储损坏检测”。当前 hash 不是密码学认证；微信 Storage 缺 key、配额、崩溃持久化和 copy-on-write 余量尚未实测，读-校验-写也不是跨进程/跨上下文的存储层原子 CAS。真实启用前还必须在微信开发者工具的隔离环境验证这些行为，并确认所有 writer 同属排他协调边界。Phase 1E.2A.1 候选不能作为生产切换或发布依据。
 
+### 1.8 Phase 1E.2A.2-R1 当前实现状态（2026-07-23）
+
+Phase 1E.2A.2-R1 已在微信开发者工具的独立 Mini Program 中完成隔离 Storage 运行时验证：
+
+- 开发者工具直接打开仓库外物化的独立测试目录；测试 `app.js` 在加载事务模块前先安装四 key 硬白名单，不加载生产 `app.js`、onboarding、`initializeState()` 或普通业务页面。生产项目配置反向忽略测试入口与运行时专用源码，正式 `app.json` 不注册测试页。
+- 首次启动、15 项不重载测试、5 次真实“重新进入小程序”和最终清理形成 6 个独立 Boot。append-only 审计显示整个运行中 `yiwu_boss_ai_assistant_v1` 读取、写入和删除次数均为 0，白名单外访问次数为 0。
+- 真实 wx Storage 测试 key 上，15/15 不重载用例通过，包含基础写后读回、旧 bundle 迁移、revision/CAS、stale writer、planId 碰撞、容量预检、真实 coordinator 队列和四类读回异常。
+- 五类跨 Boot 验证分别得到：仅 `PREPARED` 时 `RECOVERED_ROLLED_BACK`；主 bundle 已写时 `RECOVERED_COMMITTED`；主 bundle 损坏且 backup 有效时 `RECOVERED_ROLLED_BACK`；三方矛盾时 `RECOVERY_REQUIRED` 且材料保留；同 plan 跨 Boot 时 `ALREADY_COMMITTED`，相同 planId 不同 planHash 继续返回 `SAVE_PLAN_ID_COLLISION`。
+- 容量信息由真实 `wx.getStorageInfoSync()`读取；容量不足使用 gateway 测试限额在主 bundle 写入前阻断，没有填满开发者工具 Storage。最终四个隔离测试 key 全部删除，页面冻结证据为 revision 0、receipt 0、test key count 0。
+- 真实页面和 production business 未迁移，生产模式仍为 `LEGACY_ONLY`，`SHARED_COMMIT` 仍在 adapter/coordinator 两层禁用。本阶段未验证真机断电、真实设备配额/落盘细节、真实用户数据迁移、跨进程存储层原子 CAS 或长期 receipt 淘汰后的金融幂等，不构成生产切换或发布结论。
+
 ## 2. 目标与非目标
 
 ### 2.1 目标
@@ -908,7 +919,7 @@ Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`�
 | 确认 revision 与提交授权 | 是（MemoryStore链） | `utils/record-confirmation-builder.js`、`utils/record-save-plan-builder.js`、`utils/record-save-commit.js` | 已绑定confirmation revision/contentHash、preflight、planId/hash和state；页面真实点击授权尚未接入 | P0 后续集成 |
 | savePlan | 是（未迁移生产） | `utils/record-save-plan-contract.js`、`utils/record-save-plan-builder.js` | Phase 1E.1已表达记一笔主保存与必要副作用；生产business及直接页面生命周期尚未消费 | P0 后续集成 |
 | MemoryStore | 是 | `utils/record-memory-store.js`、`utils/record-save-commit.js` | 原子、回滚、幂等、失败注入已验证；微信旧Storage目前只通过只读adapter投影到MemoryStore Preview，尚无可写事务adapter | P0 后续集成 |
-| Storage adapter / shadow preview | 是（只读生产边界；Fake事务预演可写） | `utils/record-storage-adapter-contract.js`、`utils/record-storage-state-projector.js`、`utils/record-storage-adapters.js`、`utils/record-storage-coordinator.js`、`utils/record-storage-transaction.js`、`utils/record-save-shadow.js` | Phase 1E.2A.1 已在Fake Gateway实现revision/CAS、journal/backup、读回、恢复、receipt及writer协调；真实wx事务、跨上下文CAS和容量仍未验证，生产commit固定禁用 | P0 运行时验证 |
+| Storage adapter / shadow preview | 是（只读生产边界；Fake事务预演与隔离wx测试可写） | `utils/record-storage-adapter-contract.js`、`utils/record-storage-state-projector.js`、`utils/record-storage-adapters.js`、`utils/record-storage-coordinator.js`、`utils/record-storage-transaction.js`、`utils/record-save-shadow.js`、`runtime-test/` | Phase 1E.2A.2-R1 已在独立微信开发者工具项目的四个隔离key验证revision/CAS、journal/backup、读回、跨Boot恢复、receipt、容量预检及writer队列；真机、真实业务key、跨进程存储层原子CAS和生产切换未验证，生产commit固定禁用 | P0 受控切换设计 |
 | state diff | 是 | `utils/record-state-diff.js` | business/full diff已稳定；尚未进入统一五层报告和页面 | P1 |
 | 自动报告 | 部分 | `scripts/release-parse-corpus-v2.js` 等 | 会生成独立报告，但 schema、版本和五层归责不统一 | P2 |
 | 真实 AI canary | 部分实验 | real-ai 脚本/promptfoo | prompt 与生产可能分叉，环境/成本合同未统一 | Later |
@@ -925,6 +936,7 @@ Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`�
 | 1E.1. 纯 SavePlan、Commit 与 MemoryStore | **已实现本阶段范围**；共享计划、MemoryStore事务、receipt和双层diff，不切换生产business | 过渡期保存变换暂与legacy并存；直接页面生命周期不在Confirmation计划范围 | 20组专项、22个记一笔等价场景、6类失败注入、幂等/过期/金融/P0及旧全套回归通过 | 中；页面和生产business未切换 |
 | 1E.2A. Storage适配与影子对照 | **已实现本阶段范围**；旧单bundle投影、可信适配器、零写入Preview、22题完整bundle影子等价和全部writer分类 | 微信写入原子性未证明；无持久化revision/CAS/读回/journal；生命周期入口多数仅分类 | 13组专项、22题Storage层等价、可信snapshot/兼容字段/零写入及旧全套回归通过 | 中；生产始终LEGACY_ONLY，共享commit禁用 |
 | 1E.2A.1. 单bundle持久化协议与writer协调 | **已实现离线候选范围**；23个writer统一门面，Fake Gateway revision/CAS、sealed journal/backup、读回、恢复、有界receipt和故障矩阵通过 | 真实wx缺key/配额/崩溃/COW余量、跨上下文原子CAS、receipt淘汰后的长期金融幂等未验证；production仍LEGACY_ONLY | 22组专项、11崩溃点、16故障类、700提交receipt压力、22题三方语义等价及旧回归通过 | 高；下一步只做隔离微信运行时验证，不切换生产 |
+| 1E.2A.2. 微信开发者工具隔离事务验证 | **R1已完成**；仓库外独立Mini Program先安装Storage硬白名单，再加载真实wx Gateway和跨Boot恢复Harness；生产App不注册测试页且正式打包忽略测试源码 | 真机断电、真实设备配额/落盘细节、真实用户数据迁移、跨进程原子CAS和生产切换不在本阶段 | 静态专项19/19；开发者工具15/15不重载、5类跨Boot恢复/幂等、真实业务key读写删0、forbidden 0、6个审计Boot、最终4个测试key清理为0 | 高；仅可进入受控切换方案设计，production仍LEGACY_ONLY，共享commit禁用 |
 | 1E.2B. 生产business接入 | 在一键回退到LEGACY_ONLY前提下，让现有记一笔保存入口消费共享SavePlan与事务Commit | 先完成真实微信隔离事务验证、跨上下文writer边界、容量余量和长期高风险幂等政策 | 页面调用方式与最终数据不变；真实微信CAS、写后读回、恢复/回退和故障测试通过 | 高；当前仍被微信运行时证据阻断 |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
 | 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |
