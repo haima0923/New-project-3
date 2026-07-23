@@ -1,0 +1,14 @@
+{
+  "description": "货小玲Storage事务隔离运行时测试",
+  "compileType": "miniprogram",
+  "appid": "wx975fd5297d4c13e7",
+  "projectname": "huoxiaoling-record-storage-runtime-test",
+  "miniprogramRoot": "./",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": true,
+    "minified": false,
+    "enhance": true
+  }
+}

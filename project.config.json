@@ -15,6 +15,22 @@
         "type": "folder"
       },
       {
+        "value": "runtime-test",
+        "type": "folder"
+      },
+      {
+        "value": "utils/record-storage-runtime-test-contract.js",
+        "type": "file"
+      },
+      {
+        "value": "utils/record-storage-runtime-test-gateway.js",
+        "type": "file"
+      },
+      {
+        "value": "utils/record-storage-wx-runtime-harness.js",
+        "type": "file"
+      },
+      {
         "value": "scripts",
         "type": "folder"
       },

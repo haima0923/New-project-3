@@ -1,0 +1,52 @@
+<view class="page">
+  <view class="notice danger">独立 Mini Program。生产 app、onboarding 和 production storage 均未加载。</view>
+  <view class="notice">{{message}}</view>
+
+  <view class="panel">
+    <view class="title">运行环境</view>
+    <view class="row">Boot：{{bootId}}</view>
+    <view class="row">生产模式：LEGACY_ONLY</view>
+    <view class="row">Shared Commit：DISABLED</view>
+    <view class="row">真实业务key读取：{{status.storageAudit.realBusinessKey.reads || 0}}</view>
+    <view class="row">真实业务key写入：{{status.storageAudit.realBusinessKey.writes || 0}}</view>
+    <view class="row">真实业务key删除：{{status.storageAudit.realBusinessKey.removals || 0}}</view>
+    <view class="row">Forbidden访问：{{status.storageAudit.forbiddenAccessCount || 0}}</view>
+    <view class="row">已审计Boot：{{status.storageAudit.bootCount || 0}}</view>
+    <button type="primary" loading="{{busy}}" disabled="{{busy}}" bindtap="runNonReloadSuite">运行不重载测试</button>
+    <button disabled="{{busy}}" bindtap="refreshStatus">刷新隔离状态</button>
+  </view>
+
+  <view class="panel">
+    <view class="title">跨重新编译恢复测试</view>
+    <view class="hint">每次只准备一个场景。准备后必须真的点“重新编译”，再点击恢复/验证。</view>
+    <button
+      wx:for="{{recoveryScenarios}}"
+      wx:key="value"
+      disabled="{{busy}}"
+      data-scenario="{{item.value}}"
+      bindtap="prepareRecovery"
+    >准备：{{item.label}}</button>
+    <button type="primary" disabled="{{busy}}" bindtap="resumeRecovery">重新编译后：恢复/验证</button>
+  </view>
+
+  <view class="panel">
+    <view class="title">结构化结果</view>
+    <view class="result {{result.status === 'PASS' ? 'pass' : result.status === 'FAIL' ? 'fail' : ''}}">
+      {{result.suite || 'NOT_RUN'}}：{{result.status}}
+      <text wx:if="{{result.cases.length}}">（{{result.passed}}通过 / {{result.failed}}失败）</text>
+    </view>
+    <view wx:for="{{result.cases}}" wx:key="caseId" class="case-row">
+      <text>{{item.caseId}}</text>
+      <text>{{item.status}}</text>
+      <text wx:if="{{item.errorCode}}">{{item.errorCode}}</text>
+    </view>
+  </view>
+
+  <view class="panel">
+    <view class="title">隔离数据</view>
+    <view class="row">Revision：{{status.revision || 0}}</view>
+    <view class="row">Receipt：{{status.receiptCount || 0}}</view>
+    <view class="row">Test key count：{{status.trace.isolatedKeysPresent.length || 0}}</view>
+    <button type="warn" disabled="{{busy}}" bindtap="cleanIsolatedStorage">一键清理隔离测试数据</button>
+  </view>
+</view>

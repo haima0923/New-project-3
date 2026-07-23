@@ -1,8 +1,9 @@
 const {
   LEGACY_BUSINESS_STORAGE_KEY,
+  RECORD_TRANSACTION_STORAGE_KEYS,
   STORAGE_TARGET_KINDS
 } = require('./record-storage-adapter-contract');
-const { getTrustedGatewayIdentity } = require('./record-storage-gateways');
+const { getTrustedGatewayIdentity } = require('./record-storage-gateway-registry');
 const {
   RECORD_STORAGE_COORDINATOR_MODES,
   RECORD_STORAGE_TRANSACTION_ERRORS,
@@ -71,13 +72,23 @@ function createRecordStorageCoordinator(options = {}) {
       '显式注入的Storage gateway必须由受保护工厂创建。'
     );
   }
+  const transactionPreviewGatewayAllowed = gatewayIdentity && (
+    gatewayIdentity.gatewayKind === STORAGE_TARGET_KINDS.FAKE
+    || (gatewayIdentity.gatewayKind === STORAGE_TARGET_KINDS.WX_ISOLATED_TEST
+      && gatewayIdentity.runtimeTestOnly === true)
+  );
   if (mode === RECORD_STORAGE_COORDINATOR_MODES.TRANSACTION_PREVIEW
-    && (!gatewayIdentity || gatewayIdentity.gatewayKind !== STORAGE_TARGET_KINDS.FAKE)) {
+    && !transactionPreviewGatewayAllowed) {
     throw coordinatorError(
       RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_TRANSACTION_MODE_FORBIDDEN,
-      'TRANSACTION_PREVIEW只能使用受保护Fake Gateway。'
+      'TRANSACTION_PREVIEW只能使用受保护Fake或微信开发者工具隔离测试Gateway。'
     );
   }
+  const transactionStorageKeys = gatewayIdentity && gatewayIdentity.transactionStorageKeys || {
+    primary: LEGACY_BUSINESS_STORAGE_KEY,
+    journal: RECORD_TRANSACTION_STORAGE_KEYS.journal,
+    backup: RECORD_TRANSACTION_STORAGE_KEYS.backup
+  };
   const readContexts = new WeakMap();
   let writing = false;
   let transactionQueue = Promise.resolve();
@@ -86,7 +97,7 @@ function createRecordStorageCoordinator(options = {}) {
     : null;
 
   function readRawBundle() {
-    const value = gateway.getStorageSync(LEGACY_BUSINESS_STORAGE_KEY);
+    const value = gateway.getStorageSync(transactionStorageKeys.primary);
     return value || null;
   }
 
@@ -160,7 +171,7 @@ function createRecordStorageCoordinator(options = {}) {
           '含持久化控制信封的Bundle禁止由Legacy passthrough覆盖。'
         );
       }
-      gateway.setStorageSync(LEGACY_BUSINESS_STORAGE_KEY, state);
+      gateway.setStorageSync(transactionStorageKeys.primary, state);
       bindReadContext(state, state, writeOptions.writerSource || context && context.writerSource || 'LEGACY_WRITE');
       return state;
     } finally {
@@ -188,7 +199,7 @@ function createRecordStorageCoordinator(options = {}) {
       return {
         schemaVersion: 'record-storage-coordinator-v1',
         mode,
-        businessStorageKey: LEGACY_BUSINESS_STORAGE_KEY,
+        businessStorageKey: transactionStorageKeys.primary,
         sharedProductionCommitEnabled: false,
         gatewayKind: gatewayIdentity && gatewayIdentity.gatewayKind || (options.gateway ? 'UNKNOWN' : STORAGE_TARGET_KINDS.WX_LEGACY)
       };

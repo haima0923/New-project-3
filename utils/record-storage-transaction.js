@@ -2,7 +2,7 @@ const {
   LEGACY_BUSINESS_STORAGE_KEY,
   STORAGE_TARGET_KINDS
 } = require('./record-storage-adapter-contract');
-const { getTrustedGatewayIdentity } = require('./record-storage-gateways');
+const { getTrustedGatewayIdentity } = require('./record-storage-gateway-registry');
 const {
   RECORD_STORAGE_BACKUP_KEY,
   RECORD_STORAGE_BACKUP_SCHEMA_VERSION,
@@ -299,13 +299,13 @@ function removeAndVerify(gateway, key) {
   }
 }
 
-function cleanup(gateway) {
+function cleanup(gateway, storageKeys) {
   const errors = [];
-  try { removeAndVerify(gateway, RECORD_STORAGE_JOURNAL_KEY); } catch (error) {
+  try { removeAndVerify(gateway, storageKeys.journal); } catch (error) {
     errors.push(makeIssue(error));
     return errors;
   }
-  try { removeAndVerify(gateway, RECORD_STORAGE_BACKUP_KEY); } catch (error) { errors.push(makeIssue(error)); }
+  try { removeAndVerify(gateway, storageKeys.backup); } catch (error) { errors.push(makeIssue(error)); }
   return errors;
 }
 
@@ -406,6 +406,35 @@ function checkCapacity(gateway, payloads) {
   return { peakBytes, limitSizeBytes: Number(info.limitSizeBytes) };
 }
 
+function resolveTransactionStorageKeys(gatewayIdentity) {
+  const candidate = gatewayIdentity && gatewayIdentity.transactionStorageKeys || {
+    primary: LEGACY_BUSINESS_STORAGE_KEY,
+    journal: RECORD_STORAGE_JOURNAL_KEY,
+    backup: RECORD_STORAGE_BACKUP_KEY
+  };
+  const output = {
+    primary: String(candidate.primary || ''),
+    journal: String(candidate.journal || ''),
+    backup: String(candidate.backup || '')
+  };
+  const values = Object.values(output);
+  if (values.some((value) => !/^[A-Za-z0-9:_-]{1,160}$/.test(value)) || new Set(values).size !== 3) {
+    throw makeError(
+      RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_TRANSACTION_MODE_FORBIDDEN,
+      '可信Gateway的事务Storage key无效。'
+    );
+  }
+  return Object.freeze(output);
+}
+
+function estimateEntryBytes(gateway, key, value) {
+  if (gateway && typeof gateway.estimateEntryBytes === 'function') {
+    const estimated = Number(gateway.estimateEntryBytes(key, value));
+    if (Number.isFinite(estimated) && estimated >= 0) return estimated;
+  }
+  return utf8ByteLength(key) + utf8ByteLength(value);
+}
+
 function checkpoint(options, name, context) {
   if (typeof options.onCheckpoint === 'function') options.onCheckpoint(name, safeClone(context));
   if (options.crashAt === name) {
@@ -436,10 +465,17 @@ function verifySealedRecord(record, fingerprintField, prefix) {
 function createPersistentRecordTransactionManager(options = {}) {
   const gateway = options.gateway;
   const gatewayIdentity = getTrustedGatewayIdentity(gateway);
-  if (!gatewayIdentity || gatewayIdentity.gatewayKind !== STORAGE_TARGET_KINDS.FAKE || gatewayIdentity.canTouchRealStorage !== false) {
+  const isFake = gatewayIdentity
+    && gatewayIdentity.gatewayKind === STORAGE_TARGET_KINDS.FAKE
+    && gatewayIdentity.canTouchRealStorage === false;
+  const isIsolatedWxRuntimeTest = gatewayIdentity
+    && gatewayIdentity.gatewayKind === STORAGE_TARGET_KINDS.WX_ISOLATED_TEST
+    && gatewayIdentity.canTouchRealStorage === true
+    && gatewayIdentity.runtimeTestOnly === true;
+  if (!isFake && !isIsolatedWxRuntimeTest) {
     throw makeError(
       RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_TRANSACTION_MODE_FORBIDDEN,
-      '持久化事务本轮只允许受保护Fake Gateway隔离验证。'
+      '持久化事务只允许受保护Fake或微信开发者工具隔离测试Gateway。'
     );
   }
   if (options.mode !== RECORD_STORAGE_COORDINATOR_MODES.TRANSACTION_PREVIEW) {
@@ -448,10 +484,11 @@ function createPersistentRecordTransactionManager(options = {}) {
       '生产共享Commit仍禁用；事务只能显式运行于TRANSACTION_PREVIEW。'
     );
   }
+  const storageKeys = resolveTransactionStorageKeys(gatewayIdentity);
   let active = false;
 
   function readPrimary() {
-    const stored = readMaybe(gateway, LEGACY_BUSINESS_STORAGE_KEY);
+    const stored = readMaybe(gateway, storageKeys.primary);
     const bundle = stored === null ? {} : stored;
     if (!bundle || typeof bundle !== 'object' || Array.isArray(bundle)) {
       throw makeError(RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_RECOVERY_REQUIRED, '主业务Bundle不可解析。');
@@ -483,9 +520,9 @@ function createPersistentRecordTransactionManager(options = {}) {
     let backup;
     let primary;
     try {
-      journal = readMaybe(gateway, RECORD_STORAGE_JOURNAL_KEY);
-      backup = readMaybe(gateway, RECORD_STORAGE_BACKUP_KEY);
-      primary = readMaybe(gateway, LEGACY_BUSINESS_STORAGE_KEY);
+      journal = readMaybe(gateway, storageKeys.journal);
+      backup = readMaybe(gateway, storageKeys.backup);
+      primary = readMaybe(gateway, storageKeys.primary);
     } catch (error) {
       return {
         schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
@@ -544,7 +581,7 @@ function createPersistentRecordTransactionManager(options = {}) {
           receiptHash: backup.receiptHash
         });
       if (primaryIsCommittedTarget) {
-        const cleanupErrors = cleanup(gateway);
+        const cleanupErrors = cleanup(gateway, storageKeys);
         return {
           schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
           status: cleanupErrors.length
@@ -559,7 +596,7 @@ function createPersistentRecordTransactionManager(options = {}) {
       if (backupSealed
         && backup.schemaVersion === RECORD_STORAGE_BACKUP_SCHEMA_VERSION
         && verifyBundle(primary, { bundleFingerprint: backup.bundleFingerprint })) {
-        const cleanupErrors = cleanup(gateway);
+        const cleanupErrors = cleanup(gateway, storageKeys);
         return {
           schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
           status: cleanupErrors.length ? RECORD_STORAGE_RECOVERY_STATES.RECOVERY_REQUIRED : RECORD_STORAGE_RECOVERY_STATES.CLEAN,
@@ -603,7 +640,7 @@ function createPersistentRecordTransactionManager(options = {}) {
       idempotencyKey: journal.idempotencyKey
     };
     if (verifyBundle(primary, expectedNew)) {
-      const cleanupErrors = cleanup(gateway);
+      const cleanupErrors = cleanup(gateway, storageKeys);
       return {
         schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
         status: cleanupErrors.length
@@ -641,7 +678,7 @@ function createPersistentRecordTransactionManager(options = {}) {
       bundleFingerprint: backup.bundleFingerprint
     });
     if (primaryIsOld) {
-      const cleanupErrors = cleanup(gateway);
+      const cleanupErrors = cleanup(gateway, storageKeys);
       return {
         schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
         status: cleanupErrors.length ? RECORD_STORAGE_RECOVERY_STATES.RECOVERY_REQUIRED : RECORD_STORAGE_RECOVERY_STATES.RECOVERED_ROLLED_BACK,
@@ -681,15 +718,15 @@ function createPersistentRecordTransactionManager(options = {}) {
       };
     }
     try {
-      gateway.setStorageSync(LEGACY_BUSINESS_STORAGE_KEY, backup.bundle);
-      const restored = readMaybe(gateway, LEGACY_BUSINESS_STORAGE_KEY);
+      gateway.setStorageSync(storageKeys.primary, backup.bundle);
+      const restored = readMaybe(gateway, storageKeys.primary);
       if (!verifyBundle(restored, {
         businessFingerprint: journal.baseFingerprint,
         bundleFingerprint: backup.bundleFingerprint
       })) {
         throw makeError(RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_RESTORE_FAILED, 'Backup恢复后读回不一致。');
       }
-      const cleanupErrors = cleanup(gateway);
+      const cleanupErrors = cleanup(gateway, storageKeys);
       return {
         schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
         status: cleanupErrors.length ? RECORD_STORAGE_RECOVERY_STATES.RECOVERY_REQUIRED : RECORD_STORAGE_RECOVERY_STATES.RECOVERED_ROLLED_BACK,
@@ -848,22 +885,24 @@ function createPersistentRecordTransactionManager(options = {}) {
         status: RECORD_STORAGE_TRANSACTION_STATES.MAIN_WRITE_STARTED
       }), 'journalFingerprint', 'journal1');
       const capacity = checkCapacity(gateway, {
-        oldPrimaryBytes: utf8ByteLength(LEGACY_BUSINESS_STORAGE_KEY) + utf8ByteLength(current.bundle),
-        newPrimaryBytes: utf8ByteLength(LEGACY_BUSINESS_STORAGE_KEY) + utf8ByteLength(targetBundle),
-        backupBytes: utf8ByteLength(RECORD_STORAGE_BACKUP_KEY) + utf8ByteLength(backup),
-        journalBytes: utf8ByteLength(RECORD_STORAGE_JOURNAL_KEY)
-          + Math.max(utf8ByteLength(preparedJournal), utf8ByteLength(mainWriteStartedJournal))
+        oldPrimaryBytes: estimateEntryBytes(gateway, storageKeys.primary, current.bundle),
+        newPrimaryBytes: estimateEntryBytes(gateway, storageKeys.primary, targetBundle),
+        backupBytes: estimateEntryBytes(gateway, storageKeys.backup, backup),
+        journalBytes: Math.max(
+          estimateEntryBytes(gateway, storageKeys.journal, preparedJournal),
+          estimateEntryBytes(gateway, storageKeys.journal, mainWriteStartedJournal)
+        )
       });
 
       checkpoint(commitOptions, 'BEFORE_BACKUP_WRITE', { transactionId: input.transactionId });
-      gateway.setStorageSync(RECORD_STORAGE_BACKUP_KEY, backup);
-      if (!verifyStoredValue(gateway, RECORD_STORAGE_BACKUP_KEY, backup)) {
+      gateway.setStorageSync(storageKeys.backup, backup);
+      if (!verifyStoredValue(gateway, storageKeys.backup, backup)) {
         throw makeError(RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_BACKUP_WRITE_FAILED, 'Backup写后读回不一致。');
       }
       checkpoint(commitOptions, 'AFTER_BACKUP_WRITE', { transactionId: input.transactionId });
       checkpoint(commitOptions, 'BEFORE_JOURNAL_WRITE', { transactionId: input.transactionId });
-      gateway.setStorageSync(RECORD_STORAGE_JOURNAL_KEY, preparedJournal);
-      if (!verifyStoredValue(gateway, RECORD_STORAGE_JOURNAL_KEY, preparedJournal)) {
+      gateway.setStorageSync(storageKeys.journal, preparedJournal);
+      if (!verifyStoredValue(gateway, storageKeys.journal, preparedJournal)) {
         throw makeError(RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_JOURNAL_WRITE_FAILED, 'Journal写后读回不一致。');
       }
       checkpoint(commitOptions, 'AFTER_JOURNAL_WRITE', { transactionId: input.transactionId });
@@ -876,8 +915,8 @@ function createPersistentRecordTransactionManager(options = {}) {
           '写主Bundle前CAS发现并发变化。'
         );
       }
-      gateway.setStorageSync(RECORD_STORAGE_JOURNAL_KEY, mainWriteStartedJournal);
-      if (!verifyStoredValue(gateway, RECORD_STORAGE_JOURNAL_KEY, mainWriteStartedJournal)) {
+      gateway.setStorageSync(storageKeys.journal, mainWriteStartedJournal);
+      if (!verifyStoredValue(gateway, storageKeys.journal, mainWriteStartedJournal)) {
         throw makeError(RECORD_STORAGE_TRANSACTION_ERRORS.STORAGE_JOURNAL_WRITE_FAILED, '主写入许可Journal写后读回不一致。');
       }
       checkpoint(commitOptions, 'BEFORE_MAIN_WRITE', { transactionId: input.transactionId });
@@ -891,10 +930,10 @@ function createPersistentRecordTransactionManager(options = {}) {
         );
       }
       mainWriteAttempted = true;
-      gateway.setStorageSync(LEGACY_BUSINESS_STORAGE_KEY, targetBundle);
+      gateway.setStorageSync(storageKeys.primary, targetBundle);
       checkpoint(commitOptions, 'AFTER_MAIN_WRITE', { transactionId: input.transactionId });
       checkpoint(commitOptions, 'BEFORE_READBACK', { transactionId: input.transactionId });
-      const readback = readMaybe(gateway, LEGACY_BUSINESS_STORAGE_KEY);
+      const readback = readMaybe(gateway, storageKeys.primary);
       if (!verifyBundle(readback, {
         revision: targetRevision,
         transactionId: input.transactionId,
@@ -913,9 +952,9 @@ function createPersistentRecordTransactionManager(options = {}) {
       }
       checkpoint(commitOptions, 'AFTER_READBACK', { transactionId: input.transactionId });
       checkpoint(commitOptions, 'BEFORE_JOURNAL_CLEANUP', { transactionId: input.transactionId });
-      removeAndVerify(gateway, RECORD_STORAGE_JOURNAL_KEY);
+      removeAndVerify(gateway, storageKeys.journal);
       checkpoint(commitOptions, 'BEFORE_BACKUP_CLEANUP', { transactionId: input.transactionId });
-      removeAndVerify(gateway, RECORD_STORAGE_BACKUP_KEY);
+      removeAndVerify(gateway, storageKeys.backup);
       return {
         schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
         status: RECORD_STORAGE_TRANSACTION_STATES.COMMITTED,
@@ -934,7 +973,7 @@ function createPersistentRecordTransactionManager(options = {}) {
       if (error && error.simulatedCrash) throw error;
       if (error && error.code === RECORD_STORAGE_TRANSACTION_ERRORS.STALE_STORAGE_SNAPSHOT
         && mainWriteAttempted === false) {
-        const cleanupErrors = cleanup(gateway);
+        const cleanupErrors = cleanup(gateway, storageKeys);
         return {
           schemaVersion: RECORD_STORAGE_TRANSACTION_SCHEMA_VERSION,
           status: cleanupErrors.length

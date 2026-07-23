@@ -1,33 +1,15 @@
-const { STORAGE_TARGET_KINDS } = require('./record-storage-adapter-contract');
+const {
+  LEGACY_BUSINESS_STORAGE_KEY,
+  RECORD_TRANSACTION_STORAGE_KEYS,
+  STORAGE_TARGET_KINDS
+} = require('./record-storage-adapter-contract');
+const {
+  gatewayError,
+  getTrustedGatewayIdentity,
+  registerTrustedGateway,
+  validateGatewayShape
+} = require('./record-storage-gateway-registry');
 const { safeClone } = require('./record-state-diff');
-
-const TRUSTED_GATEWAYS = new WeakMap();
-
-function gatewayError(message) {
-  const error = new Error(message);
-  error.code = 'STORAGE_GATEWAY_INVALID';
-  return error;
-}
-
-function validateGatewayShape(gateway) {
-  if (!gateway || typeof gateway !== 'object'
-    || typeof gateway.getStorageSync !== 'function'
-    || typeof gateway.setStorageSync !== 'function'
-    || typeof gateway.removeStorageSync !== 'function') {
-    throw gatewayError('Storage gateway合同不完整。');
-  }
-}
-
-function registerGateway(gateway, descriptor) {
-  validateGatewayShape(gateway);
-  TRUSTED_GATEWAYS.set(gateway, Object.freeze(Object.assign({}, descriptor)));
-  return Object.freeze(gateway);
-}
-
-function getTrustedGatewayIdentity(gateway) {
-  const descriptor = TRUSTED_GATEWAYS.get(gateway);
-  return descriptor ? safeClone(descriptor) : null;
-}
 
 function createWxStorageGateway() {
   if (arguments.length > 0) {
@@ -64,7 +46,7 @@ function createWxStorageGateway() {
       };
     }
   };
-  return registerGateway(gateway, {
+  return registerTrustedGateway(gateway, {
     gatewayKind: STORAGE_TARGET_KINDS.WX_LEGACY,
     canTouchRealStorage: true,
     source: 'WX_API'
@@ -257,10 +239,15 @@ function createFakeStorageGateway(initialEntries = {}, options = {}) {
     setFailureInjection(value) { failure = normalizeFailureInjection(value); },
     clearFailureInjection() { failure = null; }
   };
-  return registerGateway(gateway, {
+  return registerTrustedGateway(gateway, {
     gatewayKind: STORAGE_TARGET_KINDS.FAKE,
     canTouchRealStorage: false,
-    source: 'IN_MEMORY_FAKE'
+    source: 'IN_MEMORY_FAKE',
+    transactionStorageKeys: {
+      primary: LEGACY_BUSINESS_STORAGE_KEY,
+      journal: RECORD_TRANSACTION_STORAGE_KEYS.journal,
+      backup: RECORD_TRANSACTION_STORAGE_KEYS.backup
+    }
   });
 }
 

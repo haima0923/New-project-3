@@ -1,0 +1,12 @@
+.page { padding: 24rpx; }
+.notice { margin-bottom: 20rpx; padding: 20rpx; border-radius: 14rpx; background: #fff; }
+.danger { color: #b42318; border: 2rpx solid #fda29b; }
+.panel { margin-bottom: 20rpx; padding: 22rpx; border-radius: 16rpx; background: #fff; }
+.title { margin-bottom: 14rpx; font-size: 30rpx; font-weight: 600; }
+.row, .hint { margin: 10rpx 0; font-size: 25rpx; }
+.hint { color: #667085; }
+.result { padding: 14rpx; border-radius: 10rpx; background: #f2f4f7; }
+.pass { color: #027a48; background: #ecfdf3; }
+.fail { color: #b42318; background: #fef3f2; }
+.case-row { display: flex; justify-content: space-between; gap: 12rpx; padding: 10rpx 0; font-size: 22rpx; }
+button { margin-top: 14rpx; }
