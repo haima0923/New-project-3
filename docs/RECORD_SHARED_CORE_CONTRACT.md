@@ -1,6 +1,6 @@
 # 记一笔共享核心合同（候选 V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.2A.1 已通过离线回归；单业务 Bundle 的 revision/CAS、journal/backup、写后读回、恢复和持久化幂等协议已在受保护 Fake Gateway 中验证；23 个 legacy writer 已收敛到统一协调门面；共享生产 Commit 仍禁用，legacy 保存仍生效；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1E.2B.1 已通过对应离线回归；微信开发者工具隔离 key 的事务运行时验证已通过；受控切换控制面仅在 Fake/Memory/隔离目标演练；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；没有真实用户 canary、可信远程 kill switch、真机或真实 AI 验证；不是发布基线。**
 >
 > 本合同最初以 `fix/p0-ai-result-integrity` 分支、`c1818817353b91d4d9cd53eb47bc4a01c8c046d0`
 > 的真实代码定稿；Phase 1B 从 Phase 1A 提交 `5109f04982332e0f5f6be649926f6595f6d81489` 开始实现。实现状态以本节记录和对应候选提交为准，不得借合同之名改变当前 AI 分流产品规则。
@@ -144,6 +144,20 @@ Phase 1E.2A.2-R1 已在微信开发者工具的独立 Mini Program 中完成隔�
 - 五类跨 Boot 验证分别得到：仅 `PREPARED` 时 `RECOVERED_ROLLED_BACK`；主 bundle 已写时 `RECOVERED_COMMITTED`；主 bundle 损坏且 backup 有效时 `RECOVERED_ROLLED_BACK`；三方矛盾时 `RECOVERY_REQUIRED` 且材料保留；同 plan 跨 Boot 时 `ALREADY_COMMITTED`，相同 planId 不同 planHash 继续返回 `SAVE_PLAN_ID_COLLISION`。
 - 容量信息由真实 `wx.getStorageInfoSync()`读取；容量不足使用 gateway 测试限额在主 bundle 写入前阻断，没有填满开发者工具 Storage。最终四个隔离测试 key 全部删除，页面冻结证据为 revision 0、receipt 0、test key count 0。
 - 真实页面和 production business 未迁移，生产模式仍为 `LEGACY_ONLY`，`SHARED_COMMIT` 仍在 adapter/coordinator 两层禁用。本阶段未验证真机断电、真实设备配额/落盘细节、真实用户数据迁移、跨进程存储层原子 CAS 或长期 receipt 淘汰后的金融幂等，不构成生产切换或发布结论。
+
+### 1.9 Phase 1E.2B.1 当前实现状态（2026-07-23）
+
+Phase 1E.2B.1 只实现共享保存受控切换控制面和隔离演练，没有迁移页面或 production business：
+
+- `utils/record-save-cutover-contract.js` 与 `utils/record-save-cutover-controller.js` 定义 `LEGACY_ONLY`、`SHADOW_PREVIEW`、`SHARED_CANARY`、`SHARED_PRIMARY`、`RECOVERY_LOCKED`，统一可信配置、隔离资格证据、Shared/Legacy 资格、路径和阶段化回退。生产环境无论请求何种模式都硬钳制为 `LEGACY_ONLY`。
+- 当前没有可信远程配置、在线 kill switch 或活跃客户端版本覆盖率。构建 Provider 只能签发生产 Legacy；Fake/Local Provider 和证据只用于隔离环境。普通参数、Storage、环境变量、页面输入、克隆配置或普通布尔对象均不能取得 Shared 资格。当前真实回退只能依靠构建配置或重新发布。
+- Shared 资格复用 SavePlan 权威 `validatePlanShape()`，并绑定 Confirmation、Preflight、state revision/fingerprint、受保护 target/Coordinator、实际 Coordinator schema、明确 clean transaction/readback/receipt/material 证据、精确 cohort policy、allowlist、生产 result/provider、Shadow 基线和 Release A/旧 writer 退出证据。当前没有生产证据签发器，真实用户不能获得 Shared 资格。
+- 终局或模糊事务状态在 mode 选择前阻断。主 Bundle 可能写入、readback/receipt 不确定、已提交、stale、plan 碰撞、金融不变量失败均为 `NO_FALLBACK`；`BEFORE_JOURNAL` 也不视为安全写前阶段，因为事务协议先写 Backup。回退阶段、base/revision/fingerprint、receipt 和重验事实必须来自绑定可信 Coordinator 的受保护 outcome，普通参数不能解锁回退；可信配置的 `fallbackPolicy` 也必须明确允许该类回退。只有明确尚未创建事务材料，或严格验证回到 base 后重新读取、重做 Preflight 的场景，才可考虑 Legacy。
+- `RECOVERY_LOCKED` 同时阻断 Shared 和 Legacy；配置 kill switch 只影响下一笔尚未开始的保存，不能中断或改道正在提交/恢复的事务。
+- `utils/record-save-cutover-monitor.js` 只在内存保留有界技术事件，使用枚举、语义版本、config/hash 短指纹和计数；不记录原文、客户、电话、商品、金额、完整记录或自由错误文本，不写业务 Bundle、不上传远端。
+- 22 个 legacy/shared 保存等价场景继续作为 Shadow 基线；`Legacy → Shared → transactional-Legacy → Shared` 仅在隔离事务协议中模拟 revision/receipt/未知字段兼容，不代表生产 transactional Legacy writer 已实现。
+
+发布顺序必须先是 Release A 基础设施版本并继续固定 `LEGACY_ONLY`；只有能证明活跃客户端升级和旧 writer 退出后，才可设计受控内部设备 Release B canary。详细边界以 `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 为准。
 
 ## 2. 目标与非目标
 
@@ -937,7 +951,8 @@ Phase 1E.2A 兼容接口为 `getIdentity()`、`readSnapshot()`、`getVersion()`�
 | 1E.2A. Storage适配与影子对照 | **已实现本阶段范围**；旧单bundle投影、可信适配器、零写入Preview、22题完整bundle影子等价和全部writer分类 | 微信写入原子性未证明；无持久化revision/CAS/读回/journal；生命周期入口多数仅分类 | 13组专项、22题Storage层等价、可信snapshot/兼容字段/零写入及旧全套回归通过 | 中；生产始终LEGACY_ONLY，共享commit禁用 |
 | 1E.2A.1. 单bundle持久化协议与writer协调 | **已实现离线候选范围**；23个writer统一门面，Fake Gateway revision/CAS、sealed journal/backup、读回、恢复、有界receipt和故障矩阵通过 | 真实wx缺key/配额/崩溃/COW余量、跨上下文原子CAS、receipt淘汰后的长期金融幂等未验证；production仍LEGACY_ONLY | 22组专项、11崩溃点、16故障类、700提交receipt压力、22题三方语义等价及旧回归通过 | 高；下一步只做隔离微信运行时验证，不切换生产 |
 | 1E.2A.2. 微信开发者工具隔离事务验证 | **R1已完成**；仓库外独立Mini Program先安装Storage硬白名单，再加载真实wx Gateway和跨Boot恢复Harness；生产App不注册测试页且正式打包忽略测试源码 | 真机断电、真实设备配额/落盘细节、真实用户数据迁移、跨进程原子CAS和生产切换不在本阶段 | 静态专项19/19；开发者工具15/15不重载、5类跨Boot恢复/幂等、真实业务key读写删0、forbidden 0、6个审计Boot、最终4个测试key清理为0 | 高；仅可进入受控切换方案设计，production仍LEGACY_ONLY，共享commit禁用 |
-| 1E.2B. 生产business接入 | 在一键回退到LEGACY_ONLY前提下，让现有记一笔保存入口消费共享SavePlan与事务Commit | 先完成真实微信隔离事务验证、跨上下文writer边界、容量余量和长期高风险幂等政策 | 页面调用方式与最终数据不变；真实微信CAS、写后读回、恢复/回退和故障测试通过 | 高；当前仍被微信运行时证据阻断 |
+| 1E.2B.1. 共享保存受控切换控制面 | **已实现本阶段范围**；可信配置合同、受保护隔离证据、Shared资格、路径决策、阶段化回退、Recovery Lock、脱敏内存监测和隔离演练 | 无可信远程配置或在线kill switch；无客户端版本覆盖率；真实transactional Legacy writer和生产Shared路径均未实现 | 12组专项、22个Shadow基线、禁止双写、模式转换协议模拟、旧版本门禁、隐私门禁及旧全套离线回归通过 | 高；production固定LEGACY_ONLY，共享commit禁用，没有真实用户canary |
+| Release A. 基础设施发布候选 | 只准备Coordinator、revision/CAS、恢复与技术监测的LEGACY_ONLY候选，不开启Shared | 必须证明活跃客户端升级覆盖和旧writer退出；当前只能版本级回退 | 发布候选仍硬关闭Shared；建立可信版本覆盖证据并完成稳定性观察 | 高；下一步仅可准备候选，不得直接发布或开启Shared |
 | 6. 建立第一阶段 Node 门禁 | 统一 case runner、断言、报告 | 题库只测中间对象 | 每题从原文到 state diff；零容忍 100% | 中；迁移现有 fixture，不复制 parser |
 | 7. 网页测试台 | 只消费核心 output/trace | 形成第二套逻辑 | 无 parser/安全/保存复制；可看每层失败 | 低；不改变生产 |
 | 8. 微信开发者工具自动化 | 页面机器人与测试账号 | 工具和登录不稳定 | 两入口输入、卡片、按钮、保存、跳转可验 | 中；独立环境 |

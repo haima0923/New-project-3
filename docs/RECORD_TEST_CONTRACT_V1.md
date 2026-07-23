@@ -1,6 +1,6 @@
 # 记一笔第一阶段测试合同（V1）
 
-> 状态：**合同已定稿；Phase 1A～1E.2A.1 专项运行器已通过离线回归；单业务 Bundle 的 revision/CAS、故障恢复、持久化幂等和 legacy writer 协调已在 Fake Gateway 形成确定性门禁；生产共享 Commit 仍禁用；真实 AI 未验证；微信运行时未验证；不是发布基线。**
+> 状态：**合同已定稿；Phase 1A～1E.2B.1 已通过对应离线回归；微信开发者工具隔离 key 的事务运行时验证已通过；受控切换只在 Fake/Memory/隔离目标演练；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；没有真实用户 canary、可信远程 kill switch、真机或真实 AI 验证；不是发布基线。**
 >
 > 本合同与 `docs/RECORD_SHARED_CORE_CONTRACT.md` 配套。任何测试成绩都必须能说明：测的是哪份代码、哪套题、哪种模式、哪个模型和 prompt，以及错误发生在哪一层。
 
@@ -144,6 +144,24 @@ Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保�
 - 同轮离线门禁继续通过；未调用真实AI、外网、真实用户数据或真实业务key。production仍为`LEGACY_ONLY`，`SHARED_COMMIT`保持禁用。
 
 本结果只证明微信开发者工具隔离key上的运行时行为，不证明真机断电、真实设备持久化绝对原子、真实用户数据迁移、跨进程原子CAS或生产保存切换。下一阶段只能设计带回退、监测和失败降级的受控切换方案，不能直接启用。
+
+### 1.9 Phase 1E.2B.1 动态验证状态（2026-07-23）
+
+`scripts/record-shared-core-phase1e2b1-tests.js` 为 12/12，验证范围为纯控制面和隔离存储演练：
+
+- 可信配置使用私有注册身份；生产构建始终硬收敛为 `LEGACY_ONLY`。页面参数、普通 Storage、环境变量、克隆对象和普通布尔证据均不能开启 Shared；Shadow抽样未命中或采样率为0时不运行预演，配置也不能打开远程监测上传。
+- `LEGACY_ONLY`、`SHADOW_PREVIEW`、`SHARED_CANARY`、`SHARED_PRIMARY`、`RECOVERY_LOCKED` 五种决策态均受检；后三种 Shared 决策只接受受保护 Fake/Memory/开发者工具隔离目标，不能绑定真实业务 Storage。
+- Shared 资格逐项覆盖构建版本/flavor、Storage schema、事务协议、实际 Coordinator schema、target绑定、恢复材料、业务和操作 allowlist、Preflight、Confirmation、完整 SavePlan、state revision/fingerprint、provider/resultScope、Shadow 差异、Release A/旧 writer 退出和精确匹配的可信 canary cohort。
+- 阶段化回退验证了安全写前、Backup/Journal、主 Bundle 可能写入、readback/receipt 不确定、stale、plan 碰撞、已提交和 Recovery Lock；主 Bundle 或提交结果一旦可能变化，Legacy 执行次数恒为 0。回退证明必须由绑定可信 Coordinator 的受保护 outcome 提供，普通布尔值不能解锁；可信配置为 `NO_FALLBACK` 时控制器不会自行改成写前回退。
+- 可信 evidence 的 transaction/recovery 状态优先于普通输入；普通输入试图把 `COMMITTED + RECOVERY_REQUIRED` 改报为 `ROLLED_BACK + RECOVERED_ROLLED_BACK` 时进入 Recovery Lock，不得借已验证回滚路径执行 Legacy。
+- 22 个既有 Legacy/Shared 等价场景继续作为 Shadow 基线；业务、金融、关系、数据丢失、未知差异和自相矛盾的 Shadow 结果均阻断 Shared。
+- `Legacy → Shared → 事务兼容 Legacy → Shared` 只在同一事务协议的隔离状态机中做模式转换模拟，验证 revision、receipt、未知字段和关系语义；不代表生产 transactional Legacy writer 已接入。
+- 监测仅保留严格枚举和短指纹，输入中的原文、客户、电话、商品、金额、自由错误文字和完整业务对象不能进入内部事件、公开 decision 的 `monitoringEvents` 或 `monitoringTags`；内存 FIFO 有界、可清理且不上传。
+- Kill switch 只影响下一笔未开始保存；`RECOVERY_LOCKED`、已提交、stale、plan碰撞和模糊事务状态不能被 kill switch 改道到 Legacy。
+
+同轮 Phase 1E.2A.2 静态门禁 19/19、Phase 1E.2A.1 22/22、Phase 1E.2A 13/13、Phase 1E.1 20/20、Phase 1D 16/16、领域预检 20/20、Phase 1C 16/16、Phase 1B 24/24、Phase 1A 25/25，以及 AI P0、route、五步用户、本地硬检查、核心/金融、UI结构、模型路由、服务端 fake/auth 回归均通过。控制面没有修改 Transaction、Journal、Recovery、Storage Gateway 或 Runtime Harness，因此本轮没有重跑真实微信 Storage 矩阵；沿用 Phase 1E.2A.2-R1 的隔离运行时证据。
+
+当前没有可信远程配置或客户端版本覆盖率，只能通过构建配置和发布新版本进行全局回退，不能称为在线一键 kill switch。production 仍为 `LEGACY_ONLY`，共享生产 Commit 和真实用户 canary 均未启用。
 
 ## 2. 第一阶段范围
 
@@ -686,6 +704,7 @@ fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JS
 | `scripts/record-shared-core-phase1e2a-tests.js` | 单bundleStorage投影、可信adapter/snapshot、零写入Preview、22题完整bundle影子等价、兼容字段和生命周期writer分类 | 使用fake gateway与合成state；真实wx崩溃/配额/写入原子性、持久化revision/CAS、恢复及生产切换尚未验证 |
 | `scripts/record-shared-core-phase1e2a1-tests.js` | 单bundle持久化revision/CAS、sealed journal/backup、读回恢复、有界receipt、23 writer门禁、11崩溃点、16故障类、700提交压力及22题事务目标等价 | 仅受保护Fake Gateway/TRANSACTION_PREVIEW；真实wx缺key、配额、崩溃、跨上下文CAS、长期金融幂等和生产切换尚未验证 |
 | `scripts/record-shared-core-phase1e2a2-static-tests.js` + 仓库外独立Mini Program | 静态门禁19/19；真实开发者工具独立首次启动、15/15不重载、五类跨Boot恢复/CAS/幂等、容量预检、真实业务key访问0和最终0测试key已验证 | 仅覆盖开发者工具与隔离key；不代表真机断电/配额、真实用户数据迁移、跨进程原子CAS、生产切换或发布通过 |
+| `scripts/record-shared-core-phase1e2b1-tests.js` | 可信配置、Shared资格、路径决策、阶段化回退、Recovery Lock、22题Shadow基线、模式转换协议模拟、禁止双写、旧版本门禁和脱敏限量监测 | 仅纯控制面和Fake/Memory/隔离目标；无可信远程开关、版本覆盖率、生产transactional Legacy、真实用户canary或生产Shared写入 |
 | `scripts/record-shared-core-phase1d-tests.js` | 统一Confirmation、domain/surface、三mode、多商品、AI状态、revision/hash和页面事实对照 | 尚非WXML运行；用户编辑重算和savePlan未实现 |
 | `scripts/record-domain-preflight-tests.js` | 客户/历史/金融/目标/AI/mode统一预检、四方一致性和正式副作用零增量 | 部分关系边界使用合成parseResult；MemoryStore/diff由Phase 1E.1独立runner覆盖，尚未合成统一V1 case runner |
 | `scripts/ai-safety-regression-tests.js` | 两个 P0、standard/deep、页面 VM、business 副作用 | 函数级拼装较多，尚无统一 case/trace/stateDiff schema |
