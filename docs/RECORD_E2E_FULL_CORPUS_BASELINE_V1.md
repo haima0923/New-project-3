@@ -18,8 +18,9 @@ BLOCKED        0
 E2E，也不构成产品发布结论。`CASE_FAIL` 只表示 Actual 与人工合同 Expected 不一致；
 其中只有证据充分的项目才标为确认产品问题，其余保持候选或待人工判责。
 
-本阶段没有修改生产页面、parser、AI、Preflight、Confirmation、business、Storage 或
-Coordinator，也没有修改 120 条题的业务 Expected。
+原始 Phase 2B.2-R1 基线没有修改生产代码。后续 `SELECT_ORDER` Cluster Fix只修改
+完整输入页的候选交互和确认草稿映射；parser、AI、Domain Preflight政策、business、
+Storage、Coordinator和120条题的业务Expected仍未修改。
 
 ## 2. 跨页面动作注册表
 
@@ -73,9 +74,9 @@ backupCount = 0
 primary failure、Ownership、Route、Preflight、Confirmation、业务 Diff、Receipt、
 revision、Restart 和 Concurrent 语义。PID、Boot ID 和绝对耗时不参与业务判分。
 
-完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次临时文件为
-`/private/tmp/record-e2e-full-corpus-v1.json`，不属于源码、不提交 Git，也不能替代由
-固定提交重新运行生成的证据。
+完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次Cluster Fix重跑
+临时文件为`/tmp/record-select-order-full-corpus-v1.json`，不属于源码、不提交Git，也不能
+替代由固定提交重新运行生成的证据。
 
 ## 4. 风险、阶段与 Ownership
 
@@ -99,10 +100,10 @@ Primary failure stage：
 
 | Stage | Case数 |
 | --- | ---: |
-| `AI_NORMALIZE_ERROR` | 42 |
-| `LOCAL_PARSE_ERROR` | 25 |
+| `AI_NORMALIZE_ERROR` | 44 |
+| `LOCAL_PARSE_ERROR` | 26 |
 | `PREFLIGHT_ERROR` | 18 |
-| `SURFACE_ERROR` | 14 |
+| `SURFACE_ERROR` | 11 |
 | `ROUTE_ERROR` | 12 |
 | `STATE_DIFF_ERROR` | 3 |
 | `CONFIRMATION_ERROR` | 1 |
@@ -113,13 +114,13 @@ Ownership：
 | Ownership | Case数 | 含义 |
 | --- | ---: | --- |
 | `CONFIRMED_CONFIRMATION_DEFECT` | 1 | 已有生产等价页面方法证据 |
-| `CONFIRMED_PRODUCT_CAPABILITY_GAP` | 5 | 页面确实缺少合同要求的选择入口 |
+| `CONFIRMED_PRODUCT_CAPABILITY_GAP` | 2 | 页面确实缺少合同要求的报价选择入口 |
 | `EXPECTED_MAPPING_MISMATCH_CANDIDATE` | 1 | State Diff/字段映射候选，未改合同 |
 | `OBSERVABILITY_EXPECTATION_MISMATCH` | 2 | operationLogs 可观测预期差异 |
 | `TEST_CONTRACT_MISMATCH_CANDIDATE` | 2 | 执行 Lane 正确但旧统计合同冲突 |
-| `UNCLASSIFIED_REQUIRES_REVIEW` | 105 | 证据不足以判产品或测试合同责任 |
+| `UNCLASSIFIED_REQUIRES_REVIEW` | 108 | 证据不足以判产品或测试合同责任 |
 
-Ownership 不改变 Case 状态和 Expected。尤其不得把 105 条未分类差异直接称为产品 Bug，
+Ownership 不改变 Case 状态和 Expected。尤其不得把 108 条未分类差异直接称为产品 Bug，
 也不得用“候选”标签自动修改题库。
 
 ## 5. Lane 与 Case 结果必须分开
@@ -140,11 +141,14 @@ Lane 动作成功但 Case 整体因其他 Expected 失败是合法结果，不�
 
 ## 6. 已确认问题
 
-### 6.1 缺少订单选择能力
+### 6.1 订单选择能力已补齐
 
-`BASIC-010`、`REL-003`、`REL-009` 共三条 P0。fixture 中目标订单存在，合同要求
-`SELECT_ORDER`，完整页无对应生产方法或处理入口。Runner 未伪造选择，保存未成功，
-六类正式业务集合 Diff 均为零。
+完整页已增加由Domain Preflight合法候选驱动的真实订单选择、取消和改选方法，并在选择
+及保存前重新验证订单存在性、状态和客户关系。`BASIC-010`、`REL-003`、`REL-009`不再以
+`SURFACE_ERROR/REQUIRED_PAGE_CAPABILITY_MISSING`失败；当前分别进入
+`LOCAL_PARSE_ERROR`、`AI_NORMALIZE_ERROR`、`AI_NORMALIZE_ERROR`。三个Case的正式业务
+Diff仍为零。只有`REL-003`在原始输入链实际到达可见选择控件；另两题因更早差异未调用
+隐藏页面方法，Runner如实保留交互失败证据。本阶段没有修改这些上游差异或Expected。
 
 ### 6.2 缺少报价选择能力
 
@@ -177,7 +181,8 @@ Lane 动作成功但 Case 整体因其他 Expected 失败是合法结果，不�
 
 ## 8. 失败 Cluster
 
-39 个 Cluster 完整覆盖 116 条 CASE_FAIL，且每条只进入一个主 Cluster：
+原始Phase 2B.2-R1的39个Cluster如下，完整覆盖116条CASE_FAIL，且每条只进入一个主
+Cluster。该表保留为修复前证据，不再代表当前页面能力：
 
 | Cluster | Case数 | 风险 | Stage | Ownership |
 | --- | ---: | --- | --- | --- |
@@ -221,6 +226,20 @@ Lane 动作成功但 Case 整体因其他 Expected 失败是合法结果，不�
 | Fake/Replay标准化差异：FAKE_DEEP / fields.explicitNewRecord | 1 | P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 | Fake/Replay标准化差异：FAKE_DEEP / items.length | 1 | P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 
+`SELECT_ORDER` Cluster Fix后重新生成40个当前Cluster，仍覆盖116/116。与本次修复直接
+相关的当前主Cluster为：
+
+| 当前Cluster | Case数 | 风险 | Stage | Ownership |
+| --- | ---: | --- | --- | --- |
+| 页面缺少必要交互能力：SELECT_QUOTATION | 2 | P0 | SURFACE_ERROR | CONFIRMED_PRODUCT_CAPABILITY_GAP |
+| 首页顶层编辑与items[0]不同步 | 1 | P0 | CONFIRMATION_ERROR | CONFIRMED_CONFIRMATION_DEFECT |
+| 本地解析字段差异：receivable / businessType | 1 | P0 | LOCAL_PARSE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
+| Fake/Replay标准化差异：FAKE_DEEP / items.length | 3 | P0/P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
+| Fake/Replay标准化差异：FAKE_DEEP / fields.customerId | 2 | P0 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
+
+其中后三组分别包含`BASIC-010`、`REL-003`和`REL-009`。这表示真实订单选择入口已存在，
+但Case继续暴露更早的上游差异；它不授权把这些差异自动归为产品Bug。
+
 ## 9. 重跑与回归
 
 - 65 条 `P0 + CASE_FAIL` 全部逐条单题重跑，语义 fingerprint 与全量一致。
@@ -229,17 +248,16 @@ Lane 动作成功但 Case 整体因其他 Expected 失败是合法结果，不�
   `PAGE-001`、`REL-001`、`REL-014`、`VOICE-001`。
 - Corpus Validator 与 Phase 2A 合同自测为 120 题通过、12/12。
 - Runner Kernel 自测 41/41（含Restart子Worker错误仍返回完整隔离审计）；Page Action
-  注册表自测 13/13；全量/报告自测 14/14。
+  注册表自测13/13；订单选择Surface专项测试15/15；全量/报告自测14/14。
 - Release A RC1 16/16、Domain Preflight 20/20、Record Flow Gate 50题/99入口、
   五步用户测试 28/28、AI/P0、route/status、AI模型路由、Voice Recognition Fake
   全部通过。
 
 ## 10. 建议修复顺序
 
-第一优先建议是独立处理 `SELECT_ORDER` 页面能力缺口 Cluster：它是当前数量最多的
-已确认 P0 产品 Cluster（3条），证据明确且正式副作用均为零。修复前应先人工确认页面
-交互形态；修复时只改产品页面能力；修复后重跑该 Cluster、全部 requiredCapability
-Case、P0题和旧安全回归。
+`SELECT_ORDER`页面能力Cluster已经独立完成。下一优先建议是处理
+`SELECT_QUOTATION`（2条P0）：它是当前剩余的高置信完整页选择能力缺口，正式副作用均为
+零，且可沿用订单选择的Preflight候选和交互模式。
 
-其后依次是 `SELECT_QUOTATION`（2条 P0）、`PAGE-008`（1条 P0）以及 105 条未分类差异的
-分层 Evidence 判责。测试合同/映射候选必须先修合同，不能据此修改产品代码。
+其后才是`PAGE-008`（1条P0）以及108条未分类差异的分层Evidence判责。测试合同/映射
+候选必须先修合同，不能据此修改产品代码。

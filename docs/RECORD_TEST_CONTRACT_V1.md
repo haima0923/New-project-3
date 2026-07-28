@@ -860,7 +860,23 @@ stage/Ownership/category分层抽查10条，结果一致。Runner Kernel自测�
 证明Restart子Worker发生错误时仍会通过finally返回完整隔离审计。
 
 `failureStage`描述最早差异层，`failureOwnership`描述当前证据责任归属，两者不得混用。
-只有`PAGE-008`被高置信确认页面Confirmation不同步，五条订单/报价选择题被确认页面能力
-缺口；测试合同、Diff映射和可观测差异保留候选，105条证据不足的差异保持
-`UNCLASSIFIED_REQUIRES_REVIEW`。详细全量数字、39个Cluster、PERSIST/FIN重点Lane和
-修复队列见`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`。
+原始R1基线只有`PAGE-008`被高置信确认页面Confirmation不同步，五条订单/报价选择题被
+确认页面能力缺口；当时105条证据不足的差异保持`UNCLASSIFIED_REQUIRES_REVIEW`，
+并形成39个Cluster。后续能力修复不得改写这份历史证据；当前数字见
+`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`。
+
+## 24. 完整页通用订单选择合同
+
+`SELECT_ORDER` Cluster Fix只补齐完整输入页的通用订单选择，不改变parser、AI、Domain
+Preflight政策或Legacy保存语义。
+
+订单候选必须来自Domain Preflight已经允许的候选ID，再由页面使用当前State生成安全展示
+投影。页面不得自行猜测历史订单、自动选择第一项、接受任意事件ID或跨客户关联。真实页面
+方法必须支持选择、取消和改选，并将稳定`orderId`写入当前确认草稿；每次交互及保存前都要
+基于最新State重建Confirmation和Preflight。
+
+`BASIC-010`、`REL-003`、`REL-009`不再因缺少`SELECT_ORDER`能力失败；当前分别进入
+`LOCAL_PARSE_ERROR`、`AI_NORMALIZE_ERROR`和`AI_NORMALIZE_ERROR`。这些上游差异、
+`SELECT_QUOTATION`和`PAGE-008`不属于本次修复范围，Expected保持不变。订单选择专项
+测试15/15，全量120题两轮仍为`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 /
+BLOCKED=0`且确定性一致。
