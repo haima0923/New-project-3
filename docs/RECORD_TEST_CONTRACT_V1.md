@@ -816,7 +816,9 @@ Phase 1 已将测试输入统一到 `tests/record-e2e/`。详细机器合同见
 7. `expected.result` 判定 normalizer 与人工交互后的 Confirmation 标准语义层；原始 parser 别名和 Storage 字段分别由 adapter 与 State Diff 映射，不能在同一 operation 中混写。
 8. 冲突候选使用 `conflictValues`，不会像 `allowedValues` 一样放宽判分；复杂交互、字段断言和关系断言均使用封闭机器结构。
 9. PAGE与HEADLESS生产观察是不同lane；HEADLESS不能冒充页面。页面缺少Case要求的真实能力时归类`CASE_FAIL/SURFACE_ERROR`，Runner不会伪造事件。
-10. `PERSIST-003`是事务材料exact replay：页面只生成第一次草稿和一次保存动作，事务层原样重放返回`ALREADY_COMMITTED`；它不是第二次页面点击。
+10. `PERSIST-003`是事务材料exact replay：页面只生成确认草稿，首次事务由
+    `TEST_ONLY_ISOLATED_LEGACY_COMMIT`执行，页面正式保存handler实际调用为0；事务层
+    原样重放返回`ALREADY_COMMITTED`，它不是第二次页面点击。
 11. HEADLESS题需要隔离提交时必须额外通过真实完整页生成确认草稿；`FIN-014`的同一点击风暴由页面防重lane抑制第二次进入事务，不使用`ALREADY_COMMITTED`替代UI证据。
 
 Phase 2A 只修订执行边界合同。Phase 2B.1 已新增
@@ -832,8 +834,11 @@ Phase 2B.1 首次复查因未执行 Lane、空 State Restart 和缺少事务/隔
 生产Preflight，运行时仍执行真实Domain Preflight。
 
 R2按既有“正式订单必须有客户、商品和交期”合同，为`PERSIST-001/002/003/004`补充固定
-合成交期，并机械修正`BASIC-020`专属pending fixture原文。上述是`TEST_DATA_ERROR_FIXED`，
-没有放宽产品规则或改变题目业务目标。
+合成交期；`PERSIST-004`并发B的“200个/4元一套”显式单位冲突机械统一为
+“200个/4元一个”；同时机械修正`BASIC-020`专属pending fixture原文。上述是
+`TEST_DATA_ERROR_FIXED`，没有放宽产品规则或改变题目业务目标、Lane或最终业务Expected。
+Plan-only会拒绝首次成功提交合同不成立、并发B缺交期或显式单位冲突、pending目标/原文
+不一致及required selection目标不存在。
 
 Phase 2B.1-R2 仍只运行24题代表性Smoke和120题plan-only，不代表120题已全量执行，不是
 WXML页面E2E，也不是真实千问测试。24题双轮结果为`PASS=0 / CASE_FAIL=24 /

@@ -154,7 +154,10 @@ Lane 只有全部布尔证据为真且断言完成才能 `PASS`。未启动、�
 `--plan-only` 除 Schema 外还检查首次成功提交合同。Restart、replay、concurrent 的订单
 必须已有客户、商品、数量和固定 ISO 交期，Expected Preflight 必须允许正式语义，且
 TEST_ONLY 首次提交合同和非零业务 Diff 均存在。`PERSIST-001/002/003/004`的合成订单已
-按既有“正式订单交期必填”规则补充固定交期；产品规则没有改变。
+按既有“正式订单交期必填”规则补充固定交期；`PERSIST-004`的并发B合成输入还把
+“200个/4元一套”的显式单位冲突机械统一为“200个/4元一个”。计划阶段会拒绝并发B
+缺固定交期或显式数量/计价单位冲突。上述只修复“两个草稿本身均安全”这一CAS前置，
+产品规则、A提交/B stale目标和最终业务Expected都没有改变。
 
 `BASIC-020`使用的专属待整理 fixture 原文已机械修正为与 Case 的“陈姐/礼盒”原文一致；
 计划阶段会拒绝 pending ID、目标或原文不一致。
@@ -164,7 +167,10 @@ TEST_ONLY 首次提交合同和非零业务 Diff 均存在。`PERSIST-001/002/00
 - `PERSIST-003`：首次 TEST_ONLY Legacy Commit 必须真实返回 `COMMITTED` 和 Receipt，
   随后原样重放 transactionId、planId、planHash、idempotencyKey、base/target revision
   与 fingerprint。Replay 返回 `ALREADY_COMMITTED`，revision、Receipt 和业务记录零增量；
-  replay 阶段页面保存调用为 0。
+  首次及 replay 阶段都不调用页面正式保存 handler，实际调用数为 0；首次事务来自
+  页面派生草稿的 TEST_ONLY 隔离提交。旧 Case 字段仍期待`pageSaveAttempts=1`，因此该题
+  当前如实为`CASE_FAIL/STORAGE_TRANSACTION_ERROR`，但 exact replay Lane 的真实事务证据
+  完整存在；Runner不会硬编码 1 制造通过。
 - `RESTART_PERSISTENCE`：首次 Commit 后导出 Fake Storage，原 Case Worker 退出，再启动
   新 PID/Boot ID 的 App Worker；保存型 Case 必须有可识别非空业务变化。
 - `PERSIST-004`：A/B 读取相同 base revision/fingerprint；A真实提交并产生 Receipt，
@@ -229,7 +235,7 @@ exact replay、重复触发和并发。Case 内容仍以 Corpus 为唯一来源�
 
 ## 13. 自测与假绿防护
 
-Runner 当前 33 项自测覆盖：
+Runner 当前 40 项自测覆盖：
 
 1. 错误 Expected；
 2. 漏执行保存；
@@ -254,7 +260,12 @@ Runner 当前 33 项自测覆盖：
 21. duplicate trigger 缺四层计数不得 PASS；
 22. Surface 主错误不能被 Route 覆盖；
 23. pending Case/fixture 原文矛盾在 plan 阶段失败；
-24. 网络/Storage审计未执行、fixture mutation、Journal残留和宿主文件写入均硬失败。
+24. required selection的fixture目标必须真实存在；
+25. 并发B的显式数量/计价单位冲突必须在plan阶段失败；
+26. 缺少要求Lane结果或Lane停在PLANNED都不能离开断言器；
+27. Surface零副作用必须读取真实runtime Storage Diff，不能比较两个合成空State；
+28. Storage save调用不能冒充Coordinator事务决策；
+29. 网络/Storage审计未执行、fixture mutation、Journal残留和宿主文件写入均硬失败。
 
 Smoke `--repeat 2` 比较 Case/Lane状态、Route、Preflight、页面业务语义、Diff、Receipt 和
 failureStage。只排除 PID、Boot ID 等非业务运行标识。
