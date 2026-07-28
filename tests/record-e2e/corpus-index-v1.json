@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "record-e2e-corpus-index-v1",
+  "corpusVersion": "core-v1",
+  "activeCaseCount": 120,
+  "expectedCategoryCounts": {
+    "FORMAL_BASIC": 20,
+    "AMBIGUOUS_BLOCKED": 16,
+    "CUSTOMER_HISTORY_RELATIONS": 14,
+    "MULTI_ITEM": 12,
+    "FINANCIAL_SAFETY": 14,
+    "DATE_TIME": 12,
+    "CLIPBOARD_CHAT": 10,
+    "VOICE_TRANSCRIPT": 10,
+    "SURFACE_PAGE_EDIT": 8,
+    "PERSISTENCE_IDEMPOTENCY": 4
+  },
+  "caseFiles": [
+    "cases/core-v1/01-formal-basic.json",
+    "cases/core-v1/02-ambiguous-and-blocked.json",
+    "cases/core-v1/03-customer-history-relations.json",
+    "cases/core-v1/04-multi-item.json",
+    "cases/core-v1/05-financial-safety.json",
+    "cases/core-v1/06-date-time.json",
+    "cases/core-v1/07-clipboard-chat.json",
+    "cases/core-v1/08-voice-transcript.json",
+    "cases/core-v1/09-surface-and-page-edit.json",
+    "cases/core-v1/10-persistence-and-idempotency.json"
+  ],
+  "stateFixtureFile": "fixtures/states/state-fixtures-v1.json",
+  "aiFixtureFile": "fixtures/ai/ai-fixtures-v1.json",
+  "decisionBacklogFile": "decisions/product-decision-backlog-v1.json",
+  "stateDiffCollectionMap": {
+    "payments": "paymentRecords"
+  },
+  "expectedResultLayer": "POST_NORMALIZER_POST_INTERACTION_CONFIRMATION_SEMANTICS",
+  "resultToStateFieldMap": {
+    "paymentAmount": "paymentRecords[].amount",
+    "depositAmount": "paymentRecords[].amount",
+    "receivableAmount": "receivables[].amount",
+    "orderDeliveryDate": "orders[].requiredDeliveryDate",
+    "receivableDueDate": "receivables[].dueDate",
+    "paymentDate": "paymentRecords[].paidAt",
+    "todoRemindDate": "todos[].dueDate"
+  },
+  "expectedAnswerPolicy": "Expected来自产品合同、Preflight政策、业务State合同和人工复查；不得由当前实现输出生成。",
+  "privacyPolicy": "全部客户、商品、金额、ID、聊天和语音转写均为人工合成数据。王总、李姐等是虚构通用称呼。",
+  "runtimePolicy": "本题库本身不调用外网、不调用真实千问、不写真实微信业务Storage。"
+}

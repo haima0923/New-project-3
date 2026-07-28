@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "record-e2e-product-decisions-v1",
+  "description": "仅记录现有产品合同不足以唯一判定的业务选择；不计入120条ACTIVE核心题。",
+  "decisions": [
+    {
+      "decisionId": "REC-DECISION-001",
+      "inputExample": "下个月初把货交了",
+      "currentPossibleBehaviors": [
+        "按下月1日",
+        "按下月第一个工作日",
+        "要求用户选择具体日期"
+      ],
+      "risk": "不同解释会改变订单交期，可能影响交付提醒。",
+      "whyContractIsInsufficient": "现有合同没有定义“月初”的唯一日期边界。",
+      "recommendedQuestionForOwner": "老板说“下个月初”时，产品应默认哪一天，还是必须让老板选具体日期？"
+    },
+    {
+      "decisionId": "REC-DECISION-002",
+      "inputExample": "那个事情记一下",
+      "currentPossibleBehaviors": [
+        "直接判NO_RECORD",
+        "允许用户手动存为待整理"
+      ],
+      "risk": "自动保存会产生无业务事实的噪音，不保存又可能丢失老板的临时意图。",
+      "whyContractIsInsufficient": "合同要求模糊内容可进待整理，但未定义完全没有业务事实时是否仍提供待整理按钮。",
+      "recommendedQuestionForOwner": "完全没有可识别业务事实的句子，是否仍允许老板主动存为待整理？"
+    },
+    {
+      "decisionId": "REC-DECISION-004",
+      "inputExample": "王总那单改到月底交",
+      "currentPossibleBehaviors": [
+        "唯一活动订单自动选中",
+        "仍要求老板点击确认唯一候选"
+      ],
+      "risk": "自动选择更快，但历史记录变动或语义偏差时可能更新错单。",
+      "whyContractIsInsufficient": "合同明确多候选必须选，未最终规定唯一候选是否可以自动确认。",
+      "recommendedQuestionForOwner": "历史指代只有一个候选时，是否允许系统自动关联，还是每次都要老板确认？"
+    },
+    {
+      "decisionId": "REC-DECISION-005",
+      "inputExample": "下周提醒催王总",
+      "currentPossibleBehaviors": [
+        "金额可选，保存催款提醒",
+        "必须补充金额或选择待收款"
+      ],
+      "risk": "无金额提醒较轻便，但可能无法区分同一客户多笔欠款。",
+      "whyContractIsInsufficient": "催款提醒被定义为轻量todo，但关联和金额的最低要求没有唯一政策。",
+      "recommendedQuestionForOwner": "只有客户和提醒日期、没有金额时，催款提醒能否正式保存？"
+    },
+    {
+      "decisionId": "REC-DECISION-006",
+      "inputExample": "客户：这个价再便宜点\n我：最多再少两毛",
+      "currentPossibleBehaviors": [
+        "说话人不明确时全部待整理",
+        "允许用户指定哪一方是客户后继续"
+      ],
+      "risk": "猜错说话人会把本人当客户或错误生成报价。",
+      "whyContractIsInsufficient": "合同要求不能把本人当客户，但没有定义无昵称聊天的交互修复方式。",
+      "recommendedQuestionForOwner": "聊天无法判断说话人时，是直接待整理，还是提供“哪边是客户”的选择？"
+    },
+    {
+      "decisionId": "REC-DECISION-007",
+      "inputExample": "从历史记录点编辑后改数量",
+      "currentPossibleBehaviors": [
+        "直接进入编辑模型",
+        "重新走原文解析与统一Preflight"
+      ],
+      "risk": "绕过统一入口可能漏掉关系和金额安全检查。",
+      "whyContractIsInsufficient": "现有合同覆盖更新安全，但未规定历史编辑入口的统一路由语义。",
+      "recommendedQuestionForOwner": "历史记录编辑保存前，产品是否要求与“记一笔”相同的完整安全检查？"
+    },
+    {
+      "decisionId": "REC-DECISION-008",
+      "inputExample": "连续两次点击“收到定金1000元”",
+      "currentPossibleBehaviors": [
+        "同一次点击风暴自动去重",
+        "两次明确确认视为两笔真实动作",
+        "第二次必须再次警告"
+      ],
+      "risk": "误去重会漏账，误重复会多记金融记录。",
+      "whyContractIsInsufficient": "基础幂等合同区分同一plan与不同动作，但页面层如何识别第二次明确确认仍需产品定义。",
+      "recommendedQuestionForOwner": "同一金融内容短时间再次确认时，应直接阻断、强提醒，还是允许作为第二笔？"
+    }
+  ]
+}

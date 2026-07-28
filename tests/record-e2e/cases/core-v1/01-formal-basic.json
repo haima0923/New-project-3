@@ -1,0 +1,4285 @@
+{
+  "schemaVersion": "record-e2e-case-file-v1",
+  "category": "FORMAL_BASIC",
+  "description": "20条标准业务题，覆盖正式业务、提醒、催款与用户明确选择待整理。",
+  "cases": [
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-001",
+      "title": "新客户明确单商品订单",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER",
+        "NEW_CUSTOMER",
+        "SINGLE_ITEM"
+      ],
+      "provenance": {
+        "sources": [
+          "REAL_AI_COMPARISON_V1"
+        ],
+        "sourceCaseIds": [
+          "A02"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "李总订礼品盒500套，3块8一套，明天交"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order",
+          "operation": "create_order",
+          "originalText": "李总订礼品盒500套，3块8一套，明天交",
+          "fields": {
+            "customerName": "李总",
+            "productName": "礼品盒",
+            "quantity": 500,
+            "unit": "套",
+            "unitPrice": 3.8,
+            "amount": 1900,
+            "orderDeliveryDate": "2026-07-16"
+          },
+          "items": [
+            {
+              "productName": "礼品盒",
+              "quantity": 500,
+              "unit": "套",
+              "unitPrice": 3.8,
+              "totalAmount": 1900
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items",
+            "orderDeliveryDate"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "李总订礼品盒500套，3块8一套，明天交"
+              },
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "items[0].unitPrice",
+                "assert": "EXACT",
+                "value": 3.8
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "orders",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-002",
+      "title": "已有客户新增订单",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER",
+        "EXISTING_CUSTOMER",
+        "SINGLE_ITEM"
+      ],
+      "provenance": {
+        "sources": [
+          "PROMPTFOO_RECORD_100"
+        ],
+        "sourceCaseIds": [
+          "ORDER_EXISTING_CUSTOMER"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "王总要做800个钥匙扣，1块2一个，后天交"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-customer-only-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order",
+          "operation": "create_order",
+          "originalText": "王总要做800个钥匙扣，1块2一个，后天交",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "productName": "钥匙扣",
+            "quantity": 800,
+            "unit": "个",
+            "unitPrice": 1.2,
+            "amount": 960,
+            "orderDeliveryDate": "2026-07-17"
+          },
+          "items": [
+            {
+              "productName": "钥匙扣",
+              "quantity": 800,
+              "unit": "个",
+              "unitPrice": 1.2,
+              "totalAmount": 960
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items",
+            "orderDeliveryDate"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "customerId",
+                "assert": "EXACT",
+                "value": "cus-syn-a"
+              },
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总要做800个钥匙扣，1块2一个，后天交"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "orders",
+                "fromPath": "customerId",
+                "toCollection": "customers",
+                "toId": "cus-syn-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-003",
+      "title": "纸袋按只计价的明确订单",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER",
+        "UNIT_PIECE",
+        "EXPLICIT_AMOUNT"
+      ],
+      "provenance": {
+        "sources": [
+          "BOSS_SPOKEN_V1"
+        ],
+        "sourceCaseIds": [
+          "voice-order-decimal-colloquial"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY",
+        "VOICE_TRANSCRIPT"
+      ],
+      "input": {
+        "channel": "VOICE_TRANSCRIPT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "张总下两千只纸袋一块二一只总共两千四后天发",
+        "voiceTranscript": "张总下两千只纸袋一块二一只总共两千四后天发",
+        "transcriptCharacteristics": [
+          "NO_PUNCTUATION",
+          "CHINESE_NUMERALS",
+          "COLLOQUIAL_DECIMAL",
+          "COLLOQUIAL_DATE"
+        ]
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order",
+          "operation": "create_order",
+          "originalText": "张总下两千只纸袋一块二一只总共两千四后天发",
+          "fields": {
+            "customerName": "张总",
+            "productName": "纸袋",
+            "quantity": 2000,
+            "unit": "只",
+            "unitPrice": 1.2,
+            "amount": 2400,
+            "orderDeliveryDate": "2026-07-17"
+          },
+          "items": [
+            {
+              "productName": "纸袋",
+              "quantity": 2000,
+              "unit": "只",
+              "unitPrice": 1.2,
+              "totalAmount": 2400
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items",
+            "orderDeliveryDate"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "totalAmount",
+                "assert": "EXACT",
+                "value": 2400
+              },
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "张总下两千只纸袋一块二一只总共两千四后天发"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "orders",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-004",
+      "title": "明确年月日交期订单",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER",
+        "EXPLICIT_DATE",
+        "SINGLE_ITEM"
+      ],
+      "provenance": {
+        "sources": [
+          "PROMPTFOO_RECORD_100"
+        ],
+        "sourceCaseIds": [
+          "ORDER_EXPLICIT_DATE"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "陈老板订600个冰箱贴，2元一个，2026年8月6日交"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order",
+          "operation": "create_order",
+          "originalText": "陈老板订600个冰箱贴，2元一个，2026年8月6日交",
+          "fields": {
+            "customerName": "陈老板",
+            "productName": "冰箱贴",
+            "quantity": 600,
+            "unit": "个",
+            "unitPrice": 2,
+            "amount": 1200,
+            "orderDeliveryDate": "2026-08-06"
+          },
+          "items": [
+            {
+              "productName": "冰箱贴",
+              "quantity": 600,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 1200
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items",
+            "orderDeliveryDate"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "requiredDeliveryDate",
+                "assert": "EXACT",
+                "value": "2026-08-06"
+              },
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "陈老板订600个冰箱贴，2元一个，2026年8月6日交"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "orders",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-005",
+      "title": "无手机号订单不得编造手机号",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER",
+        "NO_PHONE_FABRICATION",
+        "SINGLE_ITEM"
+      ],
+      "provenance": {
+        "sources": [
+          "NEW_COVERAGE"
+        ],
+        "sourceCaseIds": [],
+        "adaptation": "NEW_SYNTHETIC",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "赵姐要300个帆布袋，6元一个，周五交"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order",
+          "operation": "create_order",
+          "originalText": "赵姐要300个帆布袋，6元一个，周五交",
+          "fields": {
+            "customerName": "赵姐",
+            "productName": "帆布袋",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 6,
+            "amount": 1800,
+            "orderDeliveryDate": "2026-07-17"
+          },
+          "items": [
+            {
+              "productName": "帆布袋",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 6,
+              "totalAmount": 1800
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items",
+            "orderDeliveryDate"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "customers",
+                "change": "CREATED",
+                "path": "phone",
+                "assert": "ABSENT"
+              },
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "赵姐要300个帆布袋，6元一个，周五交"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "orders",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-006",
+      "title": "新客户单商品报价",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "QUOTATION",
+        "NEW_CUSTOMER",
+        "EXPLICIT_PRICE"
+      ],
+      "provenance": {
+        "sources": [
+          "REAL_AI_COMPARISON_V1"
+        ],
+        "sourceCaseIds": [
+          "A07"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "给郑老板报挂件3000个，1块5一个，还没下单"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "quotation",
+          "operation": "create_quotation",
+          "originalText": "给郑老板报挂件3000个，1块5一个，还没下单",
+          "fields": {
+            "customerName": "郑老板",
+            "productName": "挂件",
+            "quantity": 3000,
+            "unit": "个",
+            "unitPrice": 1.5,
+            "amount": 4500
+          },
+          "items": [
+            {
+              "productName": "挂件",
+              "quantity": 3000,
+              "unit": "个",
+              "unitPrice": 1.5,
+              "totalAmount": 4500
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone",
+            "quoteFollowupDate"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "quotations": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "quotations",
+                "change": "CREATED",
+                "path": "status",
+                "assert": "EXACT",
+                "value": "待确认"
+              },
+              {
+                "collection": "quotations",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "给郑老板报挂件3000个，1块5一个，还没下单"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "quotations",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "quotations": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-007",
+      "title": "已有客户新报价",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "QUOTATION",
+        "EXISTING_CUSTOMER",
+        "UNIT_SET"
+      ],
+      "provenance": {
+        "sources": [
+          "REAL_AI_COMPARISON_V1"
+        ],
+        "sourceCaseIds": [
+          "A08"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "给王总报收纳盒1000套，2块8一套"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-customer-only-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "quotation",
+          "operation": "create_quotation",
+          "originalText": "给王总报收纳盒1000套，2块8一套",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "productName": "收纳盒",
+            "quantity": 1000,
+            "unit": "套",
+            "unitPrice": 2.8,
+            "amount": 2800
+          },
+          "items": [
+            {
+              "productName": "收纳盒",
+              "quantity": 1000,
+              "unit": "套",
+              "unitPrice": 2.8,
+              "totalAmount": 2800
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone",
+            "quoteFollowupDate"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "quotations": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "quotations",
+                "change": "CREATED",
+                "path": "customerId",
+                "assert": "EXACT",
+                "value": "cus-syn-a"
+              },
+              {
+                "collection": "quotations",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "给王总报收纳盒1000套，2块8一套"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "quotations",
+                "fromPath": "customerId",
+                "toCollection": "customers",
+                "toId": "cus-syn-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "quotations": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-008",
+      "title": "报价含明确总价",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "QUOTATION",
+        "EXPLICIT_TOTAL",
+        "UNIT_BOX"
+      ],
+      "provenance": {
+        "sources": [
+          "RELEASE_CORPUS_V2"
+        ],
+        "sourceCaseIds": [
+          "quotation-explicit-total-pattern"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY",
+        "VOICE_TRANSCRIPT"
+      ],
+      "input": {
+        "channel": "VOICE_TRANSCRIPT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "周姐问彩盒200箱每箱30块总共6000先报价",
+        "voiceTranscript": "周姐问彩盒200箱每箱30块总共6000先报价",
+        "transcriptCharacteristics": [
+          "NO_PUNCTUATION",
+          "ARABIC_NUMERALS"
+        ]
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "quotation",
+          "operation": "create_quotation",
+          "originalText": "周姐问彩盒200箱每箱30块总共6000先报价",
+          "fields": {
+            "customerName": "周姐",
+            "productName": "彩盒",
+            "quantity": 200,
+            "unit": "箱",
+            "unitPrice": 30,
+            "amount": 6000
+          },
+          "items": [
+            {
+              "productName": "彩盒",
+              "quantity": 200,
+              "unit": "箱",
+              "unitPrice": 30,
+              "totalAmount": 6000
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone",
+            "quoteFollowupDate"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "quotations": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "quotations",
+                "change": "CREATED",
+                "path": "totalAmount",
+                "assert": "EXACT",
+                "value": 6000
+              },
+              {
+                "collection": "quotations",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "周姐问彩盒200箱每箱30块总共6000先报价"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "quotations",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "quotations": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-009",
+      "title": "新客户明确待收款",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "RECEIVABLE",
+        "NEW_CUSTOMER",
+        "EXPLICIT_AMOUNT"
+      ],
+      "provenance": {
+        "sources": [
+          "REAL_AI_COMPARISON_V1"
+        ],
+        "sourceCaseIds": [
+          "B03"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "刘姐那批货还欠3200元，7月31日前收"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "receivable",
+          "operation": "create_receivable",
+          "originalText": "刘姐那批货还欠3200元，7月31日前收",
+          "fields": {
+            "customerName": "刘姐",
+            "receivableAmount": 3200,
+            "receivableDueDate": "2026-07-31"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "phone",
+            "orderId"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "receivableAmount"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "receivables": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "receivables",
+                "change": "CREATED",
+                "path": "amount",
+                "assert": "EXACT",
+                "value": 3200
+              },
+              {
+                "collection": "receivables",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "刘姐那批货还欠3200元，7月31日前收"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "receivables",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "receivables": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-010",
+      "title": "为选定订单建立待收款",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "RECEIVABLE",
+        "ORDER_SELECTION",
+        "EXPLICIT_AMOUNT"
+      ],
+      "provenance": {
+        "sources": [
+          "FLOW_GATE"
+        ],
+        "sourceCaseIds": [
+          "receivable-from-selected-order"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "王总收纳盒这单还有8000元待收，7月25日收"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-active-order-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [
+          {
+            "kind": "orderId",
+            "selectedId": "ord-active-a"
+          }
+        ],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "receivable",
+          "operation": "create_receivable",
+          "originalText": "王总收纳盒这单还有8000元待收，7月25日收",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "receivableAmount": 8000,
+            "receivableDueDate": "2026-07-25"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "receivableAmount",
+            "orderId"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "SELECT_ORDER"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "receivables": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "receivables",
+                "change": "CREATED",
+                "path": "orderId",
+                "assert": "EXACT",
+                "value": "ord-active-a"
+              },
+              {
+                "collection": "receivables",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总收纳盒这单还有8000元待收，7月25日收"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "receivables",
+                "fromPath": "orderId",
+                "toCollection": "orders",
+                "toId": "ord-active-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "receivables": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-011",
+      "title": "唯一待收经用户确认后部分收款",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "PAYMENT",
+        "RECEIVABLE_SELECTION",
+        "PARTIAL_PAYMENT"
+      ],
+      "provenance": {
+        "sources": [
+          "FLOW_GATE"
+        ],
+        "sourceCaseIds": [
+          "payment-selected-receivable"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "王总这笔待收今天付了1500元"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-open-receivable-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "FAKE_DEEP",
+        "expectedRoute": "AI_DEEP",
+        "fixtureRef": "ai-case-rec-e2e-basic-011-v1",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [
+          {
+            "kind": "receivableId",
+            "selectedId": "rec-open-a"
+          }
+        ],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "payment",
+          "operation": "record_payment",
+          "originalText": "王总这笔待收今天付了1500元",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "receivableId": "rec-open-a",
+            "orderId": "ord-active-a",
+            "paymentAmount": 1500,
+            "paymentDate": "2026-07-15"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "AI_DEEP",
+        "routing": {
+          "productionRoute": "AI_DEEP",
+          "executionPath": "PRODUCTION_DEEP",
+          "localSafetyStatus": "NEEDS_AI",
+          "expectedAiCall": "MUST_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "paymentAmount",
+            "receivableId"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "SELECT_RECEIVABLE"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "receivables": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "amount",
+                "assert": "EXACT",
+                "value": 1500
+              },
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总这笔待收今天付了1500元"
+              },
+              {
+                "collection": "receivables",
+                "change": "UPDATED",
+                "path": "paidAmount",
+                "assert": "EXACT",
+                "value": 2500
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "payments",
+                "fromPath": "receivableId",
+                "toCollection": "receivables",
+                "toId": "rec-open-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "receivables": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-012",
+      "title": "明确不关联历史的客户收款",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "PAYMENT",
+        "UNLINKED_PAYMENT",
+        "EXPLICIT_AMOUNT"
+      ],
+      "provenance": {
+        "sources": [
+          "NEW_COVERAGE"
+        ],
+        "sourceCaseIds": [],
+        "adaptation": "NEW_SYNTHETIC",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "王总今天付了600元，这是零散款，不关联旧订单"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-customer-only-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "FAKE_DEEP",
+        "expectedRoute": "AI_DEEP",
+        "fixtureRef": "ai-case-rec-e2e-basic-012-v1",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "payment",
+          "operation": "record_payment",
+          "originalText": "王总今天付了600元，这是零散款，不关联旧订单",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "paymentAmount": 600,
+            "paymentDate": "2026-07-15",
+            "allowUnlinkedPayment": true,
+            "unlinkedPaymentCustomerId": "cus-syn-a"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "receivableId",
+            "orderId"
+          ],
+          "conflictValues": {}
+        },
+        "route": "AI_DEEP",
+        "routing": {
+          "productionRoute": "AI_DEEP",
+          "executionPath": "PRODUCTION_DEEP",
+          "localSafetyStatus": "NEEDS_AI",
+          "expectedAiCall": "MUST_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "paymentAmount"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "CONFIRM_UNLINKED_PAYMENT"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "amount",
+                "assert": "EXACT",
+                "value": 600
+              },
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总今天付了600元，这是零散款，不关联旧订单"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "payments",
+                "fromPath": "customerId",
+                "toCollection": "customers",
+                "toId": "cus-syn-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-013",
+      "title": "选定活动订单后记录定金",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER_DEPOSIT",
+        "ORDER_SELECTION",
+        "EXPLICIT_AMOUNT"
+      ],
+      "provenance": {
+        "sources": [
+          "BOSS_SPOKEN_V1"
+        ],
+        "sourceCaseIds": [
+          "typed-deposit-order"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "王总收纳盒这单收到2000元定金"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-active-order-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "FAKE_DEEP",
+        "expectedRoute": "AI_DEEP",
+        "fixtureRef": "ai-case-rec-e2e-basic-013-v1",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [
+          {
+            "kind": "orderId",
+            "selectedId": "ord-active-a"
+          }
+        ],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order_deposit",
+          "operation": "record_order_deposit",
+          "originalText": "王总收纳盒这单收到2000元定金",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "depositAmount": 2000,
+            "paymentKind": "deposit",
+            "paymentDate": "2026-07-15"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "receivableId"
+          ],
+          "conflictValues": {}
+        },
+        "route": "AI_DEEP",
+        "routing": {
+          "productionRoute": "AI_DEEP",
+          "executionPath": "PRODUCTION_DEEP",
+          "localSafetyStatus": "NEEDS_AI",
+          "expectedAiCall": "MUST_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "depositAmount",
+            "orderId"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "SELECT_ORDER"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "kind",
+                "assert": "EXACT",
+                "value": "deposit"
+              },
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总收纳盒这单收到2000元定金"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "payments",
+                "fromPath": "orderId",
+                "toCollection": "orders",
+                "toId": "ord-active-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-014",
+      "title": "新订单同时记录小额定金",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "ORDER",
+        "ORDER_DEPOSIT",
+        "NEW_CUSTOMER"
+      ],
+      "provenance": {
+        "sources": [
+          "RELEASE_CORPUS_V2"
+        ],
+        "sourceCaseIds": [
+          "order-with-deposit-pattern"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "孙老板订1000个卡套，5元一个，已付定金1000元，7月28日交"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "FAKE_DEEP",
+        "expectedRoute": "AI_DEEP",
+        "fixtureRef": "ai-case-rec-e2e-basic-014-v1",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "order",
+          "operation": "create_order",
+          "originalText": "孙老板订1000个卡套，5元一个，已付定金1000元，7月28日交",
+          "fields": {
+            "customerName": "孙老板",
+            "productName": "卡套",
+            "quantity": 1000,
+            "unit": "个",
+            "unitPrice": 5,
+            "amount": 5000,
+            "depositAmount": 1000,
+            "orderDeliveryDate": "2026-07-28"
+          },
+          "items": [
+            {
+              "productName": "卡套",
+              "quantity": 1000,
+              "unit": "个",
+              "unitPrice": 5,
+              "totalAmount": 5000
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "AI_DEEP",
+        "routing": {
+          "productionRoute": "AI_DEEP",
+          "executionPath": "PRODUCTION_DEEP",
+          "localSafetyStatus": "NEEDS_AI",
+          "expectedAiCall": "MUST_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "customerName",
+            "items",
+            "depositAmount",
+            "orderDeliveryDate"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "CONFIRM_DEPOSIT"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "totalAmount",
+                "assert": "EXACT",
+                "value": 5000
+              },
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "amount",
+                "assert": "EXACT",
+                "value": 1000
+              },
+              {
+                "collection": "orders",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "孙老板订1000个卡套，5元一个，已付定金1000元，7月28日交"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "payments",
+                "fromPath": "orderId",
+                "toCollection": "orders"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "orders": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "payments": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "receivables",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-015",
+      "title": "普通无客户提醒",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "TODO",
+        "NO_CUSTOMER_REQUIRED",
+        "EXPLICIT_DATE"
+      ],
+      "provenance": {
+        "sources": [
+          "PROMPTFOO_RECORD_100"
+        ],
+        "sourceCaseIds": [
+          "TODO_GENERAL"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "明天上午提醒我盘点包装材料"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "todo",
+          "operation": "create_todo",
+          "originalText": "明天上午提醒我盘点包装材料",
+          "fields": {
+            "todoTitle": "盘点包装材料",
+            "todoRemindDate": "2026-07-16"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "customerName",
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "todoTitle"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "title",
+                "assert": "EXACT",
+                "value": "盘点包装材料"
+              },
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "明天上午提醒我盘点包装材料"
+              }
+            ],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-016",
+      "title": "给已有客户回报价提醒",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "TODO",
+        "EXISTING_CUSTOMER",
+        "EXPLICIT_DATE"
+      ],
+      "provenance": {
+        "sources": [
+          "BOSS_SPOKEN_V1"
+        ],
+        "sourceCaseIds": [
+          "voice-todo-reordered"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "VOICE_TRANSCRIPT"
+      ],
+      "input": {
+        "channel": "VOICE_TRANSCRIPT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "报价单别忘了明天下午给王总回",
+        "voiceTranscript": "报价单别忘了明天下午给王总回",
+        "transcriptCharacteristics": [
+          "NO_PUNCTUATION",
+          "COLLOQUIAL_DATE"
+        ]
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-customer-only-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "todo",
+          "operation": "create_todo",
+          "originalText": "报价单别忘了明天下午给王总回",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "todoRemindDate": "2026-07-16"
+          },
+          "items": [],
+          "allowedValues": {
+            "todoTitle": [
+              "回复报价单",
+              "给王总回报价"
+            ]
+          },
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "todoTitle"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "customerId",
+                "assert": "EXACT",
+                "value": "cus-syn-a"
+              },
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "报价单别忘了明天下午给王总回"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "todos",
+                "fromPath": "customerId",
+                "toCollection": "customers",
+                "toId": "cus-syn-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-017",
+      "title": "关联开放待收的催款提醒",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "TODO",
+        "DUNNING",
+        "RECEIVABLE_SELECTION"
+      ],
+      "provenance": {
+        "sources": [
+          "BOSS_SPOKEN_V1"
+        ],
+        "sourceCaseIds": [
+          "typed-dunning"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E",
+        "REAL_QWEN_QUALITY"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "下周一提醒我催王总这笔4000元余款"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-open-receivable-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [
+          {
+            "kind": "receivableId",
+            "selectedId": "rec-open-a"
+          }
+        ],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "todo",
+          "operation": "create_todo",
+          "originalText": "下周一提醒我催王总这笔4000元余款",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "receivableId": "rec-open-a",
+            "todoType": "dunning",
+            "todoTitle": "催王总余款",
+            "amount": 4000,
+            "todoRemindDate": "2026-07-20"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "phone"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "todoTitle",
+            "receivableId"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "SELECT_RECEIVABLE"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "todoType",
+                "assert": "EXACT",
+                "value": "dunning"
+              },
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "下周一提醒我催王总这笔4000元余款"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "todos",
+                "fromPath": "receivableId",
+                "toCollection": "receivables",
+                "toId": "rec-open-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-018",
+      "title": "新客户明确催款提醒",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "TODO",
+        "DUNNING",
+        "NEW_CUSTOMER"
+      ],
+      "provenance": {
+        "sources": [
+          "RELEASE_CORPUS_V2"
+        ],
+        "sourceCaseIds": [
+          "dunning-new-customer-pattern"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "7月18日提醒我催吴老板货款2500元"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-empty-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "todo",
+          "operation": "create_todo",
+          "originalText": "7月18日提醒我催吴老板货款2500元",
+          "fields": {
+            "customerName": "吴老板",
+            "todoType": "dunning",
+            "todoTitle": "催吴老板货款",
+            "amount": 2500,
+            "todoRemindDate": "2026-07-18"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "phone",
+            "receivableId"
+          ],
+          "conflictValues": {}
+        },
+        "route": "LOCAL",
+        "routing": {
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "todoTitle",
+            "customerName"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "todoType",
+                "assert": "EXACT",
+                "value": "dunning"
+              },
+              {
+                "collection": "todos",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "7月18日提醒我催吴老板货款2500元"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "todos",
+                "fromPath": "customerId",
+                "toCollection": "customers"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "customers": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "todos": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-019",
+      "title": "缺数量的订单由用户明确存待整理",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "PENDING",
+        "MISSING_QUANTITY",
+        "USER_REQUESTED_PENDING"
+      ],
+      "provenance": {
+        "sources": [
+          "RELEASE_CORPUS_V2"
+        ],
+        "sourceCaseIds": [
+          "missing-order-quantity-pattern"
+        ],
+        "adaptation": "CONTRACT_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC"
+      ],
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "HOME_QUICK",
+        "originalText": "王总要做水杯，数量晚点补，单价5元"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-customer-only-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "PENDING",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_PENDING",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "pending",
+          "operation": "pending",
+          "originalText": "王总要做水杯，数量晚点补，单价5元",
+          "fields": {
+            "customerName": "王总",
+            "productName": "水杯",
+            "unitPrice": 5
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "quantity"
+          ],
+          "conflictValues": {}
+        },
+        "route": "PENDING",
+        "routing": {
+          "productionRoute": "PENDING",
+          "executionPath": "PRODUCTION_PENDING",
+          "localSafetyStatus": "NEEDS_USER_CONFIRM",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": false,
+          "domainCanSavePending": true,
+          "blockingCodes": [
+            "PENDING_RESULT_NOT_FORMAL",
+            "MISSING_REQUIRED_FIELD"
+          ],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "originalText"
+          ],
+          "missingFields": [
+            "quantity"
+          ],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "BLOCKED",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": []
+          },
+          "fullPage": {
+            "status": "BLOCKED",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_PENDING",
+          "status": "PENDING_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "pendingNotes": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "pendingNotes",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总要做水杯，数量晚点补，单价5元"
+              }
+            ],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "todos"
+            ]
+          },
+          "full": {
+            "collections": {
+              "pendingNotes": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "pendingNotes",
+                "change": "CREATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总要做水杯，数量晚点补，单价5元"
+              }
+            ],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "todos"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1",
+      "caseId": "REC-E2E-BASIC-020",
+      "title": "客户规格未定由用户明确存待整理",
+      "status": "ACTIVE",
+      "riskLevel": "P1",
+      "category": "FORMAL_BASIC",
+      "tags": [
+        "PENDING",
+        "MISSING_SPECIFICATION",
+        "PENDING_EDIT"
+      ],
+      "provenance": {
+        "sources": [
+          "FIVE_STEP_USER_TEST"
+        ],
+        "sourceCaseIds": [
+          "pending-save"
+        ],
+        "adaptation": "SYNTHETIC_REWRITE",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC"
+      ],
+      "input": {
+        "channel": "PENDING_EDIT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "陈姐说礼盒规格和数量晚点一起补",
+        "pendingNoteId": "pending-syn-a"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-pending-edit-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "PENDING",
+        "productionCommitEligible": false
+      },
+      "interaction": {
+        "userEdits": [],
+        "userSelections": [],
+        "requestedSaveAction": "SAVE_PENDING",
+        "restartAfterSave": false
+      },
+      "expected": {
+        "result": {
+          "businessType": "pending",
+          "operation": "pending",
+          "originalText": "陈姐说礼盒规格和数量晚点一起补",
+          "fields": {
+            "customerName": "陈姐",
+            "productName": "礼盒"
+          },
+          "items": [],
+          "allowedValues": {},
+          "absentFields": [
+            "quantity",
+            "unitPrice"
+          ],
+          "conflictValues": {}
+        },
+        "route": "PENDING",
+        "routing": {
+          "productionRoute": "PENDING",
+          "executionPath": "PRODUCTION_PENDING",
+          "localSafetyStatus": "NEEDS_USER_CONFIRM",
+          "expectedAiCall": "MUST_NOT_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": false,
+          "domainCanSavePending": true,
+          "blockingCodes": [
+            "PENDING_RESULT_NOT_FORMAL",
+            "MISSING_REQUIRED_FIELD"
+          ],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "originalText"
+          ],
+          "missingFields": [
+            "quantity",
+            "unitPrice"
+          ],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "NOT_APPLICABLE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "PENDING_EDIT_ONLY"
+            ]
+          },
+          "fullPage": {
+            "status": "BLOCKED",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_PENDING",
+          "status": "PENDING_COMMITTED",
+          "commitTarget": "MEMORY_ONLY",
+          "productionCommitEligible": false
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "pendingNotes": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "pendingNotes",
+                "change": "UPDATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "陈姐说礼盒规格和数量晚点一起补"
+              }
+            ],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "todos"
+            ]
+          },
+          "full": {
+            "collections": {
+              "pendingNotes": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              },
+              "aiParseLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "pendingNotes",
+                "change": "UPDATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "陈姐说礼盒规格和数量晚点一起补"
+              }
+            ],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "todos"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE"
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    }
+  ]
+}
