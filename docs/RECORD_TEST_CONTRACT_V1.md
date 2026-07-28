@@ -845,3 +845,22 @@ WXML页面E2E，也不是真实千问测试。24题双轮结果为`PASS=0 / CASE
 RUNNER_ERROR=0 / BLOCKED=0`且确定性一致；`CASE_FAIL`保留产品实际差异。`expected.save`
 仍只表示业务正确语义；生产资格、隔离目标和TEST_ONLY标记分别由
 `productionObservation`、`isolatedExecution`承担。
+
+## 23. E2E Phase 2B.2-R1 全量基线
+
+Phase 2B.2首次第1轮因Runner把`HOME_QUICK + SAVE_PENDING`错误固定调用为完整页
+`savePending()`而作废，产品统计不得引用。R1建立不含Case ID特判的Surface/editMode/
+action注册表：HOME待整理使用`savePendingFromConfirm`，FULL待整理使用`savePending`；
+映射缺失不fallback，实际方法名与解析结果不一致时即为Runner错误。
+
+修复后从清洁Worker环境完整执行120题两轮，结果均为`PASS=4 / CASE_FAIL=116 /
+RUNNER_ERROR=0 / BLOCKED=0`。每轮网络、未知Fake路由、真实wx Storage、宿主文件Storage、
+fixture mutation、跨Case泄漏、Journal和Backup均为0；65条P0失败全部单题重跑，P1按
+stage/Ownership/category分层抽查10条，结果一致。Runner Kernel自测为41/41，其中专门
+证明Restart子Worker发生错误时仍会通过finally返回完整隔离审计。
+
+`failureStage`描述最早差异层，`failureOwnership`描述当前证据责任归属，两者不得混用。
+只有`PAGE-008`被高置信确认页面Confirmation不同步，五条订单/报价选择题被确认页面能力
+缺口；测试合同、Diff映射和可观测差异保留候选，105条证据不足的差异保持
+`UNCLASSIFIED_REQUIRES_REVIEW`。详细全量数字、39个Cluster、PERSIST/FIN重点Lane和
+修复队列见`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`。

@@ -2,7 +2,8 @@
 
 ## 1. 状态与边界
 
-本阶段实现 E2E Phase 2B.1-R2 的确定性执行内核。第一次 Phase 2B.1 复查发现
+本阶段实现 E2E Phase 2B.1-R2 的确定性执行内核，并由 Phase 2B.2-R1 完成120题全量
+确定性基线。第一次 Phase 2B.1 复查发现
 Restart 空 State、未执行事务 replay/CAS、弱重复触发计数和缺少逐 Case 隔离审计等假绿
 路径，因此当时停止且结果不可信。R2 不修产品代码，只给执行内核增加强证据门禁。它：
 
@@ -13,7 +14,7 @@ Restart 空 State、未执行事务 replay/CAS、弱重复触发计数和缺少�
   Release A Coordinator 和隔离内存 Storage；
 - 支持生产观察、页面草稿派生、TEST_ONLY 隔离提交、页面重复触发、事务 exact
   replay、真正的新运行实例重启及同 base revision 并发；
-- 用 24 条代表题验证 Runner Kernel，不代表 120 条已经全量执行。
+- 先用 24 条代表题验证 Runner Kernel，再从零执行 120 条 ACTIVE Case 两轮。
 
 它不是微信 WXML/DOM 页面 E2E，不使用微信开发者工具，不是真实千问质量测试，也不是
 Shared 生产链。Fake/Replay 不能取得真实 Provider 身份；`CASE_FAIL` 是产品实际结果与
@@ -26,13 +27,18 @@ node scripts/run-record-e2e-headless.js --plan-only
 node scripts/run-record-e2e-headless.js --list
 node scripts/run-record-e2e-headless.js --smoke
 node scripts/run-record-e2e-headless.js --smoke --repeat 2
+node scripts/run-record-e2e-headless.js --all --repeat 2
+node scripts/run-record-e2e-headless.js --risk P0
+node scripts/run-record-e2e-headless.js --category FINANCIAL_SAFETY
+node scripts/run-record-e2e-headless.js --failure-stage PREFLIGHT_ERROR
+node scripts/run-record-e2e-headless.js --ownership UNCLASSIFIED_REQUIRES_REVIEW
 node scripts/run-record-e2e-headless.js --case-id REC-E2E-PAGE-008
 node scripts/run-record-e2e-headless.js --case-id REC-E2E-PAGE-008 --json
 node tests/record-e2e/runner-tests/runner-self-tests.js
 ```
 
-默认不写仓库内报告。`--json` 只向标准输出打印脱敏证据。Phase 2B.1 没有无参数全量执行
-入口；120 条全量、分类过滤和报告输出属于 Phase 2B.2。
+默认不写仓库内报告。`--json` 只向标准输出打印脱敏证据。`--output`必须显式指定仓库外
+绝对临时路径；报告经脱敏且不得提交。
 
 ## 3. 进程与模块隔离
 
@@ -103,6 +109,21 @@ Runner 不加载 WXML，不声称验证按钮绑定、视觉渲染、触控或�
 `SELECT_ORDER` / `SELECT_QUOTATION` 不会被虚构；相关 Case 为
 `CASE_FAIL/SURFACE_ERROR`，依赖该交互的保存 Lane 不执行并保持零正式副作用。
 
+页面保存动作由`page-action-registry.js`集中解析，注册表和真实方法探测必须同时通过：
+
+| Surface/editMode | Action | 方法 |
+| --- | --- | --- |
+| HOME/CREATE | SAVE_FORMAL | `confirmQuickSave` |
+| HOME/CREATE | SAVE_PENDING | `savePendingFromConfirm` |
+| FULL/CREATE | SAVE_FORMAL | `saveFormal` |
+| FULL/CREATE | SAVE_PENDING | `savePending` |
+| FULL/PENDING_EDIT | SAVE_FORMAL | `saveFormal` |
+| FULL/PENDING_EDIT | SAVE_PENDING | `savePending` |
+| FULL/HISTORY_EDIT | UPDATE | `saveFormal`（当前ACTIVE题未覆盖） |
+
+映射缺失不得fallback，错误方法即使返回成功也不能PASS。`BASIC-019`旧Driver错误因此被
+13项注册表自测锁定；当前实际调用`savePendingFromConfirm`，不调用完整页`savePending`。
+
 ## 6. AI 身份
 
 Fake/Replay 响应必须实际经过生产 `wx.request`、AI normalizer 和合并。生产前端原本会把
@@ -169,8 +190,8 @@ TEST_ONLY 首次提交合同和非零业务 Diff 均存在。`PERSIST-001/002/00
   与 fingerprint。Replay 返回 `ALREADY_COMMITTED`，revision、Receipt 和业务记录零增量；
   首次及 replay 阶段都不调用页面正式保存 handler，实际调用数为 0；首次事务来自
   页面派生草稿的 TEST_ONLY 隔离提交。旧 Case 字段仍期待`pageSaveAttempts=1`，因此该题
-  当前如实为`CASE_FAIL/STORAGE_TRANSACTION_ERROR`，但 exact replay Lane 的真实事务证据
-  完整存在；Runner不会硬编码 1 制造通过。
+  当前主失败为`CASE_FAIL/STORAGE_TRANSACTION_ERROR`，另有`operationLogs`可观测性
+  次要差异；exact replay Lane 的真实事务证据完整存在，Runner不会硬编码 1 制造通过。
 - `RESTART_PERSISTENCE`：首次 Commit 后导出 Fake Storage，原 Case Worker 退出，再启动
   新 PID/Boot ID 的 App Worker；保存型 Case 必须有可识别非空业务变化。
 - `PERSIST-004`：A/B 读取相同 base revision/fingerprint；A真实提交并产生 Receipt，
@@ -235,7 +256,7 @@ exact replay、重复触发和并发。Case 内容仍以 Corpus 为唯一来源�
 
 ## 13. 自测与假绿防护
 
-Runner 当前 40 项自测覆盖：
+Runner 当前 41 项自测覆盖：
 
 1. 错误 Expected；
 2. 漏执行保存；
@@ -266,6 +287,8 @@ Runner 当前 40 项自测覆盖：
 27. Surface零副作用必须读取真实runtime Storage Diff，不能比较两个合成空State；
 28. Storage save调用不能冒充Coordinator事务决策；
 29. 网络/Storage审计未执行、fixture mutation、Journal残留和宿主文件写入均硬失败。
+30. Restart子Worker在运行时建立后报错，仍必须由finally返回network、Storage、host FS、
+    fixture、Journal/Backup和worker exit完整审计。
 
 Smoke `--repeat 2` 比较 Case/Lane状态、Route、Preflight、页面业务语义、Diff、Receipt 和
 failureStage。只排除 PID、Boot ID 等非业务运行标识。
@@ -279,10 +302,14 @@ Runner不绕过Preflight取得最终订单；因此当前只确认页面确认�
 
 ## 15. 当前限制与本轮结果
 
-- 本阶段只执行 24 条 Smoke，不构成 120 条全量产品通过率。
+- Phase 2B.1-R2只执行24条Smoke；Phase 2B.2-R1已执行120条全量两轮。
 - `CASE_FAIL` 会完整保留，不能用 knownRisk 或 Expected Fail 消除。
 - R2的24题双轮Smoke为 `PASS=0 / CASE_FAIL=24 / RUNNER_ERROR=0 / BLOCKED=0`，两轮语义
   fingerprint一致。产品 Case 失败不被豁免，也不影响 Runner 完整性完成判断。
+- R1的120题双轮为`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`，65条P0失败
+  全部单题重跑，P1分层抽查10条，两轮及重跑语义一致。Ownership中只有1条确认
+  Confirmation缺陷和5条确认页面能力缺口；105条仍待人工判责。
 - `PERSIST-003`、`PERSIST-004`、`FIN-014`和Restart的事务证据来自对应 Case 的真实生产
   seam与隔离 Store，不再只由自测替代。
-- 微信 WXML/真机、真实千问、120题全量、聚类报告和截图/Trace 文件输出均属于后续阶段。
+- 微信 WXML/真机、真实千问和截图仍属于后续阶段。全量结果、39个Cluster和重点Evidence
+  见`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`。
