@@ -676,6 +676,25 @@ function assertCase(testCase, evidence, options = {}) {
       lane.failureCode = lane.failureCode || `ASSERTION_FAILED:${assertion.name}`;
     }
   });
+  (evidence.laneResults || []).forEach((lane) => {
+    const lifecycleExecutionSucceeded = Boolean(
+      lane.planned
+      && lane.preconditionsChecked
+      && lane.preconditionsPassed
+      && lane.started
+      && lane.primaryActionAttempted
+      && lane.primaryActionSucceeded
+      && lane.completionEvidencePresent
+    );
+    lane.executionStatus = lifecycleExecutionSucceeded
+      ? 'PASS'
+      : (lane.status === 'RUNNER_ERROR'
+        ? 'RUNNER_ERROR'
+        : (lane.status === 'BLOCKED' ? 'BLOCKED' : 'NOT_COMPLETED'));
+    lane.assertionStatus = (lane.assertions || []).some((assertion) => !assertion.pass)
+      ? 'FAIL'
+      : 'PASS';
+  });
   (evidence.laneResults || []).forEach(finalizeLane);
   const runnerLane = (evidence.laneResults || []).find((item) => item.status === 'RUNNER_ERROR');
   const blockedLane = (evidence.laneResults || []).find((item) => item.status === 'BLOCKED');
@@ -724,6 +743,24 @@ function assertCase(testCase, evidence, options = {}) {
       : (surfaceLane
         ? 'SURFACE_ERROR'
         : (primary ? failureStageFor(primary, testCase) : '')),
+    primaryFailure: caseStatus === 'PASS' ? null : {
+      code: lifecycleFailure
+        ? lifecycleFailure.failureCode
+        : (surfaceLane
+          ? 'REQUIRED_PAGE_CAPABILITY_MISSING'
+          : (primary ? `ASSERTION_FAILED:${primary.name}` : '')),
+      layer: lifecycleFailure
+        ? lifecycleFailure.failureStage
+        : (surfaceLane ? 'SURFACE' : (primary && primary.layer || '')),
+      name: lifecycleFailure
+        ? lifecycleFailure.failureCode
+        : (surfaceLane ? 'requiredCapability' : (primary && primary.name || '')),
+      stage: lifecycleFailure
+        ? lifecycleFailure.failureStage
+        : (surfaceLane
+          ? 'SURFACE_ERROR'
+          : (primary ? failureStageFor(primary, testCase) : ''))
+    },
     secondaryFindings,
     passedAssertionCount: collector.assertions.length - failures.length
   };

@@ -3,12 +3,14 @@ const path = require('path');
 const { safeClone } = require('../../../utils/record-state-diff');
 const { assertCase } = require('./assert-case');
 const { buildAllExecutionPlans } = require('./build-execution-plan');
+const { classifyFailureOwnership } = require('./classify-failure-ownership');
 const { classifyWorkerError } = require('./classify-result');
 const { completeRestartInParent } = require('./complete-restart-in-parent');
 const { CORPUS_ROOT } = require('./constants');
+const { assertFullAttemptIntegrity, exactUniqueSet } = require('./full-run-integrity');
 const { loadCorpus } = require('./load-corpus');
 const { runCaseWorker } = require('./module-isolation');
-const { normalizeRunResult } = require('./normalize-run-result');
+const { findChangedPaths, normalizeRunResult } = require('./normalize-run-result');
 
 function loadSmokeManifest() {
   const manifestPath = path.join(CORPUS_ROOT, 'runner-smoke/smoke-manifest-v1.json');
@@ -27,7 +29,13 @@ function loadSmokeManifest() {
 }
 
 function selectPlans(corpus, options = {}) {
-  const all = buildAllExecutionPlans(corpus);
+  let all = buildAllExecutionPlans(corpus);
+  if (options.risk) {
+    all = all.filter((item) => item.testCase.riskLevel === options.risk);
+  }
+  if (options.category) {
+    all = all.filter((item) => item.testCase.category === options.category);
+  }
   if (options.caseId) {
     const selected = all.filter((item) => item.testCase.caseId === options.caseId);
     if (!selected.length) {
@@ -53,6 +61,17 @@ function selectPlans(corpus, options = {}) {
 }
 
 async function executeOne(item, options = {}) {
+  const metadata = {
+    aiProfile: item.testCase.ai.profile,
+    businessType: item.testCase.expected.result.businessType,
+    category: item.testCase.category,
+    entrySurface: item.testCase.input.entrySurface,
+    executionLanes: item.testCase.execution.lanes.slice(),
+    expectedRoute: item.testCase.expected.route,
+    inputChannel: item.testCase.input.channel,
+    requiredCapabilities: (item.testCase.interaction.requiredCapabilities || []).slice(),
+    riskLevel: item.testCase.riskLevel
+  };
   try {
     const evidence = await runCaseWorker({
       attempt: options.attempt || 1,
@@ -72,9 +91,10 @@ async function executeOne(item, options = {}) {
       options.attempt || 1
     );
     const assertionResult = assertCase(item.testCase, evidence, options.assertionOptions || {});
-    return Object.assign({}, evidence, assertionResult, {
+    const result = Object.assign({}, evidence, assertionResult, metadata, {
       caseId: item.testCase.caseId
     });
+    return Object.assign(result, classifyFailureOwnership(item.testCase, result));
   } catch (error) {
     return Object.assign({
       assertions: [],
@@ -84,7 +104,13 @@ async function executeOne(item, options = {}) {
         message: error.message,
         workerStack: error.workerStack || ''
       }
-    }, classifyWorkerError(error));
+    }, metadata, classifyWorkerError(error), {
+      failureOwnership: 'UNCLASSIFIED_REQUIRES_REVIEW',
+      ownershipConfidence: 'HIGH',
+      ownershipEvidence: {
+        reason: 'RUNNER_OR_CONTRACT_EXECUTION_NOT_A_PRODUCT_RESULT'
+      }
+    });
   }
 }
 
@@ -97,6 +123,7 @@ function summarize(results) {
     executed: results.length,
     byFailureStage: {},
     byLane: {},
+    byOwnership: {},
     byRisk: {}
   };
   results.forEach((result) => {
@@ -109,6 +136,10 @@ function summarize(results) {
     if (result.failureStage) {
       summary.byFailureStage[result.failureStage]
         = (summary.byFailureStage[result.failureStage] || 0) + 1;
+    }
+    if (result.failureOwnership) {
+      summary.byOwnership[result.failureOwnership]
+        = (summary.byOwnership[result.failureOwnership] || 0) + 1;
     }
     (result.laneResults || []).forEach((lane) => {
       summary.byLane[lane.lane] = summary.byLane[lane.lane] || {
@@ -137,6 +168,12 @@ async function runSuite(options = {}) {
       results,
       summary: summarize(results)
     });
+    if (options.fullCorpus) {
+      attempts[attempts.length - 1].integrity = assertFullAttemptIntegrity(
+        attempts[attempts.length - 1],
+        plans
+      );
+    }
   }
   const determinism = {
     comparedAttempts: repeat,
@@ -144,19 +181,39 @@ async function runSuite(options = {}) {
     stable: true
   };
   if (attempts.length > 1) {
-    const baseline = new Map(attempts[0].results.map((result) => [
-      result.caseId,
-      normalizeRunResult(result).fingerprint
-    ]));
+    const baselineIds = attempts[0].results.map((result) => result.caseId);
+    const baseline = new Map(attempts[0].results.map((result) => {
+      const normalized = normalizeRunResult(result);
+      return [result.caseId, normalized];
+    }));
     attempts.slice(1).forEach((attempt) => {
+      try {
+        exactUniqueSet(
+          attempt.results.map((result) => result.caseId),
+          baselineIds,
+          'DETERMINISM_CASE_SET_MISMATCH',
+          `Attempt ${attempt.attempt} determinism Case`
+        );
+      } catch (error) {
+        determinism.mismatches.push({
+          attempt: attempt.attempt,
+          caseId: '',
+          failureCode: error.failureCode,
+          detail: error.detail
+        });
+      }
       attempt.results.forEach((result) => {
-        const fingerprint = normalizeRunResult(result).fingerprint;
-        if (baseline.get(result.caseId) !== fingerprint) {
+        const normalized = normalizeRunResult(result);
+        const baselineResult = baseline.get(result.caseId);
+        if (!baselineResult || baselineResult.fingerprint !== normalized.fingerprint) {
           determinism.mismatches.push({
             attempt: attempt.attempt,
             caseId: result.caseId,
-            baseline: baseline.get(result.caseId),
-            actual: fingerprint
+            baseline: baselineResult && baselineResult.fingerprint || '',
+            actual: normalized.fingerprint,
+            changedPaths: baselineResult
+              ? findChangedPaths(baselineResult.semantic, normalized.semantic)
+              : ['$']
           });
         }
       });

@@ -26,7 +26,39 @@ function normalizeRunResult(result) {
   };
 }
 
+function findChangedPaths(left, right, prefix = '', output = [], limit = 80) {
+  if (output.length >= limit) return output;
+  if (left === right) return output;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+      output.push(prefix || '$');
+      return output;
+    }
+    for (let index = 0; index < left.length && output.length < limit; index += 1) {
+      findChangedPaths(left[index], right[index], `${prefix}[${index}]`, output, limit);
+    }
+    return output;
+  }
+  if (!left || !right || typeof left !== 'object' || typeof right !== 'object') {
+    output.push(prefix || '$');
+    return output;
+  }
+  const keys = Array.from(new Set(Object.keys(left).concat(Object.keys(right)))).sort();
+  keys.forEach((key) => {
+    if (output.length >= limit) return;
+    findChangedPaths(
+      left[key],
+      right[key],
+      prefix ? `${prefix}.${key}` : key,
+      output,
+      limit
+    );
+  });
+  return output;
+}
+
 module.exports = {
+  findChangedPaths,
   normalizeRunResult,
   stripNondeterministic
 };
