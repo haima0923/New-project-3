@@ -96,6 +96,7 @@ async function executeOne(item, options = {}) {
     });
     return Object.assign(result, classifyFailureOwnership(item.testCase, result));
   } catch (error) {
+    const finalAudit = error.finalAudit || {};
     return Object.assign({
       assertions: [],
       caseId: item.testCase.caseId,
@@ -104,7 +105,9 @@ async function executeOne(item, options = {}) {
         message: error.message,
         workerStack: error.workerStack || ''
       }
-    }, metadata, classifyWorkerError(error), {
+    }, metadata, finalAudit, {
+      workerExitAudit: error.workerExitAudit || null
+    }, classifyWorkerError(error), {
       failureOwnership: 'UNCLASSIFIED_REQUIRES_REVIEW',
       ownershipConfidence: 'HIGH',
       ownershipEvidence: {

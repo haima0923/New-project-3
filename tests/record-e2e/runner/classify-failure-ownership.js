@@ -399,12 +399,13 @@ function classifyFailureOwnership(testCase, result) {
   }
 
   if (result.failureStage === 'SURFACE_ERROR') {
-    return ownership('CONFIRMED_PRODUCT_DEFECT', 'MEDIUM', {
+    return ownership('UNCLASSIFIED_REQUIRES_REVIEW', 'LOW', {
       failedSurfaceAssertions: failedAssertions(result)
         .filter((assertion) => assertion.layer === 'SURFACE')
         .map((assertion) => assertion.name),
       missingCapabilities: result.surfaceEvidence
-        && result.surfaceEvidence.missingCapabilities || []
+        && result.surfaceEvidence.missingCapabilities || [],
+      reason: 'SURFACE_STATUS_DIFFERENCE_REQUIRES_INDEPENDENT_PRODUCT_EVIDENCE'
     });
   }
 

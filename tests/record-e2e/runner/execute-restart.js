@@ -2,7 +2,7 @@ const path = require('path');
 const { fork } = require('child_process');
 const { getStateFingerprint, safeClone } = require('../../../utils/record-state-diff');
 
-function executeRestart(spec, entries, primaryBootId, primaryPid, attempt = 1) {
+function executeRestart(spec, entries, primaryBootId, primaryPid, attempt = 1, options = {}) {
   return new Promise((resolve, reject) => {
     const child = fork(path.join(__dirname, 'restart-worker.js'), [], {
       env: Object.assign({}, process.env, {
@@ -39,6 +39,16 @@ function executeRestart(spec, entries, primaryBootId, primaryPid, attempt = 1) {
         );
         error.code = response && response.error && response.error.code
           || 'RESTART_PERSISTENCE_ERROR';
+        error.finalAudit = response && response.error && response.error.finalAudit || null;
+        error.secondaryError = response && response.error
+          && response.error.secondaryError || null;
+        error.workerExitAudit = {
+          exitCode,
+          exitObserved: true,
+          ipcClosed: child.connected === false,
+          pid: child.pid,
+          signal: signal || ''
+        };
         reject(error);
         return;
       }
@@ -62,7 +72,12 @@ function executeRestart(spec, entries, primaryBootId, primaryPid, attempt = 1) {
         }
       });
     });
-    child.send({ attempt, entries: safeClone(entries), spec: safeClone(spec) });
+    child.send({
+      attempt,
+      entries: safeClone(entries),
+      hooks: safeClone(options.hooks || {}),
+      spec: safeClone(spec)
+    });
   });
 }
 

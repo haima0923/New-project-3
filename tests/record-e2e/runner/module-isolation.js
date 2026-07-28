@@ -41,6 +41,15 @@ function runCaseWorker(payload, options = {}) {
         );
         error.code = response && response.error && response.error.code
           || 'AUTOMATION_DRIVER_ERROR';
+        error.finalAudit = response && response.error && response.error.finalAudit || null;
+        error.secondaryError = response && response.error && response.error.secondaryError || null;
+        error.workerExitAudit = {
+          exitCode,
+          exitObserved: true,
+          ipcClosed: child.connected === false,
+          pid: child.pid,
+          signal: signal || ''
+        };
         error.workerStack = response && response.error && response.error.stack || '';
         reject(error);
         return;

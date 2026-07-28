@@ -4,6 +4,10 @@ const { createFakeNetwork } = require('./create-fake-network');
 const { createHostFilesystemGuard } = require('./create-host-filesystem-guard');
 const { createFakeVoice } = require('./create-fake-voice');
 const { assertFakeWxApi, createFakeWx } = require('./create-fake-wx');
+const {
+  RECORD_STORAGE_BACKUP_KEY,
+  RECORD_STORAGE_JOURNAL_KEY
+} = require('../../../utils/record-storage-transaction-contract');
 
 function seedFrom(value) {
   const text = String(value || '');
@@ -86,6 +90,29 @@ function createCaseRuntime(spec, options = {}) {
     spec.clock.nowInstant,
     spec.caseId
   );
+  const registeredGateways = new Map();
+  function gatewayAudit() {
+    const gateways = Array.from(registeredGateways.entries()).map(([gateway, label]) => {
+      const entries = gateway.getEntries();
+      return {
+        backupCount: Object.prototype.hasOwnProperty.call(
+          entries,
+          RECORD_STORAGE_BACKUP_KEY
+        ) ? 1 : 0,
+        journalCount: Object.prototype.hasOwnProperty.call(
+          entries,
+          RECORD_STORAGE_JOURNAL_KEY
+        ) ? 1 : 0,
+        label
+      };
+    });
+    return {
+      backupCount: gateways.reduce((sum, item) => sum + item.backupCount, 0),
+      gatewayCount: gateways.length,
+      gateways,
+      journalCount: gateways.reduce((sum, item) => sum + item.journalCount, 0)
+    };
+  }
   return {
     app,
     audit() {
@@ -112,6 +139,17 @@ function createCaseRuntime(spec, options = {}) {
     fakeWx,
     initialStateFingerprint: stableHash(spec.initialState.state, 'e2e-initial-state-v1'),
     network,
+    registerGateway(label, gateway) {
+      if (!gateway || typeof gateway.getEntries !== 'function') {
+        throw Object.assign(new Error(`Invalid test gateway registration: ${label}`), {
+          code: 'AUTOMATION_DRIVER_ERROR'
+        });
+      }
+      if (!registeredGateways.has(gateway)) {
+        registeredGateways.set(gateway, String(label || `gateway-${registeredGateways.size + 1}`));
+      }
+    },
+    gatewayAudit,
     voice
   };
 }

@@ -12,6 +12,7 @@ const {
 const { createFakeNetwork } = require('../runner/create-fake-network');
 const { assertFakeWxApi } = require('../runner/create-fake-wx');
 const { createHostFilesystemGuard } = require('../runner/create-host-filesystem-guard');
+const { executeRestart } = require('../runner/execute-restart');
 const { executeTransactionReplay } = require('../runner/execute-transaction-replay');
 const { baseLane, finalizeLane } = require('../runner/lane-state');
 const { loadCorpus } = require('../runner/load-corpus');
@@ -387,6 +388,41 @@ const tests = [
         }),
         (error) => error.code === 'LANE_EXECUTION_EVIDENCE_MISSING'
       );
+    }
+  },
+  {
+    name: 'restart-worker-error-retains-hard-isolation-audit',
+    async run() {
+      const item = bundle('REC-E2E-PERSIST-001');
+      const evidence = await worker(item.testCase.caseId);
+      const request = evidence.restartRequest;
+      let caught = null;
+      try {
+        await executeRestart(
+          item.workerSpec,
+          request.entries,
+          request.primaryBootId,
+          request.primaryPid,
+          901,
+          { hooks: { forceErrorAfterRuntime: true } }
+        );
+      } catch (error) {
+        caught = error;
+      }
+      assert(caught);
+      assert.strictEqual(caught.code, 'RESTART_PERSISTENCE_ERROR');
+      assert(caught.finalAudit);
+      assert.strictEqual(caught.finalAudit.networkAudit.realNetworkRequests, 0);
+      assert.strictEqual(caught.finalAudit.networkAudit.unknownFakeRouteRequests, 0);
+      assert.strictEqual(caught.finalAudit.storageAudit.realWxStorageCalls, 0);
+      assert.strictEqual(
+        caught.finalAudit.hostFilesystemAudit.hostFilesystemStorageCalls,
+        0
+      );
+      assert.strictEqual(caught.finalAudit.fixtureMutationAudit.unchanged, true);
+      assert.strictEqual(caught.finalAudit.finalTransactionAudit.journalCount, 0);
+      assert.strictEqual(caught.finalAudit.finalTransactionAudit.backupCount, 0);
+      assert.strictEqual(caught.workerExitAudit.exitObserved, true);
     }
   },
   {

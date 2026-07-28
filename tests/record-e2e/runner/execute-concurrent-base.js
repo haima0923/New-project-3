@@ -22,10 +22,13 @@ function saveOptions(spec, suffix) {
   };
 }
 
-function executeConcurrentBase(spec, draftA, draftB) {
+function executeConcurrentBase(spec, draftA, draftB, options = {}) {
   const gateway = createFakeStorageGateway({
     [BUSINESS_STORAGE_KEY]: safeClone(spec.initialState.state)
   });
+  if (typeof options.registerGateway === 'function') {
+    options.registerGateway('CONCURRENT_BASE', gateway);
+  }
   const facade = createReleaseAStorageFacade({
     clock: makeClock(spec.clock.nowInstant),
     gateway

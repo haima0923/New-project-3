@@ -157,6 +157,9 @@ function executeFormalCommit(spec, pageDraft, options = {}) {
   const gateway = options.gateway || createFakeStorageGateway({
     [BUSINESS_STORAGE_KEY]: safeClone(spec.initialState.state)
   });
+  if (typeof options.registerGateway === 'function') {
+    options.registerGateway('ISOLATED_FORMAL', gateway);
+  }
   const facade = options.facade || createReleaseAStorageFacade({
     clock: makeClock(spec.clock.nowInstant),
     gateway
@@ -219,6 +222,9 @@ function executePendingCommit(spec, pageDraft, options = {}) {
   const gateway = createFakeStorageGateway({
     [BUSINESS_STORAGE_KEY]: safeClone(spec.initialState.state)
   });
+  if (typeof options.registerGateway === 'function') {
+    options.registerGateway('ISOLATED_PENDING', gateway);
+  }
   const facade = createReleaseAStorageFacade({
     clock: makeClock(spec.clock.nowInstant),
     gateway
