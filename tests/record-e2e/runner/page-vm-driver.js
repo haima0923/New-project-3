@@ -4,6 +4,7 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
 const { PAGE_PATHS, ROOT } = require('./constants');
+const { PAGE_ACTION_REGISTRY } = require('./page-action-registry');
 
 const AI_PARSER_PATH = require.resolve('../../../utils/ai-parser');
 const BUSINESS_PATH = require.resolve('../../../utils/business');
@@ -85,8 +86,20 @@ function instantiatePage(definition, evidence) {
     }
     page[key] = (...args) => {
       evidence.pageMethodCalls[key] = (evidence.pageMethodCalls[key] || 0) + 1;
-      if (key === 'saveFormal' && page.data && page.data.parseResult) {
-        evidence.pagePrimaryActionCalls.saveFormal += 1;
+      const registeredActions = Object.values(PAGE_ACTION_REGISTRY)
+        .filter((entry) => entry.methodName === key)
+        .map((entry) => entry.semanticAction);
+      if (registeredActions.length && page.data && page.data.parseResult) {
+        evidence.pagePrimaryActionCalls.byMethod[key]
+          = (evidence.pagePrimaryActionCalls.byMethod[key] || 0) + 1;
+        if (registeredActions.some((action) => (
+          action === 'SAVE_FORMAL' || action === 'UPDATE'
+        ))) {
+          evidence.pagePrimaryActionCalls.saveFormal += 1;
+        }
+        if (registeredActions.includes('SAVE_PENDING')) {
+          evidence.pagePrimaryActionCalls.savePending += 1;
+        }
       }
       return definition[key].apply(page, args);
     };
@@ -126,7 +139,9 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     pagePath: relativePath,
     pageMethodCalls: {},
     pagePrimaryActionCalls: {
-      saveFormal: 0
+      byMethod: {},
+      saveFormal: 0,
+      savePending: 0
     },
     productionBusinessCalls: {
       saveConfirmedDraft: 0,

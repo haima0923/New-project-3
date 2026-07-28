@@ -15,6 +15,10 @@ const {
 const { executePageObservation } = require('./execute-page-observation');
 const { executeTransactionReplay } = require('./execute-transaction-replay');
 const { executedLane, preconditionFailedLane } = require('./lane-state');
+const {
+  invokeResolvedPageAction,
+  resolvePageAction
+} = require('./page-action-registry');
 const { assertIsolationAudit } = require('./assert-isolation-audit');
 const {
   RECORD_STORAGE_BACKUP_KEY,
@@ -87,13 +91,18 @@ function publicObservation(observation) {
 
 function runActualPendingPageSave(spec, observation, runtime) {
   const driver = observation.driver;
-  if (!driver || typeof driver.page.savePending !== 'function') {
-    throw Object.assign(new Error('Production pending-save page method missing'), {
-      code: 'AUTOMATION_DRIVER_ERROR'
-    });
-  }
+  const actionResolution = resolvePageAction({
+    availablePageMethods: driver && driver.page,
+    entrySurface: driver && driver.surface,
+    inputChannel: spec.input.channel,
+    requestedAction: spec.interaction.requestedSaveAction
+  });
   const before = safeClone(spec.initialState.state);
-  driver.page.savePending();
+  const actionInvocation = invokeResolvedPageAction(driver.page, actionResolution, {
+    readMethodCount: () => Number(
+      driver.evidence.pageMethodCalls[actionResolution.resolvedMethodName] || 0
+    )
+  });
   const raw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || before;
   const after = stripRecordStorageControl(raw);
   const storage = require('../../../utils/storage');
@@ -105,7 +114,11 @@ function runActualPendingPageSave(spec, observation, runtime) {
     ),
     diff: createStateDiff(before, after),
     marker: 'TEST_ONLY_ISOLATED_COMMIT',
-    pageMethod: 'savePending',
+    pageActionEvidence: {
+      invocation: safeClone(actionInvocation.invocationEvidence),
+      resolution: safeClone(actionResolution.resolutionEvidence)
+    },
+    pageMethod: actionResolution.resolvedMethodName,
     prepared: {
       allowed: true,
       source: 'PAGE_DERIVED_CONFIRMED_DRAFT'
@@ -125,11 +138,12 @@ function runActualPendingPageSave(spec, observation, runtime) {
 
 async function runDuplicateTrigger(spec, observation, isolated, runtime) {
   const driver = observation.driver;
-  if (!driver || typeof driver.page.saveFormal !== 'function') {
-    throw Object.assign(new Error('Production formal-save page method missing'), {
-      code: 'AUTOMATION_DRIVER_ERROR'
-    });
-  }
+  const actionResolution = resolvePageAction({
+    availablePageMethods: driver && driver.page,
+    entrySurface: driver && driver.surface,
+    inputChannel: spec.input.channel,
+    requestedAction: 'SAVE_FORMAL'
+  });
   const prepared = prepareLegacyDraft(
     observation.afterEdits.parseResult || {},
     spec.initialState.state,
@@ -145,7 +159,9 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
     fields: safeClone(prepared.draft.fields || {}),
     intent: prepared.draft.intent
   });
-  const beforeCalls = Number(driver.evidence.pageMethodCalls.saveFormal || 0);
+  const beforeCalls = Number(
+    driver.evidence.pageMethodCalls[actionResolution.resolvedMethodName] || 0
+  );
   const beforeEligibleCalls = Number(driver.evidence.pagePrimaryActionCalls.saveFormal || 0);
   const beforeBusiness = Number(driver.evidence.productionBusinessCalls.saveConfirmedDraft || 0);
   const beforeStorage = Number(driver.evidence.productionStorageCalls.saveState || 0);
@@ -162,11 +178,21 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
   const beforeReceiptCount = beforeRaw && beforeRaw.__hxlRecordStorageV1
     ? (beforeRaw.__hxlRecordStorageV1.recentReceipts || []).length
     : 0;
-  driver.page.saveFormal();
+  const firstActionInvocation = invokeResolvedPageAction(driver.page, actionResolution, {
+    readMethodCount: () => Number(
+      driver.evidence.pageMethodCalls[actionResolution.resolvedMethodName] || 0
+    )
+  });
   const afterFirstRaw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state;
   const afterFirstState = stripRecordStorageControl(afterFirstRaw);
-  driver.page.saveFormal();
-  const afterCalls = Number(driver.evidence.pageMethodCalls.saveFormal || 0);
+  const secondActionInvocation = invokeResolvedPageAction(driver.page, actionResolution, {
+    readMethodCount: () => Number(
+      driver.evidence.pageMethodCalls[actionResolution.resolvedMethodName] || 0
+    )
+  });
+  const afterCalls = Number(
+    driver.evidence.pageMethodCalls[actionResolution.resolvedMethodName] || 0
+  );
   const afterEligibleCalls = Number(driver.evidence.pagePrimaryActionCalls.saveFormal || 0);
   const afterBusiness = Number(driver.evidence.productionBusinessCalls.saveConfirmedDraft || 0);
   const afterStorage = Number(driver.evidence.productionStorageCalls.saveState || 0);
@@ -194,6 +220,11 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
   const financialRecordCount = (afterState.paymentRecords || []).length
     - (beforeState.paymentRecords || []).length;
   return {
+    actionResolutionEvidence: safeClone(actionResolution.resolutionEvidence),
+    actionInvocationEvidence: [
+      safeClone(firstActionInvocation.invocationEvidence),
+      safeClone(secondActionInvocation.invocationEvidence)
+    ],
     additionalBusinessDiff: additionalBusinessDiff.businessDiff,
     additionalBusinessDiffEmpty: isCollectionDiffEmpty(additionalBusinessDiff.businessDiff),
     isolatedCommitCount: isolated && isolated.committed ? 1 : 0,
@@ -322,7 +353,8 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     concurrent = executeConcurrentBase(
       spec,
       sourceDraft,
-      secondObservation.afterEdits.parseResult
+      secondObservation.afterEdits.parseResult,
+      { registerGateway: runtime.registerGateway }
     );
     isolated = {
       businessResult: concurrent.businessA,
@@ -378,7 +410,11 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     } else if (spec.interaction.requestedSaveAction === 'SAVE_PENDING') {
       isolated = runActualPendingPageSave(spec, sourceObservation, runtime);
     } else {
-      isolated = executeIsolatedLegacyCommit(spec, sourceDraft, options.hooks || {});
+      isolated = executeIsolatedLegacyCommit(spec, sourceDraft, Object.assign(
+        {},
+        options.hooks || {},
+        { registerGateway: runtime.registerGateway }
+      ));
     }
     if (!surfaceGap) {
       laneResults.push(executedLane('TEST_ONLY_ISOLATED_LEGACY_COMMIT', {

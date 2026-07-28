@@ -3,6 +3,10 @@ const {
   buildSelectionTargets,
   validateExecutionPlanPreconditions
 } = require('./validate-plan-preconditions');
+const {
+  deriveEditMode,
+  lookupPageAction
+} = require('./page-action-registry');
 
 function expectedLayerNames(lanes) {
   const names = ['productionObservation'];
@@ -50,6 +54,37 @@ function buildExecutionPlan(testCase, fixtureResolver) {
     );
   }
   const lanes = safeClone(testCase.execution.lanes);
+  const requestedAction = testCase.interaction.requestedSaveAction;
+  const editMode = deriveEditMode(testCase.input.channel);
+  const pageMethodRequired = requestedAction === 'SAVE_PENDING'
+    || lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD');
+  const actionSurface = testCase.execution.draftSourceSurface
+    || testCase.execution.observationSurface
+    || testCase.input.entrySurface;
+  let pageActionPlan = {
+    actionSurface,
+    editMode,
+    requestedAction,
+    strategy: requestedAction === 'DO_NOT_SAVE'
+      ? 'NO_INVOCATION'
+      : 'TEST_ONLY_ISOLATED_LEGACY_DIRECT'
+  };
+  if (pageMethodRequired) {
+    const registered = lookupPageAction({
+      editMode,
+      entrySurface: actionSurface,
+      inputChannel: testCase.input.channel,
+      requestedAction
+    });
+    pageActionPlan = Object.assign(pageActionPlan, {
+      registryKey: registered.key,
+      resolvedMethodName: registered.entry.methodName,
+      semanticAction: registered.entry.semanticAction,
+      strategy: lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')
+        ? 'PAGE_METHOD_DUPLICATE_TRIGGER'
+        : 'PAGE_METHOD'
+    });
+  }
   const plan = {
     schemaVersion: 'record-e2e-execution-plan-v1',
     caseId: testCase.caseId,
@@ -64,6 +99,7 @@ function buildExecutionPlan(testCase, fixtureResolver) {
     stateFixtureFingerprint: initial.fingerprint,
     aiFixtureRef: testCase.ai.fixtureRef || null,
     interactionSteps: safeClone(testCase.interaction.sequence || []),
+    pageActionPlan,
     expectedLayers: expectedLayerNames(lanes)
   };
   plan.planFingerprint = stableHash(plan, 'record-e2e-execution-plan-v1');
