@@ -810,10 +810,13 @@ Phase 1 已将测试输入统一到 `tests/record-e2e/`。详细机器合同见
 1. 120 条 ACTIVE 题使用统一 caseId、固定 clock、匿名 initialState、AI profile、交互、Result、Route、Preflight、Confirmation、Surface、Save、State Diff、重启/幂等和风险合同。
 2. 所有 expected 来自产品合同、安全规则、业务 State 合同和人工审查；不得从当前代码运行结果生成。
 3. `HEADLESS_DETERMINISTIC` 使用 Local/Fake/Replay 和隔离 Memory；`REAL_QWEN_QUALITY` 是独立候选标签，不表示已运行真实千问。
-4. Fake/Replay 可验证隔离 State Diff，但永远 `productionCommitEligible=false`。
+4. Case V1.1 将生产观察与测试执行拆开：Fake/Replay生产资格必须阻断非真实Provider，但业务安全允许时可由`TEST_ONLY_ISOLATED_LEGACY_COMMIT`验证Legacy State Diff。
 5. 产品语义未决项进入独立 backlog，不计入 ACTIVE 核心题。
 6. `scripts/validate-record-e2e-corpus.js` 是结构、语义、隐私、去重和覆盖的离线门禁；不生成报告文件。
 7. `expected.result` 判定 normalizer 与人工交互后的 Confirmation 标准语义层；原始 parser 别名和 Storage 字段分别由 adapter 与 State Diff 映射，不能在同一 operation 中混写。
 8. 冲突候选使用 `conflictValues`，不会像 `allowedValues` 一样放宽判分；复杂交互、字段断言和关系断言均使用封闭机器结构。
+9. PAGE与HEADLESS生产观察是不同lane；HEADLESS不能冒充页面。页面缺少Case要求的真实能力时归类`CASE_FAIL/SURFACE_ERROR`，Runner不会伪造事件。
+10. `PERSIST-003`是事务材料exact replay：页面只生成第一次草稿和一次保存动作，事务层原样重放返回`ALREADY_COMMITTED`；它不是第二次页面点击。
+11. HEADLESS题需要隔离提交时必须额外通过真实完整页生成确认草稿；`FIN-014`的同一点击风暴由页面防重lane抑制第二次进入事务，不使用`ALREADY_COMMITTED`替代UI证据。
 
-Phase 1 只建立可执行输入合同，不实现 Headless Runner、页面 Driver 或真实千问质量运行。
+Phase 2A 只修订执行边界合同，不实现 Headless Runner、页面 Driver 或真实千问质量运行。`expected.save`仅保留业务正确语义；生产资格、隔离目标和TEST_ONLY标记分别由`productionObservation`、`isolatedExecution`承担。

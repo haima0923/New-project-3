@@ -2,12 +2,14 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前 E2E Phase 1 工作分支：`feature/record-e2e-automation-v1`；冻结生产基线为
+> 当前 E2E Phase 2A 工作分支：`feature/record-e2e-headless-v1`；Corpus冻结基线为
+> `42a8bef7c933c90a88ebc7f56ee38b5415da5d19` /
+> `candidate-record-e2e-corpus-v1`，Release A冻结基线仍为
 > `f7af27c11977925c6b15fd0f00a01a273bb77c18` /
-> `candidate-record-infrastructure-release-a-rc1`。本阶段候选 tag 为
-> `candidate-record-e2e-corpus-v1`，只有 120 条合成题和全部离线门禁通过后创建。
-> 状态为 **CASE CONTRACT AND SYNTHETIC CORPUS ONLY / REAL QWEN NOT CALLED /
-> PAGE DRIVER NOT IMPLEMENTED / NOT RELEASE**。
+> `candidate-record-infrastructure-release-a-rc1`。Phase 2A只修订生产观察、
+> TEST_ONLY隔离Legacy提交、事务exact replay、重启和并发的执行边界。
+> 状态为 **EXECUTION BOUNDARY CONTRACT ONLY / RUNNER NOT IMPLEMENTED /
+> REAL QWEN NOT CALLED / PAGE DRIVER NOT IMPLEMENTED / NOT RELEASE**。
 
 ## 1. 新对话必读
 
@@ -47,7 +49,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/XIAOLING_CHARACTER_GUIDE.md` | 小玲角色母版、固定特征、生成流程和验收标准 |
 | `docs/RECORD_SHARED_CORE_CONTRACT.md` | 记一笔共享核心输入、模式、AI adapter、状态、trace、确认态、savePlan 和适配边界的权威合同 |
 | `docs/RECORD_TEST_CONTRACT_V1.md` | 第一阶段测试题、fixture、五层评分、零容忍门禁、报告和 canary 的权威合同 |
-| `docs/RECORD_E2E_CASE_CONTRACT_V1.md` | E2E Phase 1 的统一 Case Schema、固定时钟、匿名 fixtures、预期 State Diff、隔离和 Runner 消费合同 |
+| `docs/RECORD_E2E_CASE_CONTRACT_V1.md` | E2E Case V1.1统一Schema、固定时钟、匿名fixtures、生产观察/TEST_ONLY隔离执行、事务exact replay、State Diff和Runner消费合同 |
 | `docs/RECORD_WX_STORAGE_RUNTIME_TEST_PLAYBOOK.md` | Phase 1E.2A.2 微信开发者工具隔离 Storage 事务验证步骤、恢复顺序和清理规则 |
 | `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` | Phase 1E.2B.1 共享保存受控切换、资格、回退、Recovery Lock、监测和 Release A/B/C 计划；不代表生产已开启 |
 | `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` | Release A RC1 的23个Legacy writer、启动恢复、事务失败、旧Bundle升级、回滚兼容和人工发布评审清单；尚未上传或发布 |
@@ -65,7 +67,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 - `docs/RECORD_CONFIRM_CARD_SPEC.md` 管用户可见字段和确认卡产品语义。
 - `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
 - `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
-- `docs/RECORD_E2E_CASE_CONTRACT_V1.md` 管 120 条核心题的机器结构和跨 Runner 复用边界；它不代表 Headless、页面或真实千问 Runner 已实现。
+- `docs/RECORD_E2E_CASE_CONTRACT_V1.md` 管 120 条核心题的机器结构和跨 Runner 复用边界；PAGE、HEADLESS、TEST_ONLY隔离提交和事务exact replay必须分lane判分，它不代表任何Runner已经实现。
 - `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 管共享保存切换控制与发布顺序；它从属于共享核心安全合同，不能覆盖生产固定 `LEGACY_ONLY` 或自行批准 canary。
 - `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` 管 Release A 候选证据和发布前人工检查；它不构成上传、发布或开启 Shared 的授权。
 - `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；

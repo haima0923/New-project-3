@@ -9,7 +9,7 @@
 - 独立的真实千问质量 Runner；
 - 单题重跑、Trace、截图和失败分类。
 
-V1 只建立合同、合成 fixtures 与 120 条核心题，不实现 Runner，不操作微信页面，不调用真实千问，不写真实微信业务 Storage。Expected 来自产品合同、Preflight 安全规则、业务 State 合同和人工审查；当前实现输出只能用于以后发现差异，不能定义正确答案。
+V1 只建立合同、合成 fixtures 与 120 条核心题，不实现 Runner，不操作微信页面，不调用真实千问，不写真实微信业务 Storage。Phase 2A 将 Case 小版本升级为 `record-e2e-case-v1.1`，只补充执行边界，不改变业务答案。Expected 来自产品合同、Preflight 安全规则、业务 State 合同和人工审查；当前实现输出只能用于以后发现差异，不能定义正确答案。
 
 ## 2. 文件布局
 
@@ -26,6 +26,7 @@ scripts/validate-record-e2e-corpus.js
 ```
 
 Schema 描述机器结构，枚举文件提供封闭值域，Validator 负责跨字段语义、安全、隐私、去重和覆盖门禁。Schema 与 Validator 缺一不可。
+为保持既有工具路径稳定，Schema文件名仍为`record-e2e-case-v1.schema.json`；其`$id`和Case内版本已明确升级为`record-e2e-case-v1.1.schema.json` / `record-e2e-case-v1.1`，不得仅凭物理文件名推断版本。
 
 ## 3. Case 主结构
 
@@ -36,6 +37,7 @@ schemaVersion
 caseId / title / status / riskLevel / category / tags
 provenance
 executionProfiles
+execution
 input
 clock
 initialState
@@ -66,18 +68,22 @@ PENDING_EDIT
 
 `PENDING_EDIT` 必须额外声明 `input.pendingNoteId`。该 ID 必须存在于展开后的匿名初始 State；不得让 Runner 猜测要更新哪条待整理记录。
 
-`executionProfiles` 只是未来 Runner 能力标签：
+`executionProfiles` 只是未来 Runner 能力标签，不决定实际执行层。`execution.lanes` 才是机器可执行边界：
 
 ```text
-HEADLESS_DETERMINISTIC
-PAGE_E2E
-REAL_QWEN_QUALITY
-VOICE_TRANSCRIPT
-CLIPBOARD_CHAT
+PAGE_PRODUCTION_OBSERVATION
+HEADLESS_PRODUCTION_OBSERVATION
+PAGE_CONFIRMED_DRAFT_DERIVATION
+TEST_ONLY_ISOLATED_LEGACY_COMMIT
+PAGE_DUPLICATE_TRIGGER_GUARD
+TRANSACTION_EXACT_REPLAY
 RESTART_PERSISTENCE
+CONCURRENT_BASE_REVISION
 ```
 
-REAL_QWEN_QUALITY 不表示本题已经调用过千问。确定性运行的 AI 行为仍由 `ai.profile` 指定。
+页面观察必须调用当前生产页面方法；Headless观察必须明确省略页面，不得冒充PAGE结果。现有6条HEADLESS但需要提交的题，必须额外执行`PAGE_CONFIRMED_DRAFT_DERIVATION`，通过真实完整页方法生成草稿后才能进入隔离提交。隔离提交、页面点击防重、重启、事务重放和并发分别产生独立lane结果。
+
+`execution.missingCapabilityDisposition`固定为`CASE_FAIL`，`missingCapabilityFailureStage`固定为`SURFACE_ERROR`。`laneResults`属于未来Runner输出，不写入Case Expected，避免把当前产品缺陷固化为正确答案。
 
 ## 5. 固定时间
 
@@ -119,12 +125,16 @@ FAKE_STANDARD、FAKE_DEEP、REPLAY 必须引用匹配 reviewMode/providerKind �
 
 每道使用 Fake/Replay 的 ACTIVE 题引用一个绑定同一 `caseId` 的独立 fixture。Case-bound fixture 的 `response.fields` 表示 provider 响应经过 AI normalizer 和 Confirmation 字段投影后的合成结果，不是原始 HTTP JSON；原始 Provider 合同由通用形状 fixture 单独描述。成功响应的客户、商品、金额、关系和 items 必须与该题人工审查的 expected 一致；有 `userSelections` 时 fixture 保留候选但不预填选择结果；有 `userEdits` 时 fixture 表示编辑前值。Validator 会应用选择和编辑，再检查所得字段是否精确等于 expected。通用 fixtures 只作为 Standard、Deep、uncertain、空业务、非法 JSON、timeout、Mock、多商品和历史候选的形状模板，不直接被不同业务事实的题目混用。
 
-Fake/Mock/Replay 可在隔离 Memory 中验证下游正式业务 State Diff，但：
+AI profile只描述确定性输入来源，不再携带生产Commit资格。生产资格与测试执行分别写入：
 
-- `productionCommitEligible` 永远为 false；
-- commitTarget 只能是 `MEMORY_ONLY` 或 `NONE`；
-- 不计入真实模型质量；
-- 不取得生产正式保存资格。
+```text
+expected.productionObservation
+expected.isolatedExecution
+```
+
+Fake/Mock/Replay必须分类为`NON_REAL_FAKE`或`NON_REAL_REPLAY`；安全业务也只能得到`BLOCKED_NON_REAL_PROVIDER`，不得包装成REAL。LOCAL_ONLY分类为`TEST_LOCAL_ONLY`；若当前本地生产链业务与Surface均安全，可观察为`ELIGIBLE_LOCAL`，但不代表真实AI成绩。
+
+测试隔离提交必须标记`TEST_ONLY_ISOLATED_COMMIT`，目标只能是`ISOLATED_LEGACY_STORE`，草稿来源只能是`PAGE_DERIVED_CONFIRMED_DRAFT`。页面题直接引用页面观察lane；6条HEADLESS提交题保留Headless生产观察，同时额外使用真实`FULL_PAGE`生成确认草稿，不允许直接把Headless对象交给business。
 
 真实千问质量运行必须由显式独立命令触发，只使用合成题，只记录模型、路由、耗时、错误码和脱敏响应，不写生产 State。V1 本身不执行真实千问。
 
@@ -153,7 +163,19 @@ expectedAiCall = MUST_NOT_CALL
 
 ## 9. 用户交互
 
-`interaction.userEdits` 支持字段和指定 `itemIndex` 的商品编辑；`userSelections` 支持客户、订单、报价和待收候选。复杂幂等/并发题可用封闭的 `interaction.sequence` 表达 PREPARE、COMMIT、RESTART、RETRY_SAME_PLAN 等步骤，以及可选的 `actor`、`planRef`、`baseRevision` 和 `input.originalText`。Runner 指令、页面 actor 和第二个并发动作的原文不得拼进主 `input.originalText`。
+`interaction.userEdits` 支持字段和指定 `itemIndex` 的商品编辑；`userSelections` 支持客户、订单、报价和待收候选。每个选择或编辑必须同时声明`interaction.requiredCapabilities`，包括客户、普通订单、报价、待收、定金订单、主商品、后续商品和普通确认字段编辑。复杂幂等/并发题可用封闭的 `interaction.sequence` 表达 PREPARE、COMMIT、RESTART、事务材料捕获和exact replay等步骤。
+
+当前完整页缺少通用订单/报价选择方法的5条ACTIVE题仍保留正确能力与业务Expected：
+
+| Case | 必要能力 |
+| --- | --- |
+| `REC-E2E-BASIC-010` | `SELECT_ORDER` |
+| `REC-E2E-REL-003` | `SELECT_ORDER` |
+| `REC-E2E-REL-007` | `SELECT_CUSTOMER`、`SELECT_QUOTATION` |
+| `REC-E2E-REL-008` | `SELECT_QUOTATION` |
+| `REC-E2E-REL-009` | `SELECT_CUSTOMER`、`SELECT_ORDER` |
+
+未来Runner发现页面没有这些方法时，页面lane产生`CASE_FAIL/SURFACE_ERROR`，State Diff为零且保存入口不成功；不得伪造事件、直接改对象、记为Runner错误或Expected Fail。产品补齐页面后，同一Case自然继续到后续lane。
 
 `requestedSaveAction` 只有：
 
@@ -202,9 +224,9 @@ Confirmation 明确 required、missing、conflict 字段。Surface 分别为 hom
 
 业务安全不等于当前页面有能力完成确认；完整页也不能解除领域安全阻断。
 
-## 11. 保存与 State Diff
+## 11. 生产观察、隔离执行与 State Diff
 
-保存状态为：
+旧`expected.save`只保留“完成全部合法交互后的正确业务动作与业务结果”：
 
 ```text
 FORMAL_COMMITTED
@@ -213,12 +235,20 @@ BLOCKED
 NO_RECORD
 ```
 
+它不再包含`productionCommitEligible`或`commitTarget`，也不表示页面实际保存、生产正式Commit或真实AI Commit。
+
+`expected.productionObservation`独立表达Provider分类、生产资格、页面是否允许正式保存和完整生产Preflight阻断码。Fake/Replay的阻断码必须包含真实代码`UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION`；如同时存在业务阻断，必须保留两类码的完整并集。`expected.preflight.domainCanSaveFormal`继续是Provider无关的业务安全结论。
+
+`expected.isolatedExecution`独立表达是否启用、TEST_ONLY状态、草稿来源、观察lane、隔离目标和State Diff引用。正式隔离提交必须同时满足：真实观察层已形成确认草稿、全部交互已通过对应真实方法、业务Preflight允许、候选已选择、无跨客户/金额冲突/超额/无效目标/NO_RECORD/AI失败或危险不确定结果。唯一允许绕开的只能是测试身份或非真实Provider生产资格。
+
 规则：
 
 - FORMAL_COMMITTED 必须由 `SAVE_FORMAL` 且 `domainCanSaveFormal=true` 产生，并具有正式业务 Diff；
 - PENDING_COMMITTED 必须由用户明确 `SAVE_PENDING` 产生，只允许 pendingNotes 及合同允许的日志变化；
 - BLOCKED 和 NO_RECORD 必须零业务副作用；
-- Fake/Replay 的 “committed” 只表示隔离 Memory 提交。
+- 正式隔离执行状态只能是`TEST_ONLY_ISOLATED_COMMITTED`；
+- 待整理隔离执行状态只能是`TEST_ONLY_PENDING_COMMITTED`；
+- 业务安全阻断不得借TEST_ONLY层写正式业务。
 
 `expected.stateDiff.business/full` 通过 collection count、fieldAssertions、relationAssertions 和 mustRemainUnchanged 描述结果。`fieldAssertions` 的封闭字段为 `collection/change/path/assert/value`；除 `ABSENT` 外必须给出 `value`，而 `ABSENT` 禁止带 `value`。`relationAssertions` 的封闭字段为 `fromCollection/fromPath/toCollection/toId`。省略 `toId` 只表示目标集合在本次 Diff 中恰好创建了一条记录；如果目标不唯一，题目必须给出 `toId`，不得由 Runner 猜测。公共集合覆盖 customers、quotations、orders、receivables、payments、todos、pendingNotes、productCatalog、operationLogs、aiParseLogs，并可扩展到合同枚举中的兼容集合。
 
@@ -232,14 +262,16 @@ P0 至少有一项最终 State 断言或完整零副作用断言。金额、关�
 
 ## 13. 重启、幂等与并发
 
-`expected.restart` 表达重启后指纹、记录数和必须存在的记录；`expected.idempotency` 表达：
+`expected.restart` 增加明确`attempts`，表达重启次数、重启后指纹、记录数和必须存在的记录。`expected.idempotency` 表达：
 
 - SAME_PLAN_RETRY；
 - DISTINCT_ACTIONS_MUST_NOT_DEDUP；
 - SAME_BASE_CONCURRENT_COMMITS；
 - DOUBLE_UI_TRIGGER。
 
-合同可断言 revision 增量、二次业务 Diff、Commit statuses、Journal 和 Backup 的最终清理状态。并发题的第二个业务动作使用对应 PREPARE step 的 `input.originalText`；主 `expected.result` 仍判定主动作，第二个动作的安全结果由 commit status、revision 与零额外 Diff 断言。Phase 2 先在隔离 Store 消费这些不变量，页面 Runner 后续复用同一 Case。
+`REC-E2E-PERSIST-003`固定为`TRANSACTION_EXACT_REPLAY`：第一次由观察草稿进入TEST_ONLY Legacy隔离提交；随后捕获完全相同的transactionId、planId、planHash、idempotencyKey、base/target revision、base fingerprint和目标Bundle fingerprint，并在事务层原样重放。第二次必须返回`ALREADY_COMMITTED`，revision、业务记录和receipt数量增量均为0，receipt语义与第一次相同。页面保存入口只能调用一次，不能用第二次页面点击、重新生成transaction或STALE结果模拟幂等。
+
+`REC-E2E-PERSIST-004`由`CONCURRENT_BASE_REVISION`表达两个actor读取同一base、A成功、B返回`REVISION_MISMATCH`且不能覆盖A。`REC-E2E-FIN-014`由`PAGE_DUPLICATE_TRIGGER_GUARD`约束同一次用户动作/同一plan的点击风暴：第二次触发必须在再次进入保存handler和事务前被抑制，因此只有一个`COMMITTED`，不能伪称事务`ALREADY_COMMITTED`。两个独立金融确认是否应去重仍由`REC-DECISION-008`保留为产品待办。
 
 ## 14. Allowances 与 Known Risk
 
@@ -272,21 +304,38 @@ Validator 无第三方依赖，且只读取仓库文件：
 
 ```bash
 node scripts/validate-record-e2e-corpus.js
+node scripts/validate-record-e2e-corpus.js --contract-self-test
 ```
 
 在本项目当前受控环境中也可使用微信开发者工具内置 Electron 的 Node 模式运行。它检查：
 
 - JSON、实际 Schema 子集、必填字段、封闭枚举、fixture 继承/引用和 caseId 唯一性；
 - 固定时钟、时区投影和明确 ISO 日期；
-- Result 标准字段层、allowed/conflict/absent 路径、Route、AI profile/reviewMode/providerKind、Preflight、Surface、Save 与 Diff 的交叉关系；
+- Result 标准字段层、Route、AI profile、Preflight、Surface、业务Save与Diff的交叉关系；
+- 六类execution lane、生产观察/隔离执行分离、requiredCapability映射、restart/exact replay/concurrent双向合同；
 - Sequence、fieldAssertions、relationAssertions 的封闭结构和引用对象；
 - P0 零副作用、多候选、Fake/Replay 隔离；
 - 多商品第二件、金融超额和关系安全；
 - 隐私、密钥、allowances、knownRisk；
 - 原文重复、疑似仅换数字重复、分类和风险配额；
-- ACTIVE、PAGE_E2E、REAL_QWEN_QUALITY、输入渠道、路由、保存和 fixtures 的覆盖统计。
+- Fake/Replay生产资格、业务安全不可绕过、exact replay同一身份和页面能力缺口分类的12个合同哨兵；
+- ACTIVE、PAGE_E2E、REAL_QWEN_QUALITY、输入渠道、路由、保存、lane、能力和fixtures的覆盖统计。
 
 校验只输出控制台统计，不生成或提交运行报告。
+
+未来Runner的每个`laneResults[]`至少包含：
+
+```text
+lane
+executionState
+status
+failureStage
+failureCode
+assertions
+evidence
+```
+
+`status`只能是PASS、CASE_FAIL、RUNNER_ERROR、BLOCKED。所有要求lane均符合Expected才是Case PASS；真实执行后产品事实不符是CASE_FAIL；Runner不会调用生产中已有能力才是RUNNER_ERROR；合同或fixture不足才是BLOCKED。若页面lane已因产品缺失能力产生CASE_FAIL，依赖草稿的后续lane使用`NOT_EXECUTED_UPSTREAM_CASE_FAIL`，零Diff且不调用保存；该依赖未执行不再额外记RUNNER_ERROR或BLOCKED，Case总结果仍是最早的CASE_FAIL。
 
 ## 18. Phase 2 消费约定
 
@@ -296,9 +345,28 @@ Phase 2 Runner 应：
 2. 解析 fixture 继承并应用受控 overrides；
 3. 注入固定 clock、MemoryStore 和选择/编辑动作；
 4. 根据 `ai.profile` 使用本地、Fake 或 Replay；
-5. 从原文走生产等价 parseHybridInput、页面安全、Legacy business 和隔离 Store；
-6. 分层比较 result、route、preflight、confirmation、save、stateDiff、restart/idempotency；
-7. 输出 Trace 和失败归类，不修改 expected；
-8. 永远不访问真实业务 key。
+5. 分别执行页面或Headless生产观察，不混写结果；
+6. 只有业务安全允许时，才将观察层草稿交给Legacy business、Release A Coordinator和隔离Store，并标记TEST_ONLY；
+7. exact replay只在事务层原样重放，restart和concurrent使用各自lane；
+8. 分层比较result、route、preflight、confirmation、productionObservation、isolatedExecution、stateDiff和事务断言；
+9. 输出每lane的status/failureStage/failureCode/assertions/evidence，不修改expected；
+10. 永远不访问真实业务 key。
 
 页面选择器、点击坐标和截图路径属于 Driver，不写入 Case；真实模型重复次数、成本和稳定性属于质量 Runner，不与确定性代码回归混算。
+
+## 19. Phase 2A 迁移基线
+
+120条ACTIVE题的执行边界分布为：
+
+| lane | Case数 |
+| --- | ---: |
+| PAGE_PRODUCTION_OBSERVATION | 110 |
+| HEADLESS_PRODUCTION_OBSERVATION | 10 |
+| PAGE_CONFIRMED_DRAFT_DERIVATION | 6 |
+| TEST_ONLY_ISOLATED_LEGACY_COMMIT | 89 |
+| PAGE_DUPLICATE_TRIGGER_GUARD | 1 |
+| TRANSACTION_EXACT_REPLAY | 1 |
+| RESTART_PERSISTENCE | 5 |
+| CONCURRENT_BASE_REVISION | 1 |
+
+79条正式业务语义题与10条待整理题允许TEST_ONLY隔离执行；29条BLOCKED与2条NO_RECORD题禁止隔离提交。受保护的`riskLevel/result/route/routing/preflight/confirmation/surface/save action+status/stateDiff`迁移前后指纹保持一致。本阶段没有实现Runner、修改产品代码或形成任何运行通过结论。
