@@ -260,10 +260,49 @@ const tests = [
         page.changeOrder({ detail: { value: 0 } });
         assert.strictEqual(page.data.fields.orderId, 'ord-syn-a-1');
         assert.strictEqual(page.data.orderOptions.length, 2);
+        page.changeDateField({
+          currentTarget: { dataset: { field: 'dueDate' } },
+          detail: { value: '2026-08-01' }
+        });
+        assert.strictEqual(page.data.fields.orderId, 'ord-syn-a-1');
+        assert.strictEqual(page.data.orderOptions.length, 2);
         page.changeOrder({ detail: { value: 1 } });
         assert.strictEqual(page.data.fields.orderId, 'ord-syn-a-2');
         assert.strictEqual(page.data.fields.productName, '纸袋');
-        assert.strictEqual(page.data.fields.dueDate, '2026-07-31');
+        assert.strictEqual(page.data.fields.dueDate, '2026-08-01');
+      });
+    }
+  },
+  {
+    name: 'date-edit-then-cancel-restores-unhydrated-base-fields',
+    run() {
+      withPage('REC-E2E-REL-004', ({ page }) => {
+        prepareConfirmation(page, {
+          intent: 'order',
+          operation: 'update_order',
+          source: 'typed',
+          original_text: '王总那单交期改成7月31日',
+          parse_route: { decision: 'local' },
+          fields: {
+            customerId: 'cus-syn-a',
+            customerName: '王总',
+            dueDate: '2026-07-31'
+          },
+          missing_fields: [],
+          low_confidence_fields: []
+        });
+        page.changeOrder({ detail: { value: 0 } });
+        assert.strictEqual(page.data.fields.productName, '礼品盒');
+        page.changeDateField({
+          currentTarget: { dataset: { field: 'dueDate' } },
+          detail: { value: '2026-08-02' }
+        });
+        page.clearOrderSelection();
+        assert.strictEqual(Boolean(page.data.fields.orderId), false);
+        assert.strictEqual(Boolean(page.data.fields.productName), false);
+        assert.strictEqual(page.data.fields.dueDate, '2026-08-02');
+        assert.strictEqual(page.data.orderSelectionRequired, true);
+        assert.strictEqual(page.data.orderOptions.length, 2);
       });
     }
   },
@@ -325,6 +364,38 @@ const tests = [
     }
   },
   {
+    name: 'switching-to-deposit-clears-generic-order-selector',
+    run() {
+      withPage('REC-E2E-BASIC-010', ({ page }) => {
+        prepareConfirmation(page, receivableDraft());
+        assert.strictEqual(page.data.showGenericOrderSelection, true);
+        prepareConfirmation(page, {
+          intent: 'payment',
+          operation: 'record_order_deposit',
+          source: 'typed',
+          original_text: '王总收纳盒订单收了1000元定金',
+          parse_route: { decision: 'local' },
+          fields: {
+            customerId: 'cus-syn-a',
+            customerName: '王总',
+            depositAmount: '1000',
+            paymentAmount: '1000',
+            paymentKind: 'deposit',
+            productName: '收纳盒'
+          },
+          missing_fields: [],
+          low_confidence_fields: []
+        });
+        assert.strictEqual(page.data.operation, 'record_order_deposit');
+        assert.strictEqual(page.data.showGenericOrderSelection, false);
+        assert.strictEqual(page.data.showGenericOrderPicker, false);
+        assert.strictEqual(page.data.orderCandidates.length, 0);
+        assert.strictEqual(page.data.showOrderDepositConfirm, true);
+        assert(page.data.orderOptions.length > 0);
+      });
+    }
+  },
+  {
     name: 'select-quotation-remains-unimplemented',
     run() {
       withPage('REC-E2E-REL-007', ({ driver, page }) => {
@@ -348,6 +419,13 @@ const tests = [
         assert.strictEqual(result.surfaceEvidence.availableCapabilities.SELECT_ORDER, true);
         assert.strictEqual(result.surfaceEvidence.missingCapabilities.includes('SELECT_ORDER'), false);
         assert.notStrictEqual(result.failureCode, 'REQUIRED_PAGE_CAPABILITY_MISSING');
+        if (caseId === 'REC-E2E-BASIC-010') {
+          assert.strictEqual(result.interactionEvidence.evidence.selections.length, 0);
+          assert.strictEqual(
+            result.interactionEvidence.failures[0].reason,
+            'PAGE_INTERACTION_NOT_VISIBLE'
+          );
+        }
       }
     }
   },

@@ -17,6 +17,7 @@ async function applySelection(driver, selection, evidence) {
   const kind = selection.kind;
   let method = '';
   let options = [];
+  let depositOperation = false;
   if (kind === 'customerId') {
     method = 'changeCustomerMatch';
     options = page.data.customerMatchOptions;
@@ -24,12 +25,22 @@ async function applySelection(driver, selection, evidence) {
     method = 'changeReceivable';
     options = page.data.receivableOptions;
   } else if (kind === 'orderId') {
-    const depositOperation = page.data.parseResult
+    depositOperation = page.data.parseResult
       && page.data.parseResult.operation === 'record_order_deposit';
     if (depositOperation) {
       method = 'changeOrderDeposit';
       options = page.data.orderOptions;
     } else {
+      if (page.data.showGenericOrderSelection !== true
+        || page.data.showGenericOrderPicker !== true) {
+        return {
+          applied: false,
+          reason: 'PAGE_INTERACTION_NOT_VISIBLE',
+          surface,
+          kind,
+          selectedId: selection.selectedId
+        };
+      }
       method = 'changeOrder';
       options = page.data.orderOptions;
     }
@@ -57,8 +68,26 @@ async function applySelection(driver, selection, evidence) {
       candidateIds: (options || []).map((item) => item && item.id).filter(Boolean)
     };
   }
-  page[method](eventForValue(index));
+  const accepted = page[method](eventForValue(index));
   await flushAsync();
+  if (kind === 'orderId' && !depositOperation) {
+    const actualOrderId = String(
+      (page.data.fields && page.data.fields.orderId)
+      || page.data.selectedOrderId
+      || ''
+    );
+    if (accepted === false || actualOrderId !== String(selection.selectedId)) {
+      return {
+        applied: false,
+        reason: 'PAGE_SELECTION_REJECTED',
+        surface,
+        kind,
+        method,
+        selectedId: selection.selectedId,
+        actualSelectedId: actualOrderId
+      };
+    }
+  }
   const item = {
     applied: true,
     kind,
