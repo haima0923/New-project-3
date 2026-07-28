@@ -1,6 +1,8 @@
 {
   "schemaVersion": "record-e2e-corpus-index-v1",
   "corpusVersion": "core-v1",
+  "caseSchemaVersion": "record-e2e-case-v1.1",
+  "executionBoundaryContractVersion": "record-e2e-execution-boundary-v1",
   "activeCaseCount": 120,
   "expectedCategoryCounts": {
     "FORMAL_BASIC": 20,
@@ -29,10 +31,22 @@
   "stateFixtureFile": "fixtures/states/state-fixtures-v1.json",
   "aiFixtureFile": "fixtures/ai/ai-fixtures-v1.json",
   "decisionBacklogFile": "decisions/product-decision-backlog-v1.json",
+  "expectedExecutionLaneCounts": {
+    "PAGE_PRODUCTION_OBSERVATION": 110,
+    "HEADLESS_PRODUCTION_OBSERVATION": 10,
+    "PAGE_CONFIRMED_DRAFT_DERIVATION": 6,
+    "TEST_ONLY_ISOLATED_LEGACY_COMMIT": 89,
+    "PAGE_DUPLICATE_TRIGGER_GUARD": 1,
+    "TRANSACTION_EXACT_REPLAY": 1,
+    "RESTART_PERSISTENCE": 5,
+    "CONCURRENT_BASE_REVISION": 1
+  },
   "stateDiffCollectionMap": {
     "payments": "paymentRecords"
   },
   "expectedResultLayer": "POST_NORMALIZER_POST_INTERACTION_CONFIRMATION_SEMANTICS",
+  "laneResultPolicy": "Runner按lane独立输出；生产页面缺少Case要求的能力归类CASE_FAIL/SURFACE_ERROR。依赖该草稿的后续lane记NOT_EXECUTED_UPSTREAM_CASE_FAIL，不另算RUNNER_ERROR或BLOCKED。",
+  "isolatedExecutionPolicy": "TEST_ONLY隔离提交只消费生产观察层派生草稿和业务安全Preflight；不得冒充页面保存、生产正式提交或真实AI提交。",
   "resultToStateFieldMap": {
     "paymentAmount": "paymentRecords[].amount",
     "depositAmount": "paymentRecords[].amount",

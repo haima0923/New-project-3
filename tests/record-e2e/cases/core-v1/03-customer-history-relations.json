@@ -4,7 +4,7 @@
   "description": "14条客户身份、历史指代和跨记录关系题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-001",
       "title": "唯一已有客户新增明确订单",
       "status": "ACTIVE",
@@ -34,6 +34,17 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+        ],
+        "observationSurface": "HOME_QUICK",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "HOME_QUICK"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "HOME_QUICK",
@@ -50,14 +61,14 @@
       },
       "ai": {
         "profile": "LOCAL_ONLY",
-        "expectedRoute": "LOCAL",
-        "productionCommitEligible": false
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "SAVE_FORMAL",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -124,9 +135,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -200,7 +209,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -210,13 +220,30 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "ELIGIBLE_LOCAL",
+          "pageFormalSaveAllowed": true,
+          "blockingCodes": [],
+          "providerClassification": "TEST_LOCAL_ONLY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-002",
       "title": "有历史订单但原文明说新单",
       "status": "ACTIVE",
@@ -246,6 +273,17 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -263,14 +301,14 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-002-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-002-v1"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "SAVE_FORMAL",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -341,9 +379,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -410,7 +446,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -420,13 +457,32 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-003",
       "title": "那单唯一候选经确认后更新",
       "status": "ACTIVE",
@@ -456,6 +512,17 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -473,8 +540,7 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-003-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-003-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -485,7 +551,10 @@
           }
         ],
         "requestedSaveAction": "SAVE_FORMAL",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_ORDER"
+        ]
       },
       "expected": {
         "result": {
@@ -542,9 +611,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -611,7 +678,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -621,13 +689,32 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-004",
       "title": "那单对应多个活动订单必须选",
       "status": "ACTIVE",
@@ -657,6 +744,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -674,14 +771,14 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-004-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-004-v1"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -744,9 +841,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -789,7 +884,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -799,13 +895,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "ORDER_SELECTION_REQUIRED",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-005",
       "title": "两个同名客户未选必须阻断",
       "status": "ACTIVE",
@@ -835,6 +951,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -851,14 +977,14 @@
       },
       "ai": {
         "profile": "LOCAL_ONLY",
-        "expectedRoute": "LOCAL",
-        "productionCommitEligible": false
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -932,9 +1058,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -977,7 +1101,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -987,13 +1112,32 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "CUSTOMER_SELECTION_REQUIRED"
+          ],
+          "providerClassification": "TEST_LOCAL_ONLY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-006",
       "title": "近似客户名经人工选择后保存",
       "status": "ACTIVE",
@@ -1021,6 +1165,17 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -1038,8 +1193,7 @@
       "ai": {
         "profile": "FAKE_STANDARD",
         "expectedRoute": "AI_STANDARD",
-        "fixtureRef": "ai-case-rec-e2e-rel-006-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-006-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -1050,7 +1204,10 @@
           }
         ],
         "requestedSaveAction": "SAVE_FORMAL",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_CUSTOMER"
+        ]
       },
       "expected": {
         "result": {
@@ -1118,9 +1275,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -1187,7 +1342,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -1197,13 +1353,32 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-007",
       "title": "跨客户报价更新必须阻断",
       "status": "ACTIVE",
@@ -1233,6 +1408,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -1250,8 +1435,7 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-007-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-007-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -1266,7 +1450,11 @@
           }
         ],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_CUSTOMER",
+          "SELECT_QUOTATION"
+        ]
       },
       "expected": {
         "result": {
@@ -1326,9 +1514,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -1371,7 +1557,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -1381,13 +1568,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "QUOTATION_CUSTOMER_MISMATCH",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-008",
       "title": "已转订单报价不可再次转单",
       "status": "ACTIVE",
@@ -1417,6 +1624,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -1434,8 +1651,7 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-008-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-008-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -1446,7 +1662,10 @@
           }
         ],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_QUOTATION"
+        ]
       },
       "expected": {
         "result": {
@@ -1506,9 +1725,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -1551,7 +1768,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -1561,13 +1779,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "QUOTATION_ALREADY_CONVERTED",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-009",
       "title": "跨客户订单更新必须阻断",
       "status": "ACTIVE",
@@ -1597,6 +1835,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -1614,8 +1862,7 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-009-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-009-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -1630,7 +1877,11 @@
           }
         ],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_CUSTOMER",
+          "SELECT_ORDER"
+        ]
       },
       "expected": {
         "result": {
@@ -1690,9 +1941,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -1735,7 +1984,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -1745,13 +1995,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "ORDER_CUSTOMER_MISMATCH",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-010",
       "title": "多个报价候选未选必须阻断",
       "status": "ACTIVE",
@@ -1779,6 +2049,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -1796,14 +2076,14 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-010-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-010-v1"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -1866,9 +2146,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -1911,7 +2189,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -1921,13 +2200,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "QUOTATION_TARGET_REQUIRED",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-011",
       "title": "多个待收款候选未选必须阻断",
       "status": "ACTIVE",
@@ -1957,6 +2256,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -1974,14 +2283,14 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-011-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-011-v1"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -2046,9 +2355,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -2091,7 +2398,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -2101,13 +2409,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "MULTIPLE_RECEIVABLE_SELECTION_REQUIRED",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-012",
       "title": "已结清待收不得再收款",
       "status": "ACTIVE",
@@ -2137,6 +2465,16 @@
         "PAGE_E2E",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -2154,8 +2492,7 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-012-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-012-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -2166,7 +2503,10 @@
           }
         ],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_RECEIVABLE"
+        ]
       },
       "expected": {
         "result": {
@@ -2228,9 +2568,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -2273,7 +2611,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -2283,13 +2622,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "RECEIVABLE_TARGET_SETTLED",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-013",
       "title": "不存在的更新目标必须阻断",
       "status": "ACTIVE",
@@ -2318,6 +2677,16 @@
         "HEADLESS_DETERMINISTIC",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "HEADLESS_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "HEADLESS",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "HEADLESS",
@@ -2335,8 +2704,7 @@
       "ai": {
         "profile": "REPLAY",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-013-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-013-v1"
       },
       "interaction": {
         "userEdits": [],
@@ -2347,7 +2715,10 @@
           }
         ],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_ORDER"
+        ]
       },
       "expected": {
         "result": {
@@ -2403,9 +2774,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -2448,7 +2817,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -2458,13 +2828,33 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": null,
+          "blockingCodes": [
+            "ORDER_TARGET_NOT_FOUND",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_REPLAY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-REL-014",
       "title": "已删除历史记录不得被指代恢复",
       "status": "ACTIVE",
@@ -2491,6 +2881,16 @@
         "HEADLESS_DETERMINISTIC",
         "REAL_QWEN_QUALITY"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "HEADLESS_PRODUCTION_OBSERVATION"
+        ],
+        "observationSurface": "HEADLESS",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "NOT_APPLICABLE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "HEADLESS",
@@ -2508,14 +2908,14 @@
       "ai": {
         "profile": "FAKE_DEEP",
         "expectedRoute": "AI_DEEP",
-        "fixtureRef": "ai-case-rec-e2e-rel-014-v1",
-        "productionCommitEligible": false
+        "fixtureRef": "ai-case-rec-e2e-rel-014-v1"
       },
       "interaction": {
         "userEdits": [],
         "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
-        "restartAfterSave": false
+        "restartAfterSave": false,
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -2572,9 +2972,7 @@
         },
         "save": {
           "action": "DO_NOT_SAVE",
-          "status": "BLOCKED",
-          "commitTarget": "NONE",
-          "productionCommitEligible": false
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
@@ -2617,7 +3015,8 @@
           "stateFingerprint": "NOT_APPLICABLE",
           "recordCountStable": false,
           "mustPersist": [],
-          "additionalBusinessDiff": "NOT_APPLICABLE"
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -2627,6 +3026,26 @@
           "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
           "journalFinal": "NOT_APPLICABLE",
           "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
+          "pageFormalSaveAllowed": null,
+          "blockingCodes": [
+            "ORDER_TARGET_NOT_FOUND",
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],

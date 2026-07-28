@@ -4,7 +4,7 @@
   "description": "4条供Headless和页面Runner共用的重启、重复提交与CAS并发合同题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-PERSIST-001",
       "title": "保存后重启记录仍存在",
       "status": "ACTIVE",
@@ -34,6 +34,18 @@
         "PAGE_E2E",
         "RESTART_PERSISTENCE"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT",
+          "RESTART_PERSISTENCE"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -50,8 +62,7 @@
       },
       "ai": {
         "profile": "LOCAL_ONLY",
-        "expectedRoute": "LOCAL",
-        "productionCommitEligible": false
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
@@ -68,7 +79,8 @@
           {
             "step": "RESTART"
           }
-        ]
+        ],
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -133,9 +145,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -216,7 +226,8 @@
               }
             }
           ],
-          "additionalBusinessDiff": "EMPTY"
+          "additionalBusinessDiff": "EMPTY",
+          "attempts": 1
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -228,6 +239,23 @@
           "expectedAdditionalBusinessDiff": "EMPTY",
           "journalFinal": "CLEARED",
           "backupFinal": "CLEARED"
+        },
+        "productionObservation": {
+          "productionEligibility": "ELIGIBLE_LOCAL",
+          "pageFormalSaveAllowed": true,
+          "blockingCodes": [],
+          "providerClassification": "TEST_LOCAL_ONLY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
         }
       },
       "allowances": [
@@ -242,7 +270,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-PERSIST-002",
       "title": "重启后记录数量不增加",
       "status": "ACTIVE",
@@ -272,6 +300,18 @@
         "PAGE_E2E",
         "RESTART_PERSISTENCE"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT",
+          "RESTART_PERSISTENCE"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -288,8 +328,7 @@
       },
       "ai": {
         "profile": "LOCAL_ONLY",
-        "expectedRoute": "LOCAL",
-        "productionCommitEligible": false
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
@@ -306,7 +345,8 @@
           {
             "step": "RESTART"
           }
-        ]
+        ],
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -371,9 +411,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -454,7 +492,8 @@
               }
             }
           ],
-          "additionalBusinessDiff": "EMPTY"
+          "additionalBusinessDiff": "EMPTY",
+          "attempts": 2
         },
         "idempotency": {
           "scenario": "NOT_APPLICABLE",
@@ -466,6 +505,23 @@
           "expectedAdditionalBusinessDiff": "EMPTY",
           "journalFinal": "CLEARED",
           "backupFinal": "CLEARED"
+        },
+        "productionObservation": {
+          "productionEligibility": "ELIGIBLE_LOCAL",
+          "pageFormalSaveAllowed": true,
+          "blockingCodes": [],
+          "providerClassification": "TEST_LOCAL_ONLY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
         }
       },
       "allowances": [
@@ -480,7 +536,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-PERSIST-003",
       "title": "同一plan重复提交不重复",
       "status": "ACTIVE",
@@ -510,6 +566,19 @@
         "PAGE_E2E",
         "RESTART_PERSISTENCE"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT",
+          "TRANSACTION_EXACT_REPLAY",
+          "RESTART_PERSISTENCE"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -526,8 +595,7 @@
       },
       "ai": {
         "profile": "LOCAL_ONLY",
-        "expectedRoute": "LOCAL",
-        "productionCommitEligible": false
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
@@ -544,13 +612,18 @@
             "planRef": "plan-a"
           },
           {
-            "step": "RETRY_SAME_PLAN",
+            "step": "CAPTURE_TRANSACTION_MATERIAL",
+            "planRef": "plan-a"
+          },
+          {
+            "step": "REPLAY_EXACT_TRANSACTION",
             "planRef": "plan-a"
           },
           {
             "step": "RESTART"
           }
-        ]
+        ],
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -615,9 +688,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -698,10 +769,11 @@
               }
             }
           ],
-          "additionalBusinessDiff": "EMPTY"
+          "additionalBusinessDiff": "EMPTY",
+          "attempts": 1
         },
         "idempotency": {
-          "scenario": "SAME_PLAN_RETRY",
+          "scenario": "TRANSACTION_EXACT_REPLAY",
           "attempts": 2,
           "expectedCommitStatuses": [
             "COMMITTED",
@@ -709,6 +781,46 @@
           ],
           "expectedRevisionDelta": 1,
           "expectedAdditionalBusinessDiff": "EMPTY",
+          "journalFinal": "CLEARED",
+          "backupFinal": "CLEARED"
+        },
+        "productionObservation": {
+          "productionEligibility": "ELIGIBLE_LOCAL",
+          "pageFormalSaveAllowed": true,
+          "blockingCodes": [],
+          "providerClassification": "TEST_LOCAL_ONLY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "transactionExactReplay": {
+          "trigger": "REPLAY_IDENTICAL_TRANSACTION_MATERIAL",
+          "identityFields": [
+            "transactionId",
+            "planId",
+            "planHash",
+            "idempotencyKey",
+            "baseRevision",
+            "targetRevision",
+            "baseFingerprint",
+            "targetBundleFingerprint"
+          ],
+          "firstCommitStatus": "COMMITTED",
+          "replayStatus": "ALREADY_COMMITTED",
+          "pageSaveAttempts": 1,
+          "idempotentReplay": true,
+          "revisionDeltaOnReplay": 0,
+          "businessDiffOnReplay": "EMPTY",
+          "receiptSemantic": "EQUAL_TO_FIRST_COMMIT",
+          "receiptCountDeltaOnReplay": 0,
           "journalFinal": "CLEARED",
           "backupFinal": "CLEARED"
         }
@@ -725,7 +837,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1",
+      "schemaVersion": "record-e2e-case-v1.1",
       "caseId": "REC-E2E-PERSIST-004",
       "title": "相同base后提交者不得覆盖",
       "status": "ACTIVE",
@@ -755,6 +867,19 @@
         "PAGE_E2E",
         "RESTART_PERSISTENCE"
       ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT",
+          "RESTART_PERSISTENCE",
+          "CONCURRENT_BASE_REVISION"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
       "input": {
         "channel": "TYPED_TEXT",
         "entrySurface": "FULL_PAGE",
@@ -771,8 +896,7 @@
       },
       "ai": {
         "profile": "LOCAL_ONLY",
-        "expectedRoute": "LOCAL",
-        "productionCommitEligible": false
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
@@ -808,7 +932,8 @@
           {
             "step": "RESTART"
           }
-        ]
+        ],
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -873,9 +998,7 @@
         },
         "save": {
           "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED",
-          "commitTarget": "MEMORY_ONLY",
-          "productionCommitEligible": false
+          "status": "FORMAL_COMMITTED"
         },
         "stateDiff": {
           "business": {
@@ -963,7 +1086,8 @@
               }
             }
           ],
-          "additionalBusinessDiff": "EMPTY"
+          "additionalBusinessDiff": "EMPTY",
+          "attempts": 1
         },
         "idempotency": {
           "scenario": "SAME_BASE_CONCURRENT_COMMITS",
@@ -976,6 +1100,34 @@
           "expectedAdditionalBusinessDiff": "EMPTY",
           "journalFinal": "CLEARED",
           "backupFinal": "CLEARED"
+        },
+        "productionObservation": {
+          "productionEligibility": "ELIGIBLE_LOCAL",
+          "pageFormalSaveAllowed": true,
+          "blockingCodes": [],
+          "providerClassification": "TEST_LOCAL_ONLY",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "concurrentBaseRevision": {
+          "actors": [
+            "PAGE_A",
+            "PAGE_B"
+          ],
+          "sharedBaseRevision": true,
+          "firstCommitStatus": "COMMITTED",
+          "secondCommitStatus": "REVISION_MISMATCH",
+          "firstWriterPreserved": true,
+          "expectedRevisionDelta": 1
         }
       },
       "allowances": [
