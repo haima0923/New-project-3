@@ -172,6 +172,33 @@
       </view>
       <view wx:if="{{customerMatchWarningText}}" class="payment-warning">{{customerMatchWarningText}}</view>
     </view>
+    <view wx:if="{{showGenericOrderSelection}}" class="order-selection-box">
+      <view class="order-selection-head">
+        <view>
+          <view class="card-title">选择关联订单</view>
+          <view class="order-selection-reason">{{orderSelectionReason}}</view>
+        </view>
+        <view wx:if="{{orderSelectionRequired}}" class="order-selection-required">必须选择</view>
+      </view>
+      <view wx:for="{{orderCandidates}}" wx:key="id" class="order-candidate {{item.id === selectedOrderId ? 'order-candidate-selected' : ''}}">
+        <view class="order-candidate-title">{{item.customerDisplayName}} · {{item.productSummary}}</view>
+        <view class="order-candidate-meta">
+          {{item.itemCount}}项 · {{item.status || '-'}} · 交期{{item.dueDate || '-'}}
+        </view>
+        <view wx:if="{{item.orderAmount}}" class="order-candidate-meta">订单金额：{{item.orderAmount}}元</view>
+      </view>
+      <view wx:if="{{showGenericOrderPicker}}" class="field match-picker-field">
+        <text class="label">原话指的是哪一单</text>
+        <picker mode="selector" range="{{orderRange}}" value="{{selectedOrderIndex}}" bindchange="changeOrder">
+          <view class="input date-picker-input">
+            <text wx:if="{{selectedOrderIndex >= 0}}">{{selectedOrderLabel}}</text>
+            <text wx:else class="placeholder-text">请选择订单</text>
+            <text class="picker-arrow">选择</text>
+          </view>
+        </picker>
+      </view>
+      <button wx:if="{{selectedOrderId}}" class="secondary-button order-selection-clear" bindtap="clearOrderSelection">取消关联</button>
+    </view>
     <view wx:if="{{showProductSuggestion}}" class="confirm-warning" data-value="{{productSuggestionValue}}" bindtap="applyProductSuggestion">{{productSuggestionText}} 点这里采用建议</view>
     <view wx:if="{{showItemList}}" class="item-list-field">
       <view class="label">商品明细</view>

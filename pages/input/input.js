@@ -728,6 +728,134 @@ function formatOrderOption(state, order) {
   return `${order.productName || '未填产品'}，${order.status || '-'}，交期${order.requiredDeliveryDate || '-'}，待收尾款${formatMoney(getOrderRemainingSettlement(state, order))}元`;
 }
 
+function emptyGenericOrderSelectionState(fields) {
+  return {
+    fields,
+    orderCandidates: [],
+    orderOptions: [],
+    orderRange: [],
+    selectedOrderId: fields.orderId || '',
+    selectedOrder: null,
+    selectedOrderIndex: -1,
+    selectedOrderLabel: '',
+    orderSelectionRequired: false,
+    orderSelectionReason: '',
+    orderSelectionBaseFields: null,
+    showGenericOrderSelection: false,
+    showGenericOrderPicker: false
+  };
+}
+
+function buildOrderCandidateProjection(state, order) {
+  const items = getRecordItems(order);
+  return {
+    id: order.id,
+    orderId: order.id,
+    customerId: order.customerId,
+    customerDisplayName: getCustomerNameById(state, order.customerId) || '未命名客户',
+    productSummary: getItemsSummary(order) || order.productName || '未填产品',
+    itemCount: items.length || (order.productName ? 1 : 0),
+    orderAmount: order.totalAmount || '',
+    status: order.status || '',
+    dueDate: order.requiredDeliveryDate || '',
+    createdAt: order.createdAt || ''
+  };
+}
+
+function buildGenericOrderSelectionState(state, fields, operation, domainPreflight) {
+  const nextFields = Object.assign({}, fields);
+  if (operation === 'record_order_deposit') return emptyGenericOrderSelectionState(nextFields);
+
+  const preflightCandidates = (((domainPreflight || {}).candidates || {}).orderCandidates || []);
+  const allowedIds = new Set(preflightCandidates.map((item) => String(item.id || '')).filter(Boolean));
+  const orderCandidates = (state.orders || [])
+    .filter((order) => allowedIds.has(String(order.id || '')))
+    .filter((order) => activeOrderStatuses.includes(order.status))
+    .map((order) => buildOrderCandidateProjection(state, order));
+  const selectedOrderId = String(nextFields.orderId || '');
+  const selectedOrder = orderCandidates.find((item) => item.id === selectedOrderId) || null;
+  const requiredSelections = (domainPreflight && domainPreflight.requiredSelections) || [];
+  const blockingIssues = (domainPreflight && domainPreflight.blockingIssues) || [];
+  const orderSelectionRequired = requiredSelections.includes('orderId');
+  const orderActionRequired = blockingIssues.some((item) => item.requiredAction === 'SELECT_ORDER');
+  const operationSupportsOptionalOrder = ['create_receivable', 'create_receivable_with_payment'].includes(operation);
+  const showGenericOrderSelection = orderSelectionRequired
+    || orderActionRequired
+    || Boolean(selectedOrderId)
+    || (operationSupportsOptionalOrder && orderCandidates.length > 0);
+  let orderSelectionReason = '';
+  if (orderSelectionRequired) {
+    orderSelectionReason = orderCandidates.length > 1
+      ? '找到多笔可关联订单，请选择原话指的是哪一单。'
+      : '请确认这笔业务关联哪一张订单。';
+  } else if (orderActionRequired) {
+    orderSelectionReason = '当前订单关系不安全，请重新选择同一客户的有效订单。';
+  } else if (operationSupportsOptionalOrder) {
+    orderSelectionReason = '如果这笔待收属于已有订单，可以在这里关联；不关联不会自动猜订单。';
+  }
+  if (showGenericOrderSelection && !orderCandidates.length) {
+    orderSelectionReason = '没有找到可选择的同客户有效订单，当前不能完成订单关联。';
+  }
+  const orderOptions = orderCandidates.map((item) => ({
+    id: item.id,
+    label: `${item.customerDisplayName} · ${item.productSummary} · ${item.status || '-'} · 交期${item.dueDate || '-'}`
+  }));
+  const selectedOrderIndex = orderOptions.findIndex((item) => item.id === selectedOrderId);
+
+  return {
+    fields: nextFields,
+    orderCandidates,
+    orderOptions,
+    orderRange: orderOptions.map((item) => item.label),
+    selectedOrderId,
+    selectedOrder,
+    selectedOrderIndex,
+    selectedOrderLabel: selectedOrderIndex >= 0 ? orderOptions[selectedOrderIndex].label : '',
+    orderSelectionRequired,
+    orderSelectionReason,
+    orderSelectionBaseFields: null,
+    showGenericOrderSelection,
+    showGenericOrderPicker: orderOptions.length > 0
+  };
+}
+
+function copyOrderSelectionBaseFields(fields) {
+  const base = Object.assign({}, fields);
+  if (Array.isArray(fields.items)) {
+    base.items = fields.items.map((item) => Object.assign({}, item));
+  }
+  delete base.orderId;
+  delete base.orderSelectionConfirmed;
+  return base;
+}
+
+function retainOrderCandidateChoices(state, confirmationState, priorCandidates, selectedId) {
+  const currentCustomerId = String((confirmationState.fields || {}).customerId || '');
+  const retained = (priorCandidates || [])
+    .map((candidate) => (state.orders || []).find((order) => order.id === candidate.id))
+    .filter(Boolean)
+    .filter((order) => activeOrderStatuses.includes(order.status))
+    .filter((order) => !currentCustomerId || order.customerId === currentCustomerId)
+    .map((order) => buildOrderCandidateProjection(state, order));
+  if (!retained.length) return confirmationState;
+  const orderOptions = retained.map((item) => ({
+    id: item.id,
+    label: `${item.customerDisplayName} · ${item.productSummary} · ${item.status || '-'} · 交期${item.dueDate || '-'}`
+  }));
+  const selectedOrderIndex = orderOptions.findIndex((item) => item.id === selectedId);
+  return Object.assign({}, confirmationState, {
+    orderCandidates: retained,
+    orderOptions,
+    orderRange: orderOptions.map((item) => item.label),
+    selectedOrderId: selectedId,
+    selectedOrder: retained.find((item) => item.id === selectedId) || null,
+    selectedOrderIndex,
+    selectedOrderLabel: selectedOrderIndex >= 0 ? orderOptions[selectedOrderIndex].label : '',
+    showGenericOrderSelection: true,
+    showGenericOrderPicker: true
+  });
+}
+
 function getFieldVisibility(intent, operation, fields = {}) {
   const quoteOrOrder = ['quotation', 'order'].includes(intent);
   const todo = ['todo', 'dunning'].includes(intent);
@@ -1009,7 +1137,9 @@ function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields, 
 }
 
 function buildConfirmationState(state, parseResult, intent, fields) {
-  let operation = operationByIntent[intent] || 'pending';
+  let operation = parseResult.operation === 'update_order'
+    ? 'update_order'
+    : (operationByIntent[intent] || 'pending');
   let nextFields = Object.assign({}, fields);
   let missingFields = [];
   let lowConfidenceFields = uniqueFields(parseResult.low_confidence_fields || []);
@@ -1150,6 +1280,15 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     providerKind: flowContext.providerKind || (normalizedParseResult.ai_fallback || {}).provider_kind || 'NONE',
     skipFinalSafety: true
   });
+  const genericOrderSelectionState = buildGenericOrderSelectionState(
+    state,
+    nextFields,
+    operation,
+    domainPreflight
+  );
+  const orderSelectionState = operation === 'record_order_deposit'
+    ? orderDepositState
+    : Object.assign({}, orderDepositState, genericOrderSelectionState);
   const canFormalSave = domainPreflight.domainCanSaveFormal === true;
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
 
@@ -1203,7 +1342,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showOrderDepositConfirm: operation === 'record_order_deposit',
     showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1,
     showDeepReviewButton: Boolean((normalizedParseResult.parse_route || {}).deep_review_available)
-  }, visibility, finalWarningState, paymentState, orderDepositState, customerMatchState);
+  }, visibility, finalWarningState, paymentState, orderSelectionState, customerMatchState);
 }
 
 function getSourceState(source) {
@@ -1291,6 +1430,14 @@ function getEmptyConfirmationData() {
     orderRange: [],
     selectedOrderIndex: -1,
     selectedOrderLabel: '',
+    selectedOrderId: '',
+    selectedOrder: null,
+    orderCandidates: [],
+    orderSelectionRequired: false,
+    orderSelectionReason: '',
+    orderSelectionBaseFields: null,
+    showGenericOrderSelection: false,
+    showGenericOrderPicker: false,
     showCustomerMatchBox: false,
     showCustomerPicker: false,
     showCustomerDisambiguationField: false,
@@ -1443,6 +1590,20 @@ Page({
     receivableRange: [],
     selectedReceivableIndex: -1,
     selectedReceivableLabel: '',
+    orderDepositPreview: [],
+    orderDepositWarningText: '',
+    orderOptions: [],
+    orderRange: [],
+    selectedOrderIndex: -1,
+    selectedOrderLabel: '',
+    selectedOrderId: '',
+    selectedOrder: null,
+    orderCandidates: [],
+    orderSelectionRequired: false,
+    orderSelectionReason: '',
+    orderSelectionBaseFields: null,
+    showGenericOrderSelection: false,
+    showGenericOrderPicker: false,
     showCustomerMatchBox: false,
     showCustomerPicker: false,
     showCustomerDisambiguationField: false,
@@ -2093,6 +2254,76 @@ Page({
     });
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
+  },
+
+  applyOrderSelection(orderId) {
+    if (!this.data.parseResult) return false;
+    const selectedId = String(orderId || '');
+    const projected = (this.data.orderCandidates || []).find((item) => item.id === selectedId);
+    const state = getState();
+    const liveOrder = (state.orders || []).find((item) => item.id === selectedId);
+    const currentCustomerId = String((this.data.fields || {}).customerId || '');
+    const valid = Boolean(
+      projected
+      && liveOrder
+      && activeOrderStatuses.includes(liveOrder.status)
+      && (!currentCustomerId || liveOrder.customerId === currentCustomerId)
+    );
+    if (!valid) {
+      const baseResult = Object.assign({}, this.data.parseResult, {
+        missing_fields: this.data.parseResult.missing_fields || [],
+        low_confidence_fields: this.data.parseResult.low_confidence_fields || []
+      });
+      this.setData(buildConfirmationState(state, baseResult, this.data.intent, this.data.fields));
+      wx.showToast({ title: '这张订单已不可选，请重新确认', icon: 'none' });
+      return false;
+    }
+    const baseFields = this.data.orderSelectionBaseFields
+      ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+      : copyOrderSelectionBaseFields(this.data.fields);
+    const fields = Object.assign({}, baseFields, {
+      orderId: liveOrder.id,
+      orderSelectionConfirmed: true
+    });
+    const baseResult = Object.assign({}, this.data.parseResult, {
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((field) => field !== 'orderId'),
+      low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
+        .filter((field) => field !== 'orderId')
+    });
+    const confirmationState = retainOrderCandidateChoices(
+      state,
+      buildConfirmationState(state, baseResult, this.data.intent, fields),
+      this.data.orderCandidates,
+      liveOrder.id
+    );
+    confirmationState.orderSelectionBaseFields = baseFields;
+    this.setData(confirmationState);
+    return true;
+  },
+
+  changeOrder(event) {
+    const selected = (this.data.orderOptions || [])[Number(event.detail.value)];
+    if (!selected) return false;
+    return this.applyOrderSelection(selected.id);
+  },
+
+  selectOrderCandidate(event) {
+    return this.applyOrderSelection(event.currentTarget.dataset.orderId);
+  },
+
+  clearOrderSelection() {
+    if (!this.data.parseResult) return;
+    const fields = this.data.orderSelectionBaseFields
+      ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+      : Object.assign({}, this.data.fields);
+    delete fields.orderId;
+    delete fields.orderSelectionConfirmed;
+    const baseResult = Object.assign({}, this.data.parseResult, {
+      missing_fields: this.data.parseResult.missing_fields || [],
+      low_confidence_fields: this.data.parseResult.low_confidence_fields || []
+    });
+    this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
   },
 
   addConfirmItem() {
