@@ -5,7 +5,8 @@
 > 当前 E2E Phase 2B.1 工作分支：`feature/record-e2e-runner-kernel-v1`；执行边界冻结基线为
 > `07ea2909abaae864c5b3999f7143ff4e3f68c491` /
 > `candidate-record-e2e-execution-contract-v1`，Release A与Corpus旧Tag保持冻结。
-> Phase 2B.1实现Headless Runner Kernel、120题plan-only与24题代表性Smoke。
+> Phase 2B.1-R2实现带Lane强证据和逐Case隔离硬门禁的Headless Runner Kernel、
+> 120题plan-only与24题双轮代表性Smoke；首次Phase 2B.1假绿结果已作废。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 24-CASE SMOKE ONLY /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 

@@ -825,7 +825,18 @@ Expected并负责断言，每题由独立Node子进程在Fake wx/network/voice�
 Storage中加载真实页面JS、生产parser、Legacy business与Release A Coordinator。详细边界
 见 `docs/RECORD_E2E_RUNNER_KERNEL_V1.md`。
 
-Phase 2B.1 只运行24题代表性Smoke和120题plan-only，不代表120题已全量执行，不是WXML页面
-E2E，也不是真实千问测试。`CASE_FAIL`保留产品实际差异；只有`RUNNER_ERROR`或`BLOCKED`
-属于执行内核未完成。`expected.save`仍只表示业务正确语义；生产资格、隔离目标和TEST_ONLY
-标记分别由`productionObservation`、`isolatedExecution`承担。
+Phase 2B.1 首次复查因未执行 Lane、空 State Restart 和缺少事务/隔离硬证据而停止；这些
+旧结果不得引用。R2要求每个 Lane 具有计划、前置、启动、核心动作、完成证据、断言和清理
+状态，缺一项即 `RUNNER_ERROR/LANE_EXECUTION_EVIDENCE_MISSING`。`--plan-only`还必须检查
+需要首次成功提交的Case是否具备安全Expected、非零业务Diff和订单固定交期；它不是第二套
+生产Preflight，运行时仍执行真实Domain Preflight。
+
+R2按既有“正式订单必须有客户、商品和交期”合同，为`PERSIST-001/002/003/004`补充固定
+合成交期，并机械修正`BASIC-020`专属pending fixture原文。上述是`TEST_DATA_ERROR_FIXED`，
+没有放宽产品规则或改变题目业务目标。
+
+Phase 2B.1-R2 仍只运行24题代表性Smoke和120题plan-only，不代表120题已全量执行，不是
+WXML页面E2E，也不是真实千问测试。24题双轮结果为`PASS=0 / CASE_FAIL=24 /
+RUNNER_ERROR=0 / BLOCKED=0`且确定性一致；`CASE_FAIL`保留产品实际差异。`expected.save`
+仍只表示业务正确语义；生产资格、隔离目标和TEST_ONLY标记分别由
+`productionObservation`、`isolatedExecution`承担。
