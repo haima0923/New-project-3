@@ -1,0 +1,776 @@
+{
+  "schemaVersion": "record-e2e-state-fixtures-v1",
+  "description": "全部为人工合成、固定时间、无真实客户资料的最小业务State。derived fixture按extends继承后用patch中的顶层集合替换。",
+  "fixtures": [
+    {
+      "fixtureId": "state-empty-v1",
+      "description": "空业务State",
+      "extends": null,
+      "state": {
+        "meta": {
+          "onboarded": true,
+          "industry": "合成测试",
+          "userId": "e2e-user",
+          "createdAt": "2026-07-15T02:00:00.000Z"
+        },
+        "customers": [],
+        "quotations": [],
+        "orders": [],
+        "receivables": [],
+        "paymentRecords": [],
+        "dunningRecords": [],
+        "todos": [],
+        "orderProgress": [],
+        "pendingNotes": [],
+        "aiParseLogs": [],
+        "operationLogs": [],
+        "productCatalog": [],
+        "deletedRecords": [],
+        "dunningTemplates": []
+      }
+    },
+    {
+      "fixtureId": "state-customer-only-v1",
+      "description": "唯一客户、无历史业务",
+      "extends": "state-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "cus-syn-a",
+            "userId": "e2e-user",
+            "name": "王总",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-06-01T02:00:00.000Z",
+            "updatedAt": "2026-06-01T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-customer-one-order-v1",
+      "description": "唯一客户、有一笔活动订单",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "orders": [
+          {
+            "id": "ord-syn-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "礼品盒",
+            "quantity": 500,
+            "unit": "套",
+            "unitPrice": 4,
+            "totalAmount": 2000,
+            "items": [
+              {
+                "productName": "礼品盒",
+                "quantity": 500,
+                "unit": "套",
+                "unitPrice": 4,
+                "totalAmount": 2000
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-25",
+            "status": "待生产",
+            "originalText": "王总礼品盒500套，4元一套，7月25日交",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-customer-multi-order-v1",
+      "description": "唯一客户、有多笔活动订单",
+      "extends": "state-customer-one-order-v1",
+      "patch": {
+        "orders": [
+          {
+            "id": "ord-syn-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "礼品盒",
+            "quantity": 500,
+            "unit": "套",
+            "unitPrice": 4,
+            "totalAmount": 2000,
+            "items": [
+              {
+                "productName": "礼品盒",
+                "quantity": 500,
+                "unit": "套",
+                "unitPrice": 4,
+                "totalAmount": 2000
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-25",
+            "status": "待生产",
+            "originalText": "王总礼品盒500套",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z"
+          },
+          {
+            "id": "ord-syn-a-2",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "纸袋",
+            "quantity": 1200,
+            "unit": "只",
+            "unitPrice": 1.5,
+            "totalAmount": 1800,
+            "items": [
+              {
+                "productName": "纸袋",
+                "quantity": 1200,
+                "unit": "只",
+                "unitPrice": 1.5,
+                "totalAmount": 1800
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-28",
+            "status": "生产中",
+            "originalText": "王总纸袋1200只",
+            "createdAt": "2026-07-03T02:00:00.000Z",
+            "updatedAt": "2026-07-03T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-two-same-name-customers-v1",
+      "description": "两个同名客户",
+      "extends": "state-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "cus-same-a",
+            "userId": "e2e-user",
+            "name": "王总",
+            "company": "合成一厂",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-05-01T02:00:00.000Z",
+            "updatedAt": "2026-05-01T02:00:00.000Z"
+          },
+          {
+            "id": "cus-same-b",
+            "userId": "e2e-user",
+            "name": "王总",
+            "company": "合成二厂",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-05-02T02:00:00.000Z",
+            "updatedAt": "2026-05-02T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-valid-quotation-v1",
+      "description": "一个有效报价",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "quo-syn-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [
+              {
+                "productName": "保温杯",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 18,
+                "totalAmount": 5400
+              }
+            ],
+            "quoteDate": "2026-07-10",
+            "status": "待确认",
+            "originalText": "给王总报保温杯300个，18元一个",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-10T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-customer-two-quotations-v1",
+      "description": "唯一客户、有两笔活动报价",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "quo-syn-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [
+              {
+                "productName": "保温杯",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 18,
+                "totalAmount": 5400
+              }
+            ],
+            "quoteDate": "2026-07-10",
+            "status": "待确认",
+            "originalText": "给王总报保温杯300个，18元一个",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-10T02:00:00.000Z"
+          },
+          {
+            "id": "quo-syn-a-2",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "饭盒",
+            "quantity": 200,
+            "unit": "套",
+            "unitPrice": 15,
+            "totalAmount": 3000,
+            "items": [
+              {
+                "productName": "饭盒",
+                "quantity": 200,
+                "unit": "套",
+                "unitPrice": 15,
+                "totalAmount": 3000
+              }
+            ],
+            "quoteDate": "2026-07-12",
+            "status": "待确认",
+            "originalText": "给王总报饭盒200套，15元一套",
+            "createdAt": "2026-07-12T02:00:00.000Z",
+            "updatedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-converted-quotation-v1",
+      "description": "一个已经转为订单的报价",
+      "extends": "state-valid-quotation-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "quo-syn-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [
+              {
+                "productName": "保温杯",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 18,
+                "totalAmount": 5400
+              }
+            ],
+            "quoteDate": "2026-07-10",
+            "status": "已转订单",
+            "convertedOrderId": "ord-from-quo-a",
+            "originalText": "给王总报保温杯300个",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          }
+        ],
+        "orders": [
+          {
+            "id": "ord-from-quo-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "quotationId": "quo-syn-a-1",
+            "productName": "保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [
+              {
+                "productName": "保温杯",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 18,
+                "totalAmount": 5400
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-30",
+            "status": "待生产",
+            "originalText": "把保温杯报价转订单",
+            "createdAt": "2026-07-11T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-active-order-v1",
+      "description": "一个活动订单，订单总额10000元",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "orders": [
+          {
+            "id": "ord-active-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "收纳盒",
+            "quantity": 1000,
+            "unit": "个",
+            "unitPrice": 10,
+            "totalAmount": 10000,
+            "items": [
+              {
+                "productName": "收纳盒",
+                "quantity": 1000,
+                "unit": "个",
+                "unitPrice": 10,
+                "totalAmount": 10000
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-29",
+            "status": "生产中",
+            "originalText": "王总收纳盒1000个",
+            "createdAt": "2026-07-05T02:00:00.000Z",
+            "updatedAt": "2026-07-05T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-open-receivable-v1",
+      "description": "唯一客户、一笔开放待收款，剩余4000元",
+      "extends": "state-active-order-v1",
+      "patch": {
+        "receivables": [
+          {
+            "id": "rec-open-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "amount": 5000,
+            "paidAmount": 1000,
+            "dueDate": "2026-07-20",
+            "status": "部分收款",
+            "originalText": "王总这单待收5000元",
+            "createdAt": "2026-07-06T02:00:00.000Z",
+            "updatedAt": "2026-07-08T02:00:00.000Z"
+          }
+        ],
+        "paymentRecords": [
+          {
+            "id": "pay-old-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "receivableId": "rec-open-a",
+            "amount": 1000,
+            "kind": "payment",
+            "paidAt": "2026-07-08",
+            "originalText": "王总先付1000元",
+            "createdAt": "2026-07-08T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-multi-open-receivable-v1",
+      "description": "同一客户两笔开放待收款",
+      "extends": "state-customer-multi-order-v1",
+      "patch": {
+        "receivables": [
+          {
+            "id": "rec-multi-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-syn-a-1",
+            "amount": 3000,
+            "paidAmount": 0,
+            "dueDate": "2026-07-18",
+            "status": "待收",
+            "originalText": "礼品盒待收3000元",
+            "createdAt": "2026-07-05T02:00:00.000Z",
+            "updatedAt": "2026-07-05T02:00:00.000Z"
+          },
+          {
+            "id": "rec-multi-a-2",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-syn-a-2",
+            "amount": 4500,
+            "paidAmount": 500,
+            "dueDate": "2026-07-22",
+            "status": "部分收款",
+            "originalText": "纸袋待收4500元",
+            "createdAt": "2026-07-07T02:00:00.000Z",
+            "updatedAt": "2026-07-09T02:00:00.000Z"
+          }
+        ],
+        "paymentRecords": [
+          {
+            "id": "pay-multi-a-1",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-syn-a-2",
+            "receivableId": "rec-multi-a-2",
+            "amount": 500,
+            "kind": "payment",
+            "paidAt": "2026-07-09",
+            "originalText": "纸袋款先付500元",
+            "createdAt": "2026-07-09T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-settled-receivable-v1",
+      "description": "一笔已结清待收款",
+      "extends": "state-active-order-v1",
+      "patch": {
+        "receivables": [
+          {
+            "id": "rec-settled-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "amount": 5000,
+            "paidAmount": 5000,
+            "dueDate": "2026-07-12",
+            "status": "已结清",
+            "originalText": "王总这单待收5000元",
+            "createdAt": "2026-07-06T02:00:00.000Z",
+            "updatedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ],
+        "paymentRecords": [
+          {
+            "id": "pay-settled-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "receivableId": "rec-settled-a",
+            "amount": 5000,
+            "kind": "payment",
+            "paidAt": "2026-07-12",
+            "originalText": "王总这单付清5000元",
+            "createdAt": "2026-07-12T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-order-partial-deposit-v1",
+      "description": "活动订单已有2000元定金，订单剩余8000元",
+      "extends": "state-active-order-v1",
+      "patch": {
+        "paymentRecords": [
+          {
+            "id": "dep-old-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "amount": 2000,
+            "kind": "deposit",
+            "paidAt": "2026-07-08",
+            "originalText": "王总收纳盒订单再记7月8日定金2000元",
+            "createdAt": "2026-07-08T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-legacy-unknown-fields-v1",
+      "description": "含未知兼容字段的旧State",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "legacyCompatibilityFlag": {
+          "source": "synthetic-v0",
+          "preserve": true
+        },
+        "customers": [
+          {
+            "id": "cus-syn-a",
+            "userId": "e2e-user",
+            "name": "王总",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "legacyUnknownField": "KEEP_SYNTHETIC_VALUE",
+            "createdAt": "2026-06-01T02:00:00.000Z",
+            "updatedAt": "2026-06-01T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-multi-item-order-v1",
+      "description": "一笔历史多商品订单",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "orders": [
+          {
+            "id": "ord-multi-item-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "productName": "杯垫",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 1,
+            "totalAmount": 1100,
+            "items": [
+              {
+                "productName": "杯垫",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 1,
+                "totalAmount": 300
+              },
+              {
+                "productName": "饭盒",
+                "quantity": 200,
+                "unit": "套",
+                "unitPrice": 4,
+                "totalAmount": 800
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-26",
+            "status": "待生产",
+            "originalText": "王总杯垫300个和饭盒200套",
+            "createdAt": "2026-07-04T02:00:00.000Z",
+            "updatedAt": "2026-07-04T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-pending-edit-v1",
+      "description": "一条待整理记录，用于重新解析和转正式",
+      "extends": "state-empty-v1",
+      "patch": {
+        "pendingNotes": [
+          {
+            "id": "pending-syn-a",
+            "userId": "e2e-user",
+            "originalText": "王总说杯子数量晚点补，单价5元",
+            "guessedIntent": "order",
+            "guessedFields": {
+              "customerName": "王总",
+              "productName": "杯子",
+              "unitPrice": 5
+            },
+            "missingFields": [
+              "quantity"
+            ],
+            "lowConfidenceFields": [],
+            "fieldConflicts": [],
+            "source": "typed",
+            "reason": "缺少数量",
+            "status": "待整理",
+            "createdAt": "2026-07-14T02:00:00.000Z",
+            "updatedAt": "2026-07-14T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-cross-customer-relations-v1",
+      "description": "两个客户及各自订单、待收，用于跨客户关系阻断",
+      "extends": "state-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "cus-cross-a",
+            "userId": "e2e-user",
+            "name": "王总",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-05-01T02:00:00.000Z",
+            "updatedAt": "2026-05-01T02:00:00.000Z"
+          },
+          {
+            "id": "cus-cross-b",
+            "userId": "e2e-user",
+            "name": "李姐",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-05-02T02:00:00.000Z",
+            "updatedAt": "2026-05-02T02:00:00.000Z"
+          }
+        ],
+        "quotations": [
+          {
+            "id": "quo-cross-b",
+            "userId": "e2e-user",
+            "customerId": "cus-cross-b",
+            "productName": "钥匙扣",
+            "quantity": 500,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 9000,
+            "items": [
+              {
+                "productName": "钥匙扣",
+                "quantity": 500,
+                "unit": "个",
+                "unitPrice": 18,
+                "totalAmount": 9000
+              }
+            ],
+            "quoteDate": "2026-07-09",
+            "status": "待确认",
+            "originalText": "给李姐报钥匙扣500个，18元一个",
+            "createdAt": "2026-07-09T02:00:00.000Z",
+            "updatedAt": "2026-07-09T02:00:00.000Z"
+          }
+        ],
+        "orders": [
+          {
+            "id": "ord-cross-a",
+            "userId": "e2e-user",
+            "customerId": "cus-cross-a",
+            "productName": "水杯",
+            "quantity": 100,
+            "unit": "个",
+            "unitPrice": 8,
+            "totalAmount": 800,
+            "items": [
+              {
+                "productName": "水杯",
+                "quantity": 100,
+                "unit": "个",
+                "unitPrice": 8,
+                "totalAmount": 800
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-25",
+            "status": "待生产",
+            "originalText": "王总水杯100个",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z"
+          },
+          {
+            "id": "ord-cross-b",
+            "userId": "e2e-user",
+            "customerId": "cus-cross-b",
+            "productName": "钥匙扣",
+            "quantity": 500,
+            "unit": "个",
+            "unitPrice": 2,
+            "totalAmount": 1000,
+            "items": [
+              {
+                "productName": "钥匙扣",
+                "quantity": 500,
+                "unit": "个",
+                "unitPrice": 2,
+                "totalAmount": 1000
+              }
+            ],
+            "requiredDeliveryDate": "2026-07-27",
+            "status": "生产中",
+            "originalText": "李姐钥匙扣500个",
+            "createdAt": "2026-07-02T02:00:00.000Z",
+            "updatedAt": "2026-07-02T02:00:00.000Z"
+          }
+        ],
+        "receivables": [
+          {
+            "id": "rec-cross-b",
+            "userId": "e2e-user",
+            "customerId": "cus-cross-b",
+            "orderId": "ord-cross-b",
+            "amount": 1000,
+            "paidAmount": 0,
+            "dueDate": "2026-07-20",
+            "status": "待收",
+            "originalText": "李姐钥匙扣待收1000元",
+            "createdAt": "2026-07-03T02:00:00.000Z",
+            "updatedAt": "2026-07-03T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-deleted-history-v1",
+      "description": "历史订单已删除或失效",
+      "extends": "state-customer-only-v1",
+      "patch": {
+        "deletedRecords": [
+          {
+            "id": "deleted-order-a",
+            "recordType": "order",
+            "recordId": "ord-deleted-a",
+            "customerId": "cus-syn-a",
+            "deletedAt": "2026-07-12T02:00:00.000Z",
+            "reason": "合成测试删除"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "state-financial-replay-v1",
+      "description": "包含可判定重复收款和重复定金的历史",
+      "extends": "state-order-partial-deposit-v1",
+      "patch": {
+        "receivables": [
+          {
+            "id": "rec-replay-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "amount": 10000,
+            "paidAmount": 3000,
+            "dueDate": "2026-07-25",
+            "status": "部分收款",
+            "originalText": "王总收纳盒待收10000元",
+            "createdAt": "2026-07-06T02:00:00.000Z",
+            "updatedAt": "2026-07-14T02:00:00.000Z"
+          }
+        ],
+        "paymentRecords": [
+          {
+            "id": "dep-replay-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "amount": 2000,
+            "kind": "deposit",
+            "paidAt": "2026-07-08",
+            "originalText": "王总收纳盒订单再记7月8日定金2000元",
+            "createdAt": "2026-07-08T02:00:00.000Z"
+          },
+          {
+            "id": "pay-replay-a",
+            "userId": "e2e-user",
+            "customerId": "cus-syn-a",
+            "orderId": "ord-active-a",
+            "receivableId": "rec-replay-a",
+            "amount": 1000,
+            "kind": "payment",
+            "paidAt": "2026-07-14",
+            "originalText": "王总今天付了1000元",
+            "createdAt": "2026-07-14T02:00:00.000Z"
+          }
+        ]
+      }
+    }
+  ]
+}

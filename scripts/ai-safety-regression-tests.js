@@ -369,17 +369,58 @@ function getFormalDelta(evidence) {
     .reduce((count, key) => count + Math.max(0, (evidence.saveDelta || {})[key] || 0), 0);
 }
 
+const AI_SAFETY_FIXED_CLOCK = Object.freeze({
+  businessDate: '2026-07-22',
+  timezone: 'Asia/Shanghai',
+  nowInstant: '2026-07-22T02:00:00.000Z'
+});
+
+async function withFixedBusinessClock(clock, task) {
+  const NativeDate = global.Date;
+  const projectedParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: clock.timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new NativeDate(clock.nowInstant));
+  const projected = Object.fromEntries(projectedParts.map((part) => [part.type, part.value]));
+  assert.strictEqual(
+    `${projected.year}-${projected.month}-${projected.day}`,
+    clock.businessDate,
+    'AI Safety固定nowInstant必须与businessDate/timezone一致'
+  );
+
+  class FixedBusinessDate extends NativeDate {
+    constructor(...args) {
+      super(...(args.length ? args : [clock.nowInstant]));
+    }
+
+    static now() {
+      // 异步轮询仍需真实单调前进；业务“今天”由无参Date构造固定。
+      return NativeDate.now();
+    }
+  }
+  global.Date = FixedBusinessDate;
+  try {
+    return await task();
+  } finally {
+    global.Date = NativeDate;
+  }
+}
+
 async function testLiveModeNeverUsesStubOrFakesSuccess() {
-  const baseCase = {
-    id: 'p0-live-integrity',
-    title: 'live模式结果完整性',
-    input: '李姐要订5个椅孑，20元一个，周日交',
-    source: 'voice',
-    edits: [{ field: 'productName', value: '椅子' }],
-    expect: { intent: 'order' }
-  };
-  for (const entry of ['input', 'dashboard']) {
-    const success = await runOneFlow(baseCase, entry, {
+  return withFixedBusinessClock(AI_SAFETY_FIXED_CLOCK, async () => {
+    const baseCase = {
+      id: 'p0-live-integrity',
+      title: 'live模式结果完整性',
+      input: '李姐要订5个椅孑，20元一个，周日交',
+      source: 'voice',
+      edits: [{ field: 'productName', value: '椅子' }],
+      clock: AI_SAFETY_FIXED_CLOCK,
+      expect: { intent: 'order' }
+    };
+    for (const entry of ['input', 'dashboard']) {
+      const success = await runOneFlow(baseCase, entry, {
       liveAi: true,
       apiBaseUrl: 'https://fake-live.test',
       requestHandler: makeLiveRequestHandler('success')
@@ -451,12 +492,13 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
     }
   }
 
-  const nonLive = await runOneFlow(Object.assign({}, baseCase, {
-    id: 'p0-non-live-stub',
-    aiScenario: 'used_local'
-  }), 'input', { liveAi: false });
-  assert.strictEqual(nonLive.hybridStubInjected, true, '非live受控诊断模式应继续支持stub');
-  assert.strictEqual(nonLive.aiStatus, 'used', '非live受控stub仍应产生明确的used测试结果');
+    const nonLive = await runOneFlow(Object.assign({}, baseCase, {
+      id: 'p0-non-live-stub',
+      aiScenario: 'used_local'
+    }), 'input', { liveAi: false });
+    assert.strictEqual(nonLive.hybridStubInjected, true, '非live受控诊断模式应继续支持stub');
+    assert.strictEqual(nonLive.aiStatus, 'used', '非live受控stub仍应产生明确的used测试结果');
+  });
 }
 
 async function testPageDeepEmptyBusinessIsBlocked() {

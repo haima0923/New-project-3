@@ -1,0 +1,215 @@
+{
+  "schemaVersion": "record-e2e-enums-v1",
+  "caseSchemaVersion": "record-e2e-case-v1",
+  "statuses": [
+    "ACTIVE",
+    "NEEDS_PRODUCT_DECISION",
+    "RETIRED"
+  ],
+  "riskLevels": [
+    "P0",
+    "P1",
+    "P2"
+  ],
+  "categories": [
+    "FORMAL_BASIC",
+    "AMBIGUOUS_BLOCKED",
+    "CUSTOMER_HISTORY_RELATIONS",
+    "MULTI_ITEM",
+    "FINANCIAL_SAFETY",
+    "DATE_TIME",
+    "CLIPBOARD_CHAT",
+    "VOICE_TRANSCRIPT",
+    "SURFACE_PAGE_EDIT",
+    "PERSISTENCE_IDEMPOTENCY"
+  ],
+  "executionProfiles": [
+    "HEADLESS_DETERMINISTIC",
+    "PAGE_E2E",
+    "REAL_QWEN_QUALITY",
+    "VOICE_TRANSCRIPT",
+    "CLIPBOARD_CHAT",
+    "RESTART_PERSISTENCE"
+  ],
+  "inputChannels": [
+    "TYPED_TEXT",
+    "CLIPBOARD_CHAT",
+    "VOICE_TRANSCRIPT",
+    "HISTORY_EDIT",
+    "PENDING_EDIT"
+  ],
+  "entrySurfaces": [
+    "HOME_QUICK",
+    "FULL_PAGE",
+    "HEADLESS"
+  ],
+  "aiProfiles": [
+    "LOCAL_ONLY",
+    "FAKE_STANDARD",
+    "FAKE_DEEP",
+    "REPLAY",
+    "REAL_QUALITY_ELIGIBLE"
+  ],
+  "routes": [
+    "LOCAL",
+    "PENDING",
+    "AI_STANDARD",
+    "AI_DEEP",
+    "NO_RECORD"
+  ],
+  "productionRoutes": [
+    "LOCAL",
+    "PENDING",
+    "AI_STANDARD",
+    "AI_DEEP"
+  ],
+  "executionPaths": [
+    "PRODUCTION_LOCAL",
+    "PRODUCTION_PENDING",
+    "PRODUCTION_STANDARD",
+    "PRODUCTION_DEEP"
+  ],
+  "aiCallExpectations": [
+    "MUST_CALL",
+    "MUST_NOT_CALL",
+    "MAY_CALL"
+  ],
+  "saveActions": [
+    "SAVE_FORMAL",
+    "SAVE_PENDING",
+    "DO_NOT_SAVE"
+  ],
+  "saveStatuses": [
+    "FORMAL_COMMITTED",
+    "PENDING_COMMITTED",
+    "BLOCKED",
+    "NO_RECORD"
+  ],
+  "commitTargets": [
+    "MEMORY_ONLY",
+    "ISOLATED_TEST_STORAGE",
+    "NONE"
+  ],
+  "surfaceStatuses": [
+    "CAN_COMPLETE",
+    "REQUIRES_FULL_PAGE",
+    "BLOCKED",
+    "NOT_APPLICABLE"
+  ],
+  "businessTypes": [
+    "quotation",
+    "order",
+    "receivable",
+    "payment",
+    "order_deposit",
+    "todo",
+    "pending",
+    "unknown"
+  ],
+  "operations": [
+    "create_quotation",
+    "update_quotation",
+    "create_order",
+    "update_order",
+    "create_receivable",
+    "create_receivable_with_payment",
+    "record_payment",
+    "record_order_deposit",
+    "create_todo",
+    "pending",
+    "none"
+  ],
+  "selectionKinds": [
+    "customerId",
+    "orderId",
+    "quotationId",
+    "receivableId"
+  ],
+  "editScopes": [
+    "FIELD",
+    "ITEM"
+  ],
+  "assertions": [
+    "EXACT",
+    "ONE_OF",
+    "ABSENT",
+    "SET_EQUALS",
+    "NOT_CONTAINS"
+  ],
+  "changeKinds": [
+    "CREATED",
+    "UPDATED",
+    "DELETED"
+  ],
+  "allowanceKinds": [
+    "GENERATED_ID",
+    "FIXED_TIME_FORMAT",
+    "OBJECT_KEY_ORDER",
+    "NON_SEMANTIC_LOG_ORDER"
+  ],
+  "interactionSteps": [
+    "PARSE",
+    "REQUEST_DEEP_REVIEW",
+    "OPEN_FULL_PAGE",
+    "EDIT_FIELD",
+    "EDIT_ITEM",
+    "SELECT_CANDIDATE",
+    "PREPARE",
+    "COMMIT",
+    "RESTART",
+    "RETRY_SAME_PLAN"
+  ],
+  "idempotencyScenarios": [
+    "NOT_APPLICABLE",
+    "SAME_PLAN_RETRY",
+    "DISTINCT_ACTIONS_MUST_NOT_DEDUP",
+    "SAME_BASE_CONCURRENT_COMMITS",
+    "DOUBLE_UI_TRIGGER"
+  ],
+  "provenanceSources": [
+    "RELEASE_CORPUS_V2",
+    "BOSS_SPOKEN_V1",
+    "REAL_AI_COMPARISON_V1",
+    "PROMPTFOO_RECORD_100",
+    "FLOW_GATE",
+    "FIVE_STEP_USER_TEST",
+    "USER_REPORTED_PATTERN",
+    "NEW_COVERAGE"
+  ],
+  "expectedBases": [
+    "PRODUCT_CONTRACT",
+    "PREFLIGHT_POLICY",
+    "BUSINESS_STATE_CONTRACT",
+    "HUMAN_REVIEW"
+  ],
+  "stateDiffCollections": [
+    "customers",
+    "quotations",
+    "orders",
+    "receivables",
+    "payments",
+    "todos",
+    "pendingNotes",
+    "productCatalog",
+    "operationLogs",
+    "aiParseLogs",
+    "orderProgress",
+    "dunningRecords",
+    "deletedRecords",
+    "meta",
+    "dunningTemplates",
+    "extraState"
+  ],
+  "voiceTranscriptCharacteristics": [
+    "NO_PUNCTUATION",
+    "CHINESE_NUMERALS",
+    "ARABIC_NUMERALS",
+    "COLLOQUIAL_DECIMAL",
+    "CONTIGUOUS_DIGITS",
+    "COLLOQUIAL_DATE",
+    "HOMOPHONE_NOISE",
+    "SEGMENTATION_NOISE",
+    "MULTI_ITEM_UTTERANCE",
+    "FINANCIAL_UTTERANCE"
+  ]
+}

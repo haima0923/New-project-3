@@ -1,0 +1,1337 @@
+#!/usr/bin/env node
+
+/*
+ * Record E2E Corpus V1 validator.
+ *
+ * This script is intentionally dependency-free. It validates the repository
+ * contract and cross-field semantics; it does not run parser/business code and
+ * never derives expected answers from the current implementation.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.resolve(__dirname, '..');
+const E2E_ROOT = path.join(ROOT, 'tests', 'record-e2e');
+const CASE_ROOT = path.join(E2E_ROOT, 'cases', 'core-v1');
+const ENUM_PATH = path.join(E2E_ROOT, 'contracts', 'record-e2e-enums-v1.json');
+const SCHEMA_PATH = path.join(E2E_ROOT, 'schema', 'record-e2e-case-v1.schema.json');
+const STATE_FIXTURE_PATH = path.join(E2E_ROOT, 'fixtures', 'states', 'state-fixtures-v1.json');
+const AI_FIXTURE_PATH = path.join(E2E_ROOT, 'fixtures', 'ai', 'ai-fixtures-v1.json');
+const DECISION_PATH = path.join(E2E_ROOT, 'decisions', 'product-decision-backlog-v1.json');
+const INDEX_PATH = path.join(E2E_ROOT, 'corpus-index-v1.json');
+
+const EXPECTED_CATEGORY_COUNTS = Object.freeze({
+  FORMAL_BASIC: 20,
+  AMBIGUOUS_BLOCKED: 16,
+  CUSTOMER_HISTORY_RELATIONS: 14,
+  MULTI_ITEM: 12,
+  FINANCIAL_SAFETY: 14,
+  DATE_TIME: 12,
+  CLIPBOARD_CHAT: 10,
+  VOICE_TRANSCRIPT: 10,
+  SURFACE_PAGE_EDIT: 8,
+  PERSISTENCE_IDEMPOTENCY: 4
+});
+
+const FORMAL_BUSINESS_COLLECTIONS = Object.freeze([
+  'customers',
+  'quotations',
+  'orders',
+  'receivables',
+  'payments',
+  'todos',
+  'orderProgress',
+  'dunningRecords',
+  'productCatalog'
+]);
+
+const ALL_REQUIRED_DIFF_COLLECTIONS = Object.freeze([
+  'customers',
+  'quotations',
+  'orders',
+  'receivables',
+  'payments',
+  'todos',
+  'pendingNotes',
+  'productCatalog',
+  'operationLogs',
+  'aiParseLogs'
+]);
+const STATE_OVERRIDE_KEYS = new Set([
+  'meta', 'customers', 'quotations', 'orders', 'receivables', 'paymentRecords',
+  'dunningRecords', 'todos', 'orderProgress', 'pendingNotes', 'aiParseLogs',
+  'operationLogs', 'productCatalog', 'deletedRecords', 'dunningTemplates',
+  'legacyCompatibilityFlag'
+]);
+
+const OPERATION_BY_BUSINESS_TYPE = Object.freeze({
+  quotation: new Set(['create_quotation', 'update_quotation']),
+  order: new Set(['create_order', 'update_order']),
+  receivable: new Set(['create_receivable', 'create_receivable_with_payment']),
+  payment: new Set(['record_payment']),
+  order_deposit: new Set(['record_order_deposit']),
+  todo: new Set(['create_todo']),
+  pending: new Set(['pending']),
+  unknown: new Set(['none', 'pending'])
+});
+
+const FORBIDDEN_ALLOWANCE_PATH = /(?:customer|amount|paidAmount|unitPrice|product|items|quantity|dueDate|date|orderId|quotationId|receivableId|originalText|createdCount|updatedCount|deletedCount)/i;
+const FORBIDDEN_EXPECTED_SOURCE = /(?:CURRENT_IMPLEMENTATION_OUTPUT|当前实现就是这样|沿用代码输出|为让测试通过)/i;
+const FORBIDDEN_KNOWN_RISK = /(?:EXPECTED[_ -]?FAIL|IGNORE|WAIVE|KNOWN[_ -]?BUG[_ -]?PASS|当前行为即正确|PASS_CURRENT_BEHAVIOR)/i;
+const SECRET_PATTERN = /(?:sk-[a-z0-9_-]{12,}|api[_-]?key\s*[:=]\s*\S+|bearer\s+[a-z0-9._-]{12,}|token\s*[:=]\s*[a-z0-9._-]{12,}|cookie\s*[:=]|"(?:api[_-]?key|token|cookie)"\s*:\s*"[^"]{4,}")/i;
+const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const PHONE_PATTERN = /(?:^|[^\d])1[3-9]\d{9}(?:[^\d]|$)/;
+const PRECISE_ADDRESS_PATTERN = /(?:(?:省|市|县|区).{0,20}(?:路|街|巷).{0,12}\d{1,5}号|[\u4e00-\u9fa5]{2,20}(?:小区|园区|村|镇).{0,12}\d+(?:幢|栋|单元|室))/;
+const WECHAT_IDENTIFIER_PATTERN = /(?:\bwxid_[a-z0-9_-]{5,}|@[a-z0-9_-]*chatroom\b|微信号\s*[:：]\s*\S+)/i;
+const DATE_FIELD_PATTERN = /(?:^|\.)(?:dueDate|requiredDeliveryDate|quoteDate|remindDate|paidAt|paymentDate|quoteFollowupDate|orderDeliveryDate|receivableDueDate|todoRemindDate|itemDeliveryDate|date)$/;
+const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const CASE_ID_PATTERN = /^REC-E2E-[A-Z]+-\d{3}$/;
+const FIELD_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*(?:\[\d+\]|\.[A-Za-z_][A-Za-z0-9_]*)*$/;
+const CANONICAL_RESULT_FIELD_ALIASES = Object.freeze({
+  record_payment: new Set(['amount', 'paidAt']),
+  record_order_deposit: new Set(['amount', 'paymentAmount', 'paidAt']),
+  create_order: new Set(['dueDate']),
+  update_order: new Set(['dueDate']),
+  create_quotation: new Set(['dueDate']),
+  update_quotation: new Set(['dueDate']),
+  create_receivable: new Set(['amount', 'dueDate']),
+  create_receivable_with_payment: new Set(['amount', 'dueDate']),
+  create_todo: new Set(['dueDate']),
+  pending: new Set(['dueDate', 'paidAt'])
+});
+
+let failures = [];
+let warnings = [];
+
+function fail(message) {
+  failures.push(message);
+}
+
+function warn(message) {
+  warnings.push(message);
+}
+
+function readJson(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    fail(`${path.relative(ROOT, filePath)} 无法解析：${error.message}`);
+    return null;
+  }
+}
+
+function isObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function unique(values) {
+  return Array.from(new Set(values));
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function enumSet(enums, key) {
+  return new Set(asArray(enums && enums[key]));
+}
+
+function checkEnum(value, allowed, label) {
+  if (!allowed.has(value)) fail(`${label} 枚举非法：${JSON.stringify(value)}`);
+}
+
+function checkString(value, label) {
+  if (typeof value !== 'string' || !value.trim()) fail(`${label} 必须是非空字符串`);
+}
+
+function checkArray(value, label) {
+  if (!Array.isArray(value)) {
+    fail(`${label} 必须是数组`);
+    return [];
+  }
+  return value;
+}
+
+function containsSensitiveData(serialized) {
+  return PHONE_PATTERN.test(serialized)
+    || EMAIL_PATTERN.test(serialized)
+    || SECRET_PATTERN.test(serialized)
+    || PRECISE_ADDRESS_PATTERN.test(serialized)
+    || WECHAT_IDENTIFIER_PATTERN.test(serialized);
+}
+
+function resolveLocalSchemaRef(rootSchema, ref) {
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
+  return ref.slice(2).split('/').reduce((current, segment) => (
+    current && current[segment.replace(/~1/g, '/').replace(/~0/g, '~')]
+  ), rootSchema);
+}
+
+function collectSchemaErrors(rootSchema, schemaNode, value, label) {
+  if (!schemaNode) return [`${label} Schema节点不存在`];
+  if (schemaNode.$ref) {
+    return collectSchemaErrors(rootSchema, resolveLocalSchemaRef(rootSchema, schemaNode.$ref), value, label);
+  }
+  const errors = [];
+  if (schemaNode.oneOf) {
+    const matches = schemaNode.oneOf.filter((branch) => (
+      collectSchemaErrors(rootSchema, branch, value, label).length === 0
+    )).length;
+    if (matches !== 1) errors.push(`${label} 必须且只能匹配一个oneOf分支`);
+    return errors;
+  }
+  if (Object.prototype.hasOwnProperty.call(schemaNode, 'const') && value !== schemaNode.const) {
+    errors.push(`${label} 必须等于${JSON.stringify(schemaNode.const)}`);
+  }
+  if (schemaNode.enum && !schemaNode.enum.some((item) => canonicalJson(item) === canonicalJson(value))) {
+    errors.push(`${label} 不在Schema枚举中：${JSON.stringify(value)}`);
+  }
+
+  const types = asArray(schemaNode.type);
+  if (typeof schemaNode.type === 'string') types.push(schemaNode.type);
+  if (types.length) {
+    const matchesType = types.some((type) => (
+      (type === 'object' && isObject(value))
+      || (type === 'array' && Array.isArray(value))
+      || (type === 'string' && typeof value === 'string')
+      || (type === 'boolean' && typeof value === 'boolean')
+      || (type === 'number' && typeof value === 'number' && Number.isFinite(value))
+      || (type === 'integer' && Number.isInteger(value))
+      || (type === 'null' && value === null)
+    ));
+    if (!matchesType) {
+      errors.push(`${label} 类型不符合Schema：${types.join('|')}`);
+      return errors;
+    }
+  }
+
+  if (typeof value === 'string') {
+    if (schemaNode.minLength !== undefined && value.length < schemaNode.minLength) {
+      errors.push(`${label} 长度小于${schemaNode.minLength}`);
+    }
+    if (schemaNode.pattern && !(new RegExp(schemaNode.pattern)).test(value)) {
+      errors.push(`${label} 不符合Schema pattern ${schemaNode.pattern}`);
+    }
+  }
+  if (typeof value === 'number' && schemaNode.minimum !== undefined && value < schemaNode.minimum) {
+    errors.push(`${label} 小于Schema minimum ${schemaNode.minimum}`);
+  }
+  if (Array.isArray(value)) {
+    if (schemaNode.minItems !== undefined && value.length < schemaNode.minItems) {
+      errors.push(`${label} 少于${schemaNode.minItems}项`);
+    }
+    if (schemaNode.uniqueItems && new Set(value.map(canonicalJson)).size !== value.length) {
+      errors.push(`${label} 违反uniqueItems`);
+    }
+    if (schemaNode.items) value.forEach((item, index) => {
+      errors.push(...collectSchemaErrors(rootSchema, schemaNode.items, item, `${label}[${index}]`));
+    });
+  }
+  if (isObject(value)) {
+    asArray(schemaNode.required).forEach((key) => {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) errors.push(`${label}.${key} 缺失`);
+    });
+    Object.entries(value).forEach(([key, item]) => {
+      if (schemaNode.properties && schemaNode.properties[key]) {
+        errors.push(...collectSchemaErrors(rootSchema, schemaNode.properties[key], item, `${label}.${key}`));
+      } else if (schemaNode.additionalProperties === false) {
+        errors.push(`${label}.${key} 不允许额外字段`);
+      } else if (isObject(schemaNode.additionalProperties)) {
+        errors.push(...collectSchemaErrors(rootSchema, schemaNode.additionalProperties, item, `${label}.${key}`));
+      }
+    });
+  }
+  return errors;
+}
+
+function duplicateValues(values) {
+  const seen = new Set();
+  const duplicates = new Set();
+  values.forEach((value) => {
+    if (seen.has(value)) duplicates.add(value);
+    seen.add(value);
+  });
+  return Array.from(duplicates);
+}
+
+function getPathEntries(value, prefix = '') {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => getPathEntries(item, `${prefix}[${index}]`));
+  }
+  if (!isObject(value)) return [[prefix, value]];
+  return Object.entries(value).flatMap(([key, item]) => {
+    const next = prefix ? `${prefix}.${key}` : key;
+    return getPathEntries(item, next);
+  });
+}
+
+function formatShanghaiDate(instant) {
+  const milliseconds = Date.parse(instant);
+  if (!Number.isFinite(milliseconds)) return '';
+  const date = new Date(milliseconds + (8 * 60 * 60 * 1000));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function isValidIsoDate(value) {
+  if (!ISO_DATE_PATTERN.test(String(value || ''))) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+function normalizeText(text, channel) {
+  let value = String(text || '').normalize('NFKC').replace(/\r\n?/g, '\n');
+  value = value.split('\n').map((line) => line.trim()).join('\n').trim();
+  if (channel !== 'CLIPBOARD_CHAT') value = value.replace(/[\s，。！？、；：,.!?;:]+/g, '');
+  return value.toLowerCase();
+}
+
+function literalSkeleton(text) {
+  return String(text || '')
+    .normalize('NFKC')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\d+(?:\.\d+)?/g, '<N>')
+    .replace(/[零一二两三四五六七八九十百千万点块毛角]+/g, '<CN>')
+    .replace(/(?:今天|明天|后天|本月底|月底|下周[一二三四五六日天]|下个月|明年|\d{4}年\d{1,2}月\d{1,2}日)/g, '<DATE>')
+    .replace(/[\s，。！？、；：,.!?;:]+/g, '')
+    .toLowerCase();
+}
+
+function countDiffChanges(scope, collections) {
+  return collections.reduce((total, collection) => {
+    const change = ((scope || {}).collections || {})[collection] || {};
+    return total
+      + Number(change.createdCount || 0)
+      + Number(change.updatedCount || 0)
+      + Number(change.deletedCount || 0);
+  }, 0);
+}
+
+function hasNonZeroCollection(scope, collection) {
+  return countDiffChanges(scope, [collection]) > 0;
+}
+
+function hasFormalBusinessDiff(testCase) {
+  return countDiffChanges(testCase.expected.stateDiff.business, FORMAL_BUSINESS_COLLECTIONS) > 0;
+}
+
+function hasAnyBusinessDiff(testCase) {
+  const collections = Object.keys((testCase.expected.stateDiff.business || {}).collections || {});
+  return countDiffChanges(testCase.expected.stateDiff.business, collections) > 0;
+}
+
+function checkRequiredObject(value, label, keys) {
+  if (!isObject(value)) {
+    fail(`${label} 必须是对象`);
+    return {};
+  }
+  keys.forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(value, key)) fail(`${label}.${key} 缺失`);
+  });
+  return value;
+}
+
+function validateProvenance(testCase, enums) {
+  const label = testCase.caseId;
+  const provenance = checkRequiredObject(testCase.provenance, `${label}.provenance`, [
+    'sources', 'sourceCaseIds', 'adaptation', 'expectedBasis'
+  ]);
+  const sources = checkArray(provenance.sources, `${label}.provenance.sources`);
+  const bases = checkArray(provenance.expectedBasis, `${label}.provenance.expectedBasis`);
+  if (!sources.length) fail(`${label} 至少需要一个provenance source`);
+  if (bases.length < 2) fail(`${label} expectedBasis至少需要两个独立依据`);
+  sources.forEach((item) => checkEnum(item, enumSet(enums, 'provenanceSources'), `${label}.provenance.sources`));
+  bases.forEach((item) => {
+    checkEnum(item, enumSet(enums, 'expectedBases'), `${label}.provenance.expectedBasis`);
+    if (FORBIDDEN_EXPECTED_SOURCE.test(item)) fail(`${label} expectedBasis不得来自当前实现输出`);
+  });
+  if (FORBIDDEN_EXPECTED_SOURCE.test(JSON.stringify(provenance))) {
+    fail(`${label} provenance包含禁止的当前实现答案来源`);
+  }
+}
+
+function validateInput(testCase, enums) {
+  const label = testCase.caseId;
+  const input = checkRequiredObject(testCase.input, `${label}.input`, [
+    'channel', 'entrySurface', 'originalText'
+  ]);
+  checkEnum(input.channel, enumSet(enums, 'inputChannels'), `${label}.input.channel`);
+  checkEnum(input.entrySurface, enumSet(enums, 'entrySurfaces'), `${label}.input.entrySurface`);
+  checkString(input.originalText, `${label}.input.originalText`);
+
+  if (input.channel === 'CLIPBOARD_CHAT') {
+    checkString(input.clipboardText, `${label}.input.clipboardText`);
+    checkString(input.expectedExtractedText, `${label}.input.expectedExtractedText`);
+    if (input.originalText !== input.clipboardText) fail(`${label} 聊天题originalText必须严格等于clipboardText`);
+    if (!input.originalText.includes('\n') || input.originalText.includes('\\n')) {
+      fail(`${label} 聊天题必须使用解码后的真实换行，不能测试字面量\\\\n`);
+    }
+    if (!testCase.executionProfiles.includes('CLIPBOARD_CHAT')) fail(`${label} 聊天题缺CLIPBOARD_CHAT执行标签`);
+  }
+  if (input.channel === 'VOICE_TRANSCRIPT') {
+    checkString(input.voiceTranscript, `${label}.input.voiceTranscript`);
+    const characteristics = checkArray(input.transcriptCharacteristics, `${label}.input.transcriptCharacteristics`);
+    if (!characteristics.length) fail(`${label} 语音题必须标注transcriptCharacteristics`);
+    characteristics.forEach((item) => checkEnum(
+      item,
+      enumSet(enums, 'voiceTranscriptCharacteristics'),
+      `${label}.input.transcriptCharacteristics`
+    ));
+    if (input.originalText !== input.voiceTranscript) fail(`${label} 语音题originalText必须严格等于voiceTranscript`);
+    if (!testCase.executionProfiles.includes('VOICE_TRANSCRIPT')) fail(`${label} 语音题缺VOICE_TRANSCRIPT执行标签`);
+  }
+  if (input.channel === 'PENDING_EDIT') {
+    checkString(input.pendingNoteId, `${label}.input.pendingNoteId`);
+  } else if (input.pendingNoteId !== undefined) {
+    fail(`${label} 只有PENDING_EDIT输入可以声明pendingNoteId`);
+  }
+
+  const sensitiveText = JSON.stringify(input);
+  if (containsSensitiveData(sensitiveText)) fail(`${label} 输入包含疑似隐私、密钥、微信标识或精确地址`);
+}
+
+function validateClock(testCase) {
+  const label = testCase.caseId;
+  const clock = checkRequiredObject(testCase.clock, `${label}.clock`, [
+    'businessDate', 'timezone', 'nowInstant'
+  ]);
+  if (!isValidIsoDate(clock.businessDate)) fail(`${label}.clock.businessDate不是有效ISO日期`);
+  if (clock.timezone !== 'Asia/Shanghai') fail(`${label}.clock.timezone必须为Asia/Shanghai`);
+  if (!Number.isFinite(Date.parse(clock.nowInstant))) fail(`${label}.clock.nowInstant不是有效ISO时刻`);
+  const projected = formatShanghaiDate(clock.nowInstant);
+  if (projected && projected !== clock.businessDate) {
+    fail(`${label} nowInstant投影日期${projected}与businessDate ${clock.businessDate}不一致`);
+  }
+}
+
+function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
+  const label = testCase.caseId;
+  const ai = checkRequiredObject(testCase.ai, `${label}.ai`, [
+    'profile', 'expectedRoute', 'productionCommitEligible'
+  ]);
+  checkEnum(ai.profile, enumSet(enums, 'aiProfiles'), `${label}.ai.profile`);
+  checkEnum(ai.expectedRoute, enumSet(enums, 'routes'), `${label}.ai.expectedRoute`);
+  if (typeof ai.productionCommitEligible !== 'boolean') fail(`${label}.ai.productionCommitEligible必须为boolean`);
+  if (ai.expectedRoute !== testCase.expected.route) fail(`${label} ai.expectedRoute必须等于expected.route`);
+  if (['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(ai.profile)) {
+    if (!ai.fixtureRef || !aiFixtureIds.has(ai.fixtureRef)) fail(`${label} AI profile ${ai.profile}需要有效fixtureRef`);
+    if (ai.productionCommitEligible !== false) fail(`${label} Fake/Replay不能取得生产Commit资格`);
+    const fixture = aiFixtureMap.get(ai.fixtureRef);
+    if (fixture) {
+      if (fixture.caseId !== label) {
+        fail(`${label} 必须引用绑定本caseId的独立AI fixture`);
+      }
+      if (ai.profile === 'FAKE_STANDARD'
+        && (fixture.reviewMode !== 'standard' || !['FAKE', 'MOCK'].includes(fixture.providerKind))) {
+        fail(`${label} FAKE_STANDARD必须引用standard FAKE/MOCK fixture`);
+      }
+      if (ai.profile === 'FAKE_DEEP'
+        && (fixture.reviewMode !== 'deep' || !['FAKE', 'MOCK'].includes(fixture.providerKind))) {
+        fail(`${label} FAKE_DEEP必须引用deep FAKE/MOCK fixture`);
+      }
+      if (ai.profile === 'REPLAY' && fixture.providerKind !== 'REPLAY') {
+        fail(`${label} REPLAY必须引用providerKind=REPLAY fixture`);
+      }
+      if (ai.expectedRoute === 'AI_STANDARD' && fixture.reviewMode !== 'standard') {
+        fail(`${label} AI_STANDARD route必须引用standard fixture`);
+      }
+      if (ai.expectedRoute === 'AI_DEEP' && fixture.reviewMode !== 'deep') {
+        fail(`${label} AI_DEEP route必须引用deep fixture`);
+      }
+      if (fixture.kind === 'FAKE_RESPONSE' || fixture.kind === 'REPLAY_RESPONSE') {
+        const responseFields = cloneJson((fixture.response && fixture.response.fields) || {});
+        const responseItems = asArray(responseFields.items);
+        testCase.interaction.userSelections.forEach((selection) => {
+          responseFields[selection.kind] = selection.selectedId;
+        });
+        testCase.interaction.userEdits.forEach((edit) => {
+          if (edit.scope === 'FIELD') responseFields[edit.field] = edit.value;
+          if (edit.scope === 'ITEM' && responseItems[edit.itemIndex]) {
+            responseItems[edit.itemIndex][edit.field] = edit.value;
+            const item = responseItems[edit.itemIndex];
+            if (typeof item.quantity === 'number' && typeof item.unitPrice === 'number') {
+              item.totalAmount = item.quantity * item.unitPrice;
+            }
+          }
+        });
+        if (testCase.interaction.userEdits.some((edit) => edit.scope === 'ITEM')) {
+          responseFields.amount = responseItems.reduce((sum, item) => (
+            sum + (typeof item.totalAmount === 'number' ? item.totalAmount : 0)
+          ), 0);
+        }
+        const responseComparableFields = cloneJson(responseFields);
+        delete responseComparableFields.items;
+        if (canonicalJson(responseComparableFields) !== canonicalJson(testCase.expected.result.fields)) {
+          fail(`${label} AI fixture应用选择/编辑后的fields与expected.result.fields不一致`);
+        }
+        if (canonicalJson(responseItems) !== canonicalJson(testCase.expected.result.items)) {
+          fail(`${label} AI fixture应用选择/编辑后的items与expected.result.items不一致`);
+        }
+      }
+    }
+  } else if (ai.fixtureRef) {
+    fail(`${label} ${ai.profile}不得引用Fake/Replay fixture`);
+  }
+  if (ai.profile === 'FAKE_DEEP' && ai.expectedRoute !== 'AI_DEEP') {
+    fail(`${label} FAKE_DEEP必须期待AI_DEEP route`);
+  }
+  if (ai.profile === 'FAKE_STANDARD' && ai.expectedRoute !== 'AI_STANDARD') {
+    fail(`${label} FAKE_STANDARD必须期待AI_STANDARD route`);
+  }
+  if (ai.profile === 'REPLAY' && !['AI_STANDARD', 'AI_DEEP'].includes(ai.expectedRoute)) {
+    fail(`${label} REPLAY必须用于AI_STANDARD或AI_DEEP route`);
+  }
+}
+
+function validateInteraction(testCase, enums) {
+  const label = testCase.caseId;
+  const interaction = checkRequiredObject(testCase.interaction, `${label}.interaction`, [
+    'userEdits', 'userSelections', 'requestedSaveAction', 'restartAfterSave'
+  ]);
+  checkArray(interaction.userEdits, `${label}.interaction.userEdits`).forEach((edit, index) => {
+    checkEnum(edit && edit.scope, enumSet(enums, 'editScopes'), `${label}.interaction.userEdits[${index}].scope`);
+    checkString(edit && edit.field, `${label}.interaction.userEdits[${index}].field`);
+    if (edit && edit.scope === 'ITEM' && (!Number.isInteger(edit.itemIndex) || edit.itemIndex < 0)) {
+      fail(`${label} ITEM edit必须包含非负itemIndex`);
+    }
+  });
+  checkArray(interaction.userSelections, `${label}.interaction.userSelections`).forEach((selection, index) => {
+    checkEnum(selection && selection.kind, enumSet(enums, 'selectionKinds'), `${label}.interaction.userSelections[${index}].kind`);
+    checkString(selection && selection.selectedId, `${label}.interaction.userSelections[${index}].selectedId`);
+  });
+  checkEnum(interaction.requestedSaveAction, enumSet(enums, 'saveActions'), `${label}.interaction.requestedSaveAction`);
+  if (typeof interaction.restartAfterSave !== 'boolean') fail(`${label}.interaction.restartAfterSave必须为boolean`);
+  if (interaction.sequence !== undefined) {
+    checkArray(interaction.sequence, `${label}.interaction.sequence`).forEach((step, index) => {
+      checkEnum(step && step.step, enumSet(enums, 'interactionSteps'), `${label}.interaction.sequence[${index}].step`);
+      if (step.actor !== undefined) checkString(step.actor, `${label}.interaction.sequence[${index}].actor`);
+      if (step.planRef !== undefined) checkString(step.planRef, `${label}.interaction.sequence[${index}].planRef`);
+      if (step.baseRevision !== undefined && (!Number.isInteger(step.baseRevision) || step.baseRevision < 0)) {
+        fail(`${label}.interaction.sequence[${index}].baseRevision必须是非负整数`);
+      }
+      if (step.input !== undefined) {
+        const stepInput = checkRequiredObject(
+          step.input,
+          `${label}.interaction.sequence[${index}].input`,
+          ['originalText']
+        );
+        checkString(stepInput.originalText, `${label}.interaction.sequence[${index}].input.originalText`);
+      }
+      if (step.step === 'PREPARE' && step.input !== undefined && !step.planRef) {
+        fail(`${label}.interaction.sequence[${index}] 带独立输入的PREPARE必须声明planRef`);
+      }
+    });
+  }
+}
+
+function validateResult(testCase, enums) {
+  const label = testCase.caseId;
+  const result = checkRequiredObject(testCase.expected.result, `${label}.expected.result`, [
+    'businessType', 'operation', 'originalText', 'fields', 'items',
+    'allowedValues', 'conflictValues', 'absentFields'
+  ]);
+  checkEnum(result.businessType, enumSet(enums, 'businessTypes'), `${label}.expected.result.businessType`);
+  checkEnum(result.operation, enumSet(enums, 'operations'), `${label}.expected.result.operation`);
+  if (!(OPERATION_BY_BUSINESS_TYPE[result.businessType] || new Set()).has(result.operation)) {
+    fail(`${label} businessType ${result.businessType}与operation ${result.operation}不兼容`);
+  }
+  if (result.originalText !== testCase.input.originalText) fail(`${label} expected.result.originalText必须严格等于输入原文`);
+  if (!isObject(result.fields)) fail(`${label}.expected.result.fields必须是对象`);
+  if (!Array.isArray(result.items)) fail(`${label}.expected.result.items必须是数组`);
+  if (!isObject(result.allowedValues)) fail(`${label}.expected.result.allowedValues必须是对象`);
+  if (!isObject(result.conflictValues)) fail(`${label}.expected.result.conflictValues必须是对象`);
+  if (!Array.isArray(result.absentFields)) fail(`${label}.expected.result.absentFields必须是数组`);
+
+  const explicitPaths = new Set(getPathEntries(result.fields).map(([entryPath]) => entryPath));
+  Object.entries(result.allowedValues || {}).forEach(([entryPath, values]) => {
+    if (!FIELD_PATH_PATTERN.test(entryPath)) fail(`${label} allowedValues路径非法：${entryPath}`);
+    if (!Array.isArray(values) || !values.length) fail(`${label} allowedValues.${entryPath}必须是非空候选数组`);
+    if (explicitPaths.has(entryPath)) fail(`${label} ${entryPath}不能同时在fields和allowedValues`);
+  });
+  Object.entries(result.conflictValues || {}).forEach(([entryPath, values]) => {
+    if (!FIELD_PATH_PATTERN.test(entryPath)) fail(`${label} conflictValues路径非法：${entryPath}`);
+    if (!Array.isArray(values) || unique(values.map(canonicalJson)).length < 2) {
+      fail(`${label} conflictValues.${entryPath}必须包含至少两个不同候选值`);
+    }
+    if (!testCase.expected.confirmation.conflictFields.includes(entryPath)) {
+      fail(`${label} conflictValues.${entryPath}必须同时列入confirmation.conflictFields`);
+    }
+    if (explicitPaths.has(entryPath) || Object.prototype.hasOwnProperty.call(result.allowedValues, entryPath)) {
+      fail(`${label} ${entryPath}不能同时声明唯一值、允许值和冲突候选`);
+    }
+  });
+  asArray(result.absentFields).forEach((entryPath) => {
+    if (!FIELD_PATH_PATTERN.test(entryPath)) fail(`${label} absentFields路径非法：${entryPath}`);
+    if (explicitPaths.has(entryPath)
+      || Object.prototype.hasOwnProperty.call(result.allowedValues || {}, entryPath)
+      || Object.prototype.hasOwnProperty.call(result.conflictValues || {}, entryPath)) {
+      fail(`${label} ${entryPath}不能同时声明期望值和ABSENT`);
+    }
+  });
+  const forbiddenAliases = CANONICAL_RESULT_FIELD_ALIASES[result.operation] || new Set();
+  [
+    ...Object.keys(result.fields),
+    ...Object.keys(result.allowedValues),
+    ...Object.keys(result.conflictValues),
+    ...result.absentFields
+  ].forEach((entryPath) => {
+    const rootField = (entryPath.match(/^[A-Za-z_][A-Za-z0-9_]*/) || [''])[0];
+    if (forbiddenAliases.has(rootField)) {
+      fail(`${label} expected.result使用未标准化别名${rootField}`);
+    }
+  });
+
+  getPathEntries(result).forEach(([entryPath, value]) => {
+    if (!DATE_FIELD_PATTERN.test(entryPath)) return;
+    if (typeof value === 'string' && !isValidIsoDate(value)) {
+      fail(`${label} ${entryPath}必须是明确的YYYY-MM-DD日期`);
+    }
+  });
+}
+
+function validateRouting(testCase, enums) {
+  const label = testCase.caseId;
+  checkEnum(testCase.expected.route, enumSet(enums, 'routes'), `${label}.expected.route`);
+  const routing = checkRequiredObject(testCase.expected.routing, `${label}.expected.routing`, [
+    'productionRoute', 'executionPath', 'localSafetyStatus', 'expectedAiCall'
+  ]);
+  checkEnum(routing.productionRoute, enumSet(enums, 'productionRoutes'), `${label}.expected.routing.productionRoute`);
+  checkEnum(routing.executionPath, enumSet(enums, 'executionPaths'), `${label}.expected.routing.executionPath`);
+  checkEnum(routing.expectedAiCall, enumSet(enums, 'aiCallExpectations'), `${label}.expected.routing.expectedAiCall`);
+  checkString(routing.localSafetyStatus, `${label}.expected.routing.localSafetyStatus`);
+
+  if (testCase.expected.route === 'NO_RECORD') {
+    if (routing.productionRoute !== 'PENDING' || routing.executionPath !== 'PRODUCTION_PENDING'
+      || routing.localSafetyStatus !== 'NO_RECORD' || routing.expectedAiCall !== 'MUST_NOT_CALL') {
+      fail(`${label} NO_RECORD必须映射为PENDING/PRODUCTION_PENDING/NO_RECORD/MUST_NOT_CALL`);
+    }
+  }
+  if (testCase.expected.allowedRoutes !== undefined) {
+    const allowed = checkArray(testCase.expected.allowedRoutes, `${label}.expected.allowedRoutes`);
+    if (unique(allowed).length < 2 || !allowed.includes(testCase.expected.route)) {
+      fail(`${label} allowedRoutes必须至少有两个唯一值并包含主route`);
+    }
+    checkString(testCase.expected.allowedRoutesReason, `${label}.expected.allowedRoutesReason`);
+    if (testCase.riskLevel === 'P0') fail(`${label} P0题不得放宽route`);
+  }
+}
+
+function validatePreflightAndSave(testCase, enums) {
+  const label = testCase.caseId;
+  const preflight = checkRequiredObject(testCase.expected.preflight, `${label}.expected.preflight`, [
+    'domainCanSaveFormal', 'domainCanSavePending', 'blockingCodes', 'requiredSelections'
+  ]);
+  if (typeof preflight.domainCanSaveFormal !== 'boolean') fail(`${label} domainCanSaveFormal必须为boolean`);
+  if (typeof preflight.domainCanSavePending !== 'boolean') fail(`${label} domainCanSavePending必须为boolean`);
+  checkArray(preflight.blockingCodes, `${label}.expected.preflight.blockingCodes`);
+  checkArray(preflight.requiredSelections, `${label}.expected.preflight.requiredSelections`).forEach((selection) => {
+    checkEnum(selection, enumSet(enums, 'selectionKinds'), `${label}.expected.preflight.requiredSelections`);
+  });
+
+  const confirmation = checkRequiredObject(testCase.expected.confirmation, `${label}.expected.confirmation`, [
+    'requiredFields', 'missingFields', 'conflictFields'
+  ]);
+  const confirmationPaths = [
+    ...checkArray(confirmation.requiredFields, `${label}.expected.confirmation.requiredFields`),
+    ...checkArray(confirmation.missingFields, `${label}.expected.confirmation.missingFields`),
+    ...checkArray(confirmation.conflictFields, `${label}.expected.confirmation.conflictFields`)
+  ];
+  const forbiddenAliases = CANONICAL_RESULT_FIELD_ALIASES[testCase.expected.result.operation] || new Set();
+  confirmationPaths.forEach((entryPath) => {
+    if (!FIELD_PATH_PATTERN.test(entryPath)) fail(`${label} Confirmation字段路径非法：${entryPath}`);
+    const rootField = (entryPath.match(/^[A-Za-z_][A-Za-z0-9_]*/) || [''])[0];
+    if (forbiddenAliases.has(rootField)) fail(`${label} Confirmation使用未标准化别名${rootField}`);
+  });
+
+  const save = checkRequiredObject(testCase.expected.save, `${label}.expected.save`, [
+    'action', 'status', 'commitTarget', 'productionCommitEligible'
+  ]);
+  checkEnum(save.action, enumSet(enums, 'saveActions'), `${label}.expected.save.action`);
+  checkEnum(save.status, enumSet(enums, 'saveStatuses'), `${label}.expected.save.status`);
+  checkEnum(save.commitTarget, enumSet(enums, 'commitTargets'), `${label}.expected.save.commitTarget`);
+  if (save.action !== testCase.interaction.requestedSaveAction) fail(`${label} expected.save.action必须等于用户请求动作`);
+  if (save.productionCommitEligible !== false) fail(`${label} E2E V1题不得取得真实生产Commit资格`);
+
+  if (save.status === 'FORMAL_COMMITTED') {
+    if (save.action !== 'SAVE_FORMAL' || !preflight.domainCanSaveFormal) {
+      fail(`${label} FORMAL_COMMITTED必须由可正式保存的SAVE_FORMAL产生`);
+    }
+    if (save.commitTarget !== 'MEMORY_ONLY') fail(`${label} 本轮FORMAL_COMMITTED只能指向MEMORY_ONLY`);
+    if (!hasFormalBusinessDiff(testCase)) fail(`${label} FORMAL_COMMITTED必须有正式业务State Diff`);
+  }
+  if (save.status === 'BLOCKED') {
+    if (preflight.domainCanSaveFormal) fail(`${label} BLOCKED不能domainCanSaveFormal=true`);
+    if (save.commitTarget !== 'NONE') fail(`${label} BLOCKED commitTarget必须为NONE`);
+    if (hasAnyBusinessDiff(testCase)) fail(`${label} BLOCKED不得产生任何业务或日志Diff`);
+  }
+  if (save.status === 'PENDING_COMMITTED') {
+    if (save.action !== 'SAVE_PENDING' || !preflight.domainCanSavePending) {
+      fail(`${label} PENDING_COMMITTED必须是用户明确SAVE_PENDING且允许待整理`);
+    }
+    if (save.commitTarget !== 'MEMORY_ONLY') fail(`${label} PENDING_COMMITTED必须写隔离Memory`);
+    if (!hasNonZeroCollection(testCase.expected.stateDiff.business, 'pendingNotes')) {
+      fail(`${label} PENDING_COMMITTED必须创建pendingNotes`);
+    }
+    if (countDiffChanges(testCase.expected.stateDiff.business, FORMAL_BUSINESS_COLLECTIONS) > 0) {
+      fail(`${label} SAVE_PENDING不得产生正式业务Diff`);
+    }
+  }
+  if (save.status === 'NO_RECORD') {
+    if (save.action !== 'DO_NOT_SAVE' || save.commitTarget !== 'NONE' || hasAnyBusinessDiff(testCase)) {
+      fail(`${label} NO_RECORD必须DO_NOT_SAVE、NONE且零副作用`);
+    }
+  }
+  if (preflight.requiredSelections.length && !testCase.interaction.userSelections.length) {
+    if (preflight.domainCanSaveFormal || save.status === 'FORMAL_COMMITTED') {
+      fail(`${label} 多候选未选择不得正式保存`);
+    }
+  }
+}
+
+function validateSurface(testCase, enums) {
+  const label = testCase.caseId;
+  const surface = checkRequiredObject(testCase.expected.surface, `${label}.expected.surface`, ['home', 'fullPage']);
+  ['home', 'fullPage'].forEach((key) => {
+    const item = checkRequiredObject(surface[key], `${label}.expected.surface.${key}`, [
+      'status', 'surfaceCanCompleteFormal', 'effectiveCanSaveFormal', 'missingCapabilities'
+    ]);
+    checkEnum(item.status, enumSet(enums, 'surfaceStatuses'), `${label}.expected.surface.${key}.status`);
+    if (typeof item.surfaceCanCompleteFormal !== 'boolean') fail(`${label} ${key}.surfaceCanCompleteFormal必须为boolean`);
+    if (typeof item.effectiveCanSaveFormal !== 'boolean') fail(`${label} ${key}.effectiveCanSaveFormal必须为boolean`);
+    checkArray(item.missingCapabilities, `${label}.expected.surface.${key}.missingCapabilities`);
+    if (item.effectiveCanSaveFormal && (!item.surfaceCanCompleteFormal || !testCase.expected.preflight.domainCanSaveFormal)) {
+      fail(`${label} ${key} effectiveCanSaveFormal必须同时满足领域和Surface能力`);
+    }
+  });
+}
+
+function validateDiff(testCase, enums) {
+  const label = testCase.caseId;
+  const stateDiff = checkRequiredObject(testCase.expected.stateDiff, `${label}.expected.stateDiff`, ['business', 'full']);
+  ['business', 'full'].forEach((scopeName) => {
+    const scope = checkRequiredObject(stateDiff[scopeName], `${label}.expected.stateDiff.${scopeName}`, [
+      'collections', 'fieldAssertions', 'relationAssertions', 'mustRemainUnchanged'
+    ]);
+    if (!isObject(scope.collections)) fail(`${label} ${scopeName}.collections必须是对象`);
+    Object.entries(scope.collections || {}).forEach(([collection, change]) => {
+      checkEnum(collection, enumSet(enums, 'stateDiffCollections'), `${label}.${scopeName}.collections`);
+      ['createdCount', 'updatedCount', 'deletedCount'].forEach((key) => {
+        if (!Number.isInteger(change && change[key]) || change[key] < 0) {
+          fail(`${label} ${scopeName}.${collection}.${key}必须是非负整数`);
+        }
+      });
+    });
+    checkArray(scope.fieldAssertions, `${label}.${scopeName}.fieldAssertions`).forEach((assertion, index) => {
+      const assertionLabel = `${label}.${scopeName}.fieldAssertions[${index}]`;
+      if (!isObject(assertion)) {
+        fail(`${assertionLabel}必须是对象`);
+        return;
+      }
+      checkEnum(assertion.collection, enumSet(enums, 'stateDiffCollections'), `${assertionLabel}.collection`);
+      checkEnum(assertion.change, enumSet(enums, 'changeKinds'), `${assertionLabel}.change`);
+      checkString(assertion.path, `${assertionLabel}.path`);
+      if (!FIELD_PATH_PATTERN.test(assertion.path)) fail(`${assertionLabel}.path非法`);
+      checkEnum(assertion.assert, enumSet(enums, 'assertions'), `${assertionLabel}.assert`);
+      if (!hasNonZeroCollection(scope, assertion.collection)) {
+        fail(`${assertionLabel}引用的collection没有声明变化`);
+      }
+      if (assertion.assert === 'ABSENT' && Object.prototype.hasOwnProperty.call(assertion, 'value')) {
+        fail(`${assertionLabel} ABSENT不得包含value`);
+      }
+      if (assertion.assert !== 'ABSENT' && !Object.prototype.hasOwnProperty.call(assertion, 'value')) {
+        fail(`${assertionLabel} ${assertion.assert}必须包含value`);
+      }
+    });
+    checkArray(scope.relationAssertions, `${label}.${scopeName}.relationAssertions`).forEach((assertion, index) => {
+      const assertionLabel = `${label}.${scopeName}.relationAssertions[${index}]`;
+      if (!isObject(assertion)) {
+        fail(`${assertionLabel}必须是对象`);
+        return;
+      }
+      checkEnum(assertion.fromCollection, enumSet(enums, 'stateDiffCollections'), `${assertionLabel}.fromCollection`);
+      checkEnum(assertion.toCollection, enumSet(enums, 'stateDiffCollections'), `${assertionLabel}.toCollection`);
+      checkString(assertion.fromPath, `${assertionLabel}.fromPath`);
+      if (!FIELD_PATH_PATTERN.test(assertion.fromPath)) fail(`${assertionLabel}.fromPath非法`);
+      if (!hasNonZeroCollection(scope, assertion.fromCollection)) {
+        fail(`${assertionLabel} fromCollection没有声明变化`);
+      }
+      if (assertion.toId !== undefined) {
+        checkString(assertion.toId, `${assertionLabel}.toId`);
+      } else if (!scope.collections[assertion.toCollection]
+        || scope.collections[assertion.toCollection].createdCount !== 1) {
+        fail(`${assertionLabel} 无toId时toCollection必须恰好创建一条记录`);
+      }
+    });
+    checkArray(scope.mustRemainUnchanged, `${label}.${scopeName}.mustRemainUnchanged`).forEach((collection) => {
+      checkEnum(collection, enumSet(enums, 'stateDiffCollections'), `${label}.${scopeName}.mustRemainUnchanged`);
+      if (hasNonZeroCollection(scope, collection)) fail(`${label} ${collection}不能同时变化和mustRemainUnchanged`);
+    });
+  });
+
+  if (testCase.riskLevel === 'P0') {
+    const business = stateDiff.business;
+    if (!Object.keys(business.collections || {}).length && !(business.mustRemainUnchanged || []).length) {
+      fail(`${label} P0题必须有最终State或零副作用断言`);
+    }
+  }
+  if (testCase.expected.save.status === 'BLOCKED' || testCase.expected.save.status === 'NO_RECORD') {
+    const unchanged = new Set(stateDiff.business.mustRemainUnchanged || []);
+    ALL_REQUIRED_DIFF_COLLECTIONS.forEach((collection) => {
+      if (!unchanged.has(collection) && !(
+        stateDiff.business.collections[collection]
+        && !hasNonZeroCollection(stateDiff.business, collection)
+      )) fail(`${label} 阻断/NO_RECORD题必须声明${collection}零副作用`);
+    });
+  }
+}
+
+function validateMultiItem(testCase) {
+  const isHomeItemZeroSync = testCase.caseId === 'REC-E2E-PAGE-008';
+  if (testCase.category !== 'MULTI_ITEM'
+    && !testCase.tags.includes('MULTI_ITEM')
+    && !isHomeItemZeroSync) return;
+  const label = testCase.caseId;
+  const items = testCase.expected.result.items;
+  if (isHomeItemZeroSync) {
+    if (!Array.isArray(items) || items.length !== 1) fail(`${label} 首页items[0]同步题必须恰好断言一个商品`);
+    const assertions = JSON.stringify(testCase.expected.stateDiff);
+    if (!/items\[0\]/.test(assertions)) fail(`${label} 必须有items[0] State Diff字段断言`);
+    if (!/originalText/.test(assertions)) fail(`${label} 必须断言originalText`);
+    return;
+  }
+  if (!Array.isArray(items) || items.length < 2) fail(`${label} 多商品题必须断言至少两件商品`);
+  const fieldAssertions = testCase.expected.stateDiff.business.fieldAssertions || [];
+  const assertionsByPath = new Map(fieldAssertions.map((assertion) => [assertion.path, assertion]));
+  const lengthAssertion = assertionsByPath.get('items.length');
+  if (!lengthAssertion || lengthAssertion.assert !== 'EXACT' || lengthAssertion.value !== items.length) {
+    fail(`${label} 多商品题必须精确断言最终items.length=${items.length}`);
+  }
+  items.forEach((item, itemIndex) => {
+    ['productName', 'quantity', 'unit', 'unitPrice'].forEach((field) => {
+      const entryPath = `items[${itemIndex}].${field}`;
+      const assertion = assertionsByPath.get(entryPath);
+      if (item[field] !== undefined) {
+        if (!assertion || assertion.assert !== 'EXACT' || assertion.value !== item[field]) {
+          fail(`${label} 必须精确断言${entryPath}`);
+        }
+      } else if (field === 'unitPrice'
+        && testCase.expected.result.absentFields.includes(entryPath)) {
+        if (!assertion || assertion.assert !== 'ABSENT') fail(`${label} 必须断言${entryPath}缺失`);
+      } else {
+        fail(`${label} ${entryPath}缺失且未声明为允许缺失`);
+      }
+    });
+    ['totalAmount', 'itemDeliveryDate'].forEach((field) => {
+      if (item[field] === undefined) return;
+      const entryPath = `items[${itemIndex}].${field}`;
+      const assertion = assertionsByPath.get(entryPath);
+      if (!assertion || assertion.assert !== 'EXACT' || assertion.value !== item[field]) {
+        fail(`${label} 必须精确断言${entryPath}`);
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(item, 'dueDate')) {
+      fail(`${label} 单项交期必须使用itemDeliveryDate，不能使用items[].dueDate`);
+    }
+  });
+  const originalTextAssertion = assertionsByPath.get('originalText');
+  if (!originalTextAssertion || originalTextAssertion.assert !== 'EXACT'
+    || originalTextAssertion.value !== testCase.input.originalText) {
+    fail(`${label} 多商品题必须精确断言originalText`);
+  }
+  if (testCase.expected.result.fields.dueDate) {
+    const dueAssertion = assertionsByPath.get('requiredDeliveryDate');
+    if (!dueAssertion || dueAssertion.assert !== 'EXACT'
+      || dueAssertion.value !== testCase.expected.result.fields.dueDate) {
+      fail(`${label} 共享交期必须断言订单requiredDeliveryDate`);
+    }
+  }
+}
+
+function validateFinancial(testCase) {
+  if (testCase.category !== 'FINANCIAL_SAFETY') return;
+  const label = testCase.caseId;
+  if (testCase.riskLevel !== 'P0') fail(`${label} 金融安全题必须是P0`);
+  const result = testCase.expected.result;
+  const hasAmount = ['amount', 'paymentAmount', 'depositAmount'].some((key) => (
+    typeof result.fields[key] === 'number' && result.fields[key] > 0
+  ));
+  const amountBlocking = testCase.expected.preflight.blockingCodes.some((code) => /AMOUNT|EXCEEDS|PAYMENT|DEPOSIT/.test(code));
+  if (!hasAmount && !amountBlocking) fail(`${label} 金融题必须有明确金额或明确金额阻断原因`);
+  if (testCase.allowances.some((item) => (item.paths || []).some((entryPath) => /amount/i.test(entryPath)))) {
+    fail(`${label} 金额不得列入allowances`);
+  }
+  if (testCase.tags.includes('OVERPAYMENT') && testCase.expected.save.status !== 'BLOCKED') {
+    fail(`${label} 超额金融题必须BLOCKED`);
+  }
+  if (testCase.tags.includes('MULTIPLE_RECEIVABLES')
+    && !testCase.expected.preflight.requiredSelections.includes('receivableId')) {
+    fail(`${label} 多待收题必须要求选择receivableId`);
+  }
+}
+
+function validateRestartAndIdempotency(testCase, enums) {
+  const label = testCase.caseId;
+  const restart = checkRequiredObject(testCase.expected.restart, `${label}.expected.restart`, [
+    'required', 'stateFingerprint', 'recordCountStable', 'mustPersist', 'additionalBusinessDiff'
+  ]);
+  const idempotency = checkRequiredObject(testCase.expected.idempotency, `${label}.expected.idempotency`, [
+    'scenario', 'attempts', 'expectedCommitStatuses', 'expectedRevisionDelta',
+    'expectedAdditionalBusinessDiff', 'journalFinal', 'backupFinal'
+  ]);
+  if (typeof restart.required !== 'boolean') fail(`${label} restart.required必须为boolean`);
+  if (!['NOT_APPLICABLE', 'EQUAL_TO_POST_SAVE'].includes(restart.stateFingerprint)) {
+    fail(`${label} restart.stateFingerprint枚举非法`);
+  }
+  if (!['NOT_APPLICABLE', 'EMPTY'].includes(restart.additionalBusinessDiff)) {
+    fail(`${label} restart.additionalBusinessDiff枚举非法`);
+  }
+  checkArray(restart.mustPersist, `${label}.expected.restart.mustPersist`).forEach((item, index) => {
+    if (!isObject(item)) fail(`${label}.expected.restart.mustPersist[${index}]必须是定位对象`);
+  });
+  checkEnum(idempotency.scenario, enumSet(enums, 'idempotencyScenarios'), `${label}.expected.idempotency.scenario`);
+  if (!Number.isInteger(idempotency.attempts) || idempotency.attempts < 0) {
+    fail(`${label} idempotency.attempts必须为非负整数`);
+  }
+  if (!Number.isInteger(idempotency.expectedRevisionDelta) || idempotency.expectedRevisionDelta < 0) {
+    fail(`${label} idempotency.expectedRevisionDelta必须为非负整数`);
+  }
+  checkArray(idempotency.expectedCommitStatuses, `${label}.expected.idempotency.expectedCommitStatuses`)
+    .forEach((status) => {
+      if (!['COMMITTED', 'ALREADY_COMMITTED', 'REVISION_MISMATCH'].includes(status)) {
+        fail(`${label} idempotency.expectedCommitStatuses枚举非法：${status}`);
+      }
+    });
+  if (!['NOT_APPLICABLE', 'EMPTY', 'DISTINCT_COMMIT'].includes(idempotency.expectedAdditionalBusinessDiff)) {
+    fail(`${label} idempotency.expectedAdditionalBusinessDiff枚举非法`);
+  }
+  if (!['NOT_APPLICABLE', 'CLEARED'].includes(idempotency.journalFinal)
+    || !['NOT_APPLICABLE', 'CLEARED'].includes(idempotency.backupFinal)) {
+    fail(`${label} Journal/Backup最终状态枚举非法`);
+  }
+  if (testCase.executionProfiles.includes('RESTART_PERSISTENCE') && !restart.required) {
+    fail(`${label} RESTART_PERSISTENCE题必须restart.required=true`);
+  }
+  if (testCase.interaction.restartAfterSave !== restart.required) {
+    fail(`${label} interaction.restartAfterSave必须与expected.restart.required一致`);
+  }
+  if (!restart.required && (
+    restart.stateFingerprint !== 'NOT_APPLICABLE'
+    || restart.additionalBusinessDiff !== 'NOT_APPLICABLE'
+    || restart.mustPersist.length
+  )) {
+    fail(`${label} 无重启题的restart断言必须全部NOT_APPLICABLE`);
+  }
+  if (testCase.category === 'PERSISTENCE_IDEMPOTENCY'
+    && !restart.required
+    && idempotency.scenario === 'NOT_APPLICABLE') {
+    fail(`${label} 持久化幂等题必须包含restart或idempotency合同`);
+  }
+}
+
+function validateAllowancesAndRisk(testCase, enums) {
+  const label = testCase.caseId;
+  checkArray(testCase.allowances, `${label}.allowances`).forEach((allowance, index) => {
+    checkEnum(allowance && allowance.kind, enumSet(enums, 'allowanceKinds'), `${label}.allowances[${index}].kind`);
+    checkArray(allowance && allowance.paths, `${label}.allowances[${index}].paths`).forEach((entryPath) => {
+      if (FORBIDDEN_ALLOWANCE_PATH.test(entryPath)) fail(`${label} 禁止业务差异allowance：${entryPath}`);
+    });
+    checkString(allowance && allowance.reason, `${label}.allowances[${index}].reason`);
+  });
+  if (testCase.knownRisk !== null) {
+    if (!isObject(testCase.knownRisk)) fail(`${label}.knownRisk必须是对象或null`);
+    if (FORBIDDEN_KNOWN_RISK.test(JSON.stringify(testCase.knownRisk))) {
+      fail(`${label} knownRisk包含失败豁免语义`);
+    }
+  }
+}
+
+function validateStateReferences(testCase, resolvedStateFixtureMap) {
+  const label = testCase.caseId;
+  const baseState = cloneJson(resolvedStateFixtureMap.get(testCase.initialState.fixtureRef) || {});
+  const state = Object.assign(baseState, cloneJson(testCase.initialState.overrides || {}));
+  const collectionBySelection = {
+    customerId: 'customers',
+    orderId: 'orders',
+    quotationId: 'quotations',
+    receivableId: 'receivables'
+  };
+  const blockingCodes = testCase.expected.preflight.blockingCodes || [];
+  testCase.interaction.userSelections.forEach((selection) => {
+    const collection = collectionBySelection[selection.kind];
+    const exists = asArray(state[collection]).some((item) => item && item.id === selection.selectedId);
+    const intentionalMissing = blockingCodes.some((code) => /TARGET_NOT_FOUND|DELETED|INVALID_TARGET/.test(code));
+    if (!exists && !intentionalMissing) {
+      fail(`${label} 选择${selection.kind}=${selection.selectedId}在初始State中不存在`);
+    }
+  });
+  testCase.expected.preflight.requiredSelections.forEach((selectionKind) => {
+    const hasSelection = testCase.interaction.userSelections.some((item) => item.kind === selectionKind);
+    const collection = collectionBySelection[selectionKind];
+    if (!hasSelection && asArray(state[collection]).length < 2) {
+      fail(`${label} 要求选择${selectionKind}，但初始State不足两个候选`);
+    }
+  });
+  if (testCase.input.channel === 'PENDING_EDIT') {
+    const exists = asArray(state.pendingNotes).some((item) => item && item.id === testCase.input.pendingNoteId);
+    if (!exists) fail(`${label} pendingNoteId在初始State中不存在：${testCase.input.pendingNoteId}`);
+  }
+}
+
+function validateCase(testCase, context) {
+  const {
+    enums, schema, stateFixtureIds, resolvedStateFixtureMap, aiFixtureIds, aiFixtureMap
+  } = context;
+  if (!isObject(testCase)) {
+    fail('题目必须是对象');
+    return;
+  }
+  const label = testCase.caseId || '<missing-caseId>';
+  collectSchemaErrors(schema, schema, testCase, label).forEach(fail);
+  const serializedCase = JSON.stringify(testCase);
+  if (containsSensitiveData(serializedCase)) {
+    fail(`${label} Case包含疑似隐私、密钥、微信标识或精确地址`);
+  }
+  [
+    'schemaVersion', 'caseId', 'title', 'status', 'riskLevel', 'category', 'tags',
+    'provenance', 'executionProfiles', 'input', 'clock', 'initialState', 'ai',
+    'interaction', 'expected', 'allowances', 'knownRisk'
+  ].forEach((key) => {
+    if (!Object.prototype.hasOwnProperty.call(testCase, key)) fail(`${label}.${key} 缺失`);
+  });
+  if (testCase.schemaVersion !== 'record-e2e-case-v1') fail(`${label} schemaVersion错误`);
+  if (!CASE_ID_PATTERN.test(String(testCase.caseId || ''))) fail(`${label} caseId格式错误`);
+  checkString(testCase.title, `${label}.title`);
+  checkEnum(testCase.status, enumSet(enums, 'statuses'), `${label}.status`);
+  checkEnum(testCase.riskLevel, enumSet(enums, 'riskLevels'), `${label}.riskLevel`);
+  checkEnum(testCase.category, enumSet(enums, 'categories'), `${label}.category`);
+  const tags = checkArray(testCase.tags, `${label}.tags`);
+  if (tags.length < 2 || duplicateValues(tags).length) fail(`${label}.tags至少两个且不可重复`);
+  const profiles = checkArray(testCase.executionProfiles, `${label}.executionProfiles`);
+  profiles.forEach((profile) => checkEnum(profile, enumSet(enums, 'executionProfiles'), `${label}.executionProfiles`));
+  if (!profiles.includes('HEADLESS_DETERMINISTIC')) fail(`${label} 核心题必须可由Headless确定性Runner消费`);
+  if (profiles.includes('PAGE_E2E') && testCase.input && testCase.input.entrySurface === 'HEADLESS') {
+    fail(`${label} PAGE_E2E题必须指定HOME_QUICK或FULL_PAGE`);
+  }
+
+  validateProvenance(testCase, enums);
+  validateInput(testCase, enums);
+  validateClock(testCase);
+  const initialState = checkRequiredObject(testCase.initialState, `${label}.initialState`, ['fixtureRef', 'overrides']);
+  if (!stateFixtureIds.has(initialState.fixtureRef)) fail(`${label} fixtureRef不存在：${initialState.fixtureRef}`);
+  if (!isObject(initialState.overrides)) fail(`${label}.initialState.overrides必须是对象`);
+  Object.keys(initialState.overrides || {}).forEach((key) => {
+    if (!STATE_OVERRIDE_KEYS.has(key)) fail(`${label}.initialState.overrides.${key}不是允许的State顶层键`);
+  });
+  validateResult(testCase, enums);
+  validateRouting(testCase, enums);
+  validateAi(testCase, enums, aiFixtureIds, aiFixtureMap);
+  validateInteraction(testCase, enums);
+  validatePreflightAndSave(testCase, enums);
+  validateStateReferences(testCase, resolvedStateFixtureMap);
+  validateSurface(testCase, enums);
+  validateDiff(testCase, enums);
+  validateMultiItem(testCase);
+  validateFinancial(testCase);
+  validateRestartAndIdempotency(testCase, enums);
+  validateAllowancesAndRisk(testCase, enums);
+}
+
+function validateFixtureCollections(stateFixtureDocument, aiFixtureDocument) {
+  const stateFixtures = asArray(stateFixtureDocument && stateFixtureDocument.fixtures);
+  const aiFixtures = asArray(aiFixtureDocument && aiFixtureDocument.fixtures);
+  const stateIds = stateFixtures.map((item) => item.fixtureId);
+  const aiIds = aiFixtures.map((item) => item.fixtureId);
+  duplicateValues(stateIds).forEach((id) => fail(`State fixtureId重复：${id}`));
+  duplicateValues(aiIds).forEach((id) => fail(`AI fixtureId重复：${id}`));
+  duplicateValues(aiFixtures.filter((item) => item.caseId).map((item) => item.caseId))
+    .forEach((id) => fail(`AI fixture caseId重复：${id}`));
+
+  const stateSet = new Set(stateIds);
+  const stateFixtureMap = new Map(stateFixtures.map((fixture) => [fixture.fixtureId, fixture]));
+  const resolvedStateFixtureMap = new Map();
+  const resolving = new Set();
+  function resolveStateFixture(fixtureId) {
+    if (resolvedStateFixtureMap.has(fixtureId)) return resolvedStateFixtureMap.get(fixtureId);
+    if (resolving.has(fixtureId)) {
+      fail(`${fixtureId} State fixture继承存在循环`);
+      return {};
+    }
+    const fixture = stateFixtureMap.get(fixtureId);
+    if (!fixture) return {};
+    resolving.add(fixtureId);
+    const base = fixture.extends ? cloneJson(resolveStateFixture(fixture.extends)) : {};
+    const resolved = Object.assign(base, cloneJson(fixture.extends ? fixture.patch : fixture.state));
+    resolving.delete(fixtureId);
+    resolvedStateFixtureMap.set(fixtureId, resolved);
+    return resolved;
+  }
+  stateFixtures.forEach((fixture) => {
+    checkString(fixture.fixtureId, 'state fixtureId');
+    checkString(fixture.description, `${fixture.fixtureId}.description`);
+    if (fixture.extends && !stateSet.has(fixture.extends)) fail(`${fixture.fixtureId} extends不存在：${fixture.extends}`);
+    if (!fixture.extends && !isObject(fixture.state)) fail(`${fixture.fixtureId} 根fixture必须包含state`);
+    if (fixture.extends && !isObject(fixture.patch)) fail(`${fixture.fixtureId} 派生fixture必须包含patch`);
+    const serialized = JSON.stringify(fixture);
+    if (containsSensitiveData(serialized)) {
+      fail(`${fixture.fixtureId} State fixture包含疑似隐私或密钥`);
+    }
+    resolveStateFixture(fixture.fixtureId);
+  });
+  aiFixtures.forEach((fixture) => {
+    checkString(fixture.fixtureId, 'AI fixtureId');
+    if (!['standard', 'deep'].includes(fixture.reviewMode)) {
+      fail(`${fixture.fixtureId} reviewMode必须是standard/deep`);
+    }
+    if (!['FAKE', 'MOCK', 'REPLAY'].includes(fixture.providerKind)) {
+      fail(`${fixture.fixtureId} providerKind必须是FAKE/MOCK/REPLAY`);
+    }
+    if (fixture.kind === 'REPLAY_RESPONSE' && fixture.sanitized !== true) {
+      fail(`${fixture.fixtureId} Replay必须显式sanitized=true`);
+    }
+    if (fixture.kind === 'REPLAY_RESPONSE' && fixture.capturedFromRealCustomer !== false) {
+      fail(`${fixture.fixtureId} Replay必须显式capturedFromRealCustomer=false`);
+    }
+    const serialized = JSON.stringify(fixture);
+    if (containsSensitiveData(serialized)) {
+      fail(`${fixture.fixtureId} AI fixture包含疑似隐私或密钥`);
+    }
+  });
+  return {
+    stateFixtureIds: stateSet,
+    resolvedStateFixtureMap,
+    aiFixtureIds: new Set(aiIds),
+    aiFixtureMap: new Map(aiFixtures.map((fixture) => [fixture.fixtureId, fixture]))
+  };
+}
+
+function loadCases() {
+  if (!fs.existsSync(CASE_ROOT)) {
+    fail('tests/record-e2e/cases/core-v1 不存在');
+    return { files: [], cases: [] };
+  }
+  const files = fs.readdirSync(CASE_ROOT)
+    .filter((name) => name.endsWith('.json'))
+    .sort();
+  const cases = [];
+  files.forEach((fileName) => {
+    const document = readJson(path.join(CASE_ROOT, fileName));
+    if (!document) return;
+    if (document.schemaVersion !== 'record-e2e-case-file-v1') fail(`${fileName} case file schemaVersion错误`);
+    if (!Array.isArray(document.cases)) {
+      fail(`${fileName}.cases必须是数组`);
+      return;
+    }
+    document.cases.forEach((testCase) => {
+      Object.defineProperty(testCase, '__file', { value: fileName, enumerable: false });
+      cases.push(testCase);
+    });
+  });
+  return { files, cases };
+}
+
+function countBy(cases, selector) {
+  return cases.reduce((result, testCase) => {
+    const values = asArray(selector(testCase));
+    values.forEach((value) => {
+      const key = String(value);
+      result[key] = (result[key] || 0) + 1;
+    });
+    return result;
+  }, {});
+}
+
+function validateDuplicates(cases) {
+  const exact = new Map();
+  const skeletons = new Map();
+  cases.forEach((testCase) => {
+    const normalized = normalizeText(testCase.input.originalText, testCase.input.channel);
+    if (!exact.has(normalized)) exact.set(normalized, []);
+    exact.get(normalized).push(testCase.caseId);
+    const skeletonKey = [
+      testCase.category,
+      testCase.input.channel,
+      testCase.expected.result.businessType,
+      testCase.expected.result.operation,
+      testCase.initialState.fixtureRef,
+      testCase.expected.route,
+      testCase.expected.save.status,
+      literalSkeleton(testCase.input.originalText)
+    ].join('|');
+    if (!skeletons.has(skeletonKey)) skeletons.set(skeletonKey, []);
+    skeletons.get(skeletonKey).push(testCase.caseId);
+  });
+  const exactDuplicates = Array.from(exact.values()).filter((ids) => ids.length > 1);
+  exactDuplicates.forEach((ids) => fail(`规范化原文重复：${ids.join(', ')}`));
+  const lowValue = Array.from(skeletons.values()).filter((ids) => ids.length > 1);
+  lowValue.forEach((ids) => warn(`疑似仅换数字/字面量重复：${ids.join(', ')}`));
+  return {
+    normalizedUniqueCount: exact.size,
+    skeletonUniqueCount: skeletons.size,
+    suspiciousLowValueCount: lowValue.length,
+    largestSkeletonCluster: Math.max(0, ...Array.from(skeletons.values()).map((ids) => ids.length))
+  };
+}
+
+function validateCoverage(cases, decisions, indexDocument) {
+  const active = cases.filter((testCase) => testCase.status === 'ACTIVE');
+  const categoryCounts = countBy(active, (item) => [item.category]);
+  const riskCounts = countBy(active, (item) => [item.riskLevel]);
+  const profileCounts = countBy(active, (item) => item.executionProfiles);
+  if (active.length !== 120) fail(`ACTIVE题必须为120，实际${active.length}`);
+  Object.entries(EXPECTED_CATEGORY_COUNTS).forEach(([category, expected]) => {
+    if ((categoryCounts[category] || 0) !== expected) {
+      fail(`${category}必须${expected}题，实际${categoryCounts[category] || 0}`);
+    }
+  });
+  if ((riskCounts.P0 || 0) < 40) fail(`P0必须>=40，实际${riskCounts.P0 || 0}`);
+  if ((riskCounts.P1 || 0) < 50) fail(`P1必须>=50，实际${riskCounts.P1 || 0}`);
+  if ((riskCounts.P2 || 0) > 30) fail(`P2必须<=30，实际${riskCounts.P2 || 0}`);
+  if ((profileCounts.REAL_QWEN_QUALITY || 0) < 50) {
+    fail(`REAL_QWEN_QUALITY必须>=50，实际${profileCounts.REAL_QWEN_QUALITY || 0}`);
+  }
+  if ((profileCounts.PAGE_E2E || 0) < 40) {
+    fail(`PAGE_E2E必须>=40，实际${profileCounts.PAGE_E2E || 0}`);
+  }
+  const page008 = active.find((item) => item.caseId === 'REC-E2E-PAGE-008');
+  if (!page008 || !page008.knownRisk || page008.knownRisk.riskId !== 'HOME_ITEM0_EDIT_SYNC') {
+    fail('必须包含REC-E2E-PAGE-008首页items[0]同步静态P0候选题');
+  }
+
+  const decisionItems = asArray(decisions && decisions.decisions);
+  if (decisionItems.length > 20) fail(`产品决策待办最多20项，实际${decisionItems.length}`);
+  decisionItems.forEach((item, index) => {
+    ['decisionId', 'inputExample', 'currentPossibleBehaviors', 'risk',
+      'whyContractIsInsufficient', 'recommendedQuestionForOwner'].forEach((key) => {
+      if (!item || !Object.prototype.hasOwnProperty.call(item, key)) {
+        fail(`产品决策待办[${index}].${key}缺失`);
+      }
+    });
+    const serialized = JSON.stringify(item);
+    if (containsSensitiveData(serialized)) {
+      fail(`产品决策待办[${index}]包含疑似隐私或密钥`);
+    }
+  });
+
+  if (!indexDocument || indexDocument.schemaVersion !== 'record-e2e-corpus-index-v1') {
+    fail('corpus-index-v1.json schemaVersion错误');
+  } else {
+    if (indexDocument.activeCaseCount !== 120) fail('corpus index activeCaseCount必须为120');
+    if (JSON.stringify(indexDocument.expectedCategoryCounts) !== JSON.stringify(EXPECTED_CATEGORY_COUNTS)) {
+      fail('corpus index分类配额与Validator不一致');
+    }
+    if (!indexDocument.stateDiffCollectionMap
+      || indexDocument.stateDiffCollectionMap.payments !== 'paymentRecords') {
+      fail('corpus index必须显式声明State Diff payments到State paymentRecords的映射');
+    }
+    if (!indexDocument.resultToStateFieldMap
+      || indexDocument.resultToStateFieldMap.receivableAmount !== 'receivables[].amount') {
+      fail('corpus index必须显式声明receivableAmount到receivables[].amount的映射');
+    }
+    if (indexDocument.expectedResultLayer !== 'POST_NORMALIZER_POST_INTERACTION_CONFIRMATION_SEMANTICS') {
+      fail('corpus index必须固定expected.result的标准确认语义判分层');
+    }
+  }
+  return { active, categoryCounts, riskCounts, profileCounts, decisionItems };
+}
+
+function printMap(title, map, preferredOrder = []) {
+  console.log(`\n${title}`);
+  const keys = unique(preferredOrder.concat(Object.keys(map).sort()));
+  keys.filter((key) => map[key] !== undefined).forEach((key) => {
+    console.log(`  ${key}: ${map[key]}`);
+  });
+}
+
+function main() {
+  const enums = readJson(ENUM_PATH);
+  const schema = readJson(SCHEMA_PATH);
+  const stateFixtures = readJson(STATE_FIXTURE_PATH);
+  const aiFixtures = readJson(AI_FIXTURE_PATH);
+  const decisions = readJson(DECISION_PATH);
+  const indexDocument = readJson(INDEX_PATH);
+  if (!enums || !schema || !stateFixtures || !aiFixtures) {
+    throw new Error('基础合同文件无法加载');
+  }
+  if (schema.$id !== 'record-e2e-case-v1.schema.json') fail('JSON Schema $id错误');
+  const fixtureContext = validateFixtureCollections(stateFixtures, aiFixtures);
+  const loaded = loadCases();
+  loaded.cases.forEach((testCase) => validateCase(testCase, {
+    enums,
+    schema,
+    stateFixtureIds: fixtureContext.stateFixtureIds,
+    resolvedStateFixtureMap: fixtureContext.resolvedStateFixtureMap,
+    aiFixtureIds: fixtureContext.aiFixtureIds,
+    aiFixtureMap: fixtureContext.aiFixtureMap
+  }));
+  duplicateValues(loaded.cases.map((item) => item.caseId)).forEach((caseId) => fail(`caseId重复：${caseId}`));
+  const duplicateStats = validateDuplicates(loaded.cases);
+  const coverage = validateCoverage(loaded.cases, decisions, indexDocument);
+
+  const active = coverage.active;
+  const channelCounts = countBy(active, (item) => [item.input.channel]);
+  const surfaceCounts = countBy(active, (item) => [item.input.entrySurface]);
+  const businessTypeCounts = countBy(active, (item) => [item.expected.result.businessType]);
+  const routeCounts = countBy(active, (item) => [item.expected.route]);
+  const saveCounts = countBy(active, (item) => [item.expected.save.status]);
+  const fixtureCounts = countBy(active, (item) => [item.initialState.fixtureRef]);
+
+  console.log('Record E2E Corpus V1 校验与覆盖统计');
+  console.log(`  JSON case files: ${loaded.files.length}`);
+  console.log(`  总ACTIVE题数: ${active.length}`);
+  console.log(`  State fixtures: ${fixtureContext.stateFixtureIds.size}`);
+  console.log(`  AI fixtures: ${fixtureContext.aiFixtureIds.size}`);
+  console.log(`  产品决策待办数量: ${coverage.decisionItems.length}`);
+  console.log(`  规范化原文唯一数: ${duplicateStats.normalizedUniqueCount}`);
+  console.log(`  结构skeleton唯一数: ${duplicateStats.skeletonUniqueCount}`);
+  console.log(`  疑似低价值题簇: ${duplicateStats.suspiciousLowValueCount}`);
+  console.log(`  最大skeleton簇: ${duplicateStats.largestSkeletonCluster}`);
+  printMap('各分类题数', coverage.categoryCounts, Object.keys(EXPECTED_CATEGORY_COUNTS));
+  printMap('P0/P1/P2数量', coverage.riskCounts, ['P0', 'P1', 'P2']);
+  printMap('各inputChannel数量', channelCounts, enums.inputChannels);
+  printMap('各entrySurface数量', surfaceCounts, enums.entrySurfaces);
+  printMap('各executionProfile数量', coverage.profileCounts, enums.executionProfiles);
+  printMap('各businessType数量', businessTypeCounts, enums.businessTypes);
+  printMap('各route预期数量', routeCounts, enums.routes);
+  printMap('正式保存/待整理/阻断数量', saveCounts, enums.saveStatuses);
+  printMap('使用各initialState fixture数量', fixtureCounts);
+  console.log(`\nREAL_QWEN_QUALITY数量: ${coverage.profileCounts.REAL_QWEN_QUALITY || 0}`);
+  console.log(`PAGE_E2E数量: ${coverage.profileCounts.PAGE_E2E || 0}`);
+  console.log(`产品决策待办数量: ${coverage.decisionItems.length}`);
+  console.log(`重复或疑似低价值题数量: ${duplicateStats.suspiciousLowValueCount}`);
+
+  if (warnings.length) {
+    console.log('\n警告');
+    warnings.forEach((message) => console.log(`  WARN ${message}`));
+  }
+  if (failures.length) {
+    console.error(`\n校验失败：${failures.length}项`);
+    failures.forEach((message) => console.error(`  FAIL ${message}`));
+    process.exitCode = 1;
+    return;
+  }
+  console.log('\n校验通过：120条ACTIVE合成题符合Record E2E Case V1合同。');
+}
+
+try {
+  main();
+} catch (error) {
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+}

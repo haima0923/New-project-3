@@ -1,0 +1,3158 @@
+{
+  "schemaVersion": "record-e2e-ai-fixtures-v1",
+  "description": "全部为人工合成的离线AI响应或故障合同。不得作为REAL模型成绩，不得取得生产正式保存资格。",
+  "fixtures": [
+    {
+      "fixtureId": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "fields": {
+          "customerName": "王总",
+          "productName": "水杯",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 5.5,
+          "amount": 550,
+          "dueDate": "2026-07-17",
+          "items": [
+            {
+              "productName": "水杯",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 5.5,
+              "totalAmount": 550,
+              "dueDate": "2026-07-17"
+            }
+          ],
+          "remark": "E2E_FAKE_STANDARD_SENTINEL"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "fields": {
+          "customerName": "李姐",
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300,
+              "dueDate": "2026-07-20"
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 800,
+              "dueDate": "2026-07-20"
+            }
+          ],
+          "amount": 1100,
+          "dueDate": "2026-07-20",
+          "remark": "E2E_FAKE_DEEP_SENTINEL"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "赵姐",
+          "productName": "样品袋",
+          "quantity": 120,
+          "unit": "个",
+          "unitPrice": 2,
+          "amount": 240,
+          "dueDate": "2026-07-20",
+          "remark": "E2E_FAKE_DEEP_SINGLE_ORDER_SENTINEL"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "amount": 1500,
+          "paidAt": "2026-07-15",
+          "receivableId": "rec-open-a",
+          "remark": "E2E_FAKE_DEEP_PAYMENT_SENTINEL"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-deep-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order_deposit",
+        "operation": "record_order_deposit",
+        "fields": {
+          "customerName": "王总",
+          "orderId": "ord-active-a",
+          "amount": 2000,
+          "paidAt": "2026-07-15",
+          "remark": "E2E_FAKE_DEEP_DEPOSIT_SENTINEL"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-deep-order-with-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "孙老板",
+          "productName": "卡套",
+          "quantity": 1000,
+          "unit": "个",
+          "unitPrice": 5,
+          "amount": 5000,
+          "depositAmount": 1000,
+          "dueDate": "2026-07-28",
+          "remark": "E2E_FAKE_DEEP_ORDER_DEPOSIT_SENTINEL"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 5,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "unknown",
+        "status": "NEEDS_USER_CONFIRM",
+        "reason": "无法确定客户和业务类型",
+        "fields": {},
+        "missing_fields": [
+          "businessType",
+          "customerName"
+        ],
+        "low_confidence_fields": [
+          "businessType"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "unknown",
+        "status": "NEEDS_USER_CONFIRM",
+        "reason": "深度复核后仍无法确定关键业务事实",
+        "fields": {},
+        "missing_fields": [
+          "businessType"
+        ],
+        "low_confidence_fields": [
+          "businessType"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-empty-business-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 5,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "model": "synthetic-empty"
+      },
+      "expectedFailureCode": "AI_RESPONSE_EMPTY_BUSINESS"
+    },
+    {
+      "fixtureId": "ai-invalid-json-v1",
+      "kind": "INVALID_JSON",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 5,
+      "rawResponse": "{ this is deliberately invalid synthetic json",
+      "expectedFailureCode": "AI_RESPONSE_EMPTY_BUSINESS"
+    },
+    {
+      "fixtureId": "ai-timeout-v1",
+      "kind": "TIMEOUT",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 9000,
+      "expectedFailureCode": "NETWORK_REQUEST_FAILED"
+    },
+    {
+      "fixtureId": "ai-mock-provider-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "MOCK",
+      "delayMs": 5,
+      "response": {
+        "provider": "mock",
+        "intent": "order",
+        "fields": {
+          "customerName": "王总",
+          "productName": "纸袋",
+          "quantity": 500,
+          "unit": "只",
+          "unitPrice": 1
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 20,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "customerName": "王总",
+          "dueDate": "2026-07-31"
+        },
+        "order_candidates": [
+          {
+            "id": "ord-syn-a-1",
+            "reason": "客户和礼品盒匹配"
+          },
+          {
+            "id": "ord-syn-a-2",
+            "reason": "客户匹配但商品未明确"
+          }
+        ],
+        "missing_fields": [
+          "orderId"
+        ],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-replay-sanitized-order-v1",
+      "kind": "REPLAY_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "REPLAY",
+      "sanitized": true,
+      "capturedFromRealCustomer": false,
+      "delayMs": 0,
+      "response": {
+        "provider": "replay",
+        "intent": "quotation",
+        "fields": {
+          "customerName": "陈老板",
+          "productName": "钥匙扣",
+          "quantity": 800,
+          "unit": "个",
+          "unitPrice": 1.2,
+          "amount": 960
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-replay-history-candidates-v1",
+      "kind": "REPLAY_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "REPLAY",
+      "sanitized": true,
+      "capturedFromRealCustomer": false,
+      "delayMs": 0,
+      "response": {
+        "provider": "replay",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "customerName": "王总",
+          "dueDate": "2026-07-31"
+        },
+        "order_candidates": [
+          {
+            "id": "ord-syn-a-1",
+            "reason": "合成候选一"
+          },
+          {
+            "id": "ord-syn-a-2",
+            "reason": "合成候选二"
+          }
+        ],
+        "missing_fields": [
+          "orderId"
+        ],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-no-record-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 5,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "unknown",
+        "status": "NO_RECORD",
+        "reason": "输入不包含业务记录",
+        "fields": {},
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-basic-011-v1",
+      "caseId": "REC-E2E-BASIC-011",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderId": "ord-active-a",
+          "paymentAmount": 1500,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-basic-012-v1",
+      "caseId": "REC-E2E-BASIC-012",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 600,
+          "paymentDate": "2026-07-15",
+          "allowUnlinkedPayment": true,
+          "unlinkedPaymentCustomerId": "cus-syn-a"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-basic-013-v1",
+      "caseId": "REC-E2E-BASIC-013",
+      "sourceTemplateRef": "ai-deep-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order_deposit",
+        "operation": "record_order_deposit",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "depositAmount": 2000,
+          "paymentKind": "deposit",
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "order_candidates": [
+          {
+            "id": "ord-active-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-basic-014-v1",
+      "caseId": "REC-E2E-BASIC-014",
+      "sourceTemplateRef": "ai-deep-order-with-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "孙老板",
+          "productName": "卡套",
+          "quantity": 1000,
+          "unit": "个",
+          "unitPrice": 5,
+          "amount": 5000,
+          "depositAmount": 1000,
+          "orderDeliveryDate": "2026-07-28",
+          "items": [
+            {
+              "productName": "卡套",
+              "quantity": 1000,
+              "unit": "个",
+              "unitPrice": 5,
+              "totalAmount": 5000
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-003-v1",
+      "caseId": "REC-E2E-AMB-003",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "amount"
+        ],
+        "low_confidence_fields": [
+          "amount"
+        ],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-004-v1",
+      "caseId": "REC-E2E-AMB-004",
+      "sourceTemplateRef": "ai-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "payment",
+        "operation": "pending",
+        "fields": {
+          "proposedBusinessType": "payment",
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "customerName",
+          "amount"
+        ],
+        "low_confidence_fields": [
+          "customerName",
+          "amount"
+        ],
+        "field_conflicts": [],
+        "status": "NEEDS_USER_CONFIRM"
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-006-v1",
+      "caseId": "REC-E2E-AMB-006",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderDeliveryDate": "2026-07-31"
+        },
+        "missing_fields": [
+          "orderId"
+        ],
+        "low_confidence_fields": [
+          "orderId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-007-v1",
+      "caseId": "REC-E2E-AMB-007",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "unknown",
+        "operation": "pending",
+        "fields": {
+          "detectedIntents": [
+            "order",
+            "payment"
+          ],
+          "paymentAmount": 1000,
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 300,
+              "unit": "个"
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "businessType"
+        ],
+        "field_conflicts": [
+          {
+            "field": "businessType",
+            "values": []
+          }
+        ],
+        "status": "NEEDS_USER_CONFIRM"
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-008-v1",
+      "caseId": "REC-E2E-AMB-008",
+      "sourceTemplateRef": "ai-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "pending",
+        "fields": {
+          "proposedBusinessType": "order",
+          "customerName": "周老板",
+          "productName": "雨伞",
+          "quantity": 200,
+          "unit": "把",
+          "dateText": "最近几天",
+          "items": [
+            {
+              "productName": "雨伞",
+              "quantity": 200,
+              "unit": "把"
+            }
+          ]
+        },
+        "missing_fields": [
+          "dueDate"
+        ],
+        "low_confidence_fields": [
+          "dueDate"
+        ],
+        "field_conflicts": [],
+        "status": "NEEDS_USER_CONFIRM"
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-009-v1",
+      "caseId": "REC-E2E-AMB-009",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "吴老板",
+          "productName": "笔袋",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 8,
+          "statedAmount": 900,
+          "calculatedAmount": 800,
+          "items": [
+            {
+              "productName": "笔袋",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 8,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "amount"
+        ],
+        "field_conflicts": [
+          {
+            "field": "amount",
+            "values": []
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-010-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 5,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "model": "synthetic-empty"
+      },
+      "expectedFailureCode": "AI_RESPONSE_EMPTY_BUSINESS",
+      "caseId": "REC-E2E-AMB-010",
+      "sourceTemplateRef": "ai-empty-business-v1"
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-011-v1",
+      "kind": "TIMEOUT",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 9000,
+      "expectedFailureCode": "NETWORK_REQUEST_FAILED",
+      "caseId": "REC-E2E-AMB-011",
+      "sourceTemplateRef": "ai-timeout-v1"
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-015-v1",
+      "caseId": "REC-E2E-AMB-015",
+      "sourceTemplateRef": "ai-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "pending",
+        "fields": {
+          "proposedBusinessType": "order",
+          "productName": "徽章",
+          "quantity": 300,
+          "unit": "个",
+          "unitPrice": 2,
+          "amount": 600,
+          "items": [
+            {
+              "productName": "徽章",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 600
+            }
+          ]
+        },
+        "missing_fields": [
+          "customerName"
+        ],
+        "low_confidence_fields": [
+          "customerName"
+        ],
+        "field_conflicts": [],
+        "status": "NEEDS_USER_CONFIRM"
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-amb-016-v1",
+      "caseId": "REC-E2E-AMB-016",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 1000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "receivableId"
+        ],
+        "low_confidence_fields": [
+          "receivableId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-002-v1",
+      "caseId": "REC-E2E-REL-002",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "productName": "卡套",
+          "quantity": 600,
+          "unit": "个",
+          "unitPrice": 5,
+          "amount": 3000,
+          "explicitNewRecord": true,
+          "items": [
+            {
+              "productName": "卡套",
+              "quantity": 600,
+              "unit": "个",
+              "unitPrice": 5,
+              "totalAmount": 3000
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-003-v1",
+      "caseId": "REC-E2E-REL-003",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderDeliveryDate": "2026-07-27"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "order_candidates": [
+          {
+            "id": "ord-syn-a-1",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-004-v1",
+      "caseId": "REC-E2E-REL-004",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "quantity": 700
+        },
+        "missing_fields": [
+          "orderId"
+        ],
+        "low_confidence_fields": [
+          "orderId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-006-v1",
+      "caseId": "REC-E2E-REL-006",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "王老板",
+          "productName": "保温袋",
+          "quantity": 150,
+          "unit": "个",
+          "unitPrice": 12,
+          "amount": 1800,
+          "items": [
+            {
+              "productName": "保温袋",
+              "quantity": 150,
+              "unit": "个",
+              "unitPrice": 12,
+              "totalAmount": 1800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "customer_candidates": [
+          {
+            "id": "cus-syn-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-007-v1",
+      "caseId": "REC-E2E-REL-007",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "quotation",
+        "operation": "update_quotation",
+        "fields": {
+          "unitPrice": 17
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "customerId"
+        ],
+        "field_conflicts": [
+          {
+            "field": "customerId",
+            "values": []
+          }
+        ],
+        "customer_candidates": [
+          {
+            "id": "cus-cross-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ],
+        "quotation_candidates": [
+          {
+            "id": "quo-cross-b",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-008-v1",
+      "caseId": "REC-E2E-REL-008",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "productName": "保温杯"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "quotationStatus"
+        ],
+        "field_conflicts": [
+          {
+            "field": "quotationStatus",
+            "values": []
+          }
+        ],
+        "quotation_candidates": [
+          {
+            "id": "quo-syn-a-1",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-009-v1",
+      "caseId": "REC-E2E-REL-009",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "productName": "纸袋"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "customerId"
+        ],
+        "field_conflicts": [
+          {
+            "field": "customerId",
+            "values": []
+          }
+        ],
+        "customer_candidates": [
+          {
+            "id": "cus-cross-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ],
+        "order_candidates": [
+          {
+            "id": "ord-cross-b",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-010-v1",
+      "caseId": "REC-E2E-REL-010",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "quotation",
+        "operation": "update_quotation",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "unitPrice": 16
+        },
+        "missing_fields": [
+          "quotationId"
+        ],
+        "low_confidence_fields": [
+          "quotationId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-011-v1",
+      "caseId": "REC-E2E-REL-011",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 1200,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "receivableId"
+        ],
+        "low_confidence_fields": [
+          "receivableId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-012-v1",
+      "caseId": "REC-E2E-REL-012",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 500,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "receivableStatus"
+        ],
+        "field_conflicts": [
+          {
+            "field": "receivableStatus",
+            "values": []
+          }
+        ],
+        "receivable_candidates": [
+          {
+            "id": "rec-settled-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-013-v1",
+      "caseId": "REC-E2E-REL-013",
+      "sourceTemplateRef": "ai-replay-history-candidates-v1",
+      "kind": "REPLAY_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "REPLAY",
+      "delayMs": 0,
+      "response": {
+        "provider": "e2e-synthetic-replay",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "orderDeliveryDate": "2026-08-01"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "orderId"
+        ],
+        "field_conflicts": [
+          {
+            "field": "orderId",
+            "values": []
+          }
+        ],
+        "order_candidates": [
+          {
+            "id": "ord-missing-synthetic",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      },
+      "sanitized": true,
+      "capturedFromRealCustomer": false
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-rel-014-v1",
+      "caseId": "REC-E2E-REL-014",
+      "sourceTemplateRef": "ai-history-candidates-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "update_order",
+        "fields": {
+          "orderDeliveryDate": "2026-07-31"
+        },
+        "missing_fields": [
+          "orderId"
+        ],
+        "low_confidence_fields": [
+          "orderId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-001-v1",
+      "caseId": "REC-E2E-MULTI-001",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "李姐",
+          "amount": 1100,
+          "orderDeliveryDate": "2026-07-20",
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-002-v1",
+      "caseId": "REC-E2E-MULTI-002",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "周老板",
+          "amount": 1360,
+          "orderDeliveryDate": "2026-07-25",
+          "items": [
+            {
+              "productName": "钥匙扣",
+              "quantity": 500,
+              "unit": "个",
+              "unitPrice": 1.2,
+              "totalAmount": 600
+            },
+            {
+              "productName": "冰箱贴",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 600
+            },
+            {
+              "productName": "徽章",
+              "quantity": 200,
+              "unit": "个",
+              "unitPrice": 0.8,
+              "totalAmount": 160
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-003-v1",
+      "caseId": "REC-E2E-MULTI-003",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "陈老板",
+          "amount": 1960,
+          "items": [
+            {
+              "productName": "纸袋",
+              "quantity": 1000,
+              "unit": "只",
+              "unitPrice": 1,
+              "totalAmount": 1000
+            },
+            {
+              "productName": "礼品盒",
+              "quantity": 80,
+              "unit": "套",
+              "unitPrice": 12,
+              "totalAmount": 960
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-004-v1",
+      "caseId": "REC-E2E-MULTI-004",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "赵姐",
+          "amount": 1800,
+          "items": [
+            {
+              "productName": "小号收纳袋",
+              "quantity": 200,
+              "unit": "个",
+              "unitPrice": 5,
+              "totalAmount": 1000
+            },
+            {
+              "productName": "大号收纳袋",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 8,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-005-v1",
+      "caseId": "REC-E2E-MULTI-005",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "孙老板",
+          "calculatedAmount": 380,
+          "items": [
+            {
+              "productName": "标签纸",
+              "quantity": 400,
+              "unit": "张",
+              "unitPrice": 0.5,
+              "totalAmount": 200
+            },
+            {
+              "productName": "封口贴",
+              "quantity": 600,
+              "unit": "张",
+              "unitPrice": 0.3,
+              "totalAmount": 180
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-006-v1",
+      "caseId": "REC-E2E-MULTI-006",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "钱姐",
+          "amount": 1900,
+          "orderDeliveryDate": "2026-08-02",
+          "items": [
+            {
+              "productName": "文具盒",
+              "quantity": 100,
+              "unit": "套",
+              "unitPrice": 15,
+              "totalAmount": 1500
+            },
+            {
+              "productName": "签字笔",
+              "quantity": 200,
+              "unit": "支",
+              "unitPrice": 2,
+              "totalAmount": 400
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-007-v1",
+      "caseId": "REC-E2E-MULTI-007",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "何老板",
+          "amount": 2100,
+          "items": [
+            {
+              "productName": "纸盒",
+              "quantity": 500,
+              "unit": "个",
+              "unitPrice": 3,
+              "totalAmount": 1500,
+              "itemDeliveryDate": "2026-07-20"
+            },
+            {
+              "productName": "手提袋",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 600,
+              "itemDeliveryDate": "2026-07-23"
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-008-v1",
+      "caseId": "REC-E2E-MULTI-008",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "马姐",
+          "items": [
+            {
+              "productName": "杯套",
+              "quantity": 200,
+              "unit": "个",
+              "unitPrice": 3,
+              "totalAmount": 600
+            },
+            {
+              "productName": "餐垫",
+              "quantity": 100,
+              "unit": "张"
+            }
+          ]
+        },
+        "missing_fields": [
+          "items[1].unitPrice"
+        ],
+        "low_confidence_fields": [
+          "items[1].unitPrice"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-009-v1",
+      "caseId": "REC-E2E-MULTI-009",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "李姐",
+          "amount": 1100,
+          "orderDeliveryDate": "2026-07-20",
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-010-v1",
+      "caseId": "REC-E2E-MULTI-010",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "刘总",
+          "amount": 760,
+          "orderDeliveryDate": "2026-07-17",
+          "items": [
+            {
+              "productName": "纸杯",
+              "quantity": 500,
+              "unit": "个",
+              "unitPrice": 0.8,
+              "totalAmount": 400
+            },
+            {
+              "productName": "纸盘",
+              "quantity": 300,
+              "unit": "只",
+              "unitPrice": 1.2,
+              "totalAmount": 360
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-011-v1",
+      "caseId": "REC-E2E-MULTI-011",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "许姐",
+          "amount": 300,
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 100
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 50,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 200
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-multi-012-v1",
+      "caseId": "REC-E2E-MULTI-012",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "杜总",
+          "productName": "礼品袋",
+          "quantity": 200,
+          "unit": "个",
+          "unitPrice": 2,
+          "amount": 700,
+          "items": [
+            {
+              "productName": "礼品袋",
+              "quantity": 200,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 400
+            },
+            {
+              "productName": "丝带",
+              "quantity": 100,
+              "unit": "卷",
+              "unitPrice": 3,
+              "totalAmount": 300
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-001-v1",
+      "caseId": "REC-E2E-FIN-001",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderId": "ord-active-a",
+          "paymentAmount": 1600,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-002-v1",
+      "caseId": "REC-E2E-FIN-002",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderId": "ord-active-a",
+          "paymentAmount": 4000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-003-v1",
+      "caseId": "REC-E2E-FIN-003",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 4500,
+          "remainingBeforePayment": 4000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "amount"
+        ],
+        "field_conflicts": [
+          {
+            "field": "amount",
+            "values": []
+          }
+        ],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-004-v1",
+      "caseId": "REC-E2E-FIN-004",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 800,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "receivableId"
+        ],
+        "low_confidence_fields": [
+          "receivableId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-005-v1",
+      "caseId": "REC-E2E-FIN-005",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 200,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "receivableStatus"
+        ],
+        "field_conflicts": [
+          {
+            "field": "receivableStatus",
+            "values": []
+          }
+        ],
+        "receivable_candidates": [
+          {
+            "id": "rec-settled-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-006-v1",
+      "caseId": "REC-E2E-FIN-006",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "paymentAmount": 1000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "customerId"
+        ],
+        "field_conflicts": [
+          {
+            "field": "customerId",
+            "values": []
+          }
+        ],
+        "customer_candidates": [
+          {
+            "id": "cus-cross-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ],
+        "receivable_candidates": [
+          {
+            "id": "rec-cross-b",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-007-v1",
+      "caseId": "REC-E2E-FIN-007",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "amount"
+        ],
+        "low_confidence_fields": [
+          "amount"
+        ],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-008-v1",
+      "caseId": "REC-E2E-FIN-008",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 2000,
+          "paymentDate": "2026-07-15",
+          "conflictingDirection": "increase_receivable"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "businessType"
+        ],
+        "field_conflicts": [
+          {
+            "field": "businessType",
+            "values": []
+          }
+        ],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-009-v1",
+      "caseId": "REC-E2E-FIN-009",
+      "sourceTemplateRef": "ai-deep-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order_deposit",
+        "operation": "record_order_deposit",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "depositAmount": 2000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "order_candidates": [
+          {
+            "id": "ord-active-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-010-v1",
+      "caseId": "REC-E2E-FIN-010",
+      "sourceTemplateRef": "ai-deep-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order_deposit",
+        "operation": "record_order_deposit",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "depositAmount": 10000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "order_candidates": [
+          {
+            "id": "ord-active-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-011-v1",
+      "caseId": "REC-E2E-FIN-011",
+      "sourceTemplateRef": "ai-deep-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order_deposit",
+        "operation": "record_order_deposit",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "depositAmount": 12000,
+          "orderTotal": 10000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "amount"
+        ],
+        "field_conflicts": [
+          {
+            "field": "amount",
+            "values": []
+          }
+        ],
+        "order_candidates": [
+          {
+            "id": "ord-active-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-012-v1",
+      "caseId": "REC-E2E-FIN-012",
+      "sourceTemplateRef": "ai-deep-deposit-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order_deposit",
+        "operation": "record_order_deposit",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "depositAmount": 2000,
+          "paymentDate": "2026-07-08"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "duplicateRecord"
+        ],
+        "field_conflicts": [
+          {
+            "field": "duplicateRecord",
+            "values": []
+          }
+        ],
+        "order_candidates": [
+          {
+            "id": "ord-active-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-013-v1",
+      "caseId": "REC-E2E-FIN-013",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderId": "ord-active-a",
+          "paymentAmount": 1000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-fin-014-v1",
+      "caseId": "REC-E2E-FIN-014",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "orderId": "ord-active-a",
+          "paymentAmount": 600,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-date-004-v1",
+      "caseId": "REC-E2E-DATE-004",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "邹总",
+          "productName": "胸牌",
+          "quantity": 300,
+          "unit": "个",
+          "unitPrice": 1,
+          "amount": 300,
+          "orderDeliveryDate": "2026-07-24",
+          "items": [
+            {
+              "productName": "胸牌",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-date-005-v1",
+      "caseId": "REC-E2E-DATE-005",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "陶老板",
+          "productName": "旅行袋",
+          "quantity": 300,
+          "unit": "个",
+          "unitPrice": 1,
+          "amount": 300,
+          "orderDeliveryDate": "2026-07-31",
+          "items": [
+            {
+              "productName": "旅行袋",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-date-006-v1",
+      "caseId": "REC-E2E-DATE-006",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "罗姐",
+          "productName": "洗漱包",
+          "quantity": 200,
+          "unit": "个",
+          "unitPrice": 1,
+          "amount": 200,
+          "orderDeliveryDate": "2026-08-03",
+          "items": [
+            {
+              "productName": "洗漱包",
+              "quantity": 200,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 200
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-date-007-v1",
+      "caseId": "REC-E2E-DATE-007",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "彭老板",
+          "productName": "标签",
+          "quantity": 1000,
+          "unit": "个",
+          "unitPrice": 1,
+          "amount": 1000,
+          "orderDeliveryDate": "2026-07-25",
+          "items": [
+            {
+              "productName": "标签",
+              "quantity": 1000,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 1000
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-date-009-v1",
+      "caseId": "REC-E2E-DATE-009",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "戴老板",
+          "productName": "收纳盒",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 1,
+          "amount": 100,
+          "items": [
+            {
+              "productName": "收纳盒",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 100
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "dueDate"
+        ],
+        "field_conflicts": [
+          {
+            "field": "dueDate",
+            "values": [
+              "2026-07-20",
+              "2026-07-22"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-date-010-v1",
+      "caseId": "REC-E2E-DATE-010",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "方姐",
+          "productName": "票夹",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 1,
+          "amount": 100,
+          "orderDeliveryDate": "2026-07-10",
+          "items": [
+            {
+              "productName": "票夹",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 100
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "dueDate"
+        ],
+        "field_conflicts": [
+          {
+            "field": "dueDate",
+            "values": []
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-001-v1",
+      "caseId": "REC-E2E-CHAT-001",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "王总",
+          "productName": "水杯",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 5.5,
+          "amount": 550,
+          "orderDeliveryDate": "2026-07-17",
+          "items": [
+            {
+              "productName": "水杯",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 5.5,
+              "totalAmount": 550
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-002-v1",
+      "caseId": "REC-E2E-CHAT-002",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "李姐",
+          "productName": "饭盒",
+          "quantity": 200,
+          "unit": "套",
+          "unitPrice": 4,
+          "amount": 800,
+          "orderDeliveryDate": "2026-07-17",
+          "items": [
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-003-v1",
+      "caseId": "REC-E2E-CHAT-003",
+      "sourceTemplateRef": "ai-replay-sanitized-order-v1",
+      "kind": "REPLAY_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "REPLAY",
+      "delayMs": 0,
+      "response": {
+        "provider": "e2e-synthetic-replay",
+        "intent": "quotation",
+        "operation": "create_quotation",
+        "fields": {
+          "customerName": "陈老板",
+          "productName": "钥匙扣",
+          "quantity": 800,
+          "unit": "个",
+          "unitPrice": 1.2,
+          "amount": 960,
+          "items": [
+            {
+              "productName": "钥匙扣",
+              "quantity": 800,
+              "unit": "个",
+              "unitPrice": 1.2,
+              "totalAmount": 960
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      },
+      "sanitized": true,
+      "capturedFromRealCustomer": false
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-004-v1",
+      "caseId": "REC-E2E-CHAT-004",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "赵姐",
+          "productName": "帆布袋",
+          "quantity": 300,
+          "unit": "个",
+          "unitPrice": 6,
+          "amount": 1800,
+          "orderDeliveryDate": "2026-07-20",
+          "items": [
+            {
+              "productName": "帆布袋",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 6,
+              "totalAmount": 1800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-005-v1",
+      "caseId": "REC-E2E-CHAT-005",
+      "sourceTemplateRef": "ai-replay-sanitized-order-v1",
+      "kind": "REPLAY_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "REPLAY",
+      "delayMs": 0,
+      "response": {
+        "provider": "e2e-synthetic-replay",
+        "intent": "quotation",
+        "operation": "create_quotation",
+        "fields": {
+          "customerName": "孙老板",
+          "productName": "冰箱贴",
+          "quantity": 500,
+          "unit": "个",
+          "unitPrice": 2,
+          "amount": 1000,
+          "items": [
+            {
+              "productName": "冰箱贴",
+              "quantity": 500,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 1000
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      },
+      "sanitized": true,
+      "capturedFromRealCustomer": false
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-006-v1",
+      "caseId": "REC-E2E-CHAT-006",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "钱姐",
+          "amount": 1460,
+          "orderDeliveryDate": "2026-07-25",
+          "items": [
+            {
+              "productName": "礼品盒",
+              "quantity": 80,
+              "unit": "套",
+              "unitPrice": 12,
+              "totalAmount": 960
+            },
+            {
+              "productName": "纸袋",
+              "quantity": 500,
+              "unit": "只",
+              "unitPrice": 1,
+              "totalAmount": 500
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-007-v1",
+      "caseId": "REC-E2E-CHAT-007",
+      "sourceTemplateRef": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "quotation",
+        "operation": "create_quotation",
+        "fields": {
+          "customerName": "吴老板",
+          "productName": "徽章",
+          "quantity": 500,
+          "unit": "个",
+          "unitPrice": 0.75,
+          "amount": 375,
+          "items": [
+            {
+              "productName": "徽章",
+              "quantity": 500,
+              "unit": "个",
+              "unitPrice": 0.75,
+              "totalAmount": 375
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-008-v1",
+      "caseId": "REC-E2E-CHAT-008",
+      "sourceTemplateRef": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "周老板",
+          "productName": "文件袋",
+          "quantity": 200,
+          "unit": "个",
+          "unitPrice": 4,
+          "amount": 800,
+          "orderDeliveryDate": "2026-07-28",
+          "items": [
+            {
+              "productName": "文件袋",
+              "quantity": 200,
+              "unit": "个",
+              "unitPrice": 4,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-009-v1",
+      "caseId": "REC-E2E-CHAT-009",
+      "sourceTemplateRef": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "许姐",
+          "productName": "卡套",
+          "quantity": 300,
+          "unit": "个",
+          "unitPrice": 5,
+          "amount": 1500,
+          "items": [
+            {
+              "productName": "卡套",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 5,
+              "totalAmount": 1500
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-chat-010-v1",
+      "caseId": "REC-E2E-CHAT-010",
+      "sourceTemplateRef": "ai-deep-uncertain-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "unknown",
+        "operation": "pending",
+        "fields": {
+          "quantity": 300,
+          "speakerStatus": "UNKNOWN"
+        },
+        "missing_fields": [
+          "customerName",
+          "productName"
+        ],
+        "low_confidence_fields": [
+          "customerName",
+          "productName",
+          "speakerRole"
+        ],
+        "field_conflicts": [
+          {
+            "field": "speakerRole",
+            "values": []
+          }
+        ],
+        "status": "NEEDS_USER_CONFIRM"
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-001-v1",
+      "caseId": "REC-E2E-VOICE-001",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "王总",
+          "productName": "水杯",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 5.5,
+          "amount": 550,
+          "orderDeliveryDate": "2026-07-17",
+          "items": [
+            {
+              "productName": "水杯",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 5.5,
+              "totalAmount": 550
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-002-v1",
+      "caseId": "REC-E2E-VOICE-002",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "李姐",
+          "productName": "纸袋",
+          "quantity": 2000,
+          "unit": "只",
+          "unitPrice": 1.2,
+          "amount": 2400,
+          "items": [
+            {
+              "productName": "纸袋",
+              "quantity": 2000,
+              "unit": "只",
+              "unitPrice": 1.2,
+              "totalAmount": 2400
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-003-v1",
+      "caseId": "REC-E2E-VOICE-003",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "陈老板",
+          "productName": "冰箱贴",
+          "quantity": 600,
+          "unit": "个",
+          "unitPrice": 2,
+          "amount": 1200,
+          "orderDeliveryDate": "2026-08-06",
+          "items": [
+            {
+              "productName": "冰箱贴",
+              "quantity": 600,
+              "unit": "个",
+              "unitPrice": 2,
+              "totalAmount": 1200
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-004-v1",
+      "caseId": "REC-E2E-VOICE-004",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "赵姐",
+          "productName": "礼品盒",
+          "quantity": 500,
+          "unit": "套",
+          "unitPrice": 3.8,
+          "amount": 1900,
+          "items": [
+            {
+              "productName": "礼品盒",
+              "quantity": 500,
+              "unit": "套",
+              "unitPrice": 3.8,
+              "totalAmount": 1900
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-005-v1",
+      "caseId": "REC-E2E-VOICE-005",
+      "sourceTemplateRef": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "吴老板",
+          "productName": "文具盒",
+          "quantity": 517,
+          "unit": "套",
+          "unitPrice": 15,
+          "amount": 7755,
+          "items": [
+            {
+              "productName": "文具盒",
+              "quantity": 517,
+              "unit": "套",
+              "unitPrice": 15,
+              "totalAmount": 7755
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-006-v1",
+      "caseId": "REC-E2E-VOICE-006",
+      "sourceTemplateRef": "ai-standard-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "standard",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-standard",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "孙老板",
+          "productName": "卡套",
+          "quantity": 1000,
+          "unit": "个",
+          "unitPrice": 5,
+          "amount": 5000,
+          "orderDeliveryDate": "2026-07-24",
+          "items": [
+            {
+              "productName": "卡套",
+              "quantity": 1000,
+              "unit": "个",
+              "unitPrice": 5,
+              "totalAmount": 5000
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-007-v1",
+      "caseId": "REC-E2E-VOICE-007",
+      "sourceTemplateRef": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "钱姐",
+          "productName": "礼盒",
+          "quantity": 300,
+          "unit": "套",
+          "unitPrice": 12,
+          "amount": 3600,
+          "items": [
+            {
+              "productName": "礼盒",
+              "quantity": 300,
+              "unit": "套",
+              "unitPrice": 12,
+              "totalAmount": 3600
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-008-v1",
+      "caseId": "REC-E2E-VOICE-008",
+      "sourceTemplateRef": "ai-deep-single-order-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "周老板",
+          "productName": "雨伞",
+          "quantity": 200,
+          "unit": "把",
+          "unitPrice": 8,
+          "amount": 1600,
+          "items": [
+            {
+              "productName": "雨伞",
+              "quantity": 200,
+              "unit": "把",
+              "unitPrice": 8,
+              "totalAmount": 1600
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-009-v1",
+      "caseId": "REC-E2E-VOICE-009",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "马姐",
+          "amount": 1100,
+          "orderDeliveryDate": "2026-07-20",
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-voice-010-v1",
+      "caseId": "REC-E2E-VOICE-010",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 1500,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": [],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-page-002-v1",
+      "caseId": "REC-E2E-PAGE-002",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "李姐",
+          "amount": 1100,
+          "orderDeliveryDate": "2026-07-20",
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 300,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 300
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 800
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-page-003-v1",
+      "caseId": "REC-E2E-PAGE-003",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 4500
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [
+          "amount"
+        ],
+        "field_conflicts": [
+          {
+            "field": "amount",
+            "values": []
+          }
+        ],
+        "receivable_candidates": [
+          {
+            "id": "rec-open-a",
+            "reason": "合成候选，等待用户明确选择"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-page-004-v1",
+      "caseId": "REC-E2E-PAGE-004",
+      "sourceTemplateRef": "ai-deep-payment-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "payment",
+        "operation": "record_payment",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "paymentAmount": 1000,
+          "paymentDate": "2026-07-15"
+        },
+        "missing_fields": [
+          "receivableId"
+        ],
+        "low_confidence_fields": [
+          "receivableId"
+        ],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-page-007-v1",
+      "caseId": "REC-E2E-PAGE-007",
+      "sourceTemplateRef": "ai-deep-multi-item-ok-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "order",
+        "operation": "create_order",
+        "fields": {
+          "customerName": "许姐",
+          "amount": 360,
+          "items": [
+            {
+              "productName": "杯垫",
+              "quantity": 120,
+              "unit": "个",
+              "unitPrice": 1,
+              "totalAmount": 120
+            },
+            {
+              "productName": "饭盒",
+              "quantity": 60,
+              "unit": "套",
+              "unitPrice": 4,
+              "totalAmount": 240
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    }
+  ]
+}

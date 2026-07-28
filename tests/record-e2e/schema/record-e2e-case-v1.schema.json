@@ -1,0 +1,987 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "record-e2e-case-v1.schema.json",
+  "title": "货小玲记一笔E2E测试题V1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "caseId",
+    "title",
+    "status",
+    "riskLevel",
+    "category",
+    "tags",
+    "provenance",
+    "executionProfiles",
+    "input",
+    "clock",
+    "initialState",
+    "ai",
+    "interaction",
+    "expected",
+    "allowances",
+    "knownRisk"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "record-e2e-case-v1"
+    },
+    "caseId": {
+      "type": "string",
+      "pattern": "^REC-E2E-[A-Z]+-[0-9]{3}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 4
+    },
+    "status": {
+      "enum": [
+        "ACTIVE",
+        "NEEDS_PRODUCT_DECISION",
+        "RETIRED"
+      ]
+    },
+    "riskLevel": {
+      "enum": [
+        "P0",
+        "P1",
+        "P2"
+      ]
+    },
+    "category": {
+      "enum": [
+        "FORMAL_BASIC",
+        "AMBIGUOUS_BLOCKED",
+        "CUSTOMER_HISTORY_RELATIONS",
+        "MULTI_ITEM",
+        "FINANCIAL_SAFETY",
+        "DATE_TIME",
+        "CLIPBOARD_CHAT",
+        "VOICE_TRANSCRIPT",
+        "SURFACE_PAGE_EDIT",
+        "PERSISTENCE_IDEMPOTENCY"
+      ]
+    },
+    "tags": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 2
+      }
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "executionProfiles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "HEADLESS_DETERMINISTIC",
+          "PAGE_E2E",
+          "REAL_QWEN_QUALITY",
+          "VOICE_TRANSCRIPT",
+          "CLIPBOARD_CHAT",
+          "RESTART_PERSISTENCE"
+        ]
+      }
+    },
+    "input": {
+      "$ref": "#/$defs/input"
+    },
+    "clock": {
+      "$ref": "#/$defs/clock"
+    },
+    "initialState": {
+      "$ref": "#/$defs/initialState"
+    },
+    "ai": {
+      "$ref": "#/$defs/ai"
+    },
+    "interaction": {
+      "$ref": "#/$defs/interaction"
+    },
+    "expected": {
+      "$ref": "#/$defs/expected"
+    },
+    "allowances": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/allowance"
+      }
+    },
+    "knownRisk": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/knownRisk"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sources",
+        "sourceCaseIds",
+        "adaptation",
+        "expectedBasis"
+      ],
+      "properties": {
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "sourceCaseIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "adaptation": {
+          "enum": [
+            "CONTRACT_REWRITE",
+            "SYNTHETIC_REWRITE",
+            "NEW_SYNTHETIC"
+          ]
+        },
+        "expectedBasis": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "PRODUCT_CONTRACT",
+              "PREFLIGHT_POLICY",
+              "BUSINESS_STATE_CONTRACT",
+              "HUMAN_REVIEW"
+            ]
+          }
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "channel",
+        "entrySurface",
+        "originalText"
+      ],
+      "properties": {
+        "channel": {
+          "enum": [
+            "TYPED_TEXT",
+            "CLIPBOARD_CHAT",
+            "VOICE_TRANSCRIPT",
+            "HISTORY_EDIT",
+            "PENDING_EDIT"
+          ]
+        },
+        "entrySurface": {
+          "enum": [
+            "HOME_QUICK",
+            "FULL_PAGE",
+            "HEADLESS"
+          ]
+        },
+        "originalText": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pendingNoteId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clipboardText": {
+          "type": "string"
+        },
+        "expectedExtractedText": {
+          "type": "string"
+        },
+        "voiceTranscript": {
+          "type": "string"
+        },
+        "transcriptCharacteristics": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "businessDate",
+        "timezone",
+        "nowInstant"
+      ],
+      "properties": {
+        "businessDate": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+        },
+        "timezone": {
+          "const": "Asia/Shanghai"
+        },
+        "nowInstant": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "initialState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fixtureRef",
+        "overrides"
+      ],
+      "properties": {
+        "fixtureRef": {
+          "type": "string",
+          "minLength": 3
+        },
+        "overrides": {
+          "type": "object"
+        }
+      }
+    },
+    "ai": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "expectedRoute",
+        "productionCommitEligible"
+      ],
+      "properties": {
+        "profile": {
+          "enum": [
+            "LOCAL_ONLY",
+            "FAKE_STANDARD",
+            "FAKE_DEEP",
+            "REPLAY",
+            "REAL_QUALITY_ELIGIBLE"
+          ]
+        },
+        "expectedRoute": {
+          "enum": [
+            "LOCAL",
+            "PENDING",
+            "AI_STANDARD",
+            "AI_DEEP",
+            "NO_RECORD"
+          ]
+        },
+        "fixtureRef": {
+          "type": "string"
+        },
+        "productionCommitEligible": {
+          "type": "boolean"
+        }
+      }
+    },
+    "interaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "userEdits",
+        "userSelections",
+        "requestedSaveAction",
+        "restartAfterSave"
+      ],
+      "properties": {
+        "userEdits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "field",
+              "value"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "FIELD",
+                  "ITEM"
+                ]
+              },
+              "itemIndex": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "field": {
+                "type": "string",
+                "minLength": 1
+              },
+              "value": {}
+            }
+          }
+        },
+        "userSelections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "kind",
+              "selectedId"
+            ],
+            "properties": {
+              "kind": {
+                "enum": [
+                  "customerId",
+                  "orderId",
+                  "quotationId",
+                  "receivableId"
+                ]
+              },
+              "selectedId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "requestedSaveAction": {
+          "enum": [
+            "SAVE_FORMAL",
+            "SAVE_PENDING",
+            "DO_NOT_SAVE"
+          ]
+        },
+        "restartAfterSave": {
+          "type": "boolean"
+        },
+        "sequence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/interactionStep"
+          }
+        }
+      }
+    },
+    "interactionStep": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "step"
+      ],
+      "properties": {
+        "step": {
+          "enum": [
+            "PARSE",
+            "REQUEST_DEEP_REVIEW",
+            "OPEN_FULL_PAGE",
+            "EDIT_FIELD",
+            "EDIT_ITEM",
+            "SELECT_CANDIDATE",
+            "PREPARE",
+            "COMMIT",
+            "RESTART",
+            "RETRY_SAME_PLAN"
+          ]
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "planRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "originalText"
+          ],
+          "properties": {
+            "originalText": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "result",
+        "route",
+        "routing",
+        "preflight",
+        "confirmation",
+        "surface",
+        "save",
+        "stateDiff",
+        "restart",
+        "idempotency"
+      ],
+      "properties": {
+        "result": {
+          "$ref": "#/$defs/result"
+        },
+        "route": {
+          "type": "string"
+        },
+        "allowedRoutes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "allowedRoutesReason": {
+          "type": "string"
+        },
+        "routing": {
+          "$ref": "#/$defs/routing"
+        },
+        "preflight": {
+          "$ref": "#/$defs/preflight"
+        },
+        "confirmation": {
+          "$ref": "#/$defs/confirmation"
+        },
+        "surface": {
+          "$ref": "#/$defs/surface"
+        },
+        "save": {
+          "$ref": "#/$defs/save"
+        },
+        "stateDiff": {
+          "$ref": "#/$defs/stateDiff"
+        },
+        "restart": {
+          "$ref": "#/$defs/restart"
+        },
+        "idempotency": {
+          "$ref": "#/$defs/idempotency"
+        }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "businessType",
+        "operation",
+        "originalText",
+        "fields",
+        "items",
+        "allowedValues",
+        "conflictValues",
+        "absentFields"
+      ],
+      "properties": {
+        "businessType": {
+          "type": "string"
+        },
+        "operation": {
+          "type": "string"
+        },
+        "originalText": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "object"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "allowedValues": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 1
+          }
+        },
+        "conflictValues": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "minItems": 2,
+            "uniqueItems": true
+          }
+        },
+        "absentFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+          }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "productionRoute",
+        "executionPath",
+        "localSafetyStatus",
+        "expectedAiCall"
+      ],
+      "properties": {
+        "productionRoute": {
+          "type": "string"
+        },
+        "executionPath": {
+          "type": "string"
+        },
+        "localSafetyStatus": {
+          "type": "string"
+        },
+        "expectedAiCall": {
+          "type": "string"
+        }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "domainCanSaveFormal",
+        "domainCanSavePending",
+        "blockingCodes",
+        "requiredSelections"
+      ],
+      "properties": {
+        "domainCanSaveFormal": {
+          "type": "boolean"
+        },
+        "domainCanSavePending": {
+          "type": "boolean"
+        },
+        "blockingCodes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "requiredSelections": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requiredFields",
+        "missingFields",
+        "conflictFields"
+      ],
+      "properties": {
+        "requiredFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "missingFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "conflictFields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "home",
+        "fullPage"
+      ],
+      "properties": {
+        "home": {
+          "$ref": "#/$defs/surfaceExpectation"
+        },
+        "fullPage": {
+          "$ref": "#/$defs/surfaceExpectation"
+        }
+      }
+    },
+    "surfaceExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "surfaceCanCompleteFormal",
+        "effectiveCanSaveFormal",
+        "missingCapabilities"
+      ],
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "surfaceCanCompleteFormal": {
+          "type": "boolean"
+        },
+        "effectiveCanSaveFormal": {
+          "type": "boolean"
+        },
+        "missingCapabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "save": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "status",
+        "commitTarget",
+        "productionCommitEligible"
+      ],
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "commitTarget": {
+          "type": "string"
+        },
+        "productionCommitEligible": {
+          "type": "boolean"
+        }
+      }
+    },
+    "stateDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "business",
+        "full"
+      ],
+      "properties": {
+        "business": {
+          "$ref": "#/$defs/diffScope"
+        },
+        "full": {
+          "$ref": "#/$defs/diffScope"
+        }
+      }
+    },
+    "diffScope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collections",
+        "fieldAssertions",
+        "relationAssertions",
+        "mustRemainUnchanged"
+      ],
+      "properties": {
+        "collections": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/changeCount"
+          }
+        },
+        "fieldAssertions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldAssertion"
+          }
+        },
+        "relationAssertions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/relationAssertion"
+          }
+        },
+        "mustRemainUnchanged": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "fieldAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "collection",
+        "change",
+        "path",
+        "assert"
+      ],
+      "properties": {
+        "collection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "change": {
+          "enum": [
+            "CREATED",
+            "UPDATED",
+            "DELETED"
+          ]
+        },
+        "path": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*|\\.length)*$"
+        },
+        "assert": {
+          "enum": [
+            "EXACT",
+            "ONE_OF",
+            "ABSENT",
+            "SET_EQUALS",
+            "NOT_CONTAINS"
+          ]
+        },
+        "value": {}
+      }
+    },
+    "relationAssertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fromCollection",
+        "fromPath",
+        "toCollection"
+      ],
+      "properties": {
+        "fromCollection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fromPath": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*(?:\\[[0-9]+\\]|\\.[A-Za-z_][A-Za-z0-9_]*)*$"
+        },
+        "toCollection": {
+          "type": "string",
+          "minLength": 1
+        },
+        "toId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "changeCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "createdCount",
+        "updatedCount",
+        "deletedCount"
+      ],
+      "properties": {
+        "createdCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deletedCount": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "restart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "stateFingerprint",
+        "recordCountStable",
+        "mustPersist",
+        "additionalBusinessDiff"
+      ],
+      "properties": {
+        "required": {
+          "type": "boolean"
+        },
+        "stateFingerprint": {
+          "enum": [
+            "NOT_APPLICABLE",
+            "EQUAL_TO_POST_SAVE"
+          ]
+        },
+        "recordCountStable": {
+          "type": "boolean"
+        },
+        "mustPersist": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "additionalBusinessDiff": {
+          "enum": [
+            "NOT_APPLICABLE",
+            "EMPTY"
+          ]
+        }
+      }
+    },
+    "idempotency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenario",
+        "attempts",
+        "expectedCommitStatuses",
+        "expectedRevisionDelta",
+        "expectedAdditionalBusinessDiff",
+        "journalFinal",
+        "backupFinal"
+      ],
+      "properties": {
+        "scenario": {
+          "type": "string"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedCommitStatuses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expectedRevisionDelta": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expectedAdditionalBusinessDiff": {
+          "enum": [
+            "NOT_APPLICABLE",
+            "EMPTY",
+            "DISTINCT_COMMIT"
+          ]
+        },
+        "journalFinal": {
+          "enum": [
+            "NOT_APPLICABLE",
+            "CLEARED"
+          ]
+        },
+        "backupFinal": {
+          "enum": [
+            "NOT_APPLICABLE",
+            "CLEARED"
+          ]
+        }
+      }
+    },
+    "allowance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "paths",
+        "reason"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 4
+        }
+      }
+    },
+    "knownRisk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "riskId",
+        "status",
+        "summary",
+        "evidenceKind"
+      ],
+      "properties": {
+        "riskId": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "STATIC_CANDIDATE",
+            "KNOWN_CONTRACT_RISK"
+          ]
+        },
+        "summary": {
+          "type": "string"
+        },
+        "evidenceKind": {
+          "enum": [
+            "STATIC_AUDIT",
+            "CONTRACT_REVIEW"
+          ]
+        }
+      }
+    }
+  }
+}
