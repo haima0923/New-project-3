@@ -139,21 +139,36 @@ const tests = [
     }
   },
   {
-    name: 'cross-customer-forged-order-event-is-rejected',
+    name: 'cross-customer-draft-is-preflight-blocked-and-forged-selection-is-rejected',
     run() {
       withPage('REC-E2E-REL-009', ({ driver, page }) => {
-        prepareConfirmation(page, receivableDraft({
-          customerId: 'cus-cross-a',
-          customerName: '王总',
-          productName: ''
-        }));
-        assert(page.data.orderOptions.some((item) => item.id === 'ord-cross-a'));
+        prepareConfirmation(page, {
+          intent: 'order',
+          operation: 'update_order',
+          source: 'typed',
+          original_text: '把合成乙厂的纸袋订单改到合成甲厂名下',
+          parse_route: { decision: 'local' },
+          fields: {
+            customerId: 'cus-cross-a',
+            orderId: 'ord-cross-b',
+            productName: '纸袋'
+          },
+          missing_fields: [],
+          low_confidence_fields: []
+        });
+        assert(page.data.preflightBlockingReasons.includes('ORDER_CUSTOMER_MISMATCH'));
+        assert.strictEqual(page.data.showGenericOrderSelection, true);
+        assert.strictEqual(page.data.showGenericOrderPicker, false);
+        assert.strictEqual(page.data.orderOptions.length, 0);
         assert.strictEqual(page.data.orderOptions.some((item) => item.id === 'ord-cross-b'), false);
         const accepted = page.selectOrderCandidate({
           currentTarget: { dataset: { orderId: 'ord-cross-b' } }
         });
         assert.strictEqual(accepted, false);
-        assert.notStrictEqual(page.data.fields.orderId, 'ord-cross-b');
+        assert(page.data.preflightBlockingReasons.includes('ORDER_CUSTOMER_MISMATCH'));
+        page.saveFormal();
+        assert.strictEqual(driver.evidence.productionBusinessCalls.saveConfirmedDraft, 0);
+        assert.strictEqual(driver.evidence.productionStorageCalls.saveState, 0);
         assert.strictEqual(driver.evidence.pageMethodCalls.selectOrderCandidate, 1);
         assert.strictEqual(
           driver.evidence.pageMethodCalls.applyOrderSelection,
