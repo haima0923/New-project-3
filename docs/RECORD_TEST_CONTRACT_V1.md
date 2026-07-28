@@ -799,3 +799,21 @@ fake adapter 覆盖 401、403、500、网络错误、超时、空响应、非 JS
 5. 第一阶段真实 AI canary 的题量、重复次数和每轮成本上限。
 
 上述未决项必须通过 case 标签或策略版本隔离；未决定前，确定性门禁以当前产品事实为准，不能让题库偷偷改变产品。
+
+## 22. E2E Case Contract V1 与核心题库
+
+Phase 1 已将测试输入统一到 `tests/record-e2e/`。详细机器合同见
+`docs/RECORD_E2E_CASE_CONTRACT_V1.md`。
+
+核心规则：
+
+1. 120 条 ACTIVE 题使用统一 caseId、固定 clock、匿名 initialState、AI profile、交互、Result、Route、Preflight、Confirmation、Surface、Save、State Diff、重启/幂等和风险合同。
+2. 所有 expected 来自产品合同、安全规则、业务 State 合同和人工审查；不得从当前代码运行结果生成。
+3. `HEADLESS_DETERMINISTIC` 使用 Local/Fake/Replay 和隔离 Memory；`REAL_QWEN_QUALITY` 是独立候选标签，不表示已运行真实千问。
+4. Fake/Replay 可验证隔离 State Diff，但永远 `productionCommitEligible=false`。
+5. 产品语义未决项进入独立 backlog，不计入 ACTIVE 核心题。
+6. `scripts/validate-record-e2e-corpus.js` 是结构、语义、隐私、去重和覆盖的离线门禁；不生成报告文件。
+7. `expected.result` 判定 normalizer 与人工交互后的 Confirmation 标准语义层；原始 parser 别名和 Storage 字段分别由 adapter 与 State Diff 映射，不能在同一 operation 中混写。
+8. 冲突候选使用 `conflictValues`，不会像 `allowedValues` 一样放宽判分；复杂交互、字段断言和关系断言均使用封闭机器结构。
+
+Phase 1 只建立可执行输入合同，不实现 Headless Runner、页面 Driver 或真实千问质量运行。
