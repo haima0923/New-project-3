@@ -819,4 +819,13 @@ Phase 1 已将测试输入统一到 `tests/record-e2e/`。详细机器合同见
 10. `PERSIST-003`是事务材料exact replay：页面只生成第一次草稿和一次保存动作，事务层原样重放返回`ALREADY_COMMITTED`；它不是第二次页面点击。
 11. HEADLESS题需要隔离提交时必须额外通过真实完整页生成确认草稿；`FIN-014`的同一点击风暴由页面防重lane抑制第二次进入事务，不使用`ALREADY_COMMITTED`替代UI证据。
 
-Phase 2A 只修订执行边界合同，不实现 Headless Runner、页面 Driver 或真实千问质量运行。`expected.save`仅保留业务正确语义；生产资格、隔离目标和TEST_ONLY标记分别由`productionObservation`、`isolatedExecution`承担。
+Phase 2A 只修订执行边界合同。Phase 2B.1 已新增
+`scripts/run-record-e2e-headless.js` 与 `tests/record-e2e/runner/` 执行内核：父进程保留
+Expected并负责断言，每题由独立Node子进程在Fake wx/network/voice、固定clock和隔离
+Storage中加载真实页面JS、生产parser、Legacy business与Release A Coordinator。详细边界
+见 `docs/RECORD_E2E_RUNNER_KERNEL_V1.md`。
+
+Phase 2B.1 只运行24题代表性Smoke和120题plan-only，不代表120题已全量执行，不是WXML页面
+E2E，也不是真实千问测试。`CASE_FAIL`保留产品实际差异；只有`RUNNER_ERROR`或`BLOCKED`
+属于执行内核未完成。`expected.save`仍只表示业务正确语义；生产资格、隔离目标和TEST_ONLY
+标记分别由`productionObservation`、`isolatedExecution`承担。

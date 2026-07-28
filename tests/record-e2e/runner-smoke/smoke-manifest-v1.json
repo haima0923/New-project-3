@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "record-e2e-runner-smoke-manifest-v1",
+  "description": "Phase 2B.1 Runner Kernel 24题代表性Smoke；只引用既有ACTIVE Case。",
+  "caseIds": [
+    "REC-E2E-PAGE-008",
+    "REC-E2E-PERSIST-003",
+    "REC-E2E-FIN-014",
+    "REC-E2E-BASIC-010",
+    "REC-E2E-REL-003",
+    "REC-E2E-REL-007",
+    "REC-E2E-REL-008",
+    "REC-E2E-REL-009",
+    "REC-E2E-BASIC-001",
+    "REC-E2E-PERSIST-001",
+    "REC-E2E-CHAT-001",
+    "REC-E2E-CHAT-003",
+    "REC-E2E-MULTI-001",
+    "REC-E2E-AMB-003",
+    "REC-E2E-AMB-005",
+    "REC-E2E-FIN-003",
+    "REC-E2E-FIN-001",
+    "REC-E2E-VOICE-001",
+    "REC-E2E-BASIC-020",
+    "REC-E2E-PERSIST-004",
+    "REC-E2E-PAGE-007",
+    "REC-E2E-AMB-010",
+    "REC-E2E-DATE-007",
+    "REC-E2E-AMB-011"
+  ]
+}
