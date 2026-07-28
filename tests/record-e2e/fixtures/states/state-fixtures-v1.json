@@ -567,20 +567,20 @@
           {
             "id": "pending-syn-a",
             "userId": "e2e-user",
-            "originalText": "王总说杯子数量晚点补，单价5元",
+            "originalText": "陈姐说礼盒规格和数量晚点一起补",
             "guessedIntent": "order",
             "guessedFields": {
-              "customerName": "王总",
-              "productName": "杯子",
-              "unitPrice": 5
+              "customerName": "陈姐",
+              "productName": "礼盒"
             },
             "missingFields": [
-              "quantity"
+              "quantity",
+              "unitPrice"
             ],
             "lowConfidenceFields": [],
             "fieldConflicts": [],
             "source": "typed",
-            "reason": "缺少数量",
+            "reason": "规格、数量和单价待补",
             "status": "待整理",
             "createdAt": "2026-07-14T02:00:00.000Z",
             "updatedAt": "2026-07-14T02:00:00.000Z"

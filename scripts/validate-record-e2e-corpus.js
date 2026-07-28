@@ -10,6 +10,9 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  validateExecutionPlanPreconditions
+} = require('../tests/record-e2e/runner/validate-plan-preconditions');
 
 const ROOT = path.resolve(__dirname, '..');
 const E2E_ROOT = path.join(ROOT, 'tests', 'record-e2e');
@@ -1492,9 +1495,17 @@ function validateStateReferences(testCase, resolvedStateFixtureMap) {
     }
   });
   if (testCase.input.channel === 'PENDING_EDIT') {
-    const exists = asArray(state.pendingNotes).some((item) => item && item.id === testCase.input.pendingNoteId);
-    if (!exists) fail(`${label} pendingNoteId在初始State中不存在：${testCase.input.pendingNoteId}`);
+    const pending = asArray(state.pendingNotes).find((item) => (
+      item && item.id === testCase.input.pendingNoteId
+    ));
+    if (!pending) {
+      fail(`${label} pendingNoteId在初始State中不存在：${testCase.input.pendingNoteId}`);
+    } else if (String(pending.originalText || '') !== String(testCase.input.originalText || '')) {
+      fail(`${label} pendingNoteId原文与Case input.originalText不一致`);
+    }
   }
+  validateExecutionPlanPreconditions(testCase, state)
+    .forEach((code) => fail(`${label} execution plan前置条件失败：${code}`));
 }
 
 function validateCase(testCase, context) {

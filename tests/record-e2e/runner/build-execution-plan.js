@@ -1,4 +1,5 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
+const { validateExecutionPlanPreconditions } = require('./validate-plan-preconditions');
 
 function expectedLayerNames(lanes) {
   const names = ['productionObservation'];
@@ -34,6 +35,17 @@ function buildWorkerSpec(testCase, resolved) {
 function buildExecutionPlan(testCase, fixtureResolver) {
   const initial = fixtureResolver.resolveInitialState(testCase.initialState);
   const ai = fixtureResolver.resolveAiFixture(testCase.ai);
+  const contractErrors = validateExecutionPlanPreconditions(testCase, initial.state);
+  if (contractErrors.length) {
+    throw Object.assign(
+      new Error(`${testCase.caseId} execution plan precondition failed: ${contractErrors.join(', ')}`),
+      {
+        code: 'TEST_DATA_ERROR',
+        failureCode: contractErrors[0],
+        contractErrors
+      }
+    );
+  }
   const lanes = safeClone(testCase.execution.lanes);
   const plan = {
     schemaVersion: 'record-e2e-execution-plan-v1',
