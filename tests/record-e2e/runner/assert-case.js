@@ -3,6 +3,7 @@ const {
   safeClone,
   stableSerialize
 } = require('../../../utils/record-state-diff');
+const { finalizeLane } = require('./lane-state');
 
 function semanticEqual(left, right) {
   if (typeof left === 'number' || typeof right === 'number') {
@@ -96,7 +97,8 @@ function assertExpectedResult(testCase, evidence, collector) {
     });
   });
   Object.keys(expected.allowedValues || {}).forEach((path) => {
-    const value = getPath(actual, path).value;
+    const fieldPath = getPath(actual.fields || {}, path);
+    const value = fieldPath.found ? fieldPath.value : getPath(actual, path).value;
     collector.check('RESULT', `allowedValues.${path}`, value, expected.allowedValues[path], {
       compare: (actualValue, allowed) => (
         Array.isArray(allowed) && allowed.some((item) => semanticEqual(actualValue, item))
@@ -129,7 +131,9 @@ function assertFieldAssertion(diff, assertion, collector, layerName) {
   const record = changedRecord(entry, assertion.change, assertion.index || 0);
   const actualPath = getPath(record, assertion.path);
   let pass;
-  if (assertion.assert === 'NOT_CONTAINS') {
+  if (assertion.assert === 'ABSENT') {
+    pass = !actualPath.found || actualPath.value === undefined || actualPath.value === null;
+  } else if (assertion.assert === 'NOT_CONTAINS') {
     pass = actualPath.found && !String(actualPath.value || '').includes(String(assertion.value));
   } else if (assertion.assert === 'CONTAINS') {
     pass = actualPath.found && String(actualPath.value || '').includes(String(assertion.value));
@@ -197,7 +201,15 @@ function assertDiffContract(contract, diff, collector, layerName) {
 
 function assertProductionLayers(testCase, evidence, collector) {
   const expected = testCase.expected;
-  collector.check('ROUTE', 'route', evidence.routeEvidence.actualRoute, expected.route);
+  const page = evidence.pageDerivationEvidence || evidence.pageEvidence || {};
+  const snapshot = page.afterEdits || {};
+  collector.check('ROUTE', 'route', evidence.routeEvidence.actualRoute, expected.route, {
+    compare: (actual, wanted) => {
+      const allowed = expected.allowedRoutes || [];
+      return semanticEqual(actual, wanted)
+        || allowed.some((item) => semanticEqual(actual, item));
+    }
+  });
   collector.check(
     'PREFLIGHT',
     'domainCanSaveFormal',
@@ -210,14 +222,42 @@ function assertProductionLayers(testCase, evidence, collector) {
     evidence.preflightEvidence.domainCanSavePending,
     expected.preflight.domainCanSavePending
   );
+  (expected.confirmation.requiredFields || []).forEach((path) => {
+    const actualPath = path === 'items'
+      ? { found: Array.isArray(snapshot.items) && snapshot.items.length > 0 }
+      : (path === 'originalText'
+        ? {
+          found: Boolean(
+            snapshot.originalInput
+            || snapshot.parseResult && (
+              snapshot.parseResult.original_text
+              || snapshot.parseResult.originalText
+            )
+          )
+        }
+        : getPath(snapshot.fields || {}, RESULT_FIELD_ALIASES[path] || path));
+    collector.check(
+      'CONFIRMATION',
+      `requiredFields.${path}.modeled`,
+      actualPath.found || (snapshot.missingFields || []).includes(RESULT_FIELD_ALIASES[path] || path),
+      true
+    );
+  });
+  const pageEditConsistency = page.pageEditConsistency;
+  if (pageEditConsistency && pageEditConsistency.checks.length) {
+    collector.check(
+      'CONFIRMATION',
+      'pageEditConsistency',
+      pageEditConsistency.consistent,
+      true
+    );
+  }
   collector.check(
     'PREFLIGHT',
     'blockingCodes',
     normalizeCodes(evidence.preflightEvidence.blockingCodes),
     normalizeCodes(expected.preflight.blockingCodes)
   );
-  const page = evidence.pageDerivationEvidence || evidence.pageEvidence || {};
-  const snapshot = page.afterEdits || {};
   collector.check(
     'CONFIRMATION',
     'missingFields',
@@ -252,6 +292,30 @@ function assertProductionLayers(testCase, evidence, collector) {
       true
     );
   });
+  const selectedSurface = testCase.input.entrySurface === 'HOME_QUICK'
+    ? expected.surface.home
+    : expected.surface.fullPage;
+  if (testCase.input.entrySurface !== 'HEADLESS') {
+    const missingCapabilities = evidence.surfaceEvidence.missingCapabilities || [];
+    const actualStatus = missingCapabilities.length
+      ? 'BLOCKED'
+      : (snapshot.requiresFullPage
+        ? 'REQUIRES_FULL_PAGE'
+        : (snapshot.effectiveCanSaveFormal ? 'CAN_COMPLETE' : 'BLOCKED'));
+    collector.check('SURFACE', 'status', actualStatus, selectedSurface.status);
+    collector.check(
+      'SURFACE',
+      'surfaceCanCompleteFormal',
+      snapshot.surfaceCanCompleteFormal,
+      selectedSurface.surfaceCanCompleteFormal
+    );
+    collector.check(
+      'SURFACE',
+      'effectiveCanSaveFormal',
+      snapshot.effectiveCanSaveFormal,
+      selectedSurface.effectiveCanSaveFormal
+    );
+  }
 }
 
 function assertLaneSpecific(testCase, evidence, collector) {
@@ -280,6 +344,24 @@ function assertLaneSpecific(testCase, evidence, collector) {
         );
       }
     }
+    if (expected.save) {
+      collector.check(
+        'ISOLATED_COMMIT',
+        'save.action',
+        expected.isolatedExecution.action,
+        expected.save.action
+      );
+      collector.check(
+        'ISOLATED_COMMIT',
+        'save.status',
+        isolated && isolated.committed
+          ? (expected.isolatedExecution.action === 'SAVE_PENDING'
+            ? 'PENDING_COMMITTED'
+            : 'FORMAL_COMMITTED')
+          : 'BLOCKED',
+        expected.save.status
+      );
+    }
   }
   if (testCase.execution.lanes.includes('TRANSACTION_EXACT_REPLAY')) {
     const actual = evidence.transactionReplayEvidence || {};
@@ -296,8 +378,28 @@ function assertLaneSpecific(testCase, evidence, collector) {
         actual.receiptCountDelta, contract.receiptCountDeltaOnReplay);
       collector.check('TRANSACTION_REPLAY', 'pageSaveAttempts',
         actual.pageSaveAttempts, contract.pageSaveAttempts);
+      collector.check('TRANSACTION_REPLAY', 'replayPageSaveAttempts',
+        actual.replayPageSaveAttempts, 0);
       collector.check('TRANSACTION_REPLAY', 'businessBundleEqual',
         actual.businessBundleEqual, true);
+      collector.check('TRANSACTION_REPLAY', 'firstStatus',
+        actual.firstStatus, contract.firstCommitStatus);
+      collector.check('TRANSACTION_REPLAY', 'firstCommitSucceeded',
+        actual.firstCommitSucceeded, true);
+      collector.check('TRANSACTION_REPLAY', 'firstIdempotentReplay',
+        actual.firstIdempotentReplay, false);
+      collector.check('TRANSACTION_REPLAY', 'idempotentReplay',
+        actual.replay && actual.replay.idempotentReplay, contract.idempotentReplay);
+      collector.check('TRANSACTION_REPLAY', 'receiptSemanticEqual',
+        actual.receiptSemanticEqual, true);
+      collector.check('TRANSACTION_REPLAY', 'targetFingerprintEqual',
+        actual.targetFingerprintEqual, true);
+      collector.check('TRANSACTION_REPLAY', 'gatewayWrites',
+        actual.replayStats && actual.replayStats.writes, 0);
+      collector.check('TRANSACTION_REPLAY', 'gatewayRemovals',
+        actual.replayStats && actual.replayStats.removals, 0);
+      collector.check('TRANSACTION_REPLAY', 'journalCount', actual.journalCount, 0);
+      collector.check('TRANSACTION_REPLAY', 'backupCount', actual.backupCount, 0);
     }
   }
   if (testCase.execution.lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')) {
@@ -310,6 +412,23 @@ function assertLaneSpecific(testCase, evidence, collector) {
       'secondTriggerStatus',
       'transactionExactReplay'
     ].forEach((key) => collector.check('DUPLICATE_TRIGGER', key, actual[key], contract[key]));
+    collector.check('DUPLICATE_TRIGGER', 'sameUserAction', true, contract.sameUserAction);
+    collector.check('DUPLICATE_TRIGGER', 'pageHandlerInvocationCount',
+      actual.pageHandlerInvocationCount, contract.triggerAttempts);
+    collector.check('DUPLICATE_TRIGGER', 'legacyBusinessAttemptCount',
+      actual.legacyBusinessAttemptCount, 1);
+    collector.check('DUPLICATE_TRIGGER', 'transactionBeginCount',
+      actual.transactionBeginCount, contract.transactionCommitAttempts);
+    collector.check('DUPLICATE_TRIGGER', 'committedReceiptCount',
+      actual.committedReceiptCount, 1);
+    collector.check('DUPLICATE_TRIGGER', 'financialRecordCount',
+      actual.financialRecordCount, 1);
+    collector.check('DUPLICATE_TRIGGER', 'revisionDelta',
+      actual.revisionDelta, contract.expectedRevisionDelta);
+    collector.check('DUPLICATE_TRIGGER', 'additionalBusinessDiff',
+      actual.additionalBusinessDiffEmpty, contract.additionalBusinessDiff === 'EMPTY');
+    collector.check('DUPLICATE_TRIGGER', 'providerWasNeverSetToReal',
+      actual.testOnlyIdentitySeam && actual.testOnlyIdentitySeam.providerWasNeverSetToReal, true);
   }
   if (testCase.execution.lanes.includes('RESTART_PERSISTENCE')) {
     const restart = evidence.restartEvidence || {};
@@ -317,7 +436,15 @@ function assertLaneSpecific(testCase, evidence, collector) {
       collector.check('RESTART', 'executed', false, true);
     } else {
     collector.check('RESTART', 'newRuntimeInstance', restart.newRuntimeInstance, true);
+    collector.check('RESTART', 'attemptCount', restart.attemptCount, expected.restart.attempts);
     collector.check('RESTART', 'equalToPostSave', restart.equalToPostSave, true);
+    collector.check('RESTART', 'recordCountStable', restart.recordCountStable,
+      expected.restart.recordCountStable);
+    collector.check('RESTART', 'revisionDelta', restart.revisionDelta, 0);
+    collector.check('RESTART', 'receiptCountDelta', restart.receiptCountDelta, 0);
+    collector.check('RESTART', 'journalCount', restart.journalCount, 0);
+    collector.check('RESTART', 'backupCount', restart.backupCount, 0);
+    collector.check('RESTART', 'startupRecoveryStatus', restart.startupRecoveryStatus, 'CLEAN');
     collector.check(
       'RESTART',
       'additionalBusinessDiff',
@@ -333,7 +460,16 @@ function assertLaneSpecific(testCase, evidence, collector) {
     const contract = expected.concurrentBaseRevision || {};
     collector.check('CONCURRENT', 'baseFingerprintEqual', concurrent.baseFingerprintEqual, true);
     collector.check('CONCURRENT', 'firstCommitted', concurrent.committedA, true);
+    collector.check('CONCURRENT', 'firstReceiptPresent', concurrent.commitAReceiptPresent, true);
     collector.check('CONCURRENT', 'secondCommitted', concurrent.committedB, false);
+    collector.check('CONCURRENT', 'secondCommitAttempted',
+      concurrent.secondCommitAttempted, true);
+    collector.check('CONCURRENT', 'sameBaseRevision',
+      concurrent.baseRevisionA, concurrent.baseRevisionB);
+    collector.check('CONCURRENT', 'firstCommitPrimaryWrites',
+      concurrent.firstCommitPrimaryWrites, 1);
+    collector.check('CONCURRENT', 'secondCommitPrimaryWrites',
+      concurrent.secondCommitPrimaryWrites, 0);
     collector.check('CONCURRENT', 'staleDetected', concurrent.staleDetected, true);
     collector.check('CONCURRENT', 'pageADataPreserved', concurrent.pageADataPreserved, true);
     if (contract.secondCommitStatus) {
@@ -343,7 +479,10 @@ function assertLaneSpecific(testCase, evidence, collector) {
         concurrent.errorB && concurrent.errorB.code || concurrent.commitB && concurrent.commitB.status,
         contract.secondCommitStatus,
         {
-          compare: (actual, wanted) => String(actual || '').includes(String(wanted || '').replace('LEGACY_', ''))
+          compare: (actual, wanted) => (
+            (wanted === 'REVISION_MISMATCH' && actual === 'LEGACY_SAVE_STALE')
+            || actual === wanted
+          )
         }
       );
     }
@@ -352,8 +491,8 @@ function assertLaneSpecific(testCase, evidence, collector) {
 
 const STAGE_ORDER = [
   'INPUT',
-  'ROUTE',
   'RESULT',
+  'ROUTE',
   'PREFLIGHT',
   'CONFIRMATION',
   'PRODUCTION_OBSERVATION',
@@ -398,9 +537,27 @@ function assertCase(testCase, evidence, options = {}) {
   }
   assertExpectedResult(testCase, evidence, collector);
   assertProductionLayers(testCase, evidence, collector);
+  if (testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')) {
+    collector.check(
+      'PAGE_DERIVATION',
+      'pageDraftDerived',
+      Boolean(evidence.pageDerivationEvidence && evidence.pageDerivationEvidence.afterEdits),
+      true
+    );
+  }
   assertLaneSpecific(testCase, evidence, collector);
-  assertDiffContract(testCase.expected.stateDiff.business, evidence.businessDiff, collector, 'STATE_DIFF');
-  assertDiffContract(testCase.expected.stateDiff.full, evidence.fullDiff, collector, 'STATE_DIFF');
+  const hasSurfaceGap = (evidence.surfaceEvidence.missingCapabilities || []).length > 0;
+  if (hasSurfaceGap) {
+    collector.check(
+      'SURFACE',
+      'formalBusinessDiffEmpty',
+      isCollectionDiffEmpty(evidence.businessDiff),
+      true
+    );
+  } else {
+    assertDiffContract(testCase.expected.stateDiff.business, evidence.businessDiff, collector, 'STATE_DIFF');
+    assertDiffContract(testCase.expected.stateDiff.full, evidence.fullDiff, collector, 'STATE_DIFF');
+  }
 
   if (options.mutateExpectedSentinel) {
     collector.check('STATE_DIFF', 'selfTest.wrongExpectedCount',
@@ -417,9 +574,14 @@ function assertCase(testCase, evidence, options = {}) {
   const layerLane = {
     INPUT: observationName,
     ROUTE: observationName,
-    RESULT: observationName,
+    RESULT: testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
+      ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
+      : observationName,
     PREFLIGHT: observationName,
-    CONFIRMATION: observationName,
+    CONFIRMATION: testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
+      ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
+      : observationName,
+    PAGE_DERIVATION: 'PAGE_CONFIRMED_DRAFT_DERIVATION',
     PRODUCTION_OBSERVATION: observationName,
     SURFACE: observationName,
     ISOLATED_COMMIT: 'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
@@ -440,17 +602,55 @@ function assertCase(testCase, evidence, options = {}) {
       lane.failureCode = lane.failureCode || `ASSERTION_FAILED:${assertion.name}`;
     }
   });
-  const hasRunnerLaneError = (evidence.laneResults || []).some((item) => (
-    item.status === 'RUNNER_ERROR' || item.status === 'BLOCKED'
+  (evidence.laneResults || []).forEach(finalizeLane);
+  const runnerLane = (evidence.laneResults || []).find((item) => item.status === 'RUNNER_ERROR');
+  const blockedLane = (evidence.laneResults || []).find((item) => item.status === 'BLOCKED');
+  const caseFailLane = (evidence.laneResults || []).find((item) => item.status === 'CASE_FAIL');
+  let primary = first;
+  const surfaceLane = (evidence.laneResults || []).find((item) => (
+    item.failureCode === 'REQUIRED_PAGE_CAPABILITY_MISSING'
   ));
+  const editSyncFailure = failures.find((item) => (
+    item.layer === 'CONFIRMATION' && item.name === 'pageEditConsistency'
+  ));
+  if (surfaceLane) {
+    primary = {
+      layer: 'SURFACE',
+      name: 'requiredCapability',
+      failureCode: 'REQUIRED_PAGE_CAPABILITY_MISSING'
+    };
+  } else if (editSyncFailure) {
+    primary = editSyncFailure;
+  }
+  const secondaryFindings = failures
+    .filter((item) => item !== primary)
+    .map((item) => ({
+      failureCode: `ASSERTION_FAILED:${item.name}`,
+      failureStage: failureStageFor(item, testCase),
+      layer: item.layer,
+      name: item.name
+    }));
+  const caseStatus = runnerLane
+    ? 'RUNNER_ERROR'
+    : (blockedLane
+      ? 'BLOCKED'
+      : (caseFailLane || failures.length ? 'CASE_FAIL' : 'PASS'));
+  const lifecycleFailure = runnerLane || blockedLane;
   return {
     assertions: collector.assertions,
-    caseStatus: hasRunnerLaneError
-      ? 'RUNNER_ERROR'
-      : (failures.length ? 'CASE_FAIL' : 'PASS'),
+    caseStatus,
     failedAssertionCount: failures.length,
-    failureCode: first ? `ASSERTION_FAILED:${first.name}` : '',
-    failureStage: first ? failureStageFor(first, testCase) : '',
+    failureCode: lifecycleFailure
+      ? lifecycleFailure.failureCode
+      : (surfaceLane
+        ? 'REQUIRED_PAGE_CAPABILITY_MISSING'
+        : (primary ? `ASSERTION_FAILED:${primary.name}` : '')),
+    failureStage: lifecycleFailure
+      ? lifecycleFailure.failureStage
+      : (surfaceLane
+        ? 'SURFACE_ERROR'
+        : (primary ? failureStageFor(primary, testCase) : '')),
+    secondaryFindings,
     passedAssertionCount: collector.assertions.length - failures.length
   };
 }

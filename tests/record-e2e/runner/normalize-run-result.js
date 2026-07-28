@@ -8,6 +8,7 @@ function stripNondeterministic(value) {
       'pid',
       'bootId',
       'primaryBootId',
+      'primaryPid',
       'restartBootId',
       'restartPid',
       'workerId'

@@ -28,6 +28,10 @@ function executeConcurrentBase(spec, draftA, draftB) {
   });
   const pageAState = facade.getState({ writerSource: 'INPUT_FORMAL' });
   const pageBState = facade.getState({ writerSource: 'INPUT_FORMAL' });
+  const initialEntries = gateway.getEntries();
+  const initialControl = initialEntries[BUSINESS_STORAGE_KEY]
+    && initialEntries[BUSINESS_STORAGE_KEY].__hxlRecordStorageV1 || {};
+  const sharedBaseRevision = Number(initialControl.storageRevision || 0);
   const baseFingerprintA = getStateFingerprint(pageAState);
   const baseFingerprintB = getStateFingerprint(pageBState);
   const initial = safeClone(pageAState);
@@ -50,11 +54,16 @@ function executeConcurrentBase(spec, draftA, draftB) {
 
   const businessA = saveConfirmedDraft(pageAState, preparedA.draft);
   const businessB = saveConfirmedDraft(pageBState, preparedB.draft);
+  const beforeAStats = gateway.getStats();
   facade.saveState(pageAState, saveOptions(spec, 'page-a'));
   const commitA = facade.getLastWriteResult();
+  const afterAStats = gateway.getStats();
   let commitB = null;
   let errorB = null;
+  let secondCommitAttempted = false;
+  const beforeBStats = gateway.getStats();
   try {
+    secondCommitAttempted = true;
     facade.saveState(pageBState, saveOptions(spec, 'page-b'));
     commitB = facade.getLastWriteResult();
   } catch (error) {
@@ -64,19 +73,26 @@ function executeConcurrentBase(spec, draftA, draftB) {
     };
     commitB = facade.getLastWriteResult();
   }
+  const afterBStats = gateway.getStats();
   const after = facade.getState({ writerSource: 'INPUT_FORMAL' });
+  const eventsA = afterAStats.events.slice(beforeAStats.events.length);
+  const eventsB = afterBStats.events.slice(beforeBStats.events.length);
   return {
     baseFingerprintEqual: baseFingerprintA === baseFingerprintB,
-    baseRevisionA: commitA && commitA.baseRevision,
-    baseRevisionB: 0,
+    baseRevisionA: sharedBaseRevision,
+    baseRevisionB: sharedBaseRevision,
     businessA,
     businessB,
     commitA,
     commitB,
+    commitAReceiptPresent: Boolean(commitA && commitA.receipt),
     committedA: Boolean(commitA && commitA.commitSucceeded),
     committedB: Boolean(commitB && commitB.commitSucceeded),
     diff: createStateDiff(initial, after),
     errorB,
+    firstCommitPrimaryWrites: eventsA.filter((item) => (
+      item.type === 'SET' && item.key === BUSINESS_STORAGE_KEY
+    )).length,
     gateway,
     marker: 'CONCURRENT_BASE_REVISION',
     pageADataPreserved: Boolean(
@@ -85,6 +101,10 @@ function executeConcurrentBase(spec, draftA, draftB) {
     pageBDataWritten: Boolean(
       businessB && businessB.record && (after.orders || []).some((item) => item.id === businessB.record.id)
     ),
+    secondCommitAttempted,
+    secondCommitPrimaryWrites: eventsB.filter((item) => (
+      item.type === 'SET' && item.key === BUSINESS_STORAGE_KEY
+    )).length,
     preparedA,
     preparedB,
     staleDetected: Boolean(errorB && /STALE/.test(errorB.code)),

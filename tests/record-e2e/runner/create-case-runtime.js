@@ -1,6 +1,7 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
 const { BUSINESS_STORAGE_KEY } = require('./constants');
 const { createFakeNetwork } = require('./create-fake-network');
+const { createHostFilesystemGuard } = require('./create-host-filesystem-guard');
 const { createFakeVoice } = require('./create-fake-voice');
 const { assertFakeWxApi, createFakeWx } = require('./create-fake-wx');
 
@@ -53,6 +54,8 @@ function createCaseRuntime(spec, options = {}) {
     aiProfile: spec.ai.profile
   });
   network.guardHostNetwork();
+  const hostFilesystem = createHostFilesystemGuard();
+  hostFilesystem.install();
   const initialEntries = safeClone(options.initialEntries || {
     [BUSINESS_STORAGE_KEY]: spec.initialState.state,
     huoxiaoling_ai_auth_session_v1: {
@@ -88,6 +91,7 @@ function createCaseRuntime(spec, options = {}) {
     audit() {
       return {
         networkAudit: network.audit(),
+        hostFilesystemAudit: hostFilesystem.audit(),
         storageAudit: fakeWx.audit(),
         voiceAudit: voice.audit()
       };
@@ -95,6 +99,8 @@ function createCaseRuntime(spec, options = {}) {
     bootId: `${spec.caseId}:boot:${process.pid}:${options.attempt || 1}`,
     dispose() {
       restoreClock();
+      hostFilesystem.restore();
+      network.restoreHostNetwork();
       if (previousTimezone === undefined) delete process.env.TZ;
       else process.env.TZ = previousTimezone;
       delete global.wx;

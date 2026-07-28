@@ -4,6 +4,7 @@ const { safeClone } = require('../../../utils/record-state-diff');
 const { assertCase } = require('./assert-case');
 const { buildAllExecutionPlans } = require('./build-execution-plan');
 const { classifyWorkerError } = require('./classify-result');
+const { completeRestartInParent } = require('./complete-restart-in-parent');
 const { CORPUS_ROOT } = require('./constants');
 const { loadCorpus } = require('./load-corpus');
 const { runCaseWorker } = require('./module-isolation');
@@ -59,6 +60,17 @@ async function executeOne(item, options = {}) {
       plan: item.plan,
       spec: item.workerSpec
     }, { timeoutMs: options.timeoutMs });
+    if (!evidence.workerExitAudit || evidence.workerExitAudit.exitObserved !== true) {
+      throw Object.assign(new Error('Primary Case worker exit was not observed'), {
+        code: 'LANE_EXECUTION_EVIDENCE_MISSING'
+      });
+    }
+    await completeRestartInParent(
+      evidence,
+      item.workerSpec,
+      item.plan,
+      options.attempt || 1
+    );
     const assertionResult = assertCase(item.testCase, evidence, options.assertionOptions || {});
     return Object.assign({}, evidence, assertionResult, {
       caseId: item.testCase.caseId

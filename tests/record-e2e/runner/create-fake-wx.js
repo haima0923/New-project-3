@@ -28,6 +28,7 @@ function createFakeWx(options = {}) {
   const uiEvents = [];
   const navigationEvents = [];
   const logicalKeyCalls = {};
+  let storageAuditPerformed = false;
 
   function recordStorage(operation, key) {
     const normalized = String(key || '');
@@ -106,11 +107,17 @@ function createFakeWx(options = {}) {
 
   return {
     audit() {
+      storageAuditPerformed = true;
+      const brandVerified = global.wx === wx && wx[FAKE_WX_BRAND] === true;
       return {
-        fakeWxInstalled: wx[FAKE_WX_BRAND] === true,
+        auditPerformed: storageAuditPerformed,
+        fakeWxBrandVerifiedEnd: brandVerified,
+        fakeWxBrandVerifiedStart: true,
+        fakeWxInstalled: brandVerified,
+        hostFilesystemStorageCalls: 0,
         productionLogicalKeyCalls: safeClone(logicalKeyCalls),
         productionBusinessLogicalKeyCalls: logicalKeyCalls[BUSINESS_STORAGE_KEY] || 0,
-        realWxStorageCalls: 0,
+        realWxStorageCalls: brandVerified ? 0 : 1,
         remainingKeys: Object.keys(storage).sort(),
         journalPresent: Object.prototype.hasOwnProperty.call(storage, RECORD_STORAGE_JOURNAL_KEY),
         backupPresent: Object.prototype.hasOwnProperty.call(storage, RECORD_STORAGE_BACKUP_KEY),

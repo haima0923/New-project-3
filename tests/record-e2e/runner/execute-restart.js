@@ -2,7 +2,7 @@ const path = require('path');
 const { fork } = require('child_process');
 const { getStateFingerprint, safeClone } = require('../../../utils/record-state-diff');
 
-function executeRestart(spec, entries, primaryBootId, attempt = 1) {
+function executeRestart(spec, entries, primaryBootId, primaryPid, attempt = 1) {
   return new Promise((resolve, reject) => {
     const child = fork(path.join(__dirname, 'restart-worker.js'), [], {
       env: Object.assign({}, process.env, {
@@ -17,31 +17,50 @@ function executeRestart(spec, entries, primaryBootId, attempt = 1) {
         code: 'RESTART_PERSISTENCE_ERROR'
       }));
     }, 5000);
+    let response = null;
+    let settled = false;
     child.once('message', (message) => {
-      clearTimeout(timer);
+      response = message;
       child.disconnect();
-      if (!message || !message.ok) {
-        const error = new Error(message && message.error && message.error.message || 'Restart worker failed');
-        error.code = message && message.error && message.error.code || 'RESTART_PERSISTENCE_ERROR';
+    });
+    child.once('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (exitCode, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!response || !response.ok || exitCode !== 0) {
+        const error = new Error(
+          response && response.error && response.error.message || 'Restart worker failed'
+        );
+        error.code = response && response.error && response.error.code
+          || 'RESTART_PERSISTENCE_ERROR';
         reject(error);
         return;
       }
-      const result = message.result;
+      const result = response.result;
       resolve({
         audit: result.audit,
-        newRuntimeInstance: result.bootId !== primaryBootId,
+        newRuntimeInstance: result.bootId !== primaryBootId && result.pid !== primaryPid,
         primaryBootId,
+        primaryPid,
         restartBootId: result.bootId,
         restartPid: result.pid,
         state: safeClone(result.state),
         stateFingerprint: getStateFingerprint(result.state),
         status: safeClone(result.status),
-        storageEntries: safeClone(result.storageEntries)
+        storageEntries: safeClone(result.storageEntries),
+        workerExitAudit: {
+          exitCode,
+          exitObserved: true,
+          ipcClosed: child.connected === false,
+          signal: signal || ''
+        }
       });
-    });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
     });
     child.send({ attempt, entries: safeClone(entries), spec: safeClone(spec) });
   });

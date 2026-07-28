@@ -18,16 +18,24 @@ async function executeCaseInWorker(message) {
       attempt: message.attempt || 1,
       hooks: message.hooks || {}
     });
-    const fixtureAfter = stableHash(spec.initialState.state, 'fixture-before-v1');
+    if (message.hooks && message.hooks.mutateFixture) {
+      spec.initialState.state.__runnerFixtureMutationSentinel = true;
+    }
+    const finalFixtureAfter = stableHash(spec.initialState.state, 'fixture-before-v1');
+    if (fixtureBefore !== finalFixtureAfter) {
+      throw Object.assign(new Error('Runner mutated the source State fixture'), {
+        code: 'AUTOMATION_FIXTURE_MUTATION_ERROR'
+      });
+    }
     evidence.caseId = spec.caseId;
     evidence.category = spec.category;
     evidence.clock = safeClone(spec.clock);
     evidence.entrySurface = spec.input.entrySurface;
     evidence.executionPlan = plan;
     evidence.fixtureMutationAudit = {
-      afterFingerprint: fixtureAfter,
+      afterFingerprint: finalFixtureAfter,
       beforeFingerprint: fixtureBefore,
-      unchanged: fixtureBefore === fixtureAfter
+      unchanged: fixtureBefore === finalFixtureAfter
     };
     evidence.inputChannel = spec.input.channel;
     evidence.riskLevel = spec.riskLevel;

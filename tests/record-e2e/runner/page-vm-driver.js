@@ -7,6 +7,7 @@ const { PAGE_PATHS, ROOT } = require('./constants');
 
 const AI_PARSER_PATH = require.resolve('../../../utils/ai-parser');
 const BUSINESS_PATH = require.resolve('../../../utils/business');
+const STORAGE_PATH = require.resolve('../../../utils/storage');
 
 function applyDataPatch(target, patch) {
   Object.keys(patch || {}).forEach((key) => {
@@ -84,6 +85,9 @@ function instantiatePage(definition, evidence) {
     }
     page[key] = (...args) => {
       evidence.pageMethodCalls[key] = (evidence.pageMethodCalls[key] || 0) + 1;
+      if (key === 'saveFormal' && page.data && page.data.parseResult) {
+        evidence.pagePrimaryActionCalls.saveFormal += 1;
+      }
       return definition[key].apply(page, args);
     };
   });
@@ -94,8 +98,8 @@ function detectCapabilities(surface, page) {
   const full = surface === 'FULL_PAGE';
   return {
     SELECT_CUSTOMER: full && typeof page.changeCustomerMatch === 'function',
-    SELECT_ORDER: false,
-    SELECT_QUOTATION: false,
+    SELECT_ORDER: full && typeof page.changeOrder === 'function',
+    SELECT_QUOTATION: full && typeof page.changeQuotation === 'function',
     SELECT_RECEIVABLE: full && typeof page.changeReceivable === 'function',
     SELECT_DEPOSIT_ORDER: full && typeof page.changeOrderDeposit === 'function',
     EDIT_CONFIRMATION_FIELD: full
@@ -121,17 +125,25 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
   const evidence = {
     pagePath: relativePath,
     pageMethodCalls: {},
+    pagePrimaryActionCalls: {
+      saveFormal: 0
+    },
     productionBusinessCalls: {
       saveConfirmedDraft: 0,
       savePendingNote: 0
+    },
+    productionStorageCalls: {
+      saveState: 0
     },
     transportIdentityAdaptations: []
   };
   const aiParser = require(AI_PARSER_PATH);
   const business = require(BUSINESS_PATH);
+  const storage = require(STORAGE_PATH);
   const originalHybrid = aiParser.parseHybridInput;
   const originalSaveConfirmed = business.saveConfirmedDraft;
   const originalSavePending = business.savePendingNote;
+  const originalSaveState = storage.saveState;
   aiParser.parseHybridInput = createTransportIdentityAdapter(
     originalHybrid,
     spec.ai.profile,
@@ -144,6 +156,10 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
   business.savePendingNote = (...args) => {
     evidence.productionBusinessCalls.savePendingNote += 1;
     return originalSavePending(...args);
+  };
+  storage.saveState = (...args) => {
+    evidence.productionStorageCalls.saveState += 1;
+    return originalSaveState(...args);
   };
   let definition = null;
   try {
@@ -175,10 +191,21 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     aiParser.parseHybridInput = originalHybrid;
     business.saveConfirmedDraft = originalSaveConfirmed;
     business.savePendingNote = originalSavePending;
+    storage.saveState = originalSaveState;
   }
   const page = instantiatePage(definition, evidence);
   const availableCapabilities = detectCapabilities(surface, page);
   evidence.availableCapabilities = safeClone(availableCapabilities);
+  evidence.capabilityProbes = {
+    SELECT_ORDER: {
+      method: 'changeOrder',
+      methodType: typeof page.changeOrder
+    },
+    SELECT_QUOTATION: {
+      method: 'changeQuotation',
+      methodType: typeof page.changeQuotation
+    }
+  };
   if (options.runLifecycle !== false) {
     if (typeof page.onLoad === 'function') {
       // PENDING_EDIT deliberately enters through the production hand-off key and

@@ -22,6 +22,8 @@ function createFakeNetwork(options = {}) {
   const events = [];
   let realNetworkRequests = 0;
   let guardErrors = 0;
+  let guardInstalled = false;
+  const originals = [];
 
   function completeRequest(request, event) {
     const fixture = aiFixture;
@@ -94,32 +96,51 @@ function createFakeNetwork(options = {}) {
   }
 
   function guardHostNetwork() {
+    if (guardInstalled) return;
+    guardInstalled = true;
     const blocked = () => {
       realNetworkRequests += 1;
       throw createGuardError('HOST_NETWORK');
     };
+    const remember = (target, key) => {
+      originals.push({ target, key, value: target[key] });
+      target[key] = blocked;
+    };
+    const nativeFetch = global.fetch;
+    originals.push({ target: global, key: 'fetch', value: nativeFetch });
     global.fetch = blocked;
     const http = require('http');
     const https = require('https');
-    http.request = blocked;
-    http.get = blocked;
-    https.request = blocked;
-    https.get = blocked;
+    remember(http, 'request');
+    remember(http, 'get');
+    remember(https, 'request');
+    remember(https, 'get');
+  }
+
+  function restoreHostNetwork() {
+    originals.splice(0).forEach(({ target, key, value }) => {
+      if (value === undefined) delete target[key];
+      else target[key] = value;
+    });
   }
 
   function audit() {
     return {
       allowedMemoryRequests: events.length - guardErrors,
+      auditPerformed: true,
       events: safeClone(events),
+      guardInstalled,
       guardErrors,
-      realNetworkRequests
+      realNetworkRequests,
+      unknownFakeRouteRequests: guardErrors
     };
   }
 
   return {
     audit,
     guardHostNetwork,
-    request
+    request,
+    restoreHostNetwork
   };
 }
 

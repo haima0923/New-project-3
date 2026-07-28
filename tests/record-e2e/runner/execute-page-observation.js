@@ -1,5 +1,4 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
-const { analyzeClipboardText } = require('../../../utils/clipboard-chat');
 const { applyPageInteractions } = require('./apply-page-interactions');
 const {
   businessDraftPayload,
@@ -116,6 +115,43 @@ async function submitVoice(driver) {
   }
 }
 
+async function waitForVoiceTranscript(runtime, timeoutMs = 3000) {
+  const started = Date.now();
+  while (runtime.voice.audit().transcriptDelivered !== true) {
+    if (Date.now() - started > timeoutMs) {
+      throw Object.assign(new Error('Fake voice transcript was not delivered'), {
+        code: 'VOICE_TRANSCRIPTION_ERROR'
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+function collectPageEditConsistency(driver, interaction, beforeEdits, afterEdits) {
+  const checks = [];
+  if (driver.surface !== 'HOME_QUICK') return { checks, consistent: true };
+  (interaction.evidence.edits || []).forEach((edit) => {
+    if (edit.scope === 'ITEM' || !['productName', 'quantity', 'unit', 'unitPrice'].includes(edit.field)) {
+      return;
+    }
+    const topValue = afterEdits.fields[edit.field];
+    const itemValue = afterEdits.items[0] && afterEdits.items[0][edit.field];
+    checks.push({
+      field: edit.field,
+      method: edit.method,
+      beforeTopValue: beforeEdits.fields[edit.field],
+      beforeItemValue: beforeEdits.items[0] && beforeEdits.items[0][edit.field],
+      topValue,
+      itemValue,
+      synchronized: String(topValue) === String(itemValue)
+    });
+  });
+  return {
+    checks,
+    consistent: checks.every((item) => item.synchronized)
+  };
+}
+
 async function maybeDeepReview(driver, spec) {
   if (spec.ai.profile !== 'FAKE_DEEP') return;
   await waitForPageParse(driver.page);
@@ -143,6 +179,7 @@ async function executePageObservation(runtime, spec, options = {}) {
     await submitClipboard(driver, runtime, spec);
   } else if (spec.input.channel === 'VOICE_TRANSCRIPT') {
     await submitVoice(driver);
+    await waitForVoiceTranscript(runtime);
   } else if (spec.input.channel === 'PENDING_EDIT') {
     if (typeof driver.page.runParse !== 'function') {
       throw Object.assign(new Error('Pending edit parse method missing'), {
@@ -163,10 +200,16 @@ async function executePageObservation(runtime, spec, options = {}) {
     .filter((capability) => driver.availableCapabilities[capability] !== true);
   const interaction = await applyPageInteractions(driver, spec.interaction, options.hooks);
   const afterEdits = pageSnapshot(driver);
+  const pageEditConsistency = collectPageEditConsistency(
+    driver,
+    interaction,
+    beforeEdits,
+    afterEdits
+  );
   const actualPageText = afterEdits.originalInput || beforeEdits.originalInput || '';
   let clipboardEvidence = null;
   if (spec.input.channel === 'CLIPBOARD_CHAT') {
-    const analysis = analyzeClipboardText(spec.input.clipboardText || spec.input.originalText);
+    const analysis = driver.page.data.pasteAnalysis || {};
     clipboardEvidence = {
       rawText: analysis.rawText || '',
       extractedText: analysis.extractedText || '',
@@ -187,6 +230,7 @@ async function executePageObservation(runtime, spec, options = {}) {
     inputBefore: rawBefore,
     interaction,
     missingCapabilities,
+    pageEditConsistency,
     route: routeFromResult(afterEdits.parseResult)
   };
 }

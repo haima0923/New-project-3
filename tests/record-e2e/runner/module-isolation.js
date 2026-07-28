@@ -12,6 +12,8 @@ function runCaseWorker(payload, options = {}) {
       stdio: ['ignore', 'ignore', 'ignore', 'ipc']
     });
     const timeoutMs = Number(options.timeoutMs || 15000);
+    let response = null;
+    let settled = false;
     const timer = setTimeout(() => {
       child.kill();
       const error = new Error(`Case worker timed out after ${timeoutMs}ms`);
@@ -19,20 +21,39 @@ function runCaseWorker(payload, options = {}) {
       reject(error);
     }, timeoutMs);
     child.once('message', (message) => {
-      clearTimeout(timer);
+      response = message;
       if (child.connected) child.disconnect();
-      if (!message || message.ok !== true) {
-        const error = new Error(message && message.error && message.error.message || 'Case worker failed');
-        error.code = message && message.error && message.error.code || 'AUTOMATION_DRIVER_ERROR';
-        error.workerStack = message && message.error && message.error.stack || '';
+    });
+    child.once('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (exitCode, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!response || response.ok !== true || exitCode !== 0) {
+        const error = new Error(
+          response && response.error && response.error.message
+          || `Case worker exited without a successful result (${exitCode}, ${signal || 'no-signal'})`
+        );
+        error.code = response && response.error && response.error.code
+          || 'AUTOMATION_DRIVER_ERROR';
+        error.workerStack = response && response.error && response.error.stack || '';
         reject(error);
         return;
       }
-      resolve(message.result);
-    });
-    child.once('error', (error) => {
-      clearTimeout(timer);
-      reject(error);
+      resolve(Object.assign({}, response.result, {
+        workerExitAudit: {
+          exitCode,
+          exitObserved: true,
+          ipcClosed: child.connected === false,
+          pid: child.pid,
+          signal: signal || ''
+        }
+      }));
     });
     child.send(safeClone(payload));
   });

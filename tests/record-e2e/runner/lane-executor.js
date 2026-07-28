@@ -1,6 +1,5 @@
 const {
   createStateDiff,
-  getStateFingerprint,
   isCollectionDiffEmpty,
   safeClone
 } = require('../../../utils/record-state-diff');
@@ -14,8 +13,13 @@ const {
   prepareLegacyDraft
 } = require('./execute-isolated-legacy-commit');
 const { executePageObservation } = require('./execute-page-observation');
-const { executeRestart } = require('./execute-restart');
 const { executeTransactionReplay } = require('./execute-transaction-replay');
+const { executedLane, preconditionFailedLane } = require('./lane-state');
+const { assertIsolationAudit } = require('./assert-isolation-audit');
+const {
+  RECORD_STORAGE_BACKUP_KEY,
+  RECORD_STORAGE_JOURNAL_KEY
+} = require('../../../utils/record-storage-transaction-contract');
 
 const PROVIDER_BLOCK = 'UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION';
 
@@ -73,6 +77,7 @@ function publicObservation(observation) {
     beforeEdits: observation.beforeEdits,
     inputBefore: observation.inputBefore,
     interaction: observation.interaction,
+    pageEditConsistency: observation.pageEditConsistency || null,
     missingCapabilities: observation.missingCapabilities,
     pageDriverEvidence: observation.driver && observation.driver.evidence || null,
     route: observation.route,
@@ -125,34 +130,93 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
       code: 'AUTOMATION_DRIVER_ERROR'
     });
   }
+  const prepared = prepareLegacyDraft(
+    observation.afterEdits.parseResult || {},
+    spec.initialState.state,
+    spec.ai.profile
+  );
+  if (!prepared.allowed || !prepared.identityBypass) {
+    throw Object.assign(new Error('Duplicate trigger requires safe test-only provider identity seam'), {
+      code: 'LANE_EXECUTION_EVIDENCE_MISSING'
+    });
+  }
+  driver.page.setData({
+    parseResult: safeClone(prepared.draft),
+    fields: safeClone(prepared.draft.fields || {}),
+    intent: prepared.draft.intent
+  });
   const beforeCalls = Number(driver.evidence.pageMethodCalls.saveFormal || 0);
+  const beforeEligibleCalls = Number(driver.evidence.pagePrimaryActionCalls.saveFormal || 0);
   const beforeBusiness = Number(driver.evidence.productionBusinessCalls.saveConfirmedDraft || 0);
+  const beforeStorage = Number(driver.evidence.productionStorageCalls.saveState || 0);
+  const beforeStorageEvents = runtime.fakeWx.audit().storageEvents.length;
   const beforeRaw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state;
   const beforeState = stripRecordStorageControl(beforeRaw);
   const beforeRevision = beforeRaw && beforeRaw.__hxlRecordStorageV1
     ? Number(beforeRaw.__hxlRecordStorageV1.storageRevision || 0)
     : 0;
+  const beforeReceiptCount = beforeRaw && beforeRaw.__hxlRecordStorageV1
+    ? (beforeRaw.__hxlRecordStorageV1.recentReceipts || []).length
+    : 0;
   driver.page.saveFormal();
+  const afterFirstRaw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state;
+  const afterFirstState = stripRecordStorageControl(afterFirstRaw);
   driver.page.saveFormal();
   const afterCalls = Number(driver.evidence.pageMethodCalls.saveFormal || 0);
+  const afterEligibleCalls = Number(driver.evidence.pagePrimaryActionCalls.saveFormal || 0);
   const afterBusiness = Number(driver.evidence.productionBusinessCalls.saveConfirmedDraft || 0);
+  const afterStorage = Number(driver.evidence.productionStorageCalls.saveState || 0);
+  const afterStorageAudit = runtime.fakeWx.audit();
+  const transactionEvents = afterStorageAudit.storageEvents.slice(beforeStorageEvents);
   const afterRaw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state;
   const afterState = stripRecordStorageControl(afterRaw);
   const afterRevision = afterRaw && afterRaw.__hxlRecordStorageV1
     ? Number(afterRaw.__hxlRecordStorageV1.storageRevision || 0)
     : 0;
+  const afterReceiptCount = afterRaw && afterRaw.__hxlRecordStorageV1
+    ? (afterRaw.__hxlRecordStorageV1.recentReceipts || []).length
+    : 0;
   const pageTriggerDiff = createStateDiff(beforeState, afterState);
+  const transactionBeginCount = transactionEvents.filter((event) => (
+    event.operation === 'SET' && /__txn_journal_v1$/.test(event.key)
+  )).length;
+  const additionalBusinessDiff = createStateDiff(afterFirstState, afterState);
+  const financialRecordCount = (afterState.paymentRecords || []).length
+    - (beforeState.paymentRecords || []).length;
   return {
-    additionalBusinessDiffEmpty: isCollectionDiffEmpty(pageTriggerDiff.businessDiff),
+    additionalBusinessDiff: additionalBusinessDiff.businessDiff,
+    additionalBusinessDiffEmpty: isCollectionDiffEmpty(additionalBusinessDiff.businessDiff),
     isolatedCommitCount: isolated && isolated.committed ? 1 : 0,
     isolatedCommitExcludedFromPageTriggerMetrics: true,
     pageTriggerBusinessDiff: pageTriggerDiff.businessDiff,
-    pageSaveHandlerAttempts: afterCalls - beforeCalls,
+    committedReceiptCount: afterReceiptCount - beforeReceiptCount,
+    completionEvidencePresent: [
+      afterCalls - beforeCalls,
+      afterEligibleCalls - beforeEligibleCalls,
+      afterBusiness - beforeBusiness,
+      afterStorage - beforeStorage,
+      transactionBeginCount,
+      afterReceiptCount - beforeReceiptCount,
+      financialRecordCount
+    ].every(Number.isFinite),
+    financialRecordCount,
+    legacyBusinessAttemptCount: afterBusiness - beforeBusiness,
+    pageHandlerInvocationCount: afterCalls - beforeCalls,
+    pageSaveHandlerAttempts: afterEligibleCalls - beforeEligibleCalls,
     productionBusinessSaveAttempts: afterBusiness - beforeBusiness,
-    secondTriggerStatus: afterCalls - beforeCalls === 1
+    secondTriggerStatus: afterEligibleCalls - beforeEligibleCalls === 1
       ? 'SECOND_TRIGGER_SUPPRESSED'
       : 'SECOND_TRIGGER_REACHED_HANDLER',
-    transactionCommitAttempts: afterRevision - beforeRevision,
+    storageSaveAttemptCount: afterStorage - beforeStorage,
+    testOnlyIdentitySeam: {
+      businessHashEqual: prepared.businessHashBefore === prepared.businessHashAfter,
+      marker: prepared.identityBypass.marker,
+      providerWasNeverSetToReal: prepared.identityBypass.providerWasNeverSetToReal
+    },
+    transactionBeginCount: afterStorage - beforeStorage,
+    transactionCommitAttempts: afterStorage - beforeStorage,
+    transactionJournalWriteCount: transactionBeginCount,
+    revisionDelta: afterRevision - beforeRevision,
     transactionExactReplay: false,
     triggerAttempts: 2
   };
@@ -205,26 +269,24 @@ async function executeLanes(runtime, spec, plan, options = {}) {
   const draftPublic = draftObservation && draftObservation !== observation
     ? publicObservation(draftObservation)
     : null;
-  const laneResults = [{
-    assertions: [],
-    evidence: {
+  const laneResults = [executedLane(observationLane(spec), {
       missingCapabilities: safeClone(observation.missingCapabilities),
       productionObservation: safeClone(primaryProductionObservation)
-    },
-    failureCode: observation.missingCapabilities.length ? 'PAGE_CAPABILITY_MISSING' : '',
-    failureStage: observation.missingCapabilities.length ? 'SURFACE_ERROR' : '',
-    lane: observationLane(spec),
-    status: observation.missingCapabilities.length ? 'CASE_FAIL' : 'PASS'
-  }];
+    }, observation.missingCapabilities.length ? {
+      failureCode: 'REQUIRED_PAGE_CAPABILITY_MISSING',
+      failureStage: 'SURFACE_ERROR',
+      status: 'CASE_FAIL'
+    } : {})];
   if (draftObservation && draftObservation !== observation) {
-    laneResults.push({
-      assertions: [],
-      evidence: { pageDraftDerived: true },
-      failureCode: draftObservation.missingCapabilities.length ? 'PAGE_CAPABILITY_MISSING' : '',
-      failureStage: draftObservation.missingCapabilities.length ? 'SURFACE_ERROR' : '',
-      lane: 'PAGE_CONFIRMED_DRAFT_DERIVATION',
-      status: draftObservation.missingCapabilities.length ? 'CASE_FAIL' : 'PASS'
-    });
+    laneResults.push(executedLane(
+      'PAGE_CONFIRMED_DRAFT_DERIVATION',
+      { pageDraftDerived: true },
+      draftObservation.missingCapabilities.length ? {
+        failureCode: 'REQUIRED_PAGE_CAPABILITY_MISSING',
+        failureStage: 'SURFACE_ERROR',
+        status: 'CASE_FAIL'
+      } : {}
+    ));
   }
 
   let isolated = null;
@@ -261,59 +323,55 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       stateBefore: concurrent.stateBefore,
       storageAudit: concurrent.storageAudit
     };
-    laneResults.push({
-      assertions: [],
-      evidence: {
+    laneResults.push(concurrent.committedA
+      ? executedLane('CONCURRENT_BASE_REVISION', {
         pageADataPreserved: concurrent.pageADataPreserved,
-        staleDetected: concurrent.staleDetected
-      },
-      failureCode: '',
-      failureStage: '',
-      lane: 'CONCURRENT_BASE_REVISION',
-      status: 'PASS'
-    });
+        staleDetected: concurrent.staleDetected,
+        secondCommitAttempted: concurrent.secondCommitAttempted
+      })
+      : preconditionFailedLane(
+        'CONCURRENT_BASE_REVISION',
+        {
+          firstCommitSucceeded: false,
+          reason: concurrent.reason || 'FIRST_COMMIT_NOT_COMPLETED',
+          secondCommitAttempted: concurrent.secondCommitAttempted === true
+        },
+        'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED',
+        'PREFLIGHT_ERROR'
+      ));
   } else if (lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')) {
     if (surfaceGap) {
-      laneResults.push({
-        assertions: [],
-        evidence: { zeroSideEffects: true },
-        failureCode: 'UPSTREAM_PAGE_CAPABILITY_MISSING',
-        failureStage: 'SURFACE_ERROR',
-        lane: 'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
-        status: 'CASE_FAIL'
-      });
+      laneResults.push(preconditionFailedLane(
+        'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
+        { zeroSideEffects: true },
+        'UPSTREAM_PAGE_CAPABILITY_MISSING',
+        'SURFACE_ERROR'
+      ));
     } else if (spec.interaction.requestedSaveAction === 'SAVE_PENDING') {
       isolated = runActualPendingPageSave(spec, sourceObservation, runtime);
     } else {
       isolated = executeIsolatedLegacyCommit(spec, sourceDraft, options.hooks || {});
     }
     if (!surfaceGap) {
-      laneResults.push({
-        assertions: [],
-        evidence: {
+      laneResults.push(executedLane('TEST_ONLY_ISOLATED_LEGACY_COMMIT', {
           committed: Boolean(isolated && isolated.committed),
           marker: isolated && isolated.marker,
           reason: isolated && isolated.reason || ''
-        },
-        failureCode: '',
-        failureStage: '',
-        lane: 'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
-        status: 'PASS'
-      });
+        }));
     }
   }
 
   let duplicate = null;
   if (lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')) {
     duplicate = await runDuplicateTrigger(spec, sourceObservation, isolated, runtime);
-    laneResults.push({
-      assertions: [],
-      evidence: safeClone(duplicate),
-      failureCode: '',
-      failureStage: '',
-      lane: 'PAGE_DUPLICATE_TRIGGER_GUARD',
-      status: 'PASS'
-    });
+    laneResults.push(executedLane(
+      'PAGE_DUPLICATE_TRIGGER_GUARD',
+      safeClone(duplicate),
+      {
+        primaryActionSucceeded: duplicate.completionEvidencePresent === true,
+        completionEvidencePresent: duplicate.completionEvidencePresent === true
+      }
+    ));
   }
 
   let replay = null;
@@ -324,74 +382,96 @@ async function executeLanes(runtime, spec, plan, options = {}) {
         notExecuted: true,
         reason: 'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED'
       };
-    laneResults.push({
-      assertions: [],
-      evidence: {
+    if (!replay.notExecuted) {
+      replay.pageSaveAttempts = (
+        spec.interaction.requestedSaveAction === 'SAVE_FORMAL'
+        && isolated.committed
+      ) ? 1 : 0;
+      replay.replayPageSaveAttempts = 0;
+    }
+    laneResults.push(replay.notExecuted
+      ? preconditionFailedLane(
+        'TRANSACTION_EXACT_REPLAY',
+        { reason: replay.reason },
+        'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED',
+        'PREFLIGHT_ERROR'
+      )
+      : executedLane('TRANSACTION_EXACT_REPLAY', {
         replayStatus: replay.replay && replay.replay.status,
         sameIdentity: replay.sameIdentity
-      },
-      failureCode: replay.notExecuted ? 'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED' : '',
-      failureStage: replay.notExecuted ? 'PREFLIGHT_ERROR' : '',
-      lane: 'TRANSACTION_EXACT_REPLAY',
-      status: replay.notExecuted ? 'CASE_FAIL' : 'PASS'
-    });
+      }));
   }
 
   let restart = null;
+  let restartRequest = null;
   if (lanes.includes('RESTART_PERSISTENCE')) {
-    if (!isolated || !isolated.gateway) {
+    if (!isolated || !isolated.gateway || !isolated.committed
+      || !isolated.commitResult || isolated.commitResult.status !== 'COMMITTED') {
       restart = {
         notExecuted: true,
-        reason: 'UPSTREAM_ISOLATED_STORE_NOT_AVAILABLE'
+        reason: 'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED'
       };
-      laneResults.push({
-        assertions: [],
-        evidence: safeClone(restart),
-        failureCode: 'UPSTREAM_ISOLATED_STORE_NOT_AVAILABLE',
-        failureStage: 'PREFLIGHT_ERROR',
-        lane: 'RESTART_PERSISTENCE',
-        status: 'CASE_FAIL'
-      });
+      laneResults.push(preconditionFailedLane(
+        'RESTART_PERSISTENCE',
+        safeClone(restart),
+        'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED',
+        'PREFLIGHT_ERROR'
+      ));
     } else {
-      restart = await executeRestart(
-        spec,
-        isolated.gateway.getEntries(),
-        runtime.bootId,
-        options.attempt || 1
-      );
-      restart.postSaveFingerprint = getStateFingerprint(isolated.stateAfter);
-      restart.equalToPostSave = restart.stateFingerprint === restart.postSaveFingerprint;
-      restart.additionalDiff = createStateDiff(isolated.stateAfter, restart.state);
-      laneResults.push({
-        assertions: [],
-        evidence: {
-          equalToPostSave: restart.equalToPostSave,
-          newRuntimeInstance: restart.newRuntimeInstance
+      restartRequest = {
+        entries: isolated.gateway.getEntries(),
+        postSaveState: safeClone(isolated.stateAfter),
+        priorCommit: {
+          receipt: safeClone(isolated.commitResult.receipt),
+          status: isolated.commitResult.status,
+          revision: isolated.storageAudit.revision
         },
-        failureCode: '',
-        failureStage: '',
-        lane: 'RESTART_PERSISTENCE',
-        status: 'PASS'
-      });
+        primaryBootId: runtime.bootId,
+        primaryPid: process.pid
+      };
+      laneResults.push(Object.assign(
+        preconditionFailedLane(
+          'RESTART_PERSISTENCE',
+          { awaitingParentWorkerExit: true },
+          'RESTART_PENDING_PARENT_EXECUTION',
+          'RESTART_PERSISTENCE_ERROR'
+        ),
+        {
+          preconditionsPassed: true,
+          status: 'PLANNED'
+        }
+      ));
     }
   }
 
   const audit = runtime.audit();
-  if (audit.networkAudit.realNetworkRequests !== 0 || audit.networkAudit.guardErrors !== 0) {
-    throw Object.assign(new Error('Network Guard detected a forbidden request'), {
-      code: 'AUTOMATION_NETWORK_GUARD_ERROR'
+  if (options.hooks && options.hooks.skipNetworkAudit) delete audit.networkAudit;
+  if (options.hooks && options.hooks.skipStorageAudit) delete audit.storageAudit;
+  assertIsolationAudit(audit);
+  if (options.hooks && options.hooks.leaveJournalMaterial
+    && isolated && isolated.gateway) {
+    isolated.gateway.mutateEntry(RECORD_STORAGE_JOURNAL_KEY, {
+      caseId: spec.caseId,
+      marker: 'SELF_TEST_ORPHAN_JOURNAL'
     });
   }
-  if (audit.storageAudit.realWxStorageCalls !== 0) {
-    throw Object.assign(new Error('Runner touched real or host wx Storage'), {
-      code: 'AUTOMATION_STORAGE_GUARD_ERROR'
-    });
-  }
-  const isolatedStorageAudit = isolated && isolated.storageAudit || {};
+  const finalGatewayEntries = isolated && isolated.gateway
+    ? isolated.gateway.getEntries()
+    : {};
+  const finalTransactionAudit = {
+    backupCount: Object.prototype.hasOwnProperty.call(
+      finalGatewayEntries,
+      RECORD_STORAGE_BACKUP_KEY
+    ) ? 1 : 0,
+    journalCount: Object.prototype.hasOwnProperty.call(
+      finalGatewayEntries,
+      RECORD_STORAGE_JOURNAL_KEY
+    ) ? 1 : 0
+  };
   if (audit.storageAudit.journalPresent
     || audit.storageAudit.backupPresent
-    || isolatedStorageAudit.journalPresent
-    || isolatedStorageAudit.backupPresent) {
+    || finalTransactionAudit.journalCount
+    || finalTransactionAudit.backupCount) {
     throw Object.assign(new Error('Runner cleanup left Journal or Backup material behind'), {
       code: 'CLEANUP_ERROR'
     });
@@ -415,6 +495,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     isolatedCommitEvidence: isolated,
     laneResults,
     networkAudit: audit.networkAudit,
+    hostFilesystemAudit: audit.hostFilesystemAudit,
     pageDerivationEvidence: draftPublic,
     pageEvidence: observationPublic,
     preflightEvidence: {
@@ -424,8 +505,10 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     },
     productionObservation: primaryProductionObservation,
     restartEvidence: restart,
+    restartRequest,
     routeEvidence: { actualRoute: observation.route },
     storageAudit: audit.storageAudit,
+    finalTransactionAudit,
     surfaceEvidence: {
       availableCapabilities: observation.driver
         ? observation.driver.availableCapabilities
