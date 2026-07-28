@@ -856,6 +856,26 @@ function retainOrderCandidateChoices(state, confirmationState, priorCandidates, 
   });
 }
 
+function rebuildAfterGenericOrderFieldEdit(state, pageData, baseResult, intent, nextBaseFields) {
+  const selectedId = String(pageData.selectedOrderId || '');
+  if (!selectedId || !pageData.orderSelectionBaseFields) {
+    return buildConfirmationState(state, baseResult, intent, nextBaseFields);
+  }
+  const baseFields = copyOrderSelectionBaseFields(nextBaseFields);
+  const fields = Object.assign({}, baseFields, {
+    orderId: selectedId,
+    orderSelectionConfirmed: true
+  });
+  const confirmationState = retainOrderCandidateChoices(
+    state,
+    buildConfirmationState(state, baseResult, intent, fields),
+    pageData.orderCandidates,
+    selectedId
+  );
+  confirmationState.orderSelectionBaseFields = baseFields;
+  return confirmationState;
+}
+
 function getFieldVisibility(intent, operation, fields = {}) {
   const quoteOrOrder = ['quotation', 'order'].includes(intent);
   const todo = ['todo', 'dunning'].includes(intent);
@@ -1287,7 +1307,16 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     domainPreflight
   );
   const orderSelectionState = operation === 'record_order_deposit'
-    ? orderDepositState
+    ? Object.assign({}, orderDepositState, {
+      orderCandidates: [],
+      selectedOrderId: nextFields.orderId || '',
+      selectedOrder: null,
+      orderSelectionRequired: false,
+      orderSelectionReason: '',
+      orderSelectionBaseFields: null,
+      showGenericOrderSelection: false,
+      showGenericOrderPicker: false
+    })
     : Object.assign({}, orderDepositState, genericOrderSelectionState);
   const canFormalSave = domainPreflight.domainCanSaveFormal === true;
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
@@ -2013,7 +2042,10 @@ Page({
       missing_fields: [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
-    const confirmationState = buildConfirmationState(state, baseResult, intent, this.data.fields);
+    const fields = this.data.orderSelectionBaseFields
+      ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+      : this.data.fields;
+    const confirmationState = buildConfirmationState(state, baseResult, intent, fields);
     this.setData(Object.assign({}, confirmationState, {
       intent,
       intentLabel: INTENT_LABELS[intent]
@@ -2025,7 +2057,14 @@ Page({
     const patch = {};
     patch[`fields.${field}`] = event.detail.value;
     if (this.data.parseResult) {
-      const nextFields = Object.assign({}, this.data.fields, {
+      const hasGenericOrderSelection = Boolean(
+        this.data.selectedOrderId && this.data.orderSelectionBaseFields
+      );
+      const fieldInvalidatesOrderSelection = ['customerName', 'phone', 'productName'].includes(field);
+      const sourceFields = hasGenericOrderSelection
+        ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+        : this.data.fields;
+      const nextFields = Object.assign({}, sourceFields, {
         [field]: event.detail.value
       });
       if (['customerName', 'phone'].includes(field)) {
@@ -2054,7 +2093,18 @@ Page({
           .filter((item) => item !== field)
       });
       const state = getState();
-      Object.assign(patch, buildConfirmationState(state, baseResult, this.data.intent, nextFields));
+      Object.assign(
+        patch,
+        hasGenericOrderSelection && !fieldInvalidatesOrderSelection
+          ? rebuildAfterGenericOrderFieldEdit(
+            state,
+            this.data,
+            baseResult,
+            this.data.intent,
+            nextFields
+          )
+          : buildConfirmationState(state, baseResult, this.data.intent, nextFields)
+      );
     }
     this.setData(patch);
   },
@@ -2127,7 +2177,13 @@ Page({
     const patch = {};
     patch[`fields.${field}`] = value;
     if (this.data.parseResult) {
-      const nextFields = Object.assign({}, this.data.fields, {
+      const hasGenericOrderSelection = Boolean(
+        this.data.selectedOrderId && this.data.orderSelectionBaseFields
+      );
+      const sourceFields = hasGenericOrderSelection
+        ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+        : this.data.fields;
+      const nextFields = Object.assign({}, sourceFields, {
         [field]: value
       });
       const baseResult = Object.assign({}, markManualField(this.data.parseResult, field), {
@@ -2136,7 +2192,18 @@ Page({
           .filter((item) => item !== field)
       });
       const state = getState();
-      Object.assign(patch, buildConfirmationState(state, baseResult, this.data.intent, nextFields));
+      Object.assign(
+        patch,
+        hasGenericOrderSelection
+          ? rebuildAfterGenericOrderFieldEdit(
+            state,
+            this.data,
+            baseResult,
+            this.data.intent,
+            nextFields
+          )
+          : buildConfirmationState(state, baseResult, this.data.intent, nextFields)
+      );
     }
     this.setData(patch);
   },
@@ -2259,6 +2326,17 @@ Page({
   applyOrderSelection(orderId) {
     if (!this.data.parseResult) return false;
     const selectedId = String(orderId || '');
+    const operationAllowsGenericOrder = [
+      'update_order',
+      'create_receivable',
+      'create_receivable_with_payment'
+    ].includes(this.data.operation);
+    if (!operationAllowsGenericOrder
+      || !this.data.showGenericOrderSelection
+      || !this.data.showGenericOrderPicker) {
+      wx.showToast({ title: '当前不需要选择订单', icon: 'none' });
+      return false;
+    }
     const projected = (this.data.orderCandidates || []).find((item) => item.id === selectedId);
     const state = getState();
     const liveOrder = (state.orders || []).find((item) => item.id === selectedId);
