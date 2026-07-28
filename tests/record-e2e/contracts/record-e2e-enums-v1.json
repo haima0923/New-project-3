@@ -1,6 +1,7 @@
 {
-  "schemaVersion": "record-e2e-enums-v1",
-  "caseSchemaVersion": "record-e2e-case-v1",
+  "schemaVersion": "record-e2e-enums-v1.1",
+  "caseSchemaVersion": "record-e2e-case-v1.1",
+  "executionBoundaryVersion": "record-e2e-execution-boundary-v1",
   "statuses": [
     "ACTIVE",
     "NEEDS_PRODUCT_DECISION",
@@ -30,6 +31,76 @@
     "VOICE_TRANSCRIPT",
     "CLIPBOARD_CHAT",
     "RESTART_PERSISTENCE"
+  ],
+  "executionLanes": [
+    "PAGE_PRODUCTION_OBSERVATION",
+    "HEADLESS_PRODUCTION_OBSERVATION",
+    "PAGE_CONFIRMED_DRAFT_DERIVATION",
+    "TEST_ONLY_ISOLATED_LEGACY_COMMIT",
+    "PAGE_DUPLICATE_TRIGGER_GUARD",
+    "TRANSACTION_EXACT_REPLAY",
+    "RESTART_PERSISTENCE",
+    "CONCURRENT_BASE_REVISION"
+  ],
+  "requiredCapabilities": [
+    "SELECT_CUSTOMER",
+    "SELECT_ORDER",
+    "SELECT_QUOTATION",
+    "SELECT_RECEIVABLE",
+    "SELECT_DEPOSIT_ORDER",
+    "EDIT_CONFIRMATION_FIELD",
+    "EDIT_PRIMARY_ITEM",
+    "EDIT_ADDITIONAL_ITEM"
+  ],
+  "missingCapabilityDispositions": [
+    "CASE_FAIL"
+  ],
+  "missingCapabilityFailureStages": [
+    "SURFACE_ERROR"
+  ],
+  "laneResultStatuses": [
+    "PASS",
+    "CASE_FAIL",
+    "RUNNER_ERROR",
+    "BLOCKED"
+  ],
+  "laneExecutionStates": [
+    "EXECUTED",
+    "NOT_EXECUTED_UPSTREAM_CASE_FAIL"
+  ],
+  "productionEligibilityStatuses": [
+    "ELIGIBLE_LOCAL",
+    "BLOCKED_NON_REAL_PROVIDER",
+    "BLOCKED_BUSINESS_SAFETY",
+    "BLOCKED_SURFACE",
+    "NO_RECORD"
+  ],
+  "providerClassifications": [
+    "TEST_LOCAL_ONLY",
+    "NON_REAL_FAKE",
+    "NON_REAL_REPLAY"
+  ],
+  "isolatedExecutionStatuses": [
+    "TEST_ONLY_ISOLATED_COMMITTED",
+    "TEST_ONLY_PENDING_COMMITTED",
+    "NOT_EXECUTED",
+    "BLOCKED"
+  ],
+  "isolatedExecutionMarkers": [
+    "TEST_ONLY_ISOLATED_COMMIT",
+    "NOT_APPLICABLE"
+  ],
+  "isolatedExecutionSources": [
+    "PAGE_DERIVED_CONFIRMED_DRAFT",
+    "NOT_APPLICABLE"
+  ],
+  "isolatedExecutionTargets": [
+    "ISOLATED_LEGACY_STORE",
+    "NONE"
+  ],
+  "isolatedStateDiffReferences": [
+    "EXPECTED_STATE_DIFF",
+    "ZERO_SIDE_EFFECTS"
   ],
   "inputChannels": [
     "TYPED_TEXT",
@@ -84,11 +155,6 @@
     "PENDING_COMMITTED",
     "BLOCKED",
     "NO_RECORD"
-  ],
-  "commitTargets": [
-    "MEMORY_ONLY",
-    "ISOLATED_TEST_STORAGE",
-    "NONE"
   ],
   "surfaceStatuses": [
     "CAN_COMPLETE",
@@ -157,11 +223,18 @@
     "PREPARE",
     "COMMIT",
     "RESTART",
-    "RETRY_SAME_PLAN"
+    "RETRY_SAME_PLAN",
+    "CAPTURE_TRANSACTION_MATERIAL",
+    "REPLAY_EXACT_TRANSACTION",
+    "TRIGGER_DUPLICATE_PAGE_SAVE"
+  ],
+  "pageDuplicateTriggerStatuses": [
+    "SECOND_TRIGGER_SUPPRESSED"
   ],
   "idempotencyScenarios": [
     "NOT_APPLICABLE",
     "SAME_PLAN_RETRY",
+    "TRANSACTION_EXACT_REPLAY",
     "DISTINCT_ACTIONS_MUST_NOT_DEDUP",
     "SAME_BASE_CONCURRENT_COMMITS",
     "DOUBLE_UI_TRIGGER"

@@ -33,6 +33,49 @@ const EXPECTED_CATEGORY_COUNTS = Object.freeze({
   SURFACE_PAGE_EDIT: 8,
   PERSISTENCE_IDEMPOTENCY: 4
 });
+const EXPECTED_EXECUTION_LANE_COUNTS = Object.freeze({
+  PAGE_PRODUCTION_OBSERVATION: 110,
+  HEADLESS_PRODUCTION_OBSERVATION: 10,
+  PAGE_CONFIRMED_DRAFT_DERIVATION: 6,
+  TEST_ONLY_ISOLATED_LEGACY_COMMIT: 89,
+  PAGE_DUPLICATE_TRIGGER_GUARD: 1,
+  TRANSACTION_EXACT_REPLAY: 1,
+  RESTART_PERSISTENCE: 5,
+  CONCURRENT_BASE_REVISION: 1
+});
+const OBSERVATION_LANES = Object.freeze([
+  'PAGE_PRODUCTION_OBSERVATION',
+  'HEADLESS_PRODUCTION_OBSERVATION'
+]);
+const NON_REAL_AI_PROFILES = new Set(['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY']);
+const ISOLATED_COMMITTED_STATUSES = new Set([
+  'TEST_ONLY_ISOLATED_COMMITTED',
+  'TEST_ONLY_PENDING_COMMITTED'
+]);
+const REQUIRED_CAPABILITY_BY_SELECTION = Object.freeze({
+  customerId: 'SELECT_CUSTOMER',
+  quotationId: 'SELECT_QUOTATION',
+  receivableId: 'SELECT_RECEIVABLE'
+});
+const KNOWN_PAGE_CAPABILITY_GAPS = Object.freeze({
+  'REC-E2E-BASIC-010': ['SELECT_ORDER'],
+  'REC-E2E-REL-003': ['SELECT_ORDER'],
+  'REC-E2E-REL-007': ['SELECT_CUSTOMER', 'SELECT_QUOTATION'],
+  'REC-E2E-REL-008': ['SELECT_QUOTATION'],
+  'REC-E2E-REL-009': ['SELECT_CUSTOMER', 'SELECT_ORDER']
+});
+const REQUIRED_EXACT_REPLAY_IDENTITY_FIELDS = Object.freeze([
+  'transactionId',
+  'planId',
+  'planHash',
+  'idempotencyKey',
+  'baseRevision',
+  'targetRevision',
+  'baseFingerprint',
+  'targetBundleFingerprint'
+]);
+const FORBIDDEN_PRODUCTION_COMMIT_TERMS = /(?:FORMAL_PRODUCTION_COMMIT|PAGE_SAVE_SUCCESS|REAL_AI_COMMIT)/;
+const FORBIDDEN_EXACT_REPLAY_UI_TERMS = /(?:SECOND_PAGE_SAVE|SECOND_PAGE_CLICK|DOUBLE_UI_TRIGGER|第二次页面|再次点击页面)/i;
 
 const FORMAL_BUSINESS_COLLECTIONS = Object.freeze([
   'customers',
@@ -424,15 +467,16 @@ function validateClock(testCase) {
 function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
   const label = testCase.caseId;
   const ai = checkRequiredObject(testCase.ai, `${label}.ai`, [
-    'profile', 'expectedRoute', 'productionCommitEligible'
+    'profile', 'expectedRoute'
   ]);
   checkEnum(ai.profile, enumSet(enums, 'aiProfiles'), `${label}.ai.profile`);
   checkEnum(ai.expectedRoute, enumSet(enums, 'routes'), `${label}.ai.expectedRoute`);
-  if (typeof ai.productionCommitEligible !== 'boolean') fail(`${label}.ai.productionCommitEligible必须为boolean`);
+  if (Object.prototype.hasOwnProperty.call(ai, 'productionCommitEligible')) {
+    fail(`${label}.ai.productionCommitEligible已弃用；生产资格必须只写expected.productionObservation`);
+  }
   if (ai.expectedRoute !== testCase.expected.route) fail(`${label} ai.expectedRoute必须等于expected.route`);
   if (['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(ai.profile)) {
     if (!ai.fixtureRef || !aiFixtureIds.has(ai.fixtureRef)) fail(`${label} AI profile ${ai.profile}需要有效fixtureRef`);
-    if (ai.productionCommitEligible !== false) fail(`${label} Fake/Replay不能取得生产Commit资格`);
     const fixture = aiFixtureMap.get(ai.fixtureRef);
     if (fixture) {
       if (fixture.caseId !== label) {
@@ -485,6 +529,20 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
           fail(`${label} AI fixture应用选择/编辑后的items与expected.result.items不一致`);
         }
       }
+      const fixtureResponse = (fixture.response && typeof fixture.response === 'object')
+        ? fixture.response
+        : {};
+      const fixtureTemplate = String(fixture.sourceTemplateRef || '').toLowerCase();
+      const dangerousAiFixture = ['TIMEOUT', 'INVALID_JSON'].includes(fixture.kind)
+        || /(?:uncertain|empty-business)/.test(fixtureTemplate)
+        || fixtureResponse.no_record === true
+        || fixtureResponse.recordable === false
+        || String(fixtureResponse.intent || '').toLowerCase() === 'unknown';
+      if (dangerousAiFixture
+        && testCase.expected.isolatedExecution
+        && testCase.expected.isolatedExecution.status === 'TEST_ONLY_ISOLATED_COMMITTED') {
+        fail(`${label} AI失败、空业务、NO_RECORD或危险uncertain fixture不得启用正式隔离提交`);
+      }
     }
   } else if (ai.fixtureRef) {
     fail(`${label} ${ai.profile}不得引用Fake/Replay fixture`);
@@ -503,18 +561,46 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
 function validateInteraction(testCase, enums) {
   const label = testCase.caseId;
   const interaction = checkRequiredObject(testCase.interaction, `${label}.interaction`, [
-    'userEdits', 'userSelections', 'requestedSaveAction', 'restartAfterSave'
+    'userEdits', 'userSelections', 'requiredCapabilities', 'requestedSaveAction', 'restartAfterSave'
   ]);
+  const requiredCapabilities = checkArray(
+    interaction.requiredCapabilities,
+    `${label}.interaction.requiredCapabilities`
+  );
+  requiredCapabilities.forEach((capability) => checkEnum(
+    capability,
+    enumSet(enums, 'requiredCapabilities'),
+    `${label}.interaction.requiredCapabilities`
+  ));
+  if (duplicateValues(requiredCapabilities).length) {
+    fail(`${label}.interaction.requiredCapabilities不得重复`);
+  }
   checkArray(interaction.userEdits, `${label}.interaction.userEdits`).forEach((edit, index) => {
     checkEnum(edit && edit.scope, enumSet(enums, 'editScopes'), `${label}.interaction.userEdits[${index}].scope`);
     checkString(edit && edit.field, `${label}.interaction.userEdits[${index}].field`);
     if (edit && edit.scope === 'ITEM' && (!Number.isInteger(edit.itemIndex) || edit.itemIndex < 0)) {
       fail(`${label} ITEM edit必须包含非负itemIndex`);
     }
+    const requiredCapability = edit && edit.scope === 'ITEM'
+      ? (edit.itemIndex >= 1 ? 'EDIT_ADDITIONAL_ITEM' : 'EDIT_PRIMARY_ITEM')
+      : (edit && ['productName', 'quantity', 'unit', 'unitPrice', 'amount'].includes(edit.field)
+        ? 'EDIT_PRIMARY_ITEM'
+        : 'EDIT_CONFIRMATION_FIELD');
+    if (!requiredCapabilities.includes(requiredCapability)) {
+      fail(`${label} 编辑${edit && edit.field}缺requiredCapability=${requiredCapability}`);
+    }
   });
   checkArray(interaction.userSelections, `${label}.interaction.userSelections`).forEach((selection, index) => {
     checkEnum(selection && selection.kind, enumSet(enums, 'selectionKinds'), `${label}.interaction.userSelections[${index}].kind`);
     checkString(selection && selection.selectedId, `${label}.interaction.userSelections[${index}].selectedId`);
+    const requiredCapability = selection && selection.kind === 'orderId'
+      ? (testCase.expected.result.operation === 'record_order_deposit'
+        ? 'SELECT_DEPOSIT_ORDER'
+        : 'SELECT_ORDER')
+      : REQUIRED_CAPABILITY_BY_SELECTION[selection && selection.kind];
+    if (requiredCapability && !requiredCapabilities.includes(requiredCapability)) {
+      fail(`${label} 选择${selection.kind}缺requiredCapability=${requiredCapability}`);
+    }
   });
   checkEnum(interaction.requestedSaveAction, enumSet(enums, 'saveActions'), `${label}.interaction.requestedSaveAction`);
   if (typeof interaction.restartAfterSave !== 'boolean') fail(`${label}.interaction.restartAfterSave必须为boolean`);
@@ -539,6 +625,14 @@ function validateInteraction(testCase, enums) {
       }
     });
   }
+  Object.entries(KNOWN_PAGE_CAPABILITY_GAPS).forEach(([caseId, expectedCapabilities]) => {
+    if (label !== caseId) return;
+    expectedCapabilities.forEach((capability) => {
+      if (!requiredCapabilities.includes(capability)) {
+        fail(`${label} 必须保留当前产品缺口对应的正确requiredCapability=${capability}`);
+      }
+    });
+  });
 }
 
 function validateResult(testCase, enums) {
@@ -661,31 +755,30 @@ function validatePreflightAndSave(testCase, enums) {
   });
 
   const save = checkRequiredObject(testCase.expected.save, `${label}.expected.save`, [
-    'action', 'status', 'commitTarget', 'productionCommitEligible'
+    'action', 'status'
   ]);
   checkEnum(save.action, enumSet(enums, 'saveActions'), `${label}.expected.save.action`);
   checkEnum(save.status, enumSet(enums, 'saveStatuses'), `${label}.expected.save.status`);
-  checkEnum(save.commitTarget, enumSet(enums, 'commitTargets'), `${label}.expected.save.commitTarget`);
   if (save.action !== testCase.interaction.requestedSaveAction) fail(`${label} expected.save.action必须等于用户请求动作`);
-  if (save.productionCommitEligible !== false) fail(`${label} E2E V1题不得取得真实生产Commit资格`);
+  if (Object.prototype.hasOwnProperty.call(save, 'commitTarget')
+    || Object.prototype.hasOwnProperty.call(save, 'productionCommitEligible')) {
+    fail(`${label}.expected.save只允许表达业务action/status；生产资格与隔离目标必须使用独立合同`);
+  }
 
   if (save.status === 'FORMAL_COMMITTED') {
     if (save.action !== 'SAVE_FORMAL' || !preflight.domainCanSaveFormal) {
       fail(`${label} FORMAL_COMMITTED必须由可正式保存的SAVE_FORMAL产生`);
     }
-    if (save.commitTarget !== 'MEMORY_ONLY') fail(`${label} 本轮FORMAL_COMMITTED只能指向MEMORY_ONLY`);
     if (!hasFormalBusinessDiff(testCase)) fail(`${label} FORMAL_COMMITTED必须有正式业务State Diff`);
   }
   if (save.status === 'BLOCKED') {
     if (preflight.domainCanSaveFormal) fail(`${label} BLOCKED不能domainCanSaveFormal=true`);
-    if (save.commitTarget !== 'NONE') fail(`${label} BLOCKED commitTarget必须为NONE`);
     if (hasAnyBusinessDiff(testCase)) fail(`${label} BLOCKED不得产生任何业务或日志Diff`);
   }
   if (save.status === 'PENDING_COMMITTED') {
     if (save.action !== 'SAVE_PENDING' || !preflight.domainCanSavePending) {
       fail(`${label} PENDING_COMMITTED必须是用户明确SAVE_PENDING且允许待整理`);
     }
-    if (save.commitTarget !== 'MEMORY_ONLY') fail(`${label} PENDING_COMMITTED必须写隔离Memory`);
     if (!hasNonZeroCollection(testCase.expected.stateDiff.business, 'pendingNotes')) {
       fail(`${label} PENDING_COMMITTED必须创建pendingNotes`);
     }
@@ -694,8 +787,8 @@ function validatePreflightAndSave(testCase, enums) {
     }
   }
   if (save.status === 'NO_RECORD') {
-    if (save.action !== 'DO_NOT_SAVE' || save.commitTarget !== 'NONE' || hasAnyBusinessDiff(testCase)) {
-      fail(`${label} NO_RECORD必须DO_NOT_SAVE、NONE且零副作用`);
+    if (save.action !== 'DO_NOT_SAVE' || hasAnyBusinessDiff(testCase)) {
+      fail(`${label} NO_RECORD必须DO_NOT_SAVE且零副作用`);
     }
   }
   if (preflight.requiredSelections.length && !testCase.interaction.userSelections.length) {
@@ -720,6 +813,411 @@ function validateSurface(testCase, enums) {
       fail(`${label} ${key} effectiveCanSaveFormal必须同时满足领域和Surface能力`);
     }
   });
+}
+
+function validateExecutionBoundaries(testCase, enums) {
+  const label = testCase.caseId;
+  const execution = checkRequiredObject(testCase.execution, `${label}.execution`, [
+    'schemaVersion', 'lanes', 'observationSurface', 'draftSourceSurface',
+    'missingCapabilityDisposition', 'missingCapabilityFailureStage'
+  ]);
+  if (execution.schemaVersion !== 'record-e2e-execution-boundary-v1') {
+    fail(`${label}.execution.schemaVersion错误`);
+  }
+  const lanes = checkArray(execution.lanes, `${label}.execution.lanes`);
+  if (!lanes.length) fail(`${label} 至少需要一个execution lane`);
+  if (duplicateValues(lanes).length) fail(`${label}.execution.lanes不得重复`);
+  lanes.forEach((lane) => checkEnum(lane, enumSet(enums, 'executionLanes'), `${label}.execution.lanes`));
+  checkEnum(execution.observationSurface, enumSet(enums, 'entrySurfaces'), `${label}.execution.observationSurface`);
+  if (!['HOME_QUICK', 'FULL_PAGE', 'NOT_APPLICABLE'].includes(execution.draftSourceSurface)) {
+    fail(`${label}.execution.draftSourceSurface枚举非法`);
+  }
+  checkEnum(
+    execution.missingCapabilityDisposition,
+    enumSet(enums, 'missingCapabilityDispositions'),
+    `${label}.execution.missingCapabilityDisposition`
+  );
+  checkEnum(
+    execution.missingCapabilityFailureStage,
+    enumSet(enums, 'missingCapabilityFailureStages'),
+    `${label}.execution.missingCapabilityFailureStage`
+  );
+  if (execution.missingCapabilityDisposition !== 'CASE_FAIL'
+    || execution.missingCapabilityFailureStage !== 'SURFACE_ERROR') {
+    fail(`${label} 缺失生产页面能力必须分类为CASE_FAIL/SURFACE_ERROR`);
+  }
+  if (execution.observationSurface !== testCase.input.entrySurface) {
+    fail(`${label}.execution.observationSurface必须与input.entrySurface一致`);
+  }
+  const observationLanes = lanes.filter((lane) => OBSERVATION_LANES.includes(lane));
+  if (observationLanes.length !== 1) fail(`${label} 必须且只能有一个生产观察lane`);
+  const expectedObservationLane = testCase.input.entrySurface === 'HEADLESS'
+    ? 'HEADLESS_PRODUCTION_OBSERVATION'
+    : 'PAGE_PRODUCTION_OBSERVATION';
+  const hasPageLane = lanes.includes('PAGE_PRODUCTION_OBSERVATION');
+  if (!lanes.includes(expectedObservationLane)) {
+    fail(`${label} ${testCase.input.entrySurface}必须使用${expectedObservationLane}`);
+  }
+
+  const observation = checkRequiredObject(
+    testCase.expected.productionObservation,
+    `${label}.expected.productionObservation`,
+    ['productionEligibility', 'pageFormalSaveAllowed', 'blockingCodes',
+      'providerClassification', 'requiredCapabilitiesSatisfied']
+  );
+  checkEnum(
+    observation.productionEligibility,
+    enumSet(enums, 'productionEligibilityStatuses'),
+    `${label}.expected.productionObservation.productionEligibility`
+  );
+  checkEnum(
+    observation.providerClassification,
+    enumSet(enums, 'providerClassifications'),
+    `${label}.expected.productionObservation.providerClassification`
+  );
+  checkArray(observation.blockingCodes, `${label}.expected.productionObservation.blockingCodes`);
+  if (observation.requiredCapabilitiesSatisfied !== true) {
+    fail(`${label} 正确产品Expected必须要求requiredCapabilitiesSatisfied=true`);
+  }
+  const expectedProviderClassification = testCase.ai.profile === 'LOCAL_ONLY'
+    ? 'TEST_LOCAL_ONLY'
+    : (testCase.ai.profile === 'REPLAY' ? 'NON_REAL_REPLAY' : 'NON_REAL_FAKE');
+  if (observation.providerClassification !== expectedProviderClassification) {
+    fail(`${label} providerClassification与ai.profile不一致`);
+  }
+  if (testCase.input.entrySurface === 'HEADLESS') {
+    if (observation.pageFormalSaveAllowed !== null) {
+      fail(`${label} HEADLESS观察不得声称页面正式保存能力`);
+    }
+  } else if (typeof observation.pageFormalSaveAllowed !== 'boolean') {
+    fail(`${label} PAGE观察必须明确pageFormalSaveAllowed boolean`);
+  }
+  const expectedProductionBlockingCodes = unique([
+    ...testCase.expected.preflight.blockingCodes,
+    ...(NON_REAL_AI_PROFILES.has(testCase.ai.profile)
+      ? ['UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION']
+      : [])
+  ]).sort();
+  if (canonicalJson([...observation.blockingCodes].sort())
+    !== canonicalJson(expectedProductionBlockingCodes)) {
+    fail(`${label} productionObservation.blockingCodes必须是业务Preflight码与真实Provider资格码的完整集合`);
+  }
+  if (NON_REAL_AI_PROFILES.has(testCase.ai.profile)
+    && observation.productionEligibility === 'ELIGIBLE_LOCAL') {
+    fail(`${label} Fake/Replay不得取得LOCAL或REAL生产资格`);
+  }
+  if (testCase.expected.route === 'NO_RECORD') {
+    if (observation.productionEligibility !== 'NO_RECORD') {
+      fail(`${label} NO_RECORD生产观察必须为NO_RECORD`);
+    }
+  } else if (!testCase.expected.preflight.domainCanSaveFormal) {
+    if (observation.productionEligibility !== 'BLOCKED_BUSINESS_SAFETY') {
+      fail(`${label} 业务Preflight阻断必须优先标记BLOCKED_BUSINESS_SAFETY`);
+    }
+  } else {
+    const surfaceKey = testCase.input.entrySurface === 'HOME_QUICK'
+      ? 'home'
+      : (testCase.input.entrySurface === 'FULL_PAGE' ? 'fullPage' : null);
+    const surfaceExpectation = surfaceKey && testCase.expected.surface[surfaceKey];
+    if (surfaceExpectation && surfaceExpectation.status !== 'CAN_COMPLETE') {
+      if (observation.productionEligibility !== 'BLOCKED_SURFACE') {
+        fail(`${label} 当前入口Surface不能完成时必须标记BLOCKED_SURFACE`);
+      }
+    } else if (testCase.ai.profile === 'LOCAL_ONLY') {
+      if (observation.productionEligibility !== 'ELIGIBLE_LOCAL') {
+        fail(`${label} 安全LOCAL_ONLY观察必须标记ELIGIBLE_LOCAL，且不能称为REAL AI`);
+      }
+    } else if (observation.productionEligibility !== 'BLOCKED_NON_REAL_PROVIDER') {
+      fail(`${label} 安全Fake/Replay生产观察必须阻断非真实Provider资格`);
+    }
+  }
+  const expectedPageFormalSaveAllowed = testCase.input.entrySurface === 'HEADLESS'
+    ? null
+    : (testCase.ai.profile === 'LOCAL_ONLY'
+      && testCase.expected.surface[
+        testCase.input.entrySurface === 'HOME_QUICK' ? 'home' : 'fullPage'
+      ].effectiveCanSaveFormal === true);
+  if (observation.pageFormalSaveAllowed !== expectedPageFormalSaveAllowed) {
+    fail(`${label} pageFormalSaveAllowed必须与当前页面Surface、业务安全和Provider身份一致`);
+  }
+
+  const isolated = checkRequiredObject(
+    testCase.expected.isolatedExecution,
+    `${label}.expected.isolatedExecution`,
+    ['enabled', 'action', 'status', 'marker', 'source', 'sourceLane', 'target', 'stateDiff']
+  );
+  checkEnum(isolated.action, enumSet(enums, 'saveActions'), `${label}.expected.isolatedExecution.action`);
+  checkEnum(isolated.status, enumSet(enums, 'isolatedExecutionStatuses'), `${label}.expected.isolatedExecution.status`);
+  checkEnum(isolated.marker, enumSet(enums, 'isolatedExecutionMarkers'), `${label}.expected.isolatedExecution.marker`);
+  checkEnum(isolated.source, enumSet(enums, 'isolatedExecutionSources'), `${label}.expected.isolatedExecution.source`);
+  checkEnum(isolated.target, enumSet(enums, 'isolatedExecutionTargets'), `${label}.expected.isolatedExecution.target`);
+  checkEnum(isolated.stateDiff, enumSet(enums, 'isolatedStateDiffReferences'), `${label}.expected.isolatedExecution.stateDiff`);
+  if (isolated.action !== testCase.expected.save.action) {
+    fail(`${label} isolatedExecution.action必须与业务save.action一致`);
+  }
+  const hasIsolatedLane = lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT');
+  if (isolated.enabled !== hasIsolatedLane) {
+    fail(`${label} isolatedExecution.enabled必须与TEST_ONLY lane一致`);
+  }
+  if (['FORMAL_COMMITTED', 'PENDING_COMMITTED'].includes(testCase.expected.save.status)
+    && !isolated.enabled) {
+    fail(`${label} 可提交业务Expected必须启用TEST_ONLY隔离lane`);
+  }
+  if (['BLOCKED', 'NO_RECORD'].includes(testCase.expected.save.status) && isolated.enabled) {
+    fail(`${label} 业务安全阻断或NO_RECORD不得启用隔离提交`);
+  }
+  if (isolated.enabled) {
+    if (!ISOLATED_COMMITTED_STATUSES.has(isolated.status)
+      || isolated.marker !== 'TEST_ONLY_ISOLATED_COMMIT'
+      || isolated.target !== 'ISOLATED_LEGACY_STORE'
+      || isolated.stateDiff !== 'EXPECTED_STATE_DIFF') {
+      fail(`${label} 启用隔离执行必须固定TEST_ONLY状态、标记、隔离Legacy目标和Expected Diff`);
+    }
+    if (!lanes.includes(isolated.sourceLane)) {
+      fail(`${label} isolatedExecution.sourceLane必须存在于execution.lanes`);
+    }
+    if (isolated.source !== 'PAGE_DERIVED_CONFIRMED_DRAFT'
+      || !['PAGE_PRODUCTION_OBSERVATION', 'PAGE_CONFIRMED_DRAFT_DERIVATION'].includes(
+        isolated.sourceLane
+      )) {
+      fail(`${label} 隔离执行必须来自真实页面派生确认草稿`);
+    }
+    if (isolated.status === 'TEST_ONLY_ISOLATED_COMMITTED') {
+      if (isolated.action !== 'SAVE_FORMAL'
+        || !testCase.expected.preflight.domainCanSaveFormal
+        || testCase.expected.preflight.blockingCodes.length
+        || testCase.expected.save.status !== 'FORMAL_COMMITTED') {
+        fail(`${label} TEST_ONLY正式提交不得绕过业务Preflight`);
+      }
+      testCase.expected.preflight.requiredSelections.forEach((selectionKind) => {
+        if (!testCase.interaction.userSelections.some((item) => item.kind === selectionKind)) {
+          fail(`${label} 多候选未选择不得启用TEST_ONLY正式提交：${selectionKind}`);
+        }
+      });
+    }
+    if (isolated.status === 'TEST_ONLY_PENDING_COMMITTED') {
+      if (isolated.action !== 'SAVE_PENDING'
+        || !testCase.expected.preflight.domainCanSavePending
+        || testCase.expected.save.status !== 'PENDING_COMMITTED'
+        || countDiffChanges(testCase.expected.stateDiff.business, FORMAL_BUSINESS_COLLECTIONS) > 0) {
+        fail(`${label} TEST_ONLY待整理提交只能写pending及允许日志副作用`);
+      }
+    }
+  } else {
+    if (isolated.marker !== 'NOT_APPLICABLE'
+      || isolated.source !== 'NOT_APPLICABLE'
+      || isolated.sourceLane !== 'NOT_APPLICABLE'
+      || isolated.target !== 'NONE'
+      || isolated.stateDiff !== 'ZERO_SIDE_EFFECTS') {
+      fail(`${label} 禁止隔离执行时必须NOT_APPLICABLE/NONE/ZERO_SIDE_EFFECTS`);
+    }
+    const expectedStatus = testCase.expected.save.status === 'NO_RECORD' ? 'NOT_EXECUTED' : 'BLOCKED';
+    if (isolated.status !== expectedStatus) {
+      fail(`${label} 禁止隔离执行的status应为${expectedStatus}`);
+    }
+  }
+  const hasDraftDerivationLane = lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION');
+  if (isolated.enabled && testCase.input.entrySurface === 'HEADLESS') {
+    if (!hasDraftDerivationLane
+      || execution.draftSourceSurface !== 'FULL_PAGE'
+      || isolated.sourceLane !== 'PAGE_CONFIRMED_DRAFT_DERIVATION') {
+      fail(`${label} HEADLESS提交题必须额外通过真实FULL_PAGE生成确认草稿`);
+    }
+  } else if (isolated.enabled) {
+    if (hasDraftDerivationLane
+      || execution.draftSourceSurface !== testCase.input.entrySurface
+      || isolated.sourceLane !== 'PAGE_PRODUCTION_OBSERVATION') {
+      fail(`${label} PAGE提交题必须直接使用当前页面观察草稿`);
+    }
+  } else if (hasDraftDerivationLane || execution.draftSourceSurface !== 'NOT_APPLICABLE') {
+    fail(`${label} 不执行隔离提交时不得生成测试提交草稿`);
+  }
+  if (FORBIDDEN_PRODUCTION_COMMIT_TERMS.test(JSON.stringify({
+    execution,
+    productionObservation: observation,
+    isolatedExecution: isolated
+  }))) {
+    fail(`${label} 执行边界不得使用生产正式提交或真实AI提交伪称`);
+  }
+
+  Object.entries(KNOWN_PAGE_CAPABILITY_GAPS).forEach(([caseId, capabilities]) => {
+    if (label !== caseId) return;
+    if (testCase.expected.surface.fullPage.surfaceCanCompleteFormal !== true) {
+      fail(`${label} 不得把当前页面缺陷降为正确Surface Expected`);
+    }
+    capabilities.forEach((capability) => {
+      if (testCase.expected.surface.fullPage.missingCapabilities.includes(capability)) {
+        fail(`${label} 不得把当前缺失${capability}写进正确Expected`);
+      }
+    });
+  });
+
+  const hasExactReplayLane = lanes.includes('TRANSACTION_EXACT_REPLAY');
+  const exactReplay = testCase.expected.transactionExactReplay;
+  if (hasExactReplayLane) {
+    if (!hasIsolatedLane || !isObject(exactReplay)) {
+      fail(`${label} TRANSACTION_EXACT_REPLAY必须有首次隔离提交lane和Expected`);
+    } else {
+      const identityFields = checkArray(
+        exactReplay.identityFields,
+        `${label}.expected.transactionExactReplay.identityFields`
+      );
+      if (canonicalJson([...identityFields].sort()) !== canonicalJson([...REQUIRED_EXACT_REPLAY_IDENTITY_FIELDS].sort())) {
+        fail(`${label} exact replay必须锁定完整且相同的事务身份材料`);
+      }
+      if (exactReplay.trigger !== 'REPLAY_IDENTICAL_TRANSACTION_MATERIAL'
+        || exactReplay.firstCommitStatus !== 'COMMITTED'
+        || exactReplay.replayStatus !== 'ALREADY_COMMITTED'
+        || exactReplay.pageSaveAttempts !== 1
+        || exactReplay.idempotentReplay !== true
+        || exactReplay.revisionDeltaOnReplay !== 0
+        || exactReplay.businessDiffOnReplay !== 'EMPTY'
+        || exactReplay.receiptSemantic !== 'EQUAL_TO_FIRST_COMMIT'
+        || exactReplay.receiptCountDeltaOnReplay !== 0) {
+        fail(`${label} exact replay必须原样重放且二次零revision/业务/receipt增量`);
+      }
+      const steps = asArray(testCase.interaction.sequence).map((step) => step.step);
+      if (!steps.includes('CAPTURE_TRANSACTION_MATERIAL')
+        || !steps.includes('REPLAY_EXACT_TRANSACTION')
+        || steps.includes('RETRY_SAME_PLAN')
+        || steps.filter((step) => step === 'COMMIT').length !== 1
+        || FORBIDDEN_EXACT_REPLAY_UI_TERMS.test(JSON.stringify({
+          sequence: testCase.interaction.sequence,
+          exactReplay
+        }))) {
+        fail(`${label} exact replay不得描述为第二次页面保存或点击`);
+      }
+      const replaySequence = asArray(testCase.interaction.sequence);
+      const exactStepNames = [
+        'PREPARE',
+        'COMMIT',
+        'CAPTURE_TRANSACTION_MATERIAL',
+        'REPLAY_EXACT_TRANSACTION'
+      ];
+      const exactSteps = exactStepNames.map((stepName) => (
+        replaySequence.filter((step) => step.step === stepName)
+      ));
+      const exactIndexes = exactStepNames.map((stepName) => (
+        replaySequence.findIndex((step) => step.step === stepName)
+      ));
+      const exactPlanRefs = unique(exactSteps.flat().map((step) => step.planRef).filter(Boolean));
+      if (exactSteps.some((matches) => matches.length !== 1)
+        || exactIndexes.some((index, position) => position > 0 && index <= exactIndexes[position - 1])
+        || exactPlanRefs.length !== 1) {
+        fail(`${label} exact replay必须按同一planRef依次PREPARE/COMMIT/CAPTURE/REPLAY`);
+      }
+      if (testCase.expected.idempotency.scenario !== 'TRANSACTION_EXACT_REPLAY'
+        || testCase.expected.idempotency.attempts !== 2
+        || canonicalJson(testCase.expected.idempotency.expectedCommitStatuses)
+          !== canonicalJson(['COMMITTED', 'ALREADY_COMMITTED'])
+        || testCase.expected.idempotency.expectedRevisionDelta !== 1
+        || testCase.expected.idempotency.expectedAdditionalBusinessDiff !== exactReplay.businessDiffOnReplay
+        || testCase.expected.idempotency.journalFinal !== exactReplay.journalFinal
+        || testCase.expected.idempotency.backupFinal !== exactReplay.backupFinal) {
+        fail(`${label} exact replay专用Expected必须与idempotency全字段一致`);
+      }
+    }
+  } else if (exactReplay !== undefined) {
+    fail(`${label} 无TRANSACTION_EXACT_REPLAY lane不得携带exact replay Expected`);
+  }
+  if (testCase.expected.idempotency.expectedCommitStatuses.includes('ALREADY_COMMITTED')
+    && !hasExactReplayLane) {
+    fail(`${label} ALREADY_COMMITTED只能由TRANSACTION_EXACT_REPLAY lane断言`);
+  }
+
+  const hasDuplicateTriggerLane = lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD');
+  const duplicateTrigger = testCase.expected.pageDuplicateTrigger;
+  if (hasDuplicateTriggerLane) {
+    const sequence = asArray(testCase.interaction.sequence);
+    const commitSteps = sequence.filter((step) => step.step === 'COMMIT');
+    const duplicateSteps = sequence.filter((step) => step.step === 'TRIGGER_DUPLICATE_PAGE_SAVE');
+    const planRefs = unique(commitSteps.concat(duplicateSteps).map((step) => step.planRef).filter(Boolean));
+    if (!hasPageLane
+      || !hasIsolatedLane
+      || !isObject(duplicateTrigger)
+      || testCase.expected.idempotency.scenario !== 'DOUBLE_UI_TRIGGER'
+      || duplicateTrigger.sameUserAction !== true
+      || duplicateTrigger.triggerAttempts !== 2
+      || duplicateTrigger.pageSaveHandlerAttempts !== 1
+      || duplicateTrigger.transactionCommitAttempts !== 1
+      || duplicateTrigger.secondTriggerStatus !== 'SECOND_TRIGGER_SUPPRESSED'
+      || duplicateTrigger.additionalBusinessDiff !== 'EMPTY'
+      || duplicateTrigger.expectedRevisionDelta !== 1
+      || duplicateTrigger.transactionExactReplay !== false
+      || commitSteps.length !== 1
+      || duplicateSteps.length !== 1
+      || planRefs.length !== 1
+      || testCase.expected.idempotency.attempts !== duplicateTrigger.triggerAttempts
+      || testCase.expected.idempotency.expectedCommitStatuses.length !== 1
+      || testCase.expected.idempotency.expectedCommitStatuses[0] !== 'COMMITTED'
+      || testCase.expected.idempotency.expectedRevisionDelta !== duplicateTrigger.expectedRevisionDelta
+      || testCase.expected.idempotency.expectedAdditionalBusinessDiff !== duplicateTrigger.additionalBusinessDiff
+      || testCase.expected.idempotency.journalFinal !== 'CLEARED'
+      || testCase.expected.idempotency.backupFinal !== 'CLEARED') {
+      fail(`${label} 页面点击风暴必须在第二次进入事务前抑制，且不得伪称ALREADY_COMMITTED`);
+    }
+  } else if (duplicateTrigger !== undefined) {
+    fail(`${label} 无PAGE_DUPLICATE_TRIGGER_GUARD lane不得携带页面防重Expected`);
+  }
+
+  const hasRestartLane = lanes.includes('RESTART_PERSISTENCE');
+  if (hasRestartLane !== testCase.expected.restart.required) {
+    fail(`${label} RESTART_PERSISTENCE lane必须与expected.restart.required双向一致`);
+  }
+  if (hasRestartLane && !hasIsolatedLane) {
+    fail(`${label} RESTART_PERSISTENCE必须有首次隔离提交lane`);
+  }
+  const restartSteps = asArray(testCase.interaction.sequence).filter((step) => step.step === 'RESTART').length;
+  if (hasRestartLane && restartSteps < 1) {
+    fail(`${label} RESTART_PERSISTENCE lane必须包含真实RESTART步骤`);
+  }
+  if (testCase.expected.restart.attempts !== (hasRestartLane ? Math.max(1, restartSteps) : 0)) {
+    fail(`${label} expected.restart.attempts必须与sequence重启次数一致`);
+  }
+
+  const hasConcurrentLane = lanes.includes('CONCURRENT_BASE_REVISION');
+  const concurrent = testCase.expected.concurrentBaseRevision;
+  if (hasConcurrentLane) {
+    if (!hasPageLane
+      || !hasIsolatedLane
+      || !isObject(concurrent)
+      || testCase.expected.idempotency.scenario !== 'SAME_BASE_CONCURRENT_COMMITS'
+      || testCase.expected.idempotency.attempts !== 2
+      || concurrent.sharedBaseRevision !== true
+      || concurrent.firstCommitStatus !== 'COMMITTED'
+      || concurrent.secondCommitStatus !== 'REVISION_MISMATCH'
+      || concurrent.firstWriterPreserved !== true
+      || concurrent.expectedRevisionDelta !== 1
+      || canonicalJson(testCase.expected.idempotency.expectedCommitStatuses)
+        !== canonicalJson([concurrent.firstCommitStatus, concurrent.secondCommitStatus])
+      || testCase.expected.idempotency.expectedRevisionDelta !== concurrent.expectedRevisionDelta
+      || testCase.expected.idempotency.expectedAdditionalBusinessDiff !== 'EMPTY'
+      || testCase.expected.idempotency.journalFinal !== 'CLEARED'
+      || testCase.expected.idempotency.backupFinal !== 'CLEARED') {
+      fail(`${label} CONCURRENT lane必须明确同base、后提交失败且首写者保留`);
+    }
+    const sequence = asArray(testCase.interaction.sequence);
+    const prepares = sequence.filter((step) => step.step === 'PREPARE');
+    const commits = sequence.filter((step) => step.step === 'COMMIT');
+    const prepareActors = unique(prepares.map((step) => step.actor).filter(Boolean)).sort();
+    const commitActors = unique(commits.map((step) => step.actor).filter(Boolean)).sort();
+    const expectedActors = asArray(concurrent && concurrent.actors).slice().sort();
+    const baseRevisions = unique(prepares.map((step) => step.baseRevision));
+    const planRefByActor = new Map(prepares.map((step) => [step.actor, step.planRef]));
+    const preparePlanRefs = unique(prepares.map((step) => step.planRef).filter(Boolean));
+    if (prepares.length !== 2
+      || commits.length !== 2
+      || baseRevisions.length !== 1
+      || !Number.isInteger(baseRevisions[0])
+      || canonicalJson(prepareActors) !== canonicalJson(expectedActors)
+      || canonicalJson(commitActors) !== canonicalJson(expectedActors)
+      || preparePlanRefs.length !== 2
+      || commits.some((step) => planRefByActor.get(step.actor) !== step.planRef)) {
+      fail(`${label} 并发合同必须由两个actor读取同一base后各提交一次`);
+    }
+  } else if (concurrent !== undefined) {
+    fail(`${label} 无CONCURRENT_BASE_REVISION lane不得携带并发Expected`);
+  }
 }
 
 function validateDiff(testCase, enums) {
@@ -889,13 +1387,16 @@ function validateFinancial(testCase) {
 function validateRestartAndIdempotency(testCase, enums) {
   const label = testCase.caseId;
   const restart = checkRequiredObject(testCase.expected.restart, `${label}.expected.restart`, [
-    'required', 'stateFingerprint', 'recordCountStable', 'mustPersist', 'additionalBusinessDiff'
+    'required', 'attempts', 'stateFingerprint', 'recordCountStable', 'mustPersist', 'additionalBusinessDiff'
   ]);
   const idempotency = checkRequiredObject(testCase.expected.idempotency, `${label}.expected.idempotency`, [
     'scenario', 'attempts', 'expectedCommitStatuses', 'expectedRevisionDelta',
     'expectedAdditionalBusinessDiff', 'journalFinal', 'backupFinal'
   ]);
   if (typeof restart.required !== 'boolean') fail(`${label} restart.required必须为boolean`);
+  if (!Number.isInteger(restart.attempts) || restart.attempts < 0) {
+    fail(`${label} restart.attempts必须为非负整数`);
+  }
   if (!['NOT_APPLICABLE', 'EQUAL_TO_POST_SAVE'].includes(restart.stateFingerprint)) {
     fail(`${label} restart.stateFingerprint枚举非法`);
   }
@@ -932,6 +1433,8 @@ function validateRestartAndIdempotency(testCase, enums) {
     fail(`${label} interaction.restartAfterSave必须与expected.restart.required一致`);
   }
   if (!restart.required && (
+    restart.attempts !== 0
+    ||
     restart.stateFingerprint !== 'NOT_APPLICABLE'
     || restart.additionalBusinessDiff !== 'NOT_APPLICABLE'
     || restart.mustPersist.length
@@ -1010,12 +1513,12 @@ function validateCase(testCase, context) {
   }
   [
     'schemaVersion', 'caseId', 'title', 'status', 'riskLevel', 'category', 'tags',
-    'provenance', 'executionProfiles', 'input', 'clock', 'initialState', 'ai',
+    'provenance', 'executionProfiles', 'execution', 'input', 'clock', 'initialState', 'ai',
     'interaction', 'expected', 'allowances', 'knownRisk'
   ].forEach((key) => {
     if (!Object.prototype.hasOwnProperty.call(testCase, key)) fail(`${label}.${key} 缺失`);
   });
-  if (testCase.schemaVersion !== 'record-e2e-case-v1') fail(`${label} schemaVersion错误`);
+  if (testCase.schemaVersion !== 'record-e2e-case-v1.1') fail(`${label} schemaVersion错误`);
   if (!CASE_ID_PATTERN.test(String(testCase.caseId || ''))) fail(`${label} caseId格式错误`);
   checkString(testCase.title, `${label}.title`);
   checkEnum(testCase.status, enumSet(enums, 'statuses'), `${label}.status`);
@@ -1046,6 +1549,7 @@ function validateCase(testCase, context) {
   validatePreflightAndSave(testCase, enums);
   validateStateReferences(testCase, resolvedStateFixtureMap);
   validateSurface(testCase, enums);
+  validateExecutionBoundaries(testCase, enums);
   validateDiff(testCase, enums);
   validateMultiItem(testCase);
   validateFinancial(testCase);
@@ -1194,6 +1698,7 @@ function validateCoverage(cases, decisions, indexDocument) {
   const categoryCounts = countBy(active, (item) => [item.category]);
   const riskCounts = countBy(active, (item) => [item.riskLevel]);
   const profileCounts = countBy(active, (item) => item.executionProfiles);
+  const laneCounts = countBy(active, (item) => item.execution.lanes);
   if (active.length !== 120) fail(`ACTIVE题必须为120，实际${active.length}`);
   Object.entries(EXPECTED_CATEGORY_COUNTS).forEach(([category, expected]) => {
     if ((categoryCounts[category] || 0) !== expected) {
@@ -1209,6 +1714,11 @@ function validateCoverage(cases, decisions, indexDocument) {
   if ((profileCounts.PAGE_E2E || 0) < 40) {
     fail(`PAGE_E2E必须>=40，实际${profileCounts.PAGE_E2E || 0}`);
   }
+  Object.entries(EXPECTED_EXECUTION_LANE_COUNTS).forEach(([lane, expected]) => {
+    if ((laneCounts[lane] || 0) !== expected) {
+      fail(`${lane}必须${expected}题，实际${laneCounts[lane] || 0}`);
+    }
+  });
   const page008 = active.find((item) => item.caseId === 'REC-E2E-PAGE-008');
   if (!page008 || !page008.knownRisk || page008.knownRisk.riskId !== 'HOME_ITEM0_EDIT_SYNC') {
     fail('必须包含REC-E2E-PAGE-008首页items[0]同步静态P0候选题');
@@ -1233,6 +1743,12 @@ function validateCoverage(cases, decisions, indexDocument) {
     fail('corpus-index-v1.json schemaVersion错误');
   } else {
     if (indexDocument.activeCaseCount !== 120) fail('corpus index activeCaseCount必须为120');
+    if (indexDocument.caseSchemaVersion !== 'record-e2e-case-v1.1') {
+      fail('corpus index caseSchemaVersion错误');
+    }
+    if (indexDocument.executionBoundaryContractVersion !== 'record-e2e-execution-boundary-v1') {
+      fail('corpus index executionBoundaryContractVersion错误');
+    }
     if (JSON.stringify(indexDocument.expectedCategoryCounts) !== JSON.stringify(EXPECTED_CATEGORY_COUNTS)) {
       fail('corpus index分类配额与Validator不一致');
     }
@@ -1247,8 +1763,11 @@ function validateCoverage(cases, decisions, indexDocument) {
     if (indexDocument.expectedResultLayer !== 'POST_NORMALIZER_POST_INTERACTION_CONFIRMATION_SEMANTICS') {
       fail('corpus index必须固定expected.result的标准确认语义判分层');
     }
+    if (JSON.stringify(indexDocument.expectedExecutionLaneCounts) !== JSON.stringify(EXPECTED_EXECUTION_LANE_COUNTS)) {
+      fail('corpus index execution lane配额与Validator不一致');
+    }
   }
-  return { active, categoryCounts, riskCounts, profileCounts, decisionItems };
+  return { active, categoryCounts, riskCounts, profileCounts, laneCounts, decisionItems };
 }
 
 function printMap(title, map, preferredOrder = []) {
@@ -1257,6 +1776,182 @@ function printMap(title, map, preferredOrder = []) {
   keys.filter((key) => map[key] !== undefined).forEach((key) => {
     console.log(`  ${key}: ${map[key]}`);
   });
+}
+
+function captureValidationFailures(callback) {
+  const outerFailures = failures;
+  failures = [];
+  try {
+    callback();
+  } catch (error) {
+    failures.push(`校验抛出异常：${error.message}`);
+  }
+  const captured = failures.slice();
+  failures = outerFailures;
+  return captured;
+}
+
+function runExecutionBoundaryContractSelfTests(cases, enums) {
+  const results = [];
+  function expectMutationFailure(name, sourceCase, mutate, validator) {
+    const candidate = cloneJson(sourceCase);
+    mutate(candidate);
+    const captured = captureValidationFailures(() => validator(candidate));
+    if (!captured.length) {
+      fail(`合同自测未拦截：${name}`);
+      results.push({ name, passed: false });
+    } else {
+      results.push({ name, passed: true });
+    }
+  }
+
+  const safeFake = cases.find((item) => (
+    NON_REAL_AI_PROFILES.has(item.ai.profile)
+    && item.expected.isolatedExecution.status === 'TEST_ONLY_ISOLATED_COMMITTED'
+  ));
+  const blocked = cases.find((item) => item.expected.save.status === 'BLOCKED');
+  const orderSelection = cases.find((item) => item.caseId === 'REC-E2E-BASIC-010');
+  const exactReplay = cases.find((item) => item.caseId === 'REC-E2E-PERSIST-003');
+  if (!safeFake || !blocked || !orderSelection || !exactReplay) {
+    fail('合同自测基础Case缺失');
+    return results;
+  }
+
+  expectMutationFailure(
+    'Fake生产资格错误标为ELIGIBLE',
+    safeFake,
+    (item) => { item.expected.productionObservation.productionEligibility = 'ELIGIBLE_LOCAL'; },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    'Fake隔离执行未标TEST_ONLY',
+    safeFake,
+    (item) => { item.expected.isolatedExecution.marker = 'FORMAL_PRODUCTION_COMMIT'; },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '业务安全阻断题强开正式隔离提交',
+    blocked,
+    (item) => {
+      item.execution.lanes.push('TEST_ONLY_ISOLATED_LEGACY_COMMIT');
+      item.expected.isolatedExecution = {
+        enabled: true,
+        action: 'SAVE_FORMAL',
+        status: 'TEST_ONLY_ISOLATED_COMMITTED',
+        marker: 'TEST_ONLY_ISOLATED_COMMIT',
+        source: item.input.entrySurface === 'HEADLESS'
+          ? 'HEADLESS_PRODUCTION_DERIVED_CONFIRMED_DRAFT'
+          : 'PAGE_DERIVED_CONFIRMED_DRAFT',
+        sourceLane: item.input.entrySurface === 'HEADLESS'
+          ? 'HEADLESS_PRODUCTION_OBSERVATION'
+          : 'PAGE_PRODUCTION_OBSERVATION',
+        target: 'ISOLATED_LEGACY_STORE',
+        stateDiff: 'EXPECTED_STATE_DIFF'
+      };
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    'userSelections缺requiredCapability',
+    orderSelection,
+    (item) => {
+      item.interaction.requiredCapabilities = item.interaction.requiredCapabilities
+        .filter((capability) => capability !== 'SELECT_ORDER');
+    },
+    (item) => validateInteraction(item, enums)
+  );
+  expectMutationFailure(
+    '订单选择缺口错误标为Runner BLOCKED',
+    orderSelection,
+    (item) => { item.execution.missingCapabilityDisposition = 'BLOCKED'; },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    'exact replay缺首次隔离提交lane',
+    exactReplay,
+    (item) => {
+      item.execution.lanes = item.execution.lanes
+        .filter((lane) => lane !== 'TEST_ONLY_ISOLATED_LEGACY_COMMIT');
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    'exact replay伪装第二次页面保存',
+    exactReplay,
+    (item) => {
+      item.interaction.sequence = item.interaction.sequence.map((step) => (
+        step.step === 'REPLAY_EXACT_TRANSACTION'
+          ? { step: 'COMMIT', planRef: step.planRef, actor: 'SECOND_PAGE_CLICK' }
+          : step
+      ));
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '执行lane缺Expected',
+    safeFake,
+    (item) => { delete item.expected.isolatedExecution; },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '可提交业务静默关闭隔离lane',
+    safeFake,
+    (item) => {
+      item.execution.lanes = item.execution.lanes
+        .filter((lane) => lane !== 'TEST_ONLY_ISOLATED_LEGACY_COMMIT');
+      item.execution.draftSourceSurface = 'NOT_APPLICABLE';
+      item.expected.isolatedExecution = {
+        enabled: false,
+        action: item.expected.save.action,
+        status: 'BLOCKED',
+        marker: 'NOT_APPLICABLE',
+        source: 'NOT_APPLICABLE',
+        sourceLane: 'NOT_APPLICABLE',
+        target: 'NONE',
+        stateDiff: 'ZERO_SIDE_EFFECTS'
+      };
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    'exact replay更换planRef',
+    exactReplay,
+    (item) => {
+      item.interaction.sequence = item.interaction.sequence.map((step) => (
+        step.step === 'REPLAY_EXACT_TRANSACTION'
+          ? Object.assign({}, step, { planRef: 'different-plan' })
+          : step
+      ));
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+
+  const knownGapFailures = Object.keys(KNOWN_PAGE_CAPABILITY_GAPS).flatMap((caseId) => {
+    const item = cases.find((candidate) => candidate.caseId === caseId);
+    if (!item) return [`${caseId}缺失`];
+    return captureValidationFailures(() => {
+      validateInteraction(item, enums);
+      validateExecutionBoundaries(item, enums);
+    });
+  });
+  if (knownGapFailures.length) {
+    fail(`合同自测未能正向表达页面能力缺口：${knownGapFailures.join('；')}`);
+    results.push({ name: '缺失页面能力可表达为CASE_FAIL/SURFACE_ERROR', passed: false });
+  } else {
+    results.push({ name: '缺失页面能力可表达为CASE_FAIL/SURFACE_ERROR', passed: true });
+  }
+
+  const allMigrated = cases.length === 120 && cases.every((item) => (
+    item.schemaVersion === 'record-e2e-case-v1.1'
+    && item.execution
+    && Array.isArray(item.execution.lanes)
+    && item.execution.lanes.length
+    && item.expected.productionObservation
+    && item.expected.isolatedExecution
+  ));
+  if (!allMigrated) fail('合同自测：120条ACTIVE未全部迁移执行边界');
+  results.push({ name: '120条ACTIVE迁移完整', passed: allMigrated });
+  return results;
 }
 
 function main() {
@@ -1269,7 +1964,12 @@ function main() {
   if (!enums || !schema || !stateFixtures || !aiFixtures) {
     throw new Error('基础合同文件无法加载');
   }
-  if (schema.$id !== 'record-e2e-case-v1.schema.json') fail('JSON Schema $id错误');
+  if (schema.$id !== 'record-e2e-case-v1.1.schema.json') fail('JSON Schema $id错误');
+  if (enums.schemaVersion !== 'record-e2e-enums-v1.1'
+    || enums.caseSchemaVersion !== 'record-e2e-case-v1.1'
+    || enums.executionBoundaryVersion !== 'record-e2e-execution-boundary-v1') {
+    fail('执行边界枚举版本错误');
+  }
   const fixtureContext = validateFixtureCollections(stateFixtures, aiFixtures);
   const loaded = loadCases();
   loaded.cases.forEach((testCase) => validateCase(testCase, {
@@ -1283,6 +1983,9 @@ function main() {
   duplicateValues(loaded.cases.map((item) => item.caseId)).forEach((caseId) => fail(`caseId重复：${caseId}`));
   const duplicateStats = validateDuplicates(loaded.cases);
   const coverage = validateCoverage(loaded.cases, decisions, indexDocument);
+  const selfTestResults = process.argv.includes('--contract-self-test')
+    ? runExecutionBoundaryContractSelfTests(coverage.active, enums)
+    : [];
 
   const active = coverage.active;
   const channelCounts = countBy(active, (item) => [item.input.channel]);
@@ -1291,6 +1994,18 @@ function main() {
   const routeCounts = countBy(active, (item) => [item.expected.route]);
   const saveCounts = countBy(active, (item) => [item.expected.save.status]);
   const fixtureCounts = countBy(active, (item) => [item.initialState.fixtureRef]);
+  const capabilityCounts = countBy(active, (item) => item.interaction.requiredCapabilities);
+  const isolatedEnabledCount = active.filter((item) => item.expected.isolatedExecution.enabled).length;
+  const providerBlockedButIsolatedCount = active.filter((item) => (
+    item.expected.productionObservation.productionEligibility === 'BLOCKED_NON_REAL_PROVIDER'
+    && item.expected.isolatedExecution.enabled
+  )).length;
+  const businessBlockedAndIsolatedForbiddenCount = active.filter((item) => (
+    ['BLOCKED_BUSINESS_SAFETY', 'NO_RECORD'].includes(
+      item.expected.productionObservation.productionEligibility
+    )
+    && !item.expected.isolatedExecution.enabled
+  )).length;
 
   console.log('Record E2E Corpus V1 校验与覆盖统计');
   console.log(`  JSON case files: ${loaded.files.length}`);
@@ -1307,14 +2022,28 @@ function main() {
   printMap('各inputChannel数量', channelCounts, enums.inputChannels);
   printMap('各entrySurface数量', surfaceCounts, enums.entrySurfaces);
   printMap('各executionProfile数量', coverage.profileCounts, enums.executionProfiles);
+  printMap('各execution lane数量', coverage.laneCounts, enums.executionLanes);
+  printMap('requiredCapability各类型数量', capabilityCounts, enums.requiredCapabilities);
   printMap('各businessType数量', businessTypeCounts, enums.businessTypes);
   printMap('各route预期数量', routeCounts, enums.routes);
   printMap('正式保存/待整理/阻断数量', saveCounts, enums.saveStatuses);
   printMap('使用各initialState fixture数量', fixtureCounts);
   console.log(`\nREAL_QWEN_QUALITY数量: ${coverage.profileCounts.REAL_QWEN_QUALITY || 0}`);
   console.log(`PAGE_E2E数量: ${coverage.profileCounts.PAGE_E2E || 0}`);
+  console.log(`启用TEST_ONLY_ISOLATED_COMMIT数量: ${isolatedEnabledCount}`);
+  console.log(`生产资格阻断但隔离执行允许数量: ${providerBlockedButIsolatedCount}`);
+  console.log(`业务安全阻断且隔离执行禁止数量: ${businessBlockedAndIsolatedForbiddenCount}`);
+  console.log(`SELECT_ORDER Case数量: ${capabilityCounts.SELECT_ORDER || 0}`);
+  console.log(`SELECT_QUOTATION Case数量: ${capabilityCounts.SELECT_QUOTATION || 0}`);
+  console.log(`TRANSACTION_EXACT_REPLAY数量: ${coverage.laneCounts.TRANSACTION_EXACT_REPLAY || 0}`);
+  console.log(`RESTART_PERSISTENCE数量: ${coverage.laneCounts.RESTART_PERSISTENCE || 0}`);
+  console.log(`CONCURRENT_BASE_REVISION数量: ${coverage.laneCounts.CONCURRENT_BASE_REVISION || 0}`);
   console.log(`产品决策待办数量: ${coverage.decisionItems.length}`);
   console.log(`重复或疑似低价值题数量: ${duplicateStats.suspiciousLowValueCount}`);
+  if (selfTestResults.length) {
+    console.log(`合同自测: ${selfTestResults.filter((item) => item.passed).length}/${selfTestResults.length}`);
+    selfTestResults.forEach((item) => console.log(`  ${item.passed ? 'PASS' : 'FAIL'} ${item.name}`));
+  }
 
   if (warnings.length) {
     console.log('\n警告');
@@ -1326,7 +2055,7 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  console.log('\n校验通过：120条ACTIVE合成题符合Record E2E Case V1合同。');
+  console.log('\n校验通过：120条ACTIVE合成题符合Record E2E Case V1.1执行边界合同。');
 }
 
 try {
