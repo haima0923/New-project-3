@@ -148,14 +148,14 @@ const tests = [
   {
     name: 'missing-page-capability-is-product-surface-failure',
     async run() {
-      const item = bundle('REC-E2E-BASIC-010');
+      const item = bundle('REC-E2E-REL-007');
       const result = await executeOne(item);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
       const pageLane = result.laneResults.find((lane) => lane.lane === 'PAGE_PRODUCTION_OBSERVATION');
       assert(pageLane);
       assert.strictEqual(pageLane.status, 'CASE_FAIL');
       assert.strictEqual(pageLane.failureStage, 'SURFACE_ERROR');
-      assert(result.surfaceEvidence.missingCapabilities.includes('SELECT_ORDER'));
+      assert(result.surfaceEvidence.missingCapabilities.includes('SELECT_QUOTATION'));
       assert.strictEqual(result.businessDiff.orders.created.length, 0);
     }
   },
@@ -516,7 +516,7 @@ const tests = [
   {
     name: 'surface-gap-remains-primary-over-route-findings',
     async run() {
-      const item = bundle('REC-E2E-BASIC-010');
+      const item = bundle('REC-E2E-REL-007');
       const result = await executeOne(item);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
       assert.strictEqual(result.failureStage, 'SURFACE_ERROR');
@@ -612,7 +612,7 @@ const tests = [
   {
     name: 'surface-zero-side-effect-uses-runtime-storage-diff',
     async run() {
-      const item = bundle('REC-E2E-BASIC-010');
+      const item = bundle('REC-E2E-REL-007');
       const result = await executeOne(item, {
         hooks: { mutateSurfaceBusinessStorage: true }
       });
