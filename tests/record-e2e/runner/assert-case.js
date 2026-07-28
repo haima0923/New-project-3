@@ -3,7 +3,32 @@ const {
   safeClone,
   stableSerialize
 } = require('../../../utils/record-state-diff');
-const { finalizeLane } = require('./lane-state');
+const { baseLane, finalizeLane, missingExecutionEvidence } = require('./lane-state');
+
+function enforceLaneResultCompleteness(testCase, evidence) {
+  const expected = testCase.execution.lanes || [];
+  const actual = evidence.laneResults || [];
+  const expectedSet = new Set(expected);
+  expected.forEach((laneName) => {
+    const matches = actual.filter((lane) => lane && lane.lane === laneName);
+    if (matches.length === 1) return;
+    if (!matches.length) {
+      const missing = baseLane(laneName);
+      missingExecutionEvidence(missing, ['REQUIRED_LANE_RESULT_MISSING']);
+      actual.push(missing);
+      return;
+    }
+    matches.forEach((lane) => {
+      missingExecutionEvidence(lane, ['DUPLICATE_LANE_RESULT']);
+    });
+  });
+  actual
+    .filter((lane) => lane && !expectedSet.has(lane.lane))
+    .forEach((lane) => {
+      missingExecutionEvidence(lane, ['UNEXPECTED_LANE_RESULT']);
+    });
+  evidence.laneResults = actual;
+}
 
 function semanticEqual(left, right) {
   if (typeof left === 'number' || typeof right === 'number') {
@@ -292,6 +317,23 @@ function assertProductionLayers(testCase, evidence, collector) {
       true
     );
   });
+  (evidence.surfaceEvidence.selectionTargets || [])
+    .filter((target) => target.requiredByContract)
+    .forEach((target) => {
+      const deliberatelyMissing = (
+        target.selectionKind === 'orderId'
+        && expected.preflight.blockingCodes.includes('ORDER_TARGET_NOT_FOUND')
+      ) || (
+        target.selectionKind === 'quotationId'
+        && expected.preflight.blockingCodes.includes('QUOTATION_TARGET_NOT_FOUND')
+      );
+      collector.check(
+        'SURFACE',
+        `fixtureSelectionTarget.${target.selectionKind}.${target.selectedId}`,
+        target.fixtureTargetExists,
+        !deliberatelyMissing
+      );
+    });
   const selectedSurface = testCase.input.entrySurface === 'HOME_QUICK'
     ? expected.surface.home
     : expected.surface.fullPage;
@@ -392,6 +434,12 @@ function assertLaneSpecific(testCase, evidence, collector) {
         actual.replay && actual.replay.idempotentReplay, contract.idempotentReplay);
       collector.check('TRANSACTION_REPLAY', 'receiptSemanticEqual',
         actual.receiptSemanticEqual, true);
+      collector.check('TRANSACTION_REPLAY', 'receiptIdentityEqual',
+        actual.receiptIdentityEqual, true);
+      collector.check('TRANSACTION_REPLAY', 'currentControlMatchesFirst',
+        actual.currentControlMatchesFirst, true);
+      collector.check('TRANSACTION_REPLAY', 'materialUnchanged',
+        actual.materialUnchanged, true);
       collector.check('TRANSACTION_REPLAY', 'targetFingerprintEqual',
         actual.targetFingerprintEqual, true);
       collector.check('TRANSACTION_REPLAY', 'gatewayWrites',
@@ -419,6 +467,14 @@ function assertLaneSpecific(testCase, evidence, collector) {
       actual.legacyBusinessAttemptCount, 1);
     collector.check('DUPLICATE_TRIGGER', 'transactionBeginCount',
       actual.transactionBeginCount, contract.transactionCommitAttempts);
+    collector.check('DUPLICATE_TRIGGER', 'storageSaveAttemptCount',
+      actual.storageSaveAttemptCount, 1);
+    collector.check(
+      'DUPLICATE_TRIGGER',
+      'transactionJournalWriteCount',
+      actual.transactionJournalWriteCount > 0,
+      true
+    );
     collector.check('DUPLICATE_TRIGGER', 'committedReceiptCount',
       actual.committedReceiptCount, 1);
     collector.check('DUPLICATE_TRIGGER', 'financialRecordCount',
@@ -442,6 +498,11 @@ function assertLaneSpecific(testCase, evidence, collector) {
       expected.restart.recordCountStable);
     collector.check('RESTART', 'revisionDelta', restart.revisionDelta, 0);
     collector.check('RESTART', 'receiptCountDelta', restart.receiptCountDelta, 0);
+    collector.check('RESTART', 'receiptPersisted', restart.receiptPersisted, true);
+    collector.check('RESTART', 'receiptSemanticEqual', restart.receiptSemanticEqual, true);
+    collector.check('RESTART', 'startupPrimaryWrites', restart.startupPrimaryWrites, 0);
+    collector.check('RESTART', 'startupJournalWrites', restart.startupJournalWrites, 0);
+    collector.check('RESTART', 'startupBackupWrites', restart.startupBackupWrites, 0);
     collector.check('RESTART', 'journalCount', restart.journalCount, 0);
     collector.check('RESTART', 'backupCount', restart.backupCount, 0);
     collector.check('RESTART', 'startupRecoveryStatus', restart.startupRecoveryStatus, 'CLEAN');
@@ -460,6 +521,7 @@ function assertLaneSpecific(testCase, evidence, collector) {
     const contract = expected.concurrentBaseRevision || {};
     collector.check('CONCURRENT', 'baseFingerprintEqual', concurrent.baseFingerprintEqual, true);
     collector.check('CONCURRENT', 'firstCommitted', concurrent.committedA, true);
+    collector.check('CONCURRENT', 'firstStatus', concurrent.commitAStatus, 'COMMITTED');
     collector.check('CONCURRENT', 'firstReceiptPresent', concurrent.commitAReceiptPresent, true);
     collector.check('CONCURRENT', 'secondCommitted', concurrent.committedB, false);
     collector.check('CONCURRENT', 'secondCommitAttempted',
@@ -470,8 +532,19 @@ function assertLaneSpecific(testCase, evidence, collector) {
       concurrent.firstCommitPrimaryWrites, 1);
     collector.check('CONCURRENT', 'secondCommitPrimaryWrites',
       concurrent.secondCommitPrimaryWrites, 0);
+    collector.check('CONCURRENT', 'secondCommitAllWrites',
+      concurrent.secondCommitAllWrites, 0);
+    collector.check('CONCURRENT', 'secondCommitJournalWrites',
+      concurrent.secondCommitJournalWrites, 0);
+    collector.check('CONCURRENT', 'secondCommitBackupWrites',
+      concurrent.secondCommitBackupWrites, 0);
+    collector.check('CONCURRENT', 'secondCommitRevisionDelta',
+      concurrent.secondCommitRevisionDelta, 0);
+    collector.check('CONCURRENT', 'secondCommitReceiptCountDelta',
+      concurrent.secondCommitReceiptCountDelta, 0);
     collector.check('CONCURRENT', 'staleDetected', concurrent.staleDetected, true);
     collector.check('CONCURRENT', 'pageADataPreserved', concurrent.pageADataPreserved, true);
+    collector.check('CONCURRENT', 'pageBDataWritten', concurrent.pageBDataWritten, false);
     if (contract.secondCommitStatus) {
       collector.check(
         'CONCURRENT',
@@ -526,6 +599,7 @@ function failureStageFor(assertion, testCase) {
 }
 
 function assertCase(testCase, evidence, options = {}) {
+  enforceLaneResultCompleteness(testCase, evidence);
   const collector = createCollector();
   if (testCase.input.channel === 'TYPED_TEXT' && testCase.input.entrySurface !== 'HEADLESS') {
     collector.check(

@@ -2,7 +2,8 @@ const {
   createStateDiff,
   getStateFingerprint,
   isCollectionDiffEmpty,
-  safeClone
+  safeClone,
+  stableSerialize
 } = require('../../../utils/record-state-diff');
 const { stripRecordStorageControl } = require('../../../utils/record-storage-state-projector');
 const {
@@ -92,6 +93,16 @@ async function completeRestartInParent(evidence, spec, plan, attempt) {
   const additionalDiff = createStateDiff(request.postSaveState, finalState);
   const beforeControl = controlFromEntries(request.entries);
   const afterControl = controlFromEntries(entries);
+  const priorReceipt = request.priorCommit.receipt;
+  const persistedReceipt = (afterControl.recentReceipts || []).find((receipt) => (
+    receipt
+    && receipt.transactionId === priorReceipt.transactionId
+    && receipt.planId === priorReceipt.planId
+    && receipt.planHash === priorReceipt.planHash
+  ));
+  const restartStorageEvents = attempts.flatMap((item) => (
+    item.audit && item.audit.storageAudit && item.audit.storageAudit.storageEvents || []
+  ));
   const restartEvidence = Object.assign({}, final, {
     additionalDiff,
     attemptCount: attempts.length,
@@ -109,8 +120,20 @@ async function completeRestartInParent(evidence, spec, plan, attempt) {
     recordCountStable: isCollectionDiffEmpty(additionalDiff.businessDiff),
     receiptCountDelta: (afterControl.recentReceipts || []).length
       - (beforeControl.recentReceipts || []).length,
+    receiptPersisted: Boolean(persistedReceipt),
+    receiptSemanticEqual: stableSerialize(persistedReceipt)
+      === stableSerialize(priorReceipt),
     revisionDelta: Number(afterControl.storageRevision || 0)
       - Number(beforeControl.storageRevision || 0),
+    startupBackupWrites: restartStorageEvents.filter((event) => (
+      event.operation === 'SET' && event.key === RECORD_STORAGE_BACKUP_KEY
+    )).length,
+    startupJournalWrites: restartStorageEvents.filter((event) => (
+      event.operation === 'SET' && event.key === RECORD_STORAGE_JOURNAL_KEY
+    )).length,
+    startupPrimaryWrites: restartStorageEvents.filter((event) => (
+      event.operation === 'SET' && event.key === BUSINESS_STORAGE_KEY
+    )).length,
     startupRecoveryStatus: final.status && final.status.lastStartupResult
       && final.status.lastStartupResult.status || ''
   });
@@ -124,6 +147,8 @@ async function completeRestartInParent(evidence, spec, plan, attempt) {
     primaryActionSucceeded: attempts.length === restartCount
       && attempts.every((item) => item.newRuntimeInstance),
     completionEvidencePresent: restartEvidence.equalToPostSave
+      && restartEvidence.receiptPersisted
+      && restartEvidence.receiptSemanticEqual
       && restartEvidence.workerExitAudit.exitObserved,
     evidence: {
       attemptCount: restartEvidence.attemptCount,

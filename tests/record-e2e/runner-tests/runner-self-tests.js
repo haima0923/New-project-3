@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const assert = require('assert');
+const fs = require('fs');
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
 const { assertCase } = require('../runner/assert-case');
 const { assertIsolationAudit } = require('../runner/assert-isolation-audit');
@@ -10,6 +11,7 @@ const {
 } = require('../runner/complete-restart-in-parent');
 const { createFakeNetwork } = require('../runner/create-fake-network');
 const { assertFakeWxApi } = require('../runner/create-fake-wx');
+const { createHostFilesystemGuard } = require('../runner/create-host-filesystem-guard');
 const { executeTransactionReplay } = require('../runner/execute-transaction-replay');
 const { baseLane, finalizeLane } = require('../runner/lane-state');
 const { loadCorpus } = require('../runner/load-corpus');
@@ -204,7 +206,7 @@ const tests = [
         plan.lanes.push('TRANSACTION_EXACT_REPLAY');
       });
       assert.strictEqual(evidence.transactionReplayEvidence.replay.status, 'ALREADY_COMMITTED');
-      assert.strictEqual(evidence.transactionReplayEvidence.pageSaveAttempts, 1);
+      assert.strictEqual(evidence.transactionReplayEvidence.pageSaveAttempts, 0);
       assert.strictEqual(evidence.transactionReplayEvidence.replayPageSaveAttempts, 0);
       assert.strictEqual(evidence.transactionReplayEvidence.revisionDelta, 0);
       assert.strictEqual(evidence.transactionReplayEvidence.businessBundleEqual, true);
@@ -320,6 +322,28 @@ const tests = [
     }
   },
   {
+    name: 'planned-lane-cannot-leave-assertion-engine',
+    async run() {
+      const lane = baseLane('SELF_TEST');
+      finalizeLane(lane);
+      assert.strictEqual(lane.status, 'RUNNER_ERROR');
+      assert.strictEqual(lane.failureCode, 'LANE_EXECUTION_EVIDENCE_MISSING');
+    }
+  },
+  {
+    name: 'missing-required-lane-result-is-runner-error',
+    async run() {
+      const item = bundle('REC-E2E-PERSIST-003');
+      const evidence = await worker(item.testCase.caseId);
+      evidence.laneResults = evidence.laneResults.filter((lane) => (
+        lane.lane !== 'TRANSACTION_EXACT_REPLAY'
+      ));
+      const result = assertCase(item.testCase, evidence);
+      assert.strictEqual(result.caseStatus, 'RUNNER_ERROR');
+      assert.strictEqual(result.failureCode, 'LANE_EXECUTION_EVIDENCE_MISSING');
+    }
+  },
+  {
     name: 'restart-does-not-run-after-first-commit-failure',
     async run() {
       const item = bundle('REC-E2E-PERSIST-003');
@@ -380,7 +404,7 @@ const tests = [
     async run() {
       const item = bundle('REC-E2E-PERSIST-003');
       const evidence = await worker(item.testCase.caseId);
-      evidence.transactionReplayEvidence.returnedIdentity.transactionId = 'new-transaction';
+      evidence.transactionReplayEvidence.replayInputIdentity.transactionId = 'new-transaction';
       evidence.transactionReplayEvidence.sameIdentity = false;
       const result = assertCase(item.testCase, evidence);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
@@ -410,7 +434,7 @@ const tests = [
     name: 'concurrent-second-commit-attempt-evidence-is-mandatory',
     async run() {
       const item = bundle('REC-E2E-PERSIST-004');
-      const evidence = await worker(item.testCase.caseId);
+      const evidence = await executeOne(item);
       evidence.concurrentEvidence.secondCommitAttempted = false;
       const result = assertCase(item.testCase, evidence);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
@@ -427,6 +451,23 @@ const tests = [
       const item = bundle('REC-E2E-FIN-014');
       const evidence = await worker(item.testCase.caseId);
       delete evidence.duplicateTriggerEvidence.transactionBeginCount;
+      const result = assertCase(item.testCase, evidence);
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert(
+        result.assertions.some((entry) => (
+          entry.name === 'transactionBeginCount' && !entry.pass
+        ))
+      );
+    }
+  },
+  {
+    name: 'storage-save-without-transaction-decision-cannot-pass',
+    async run() {
+      const item = bundle('REC-E2E-FIN-014');
+      const evidence = await worker(item.testCase.caseId);
+      assert.strictEqual(evidence.duplicateTriggerEvidence.storageSaveAttemptCount, 1);
+      evidence.duplicateTriggerEvidence.transactionBeginCount = 0;
+      evidence.duplicateTriggerEvidence.transactionCommitAttempts = 0;
       const result = assertCase(item.testCase, evidence);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
       assert(
@@ -461,6 +502,35 @@ const tests = [
         item.workerSpec.initialState.state
       );
       assert(errors.includes('PENDING_EDIT_ORIGINAL_TEXT_MISMATCH'));
+    }
+  },
+  {
+    name: 'required-selection-target-must-exist-in-fixture',
+    async run() {
+      const item = bundle('REC-E2E-BASIC-010');
+      const altered = safeClone(item.testCase);
+      altered.interaction.userSelections[0].selectedId = 'ord-does-not-exist';
+      const errors = validateExecutionPlanPreconditions(
+        altered,
+        item.workerSpec.initialState.state
+      );
+      assert(
+        errors.some((code) => code.startsWith('SELECTION_TARGET_NOT_FOUND:orderId:'))
+      );
+    }
+  },
+  {
+    name: 'concurrent-page-b-explicit-unit-conflict-fails-plan',
+    async run() {
+      const item = bundle('REC-E2E-PERSIST-004');
+      const altered = safeClone(item.testCase);
+      const pageB = altered.interaction.sequence.find((step) => step.actor === 'PAGE_B');
+      pageB.input.originalText = '李姐订200个饭盒，4元一套，7月25日交';
+      const errors = validateExecutionPlanPreconditions(
+        altered,
+        item.workerSpec.initialState.state
+      );
+      assert(errors.includes('CONCURRENT_PAGE_B_EXPLICIT_UNIT_CONFLICT'));
     }
   },
   {
@@ -501,6 +571,38 @@ const tests = [
         { leaveJournalMaterial: true },
         'CLEANUP_ERROR'
       );
+    }
+  },
+  {
+    name: 'surface-zero-side-effect-uses-runtime-storage-diff',
+    async run() {
+      const item = bundle('REC-E2E-BASIC-010');
+      const result = await executeOne(item, {
+        hooks: { mutateSurfaceBusinessStorage: true }
+      });
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert.strictEqual(result.businessDiff.orders.created.length, 1);
+      assert(
+        result.assertions.some((entry) => (
+          entry.name === 'formalBusinessDiffEmpty' && !entry.pass
+        ))
+      );
+    }
+  },
+  {
+    name: 'host-filesystem-guard-blocks-a-real-write-api',
+    async run() {
+      const guard = createHostFilesystemGuard();
+      guard.install();
+      try {
+        assert.throws(
+          () => fs.writeFileSync('/private/tmp', 'must-not-write'),
+          (error) => error.code === 'AUTOMATION_STORAGE_GUARD_ERROR'
+        );
+        assert.strictEqual(guard.audit().hostFilesystemStorageCalls, 1);
+      } finally {
+        guard.restore();
+      }
     }
   },
   {

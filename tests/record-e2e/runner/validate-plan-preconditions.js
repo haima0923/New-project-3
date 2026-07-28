@@ -3,6 +3,18 @@ const SUCCESS_DEPENDENT_LANES = new Set([
   'TRANSACTION_EXACT_REPLAY',
   'CONCURRENT_BASE_REVISION'
 ]);
+const SELECTION_COLLECTIONS = Object.freeze({
+  customerId: 'customers',
+  orderId: 'orders',
+  quotationId: 'quotations',
+  receivableId: 'receivables'
+});
+const SELECTION_CAPABILITIES = Object.freeze({
+  customerId: 'SELECT_CUSTOMER',
+  orderId: 'SELECT_ORDER',
+  quotationId: 'SELECT_QUOTATION',
+  receivableId: 'SELECT_RECEIVABLE'
+});
 
 function hasNonZeroBusinessDiff(testCase) {
   return Object.values(testCase.expected.stateDiff.business.collections || {}).some((change) => (
@@ -14,6 +26,16 @@ function hasNonZeroBusinessDiff(testCase) {
 
 function hasExplicitChineseDate(text) {
   return /\d{1,2}月\d{1,2}日/.test(String(text || ''));
+}
+
+function explicitOrderUnits(text) {
+  const value = String(text || '');
+  const quantity = value.match(/\d+(?:\.\d+)?\s*(个|套|件|箱|包|只|条|张|米|公斤|斤|吨)/);
+  const price = value.match(/\d+(?:\.\d+)?\s*元(?:\s*)[一每](个|套|件|箱|包|只|条|张|米|公斤|斤|吨)/);
+  return {
+    priceUnit: price && price[1] || '',
+    quantityUnit: quantity && quantity[1] || ''
+  };
 }
 
 function validateFormalOrderContract(testCase, errors) {
@@ -47,6 +69,40 @@ function validatePendingEditContract(testCase, state, errors) {
   }
 }
 
+function buildSelectionTargets(testCase, state) {
+  const required = new Set(testCase.interaction.requiredCapabilities || []);
+  return (testCase.interaction.userSelections || []).map((selection) => {
+    const collection = SELECTION_COLLECTIONS[selection.kind] || '';
+    const fixtureCandidateIds = collection
+      ? (state[collection] || []).map((item) => item && item.id).filter(Boolean)
+      : [];
+    return {
+      capability: SELECTION_CAPABILITIES[selection.kind] || '',
+      collection,
+      fixtureCandidateIds,
+      fixtureTargetExists: fixtureCandidateIds.includes(selection.selectedId),
+      requiredByContract: required.has(SELECTION_CAPABILITIES[selection.kind]),
+      selectedId: selection.selectedId,
+      selectionKind: selection.kind
+    };
+  });
+}
+
+function validateSelectionTargets(testCase, state, errors) {
+  const blocking = new Set(testCase.expected.preflight.blockingCodes || []);
+  buildSelectionTargets(testCase, state).forEach((target) => {
+    if (!target.requiredByContract || target.fixtureTargetExists || !target.collection) return;
+    const deliberatelyMissing = (
+      target.selectionKind === 'orderId' && blocking.has('ORDER_TARGET_NOT_FOUND')
+    ) || (
+      target.selectionKind === 'quotationId' && blocking.has('QUOTATION_TARGET_NOT_FOUND')
+    );
+    if (!deliberatelyMissing) {
+      errors.push(`SELECTION_TARGET_NOT_FOUND:${target.selectionKind}:${target.selectedId}`);
+    }
+  });
+}
+
 function validateSuccessLaneContract(testCase, errors) {
   const lanes = testCase.execution.lanes || [];
   if (!lanes.some((lane) => SUCCESS_DEPENDENT_LANES.has(lane))) return;
@@ -76,17 +132,25 @@ function validateSuccessLaneContract(testCase, errors) {
       && pageB && !hasExplicitChineseDate(pageB.input.originalText)) {
       errors.push('CONCURRENT_PAGE_B_DUE_DATE_INPUT_MISSING');
     }
+    if (testCase.expected.result.businessType === 'order' && pageB) {
+      const units = explicitOrderUnits(pageB.input.originalText);
+      if (units.quantityUnit && units.priceUnit && units.quantityUnit !== units.priceUnit) {
+        errors.push('CONCURRENT_PAGE_B_EXPLICIT_UNIT_CONFLICT');
+      }
+    }
   }
 }
 
 function validateExecutionPlanPreconditions(testCase, state) {
   const errors = [];
   validatePendingEditContract(testCase, state || {}, errors);
+  validateSelectionTargets(testCase, state || {}, errors);
   validateSuccessLaneContract(testCase, errors);
   return Array.from(new Set(errors));
 }
 
 module.exports = {
+  buildSelectionTargets,
   hasNonZeroBusinessDiff,
   validateExecutionPlanPreconditions
 };

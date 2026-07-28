@@ -4,6 +4,10 @@ const { createFakeStorageGateway } = require('../../../utils/record-storage-gate
 const { createReleaseAStorageFacade } = require('../../../utils/storage');
 const { BUSINESS_STORAGE_KEY } = require('./constants');
 const { prepareLegacyDraft, storageAudit } = require('./execute-isolated-legacy-commit');
+const {
+  RECORD_STORAGE_BACKUP_KEY,
+  RECORD_STORAGE_JOURNAL_KEY
+} = require('../../../utils/record-storage-transaction-contract');
 
 function makeClock(nowInstant) {
   return { now: () => new Date(nowInstant) };
@@ -58,6 +62,9 @@ function executeConcurrentBase(spec, draftA, draftB) {
   facade.saveState(pageAState, saveOptions(spec, 'page-a'));
   const commitA = facade.getLastWriteResult();
   const afterAStats = gateway.getStats();
+  const beforeBEntries = gateway.getEntries();
+  const beforeBControl = beforeBEntries[BUSINESS_STORAGE_KEY]
+    && beforeBEntries[BUSINESS_STORAGE_KEY].__hxlRecordStorageV1 || {};
   let commitB = null;
   let errorB = null;
   let secondCommitAttempted = false;
@@ -74,6 +81,9 @@ function executeConcurrentBase(spec, draftA, draftB) {
     commitB = facade.getLastWriteResult();
   }
   const afterBStats = gateway.getStats();
+  const afterBEntries = gateway.getEntries();
+  const afterBControl = afterBEntries[BUSINESS_STORAGE_KEY]
+    && afterBEntries[BUSINESS_STORAGE_KEY].__hxlRecordStorageV1 || {};
   const after = facade.getState({ writerSource: 'INPUT_FORMAL' });
   const eventsA = afterAStats.events.slice(beforeAStats.events.length);
   const eventsB = afterBStats.events.slice(beforeBStats.events.length);
@@ -86,6 +96,7 @@ function executeConcurrentBase(spec, draftA, draftB) {
     commitA,
     commitB,
     commitAReceiptPresent: Boolean(commitA && commitA.receipt),
+    commitAStatus: commitA && commitA.status || '',
     committedA: Boolean(commitA && commitA.commitSucceeded),
     committedB: Boolean(commitB && commitB.commitSucceeded),
     diff: createStateDiff(initial, after),
@@ -102,9 +113,20 @@ function executeConcurrentBase(spec, draftA, draftB) {
       businessB && businessB.record && (after.orders || []).some((item) => item.id === businessB.record.id)
     ),
     secondCommitAttempted,
+    secondCommitAllWrites: afterBStats.writes - beforeBStats.writes,
+    secondCommitBackupWrites: eventsB.filter((item) => (
+      item.type === 'SET' && item.key === RECORD_STORAGE_BACKUP_KEY
+    )).length,
+    secondCommitJournalWrites: eventsB.filter((item) => (
+      item.type === 'SET' && item.key === RECORD_STORAGE_JOURNAL_KEY
+    )).length,
     secondCommitPrimaryWrites: eventsB.filter((item) => (
       item.type === 'SET' && item.key === BUSINESS_STORAGE_KEY
     )).length,
+    secondCommitReceiptCountDelta: (afterBControl.recentReceipts || []).length
+      - (beforeBControl.recentReceipts || []).length,
+    secondCommitRevisionDelta: Number(afterBControl.storageRevision || 0)
+      - Number(beforeBControl.storageRevision || 0),
     preparedA,
     preparedB,
     staleDetected: Boolean(errorB && /STALE/.test(errorB.code)),

@@ -1,5 +1,8 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
-const { validateExecutionPlanPreconditions } = require('./validate-plan-preconditions');
+const {
+  buildSelectionTargets,
+  validateExecutionPlanPreconditions
+} = require('./validate-plan-preconditions');
 
 function expectedLayerNames(lanes) {
   const names = ['productionObservation'];
@@ -55,6 +58,7 @@ function buildExecutionPlan(testCase, fixtureResolver) {
     inputChannel: testCase.input.channel,
     lanes,
     requiredCapabilities: safeClone(testCase.interaction.requiredCapabilities || []),
+    selectionTargets: buildSelectionTargets(testCase, initial.state),
     clock: safeClone(testCase.clock),
     stateFixtureRef: initial.fixtureRef,
     stateFixtureFingerprint: initial.fingerprint,

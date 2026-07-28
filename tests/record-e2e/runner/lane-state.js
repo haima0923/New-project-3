@@ -57,6 +57,10 @@ function missingExecutionEvidence(lane, detail) {
 function finalizeLane(lane) {
   lane.assertionsCompleted = true;
   lane.completed = true;
+  if (lane.status === 'PLANNED') {
+    missingExecutionEvidence(lane, ['LANE_NEVER_STARTED']);
+    return lane;
+  }
   if (lane.status === 'PENDING_ASSERTIONS') {
     const missing = [
       'planned',
@@ -74,6 +78,9 @@ function finalizeLane(lane) {
     } else {
       lane.status = 'PASS';
     }
+  }
+  if (!['PASS', 'CASE_FAIL', 'RUNNER_ERROR', 'BLOCKED'].includes(lane.status)) {
+    missingExecutionEvidence(lane, [`NON_TERMINAL_STATUS:${lane.status}`]);
   }
   if (lane.status === 'PASS' && (
     !lane.planned

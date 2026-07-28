@@ -149,6 +149,10 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
   const beforeEligibleCalls = Number(driver.evidence.pagePrimaryActionCalls.saveFormal || 0);
   const beforeBusiness = Number(driver.evidence.productionBusinessCalls.saveConfirmedDraft || 0);
   const beforeStorage = Number(driver.evidence.productionStorageCalls.saveState || 0);
+  const productionStorage = require('../../../utils/storage');
+  const beforeMonitorEvents = (
+    productionStorage.getRecordStorageInfrastructureStatus().monitorEvents || []
+  );
   const beforeStorageEvents = runtime.fakeWx.audit().storageEvents.length;
   const beforeRaw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state;
   const beforeState = stripRecordStorageControl(beforeRaw);
@@ -166,6 +170,12 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
   const afterEligibleCalls = Number(driver.evidence.pagePrimaryActionCalls.saveFormal || 0);
   const afterBusiness = Number(driver.evidence.productionBusinessCalls.saveConfirmedDraft || 0);
   const afterStorage = Number(driver.evidence.productionStorageCalls.saveState || 0);
+  const afterMonitorEvents = (
+    productionStorage.getRecordStorageInfrastructureStatus().monitorEvents || []
+  );
+  const transactionDecisionCount = afterMonitorEvents
+    .slice(beforeMonitorEvents.length)
+    .filter((event) => event.type === 'LEGACY_WRITE_DECISION').length;
   const afterStorageAudit = runtime.fakeWx.audit();
   const transactionEvents = afterStorageAudit.storageEvents.slice(beforeStorageEvents);
   const afterRaw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state;
@@ -213,8 +223,8 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
       marker: prepared.identityBypass.marker,
       providerWasNeverSetToReal: prepared.identityBypass.providerWasNeverSetToReal
     },
-    transactionBeginCount: afterStorage - beforeStorage,
-    transactionCommitAttempts: afterStorage - beforeStorage,
+    transactionBeginCount: transactionDecisionCount,
+    transactionCommitAttempts: transactionDecisionCount,
     transactionJournalWriteCount: transactionBeginCount,
     revisionDelta: afterRevision - beforeRevision,
     transactionExactReplay: false,
@@ -236,6 +246,9 @@ function findConcurrentInput(spec) {
 
 async function executeLanes(runtime, spec, plan, options = {}) {
   const lanes = spec.execution.lanes;
+  const runtimeStateBefore = stripRecordStorageControl(
+    runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || spec.initialState.state
+  );
   let observation;
   let draftObservation;
   if (lanes.includes('HEADLESS_PRODUCTION_OBSERVATION')) {
@@ -324,6 +337,21 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       storageAudit: concurrent.storageAudit
     };
     laneResults.push(concurrent.committedA
+      ? executedLane('TEST_ONLY_ISOLATED_LEGACY_COMMIT', {
+        committed: true,
+        marker: isolated.marker,
+        status: concurrent.commitA && concurrent.commitA.status || ''
+      })
+      : preconditionFailedLane(
+        'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
+        {
+          committed: false,
+          reason: concurrent.reason || 'FIRST_COMMIT_NOT_COMPLETED'
+        },
+        'BUSINESS_SAFETY_BLOCKED',
+        'PREFLIGHT_ERROR'
+      ));
+    laneResults.push(concurrent.committedA
       ? executedLane('CONCURRENT_BASE_REVISION', {
         pageADataPreserved: concurrent.pageADataPreserved,
         staleDetected: concurrent.staleDetected,
@@ -383,10 +411,10 @@ async function executeLanes(runtime, spec, plan, options = {}) {
         reason: 'UPSTREAM_ISOLATED_COMMIT_NOT_COMPLETED'
       };
     if (!replay.notExecuted) {
-      replay.pageSaveAttempts = (
-        spec.interaction.requestedSaveAction === 'SAVE_FORMAL'
-        && isolated.committed
-      ) ? 1 : 0;
+      replay.pageSaveAttempts = Number(
+        sourceObservation.driver
+        && sourceObservation.driver.evidence.pageMethodCalls.saveFormal || 0
+      );
       replay.replayPageSaveAttempts = 0;
     }
     laneResults.push(replay.notExecuted
@@ -444,6 +472,15 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     }
   }
 
+  if (options.hooks && options.hooks.mutateSurfaceBusinessStorage
+    && surfaceGap) {
+    const raw = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || {};
+    raw.orders = (raw.orders || []).concat({
+      id: `self-test-surface-leak:${spec.caseId}`,
+      originalText: spec.input.originalText
+    });
+    runtime.fakeWx.wx.setStorageSync(BUSINESS_STORAGE_KEY, raw);
+  }
   const audit = runtime.audit();
   if (options.hooks && options.hooks.skipNetworkAudit) delete audit.networkAudit;
   if (options.hooks && options.hooks.skipStorageAudit) delete audit.storageAudit;
@@ -476,9 +513,23 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       code: 'CLEANUP_ERROR'
     });
   }
+  const runtimeStateAfter = stripRecordStorageControl(
+    runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || runtimeStateBefore
+  );
+  const runtimeStateDiff = createStateDiff(runtimeStateBefore, runtimeStateAfter);
   const stateDiff = isolated && isolated.diff
     ? isolated.diff
-    : createStateDiff(spec.initialState.state, spec.initialState.state);
+    : runtimeStateDiff;
+  const surfaceDependentLane = laneResults.find((lane) => (
+    lane.lane === 'TEST_ONLY_ISOLATED_LEGACY_COMMIT'
+    && lane.failureCode === 'UPSTREAM_PAGE_CAPABILITY_MISSING'
+  ));
+  if (surfaceDependentLane) {
+    surfaceDependentLane.evidence = Object.assign({}, surfaceDependentLane.evidence, {
+      zeroSideEffects: isCollectionDiffEmpty(runtimeStateDiff.businessDiff),
+      runtimeBusinessDiff: runtimeStateDiff.businessDiff
+    });
+  }
   return {
     actualInput: observationPublic.actualInput,
     aiEvidence: {
@@ -513,7 +564,9 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       availableCapabilities: observation.driver
         ? observation.driver.availableCapabilities
         : {},
-      missingCapabilities: observation.missingCapabilities
+      missingCapabilities: observation.missingCapabilities,
+      pageCandidateIds: safeClone(observation.afterEdits.candidateIds || {}),
+      selectionTargets: safeClone(plan.selectionTargets || [])
     },
     transactionReplayEvidence: replay,
     duplicateTriggerEvidence: duplicate,
