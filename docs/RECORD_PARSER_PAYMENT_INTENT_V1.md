@@ -179,7 +179,8 @@ Evidence层另有4条与本规则直接相关的修正：`FIN-004`与`PAGE-004`�
 其余113题的raw/semantic/proposal/outcome/Preflight/业务Diff比较无变化。
 
 网络误触审计和默认离线门禁见`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`。正式重跑中
-网络guard attempt、未知Fake Route、真实wx Storage、宿主文件Storage、fixture修改、跨Case污染、
+统一离线入口控制台审计的网络guard attempt（该计数未嵌入全量JSON）、未知Fake Route、
+真实wx Storage、宿主文件Storage、fixture修改、跨Case污染、
 Journal、Backup、parser evidence missing、orphan、uncorrelated、shadow和未执行隔离
 审计计数在两轮均为0。
 

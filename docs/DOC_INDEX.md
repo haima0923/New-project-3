@@ -12,8 +12,10 @@
 > 下游AI Normalize与Preflight真实差异；`BASIC-006`、`BASIC-010`、`AMB-005`三条高置信
 > parser缺陷继续暴露。日期、数量、次数、笔数、非金融“收到”与真实第二订单动作均有
 > 强负例门禁。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
-> Live AI smoke要求CLI和环境双重授权，最终全量network attempt为0。误触审计不能证明
-> 远端绝对未收到旧请求，但确认没有HTTP响应、真实数据、密钥或真实AI结果。除
+> Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
+> 该计数未嵌入全量JSON报告。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
+> HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
+> 认证头被请求携带的证据。除
 > `utils/parser.js`的窄规则修复外，未修改页面、Route、AI、
 > Preflight、business、Storage或业务安全Expected。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /

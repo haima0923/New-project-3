@@ -115,7 +115,7 @@ Worker/子进程继承、密钥剥离、Evidence脱敏、attempt整轮作废和�
 RUNNER_ERROR                     = 0
 BLOCKED                          = 0
 realNetworkRequests              = 0
-networkGuardAttempts             = 0
+networkGuardAttempts             = 0（统一离线入口控制台审计；未嵌入下述全量JSON）
 unknownFakeRouteRequests         = 0
 realWxStorageCalls               = 0
 hostFilesystemStorageCalls       = 0
