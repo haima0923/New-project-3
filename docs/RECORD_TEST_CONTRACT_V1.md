@@ -1067,3 +1067,22 @@ Surface、State Diff断言。`PAGE-003`仍必须阻断4500大于剩余4000的收
 保护Case`BASIC-006`、`BASIC-010`、`AMB-005`必须继续暴露其各自的本地parser缺陷。
 专项测试还必须覆盖完成型收款、待收/未完成、定金、非金融接收和普通订单五组边界。
 详细证据见`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`。
+
+## 30. 默认离线与Live双重授权合同
+
+Record本地E2E与回归必须由`run-record-offline-regression.js`的显式白名单启动。入口在
+任何项目生产模块加载前预加载网络门禁，覆盖fetch、http/https、net和tls，并把同一门禁
+传给Validator、Case Worker、Restart Worker和Node子进程。AI/API key、token、
+Authorization、Cookie、真实endpoint、proxy和宿主NODE_OPTIONS不得进入离线子进程。
+
+任一网络API调用都必须产生`AUTOMATION_NETWORK_GUARD_ERROR`并作废整轮；不得转成产品
+`CASE_FAIL`。Evidence只能记录API类型、脱敏host/port和stack摘要，不能记录headers、
+Body、query、URL凭据或环境变量值。
+
+`ai-contract-smoke.js`无参数时必须拒绝且不联网；`--offline`只运行合成Replay。真实模式
+只有`--live-ai`与`ALLOW_LIVE_AI_SMOKE=1`同时存在，并且提供显式无凭据HTTPS endpoint
+时才可进入transport。Live模式不属于确定性Runner或本地回归清单。
+
+本合同只能防止当前Node测试链误联网，不替代OS级网络隔离，也不把Offline Replay称为
+真实AI质量。事故审计、响应证据边界和15项安全哨兵见
+`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`。

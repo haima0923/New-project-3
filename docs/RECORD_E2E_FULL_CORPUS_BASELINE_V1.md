@@ -113,11 +113,11 @@ Primary failure stage：
 
 | Stage | Case数 |
 | --- | ---: |
-| `AI_NORMALIZE_ERROR` | 21 |
-| `LOCAL_PARSE_ERROR` | 11 |
-| `PREFLIGHT_ERROR` | 19 |
+| `AI_NORMALIZE_ERROR` | 23 |
+| `LOCAL_PARSE_ERROR` | 9 |
+| `PREFLIGHT_ERROR` | 20 |
 | `SURFACE_ERROR` | 10 |
-| `ROUTE_ERROR` | 44 |
+| `ROUTE_ERROR` | 43 |
 | `STATE_DIFF_ERROR` | 4 |
 | `STORAGE_TRANSACTION_ERROR` | 1 |
 
@@ -125,13 +125,13 @@ Ownership：
 
 | Ownership | Case数 | 含义 |
 | --- | ---: | --- |
-| `CONFIRMED_LOCAL_PARSER_DEFECT` | 5 | 保护的高置信 parser 缺陷 |
+| `CONFIRMED_LOCAL_PARSER_DEFECT` | 3 | 保护的高置信 parser 缺陷 |
 | `CONFIRMED_OPERATION_MAPPING_DEFECT` | 1 | `REL-008`报价转订单 operation |
 | `CONFIRMED_ROUTE_DEFECT` | 1 | 已确认 Route 缺陷 |
 | `EXPECTED_MAPPING_MISMATCH_CANDIDATE` | 1 | State Diff/字段映射候选，未改合同 |
 | `OBSERVABILITY_EXPECTATION_MISMATCH` | 4 | 可观测边界候选 |
 | `TEST_CONTRACT_MISMATCH_CANDIDATE` | 4 | 执行 Lane 正确但旧统计/超时合同冲突 |
-| `UNCLASSIFIED_REQUIRES_REVIEW` | 94 | 证据不足以判产品或测试合同责任 |
+| `UNCLASSIFIED_REQUIRES_REVIEW` | 96 | 证据不足以判产品或测试合同责任 |
 
 Ownership 不改变 Case 状态和 Expected。尤其不得把 94 条未分类差异直接称为产品 Bug，
 也不得用“候选”标签自动修改题库。
@@ -143,7 +143,7 @@ Ownership 不改变 Case 状态和 Expected。尤其不得把 94 条未分类差
 | `PAGE_PRODUCTION_OBSERVATION` | 11 | 99 | 110 条页面观察全部执行 |
 | `HEADLESS_PRODUCTION_OBSERVATION` | 4 | 6 | 10 条 Headless 观察全部执行 |
 | `PAGE_CONFIRMED_DRAFT_DERIVATION` | 5 | 1 | `PAGE-008`主商品一致性已通过；`AMB-015`仍有解析/确认差异 |
-| `TEST_ONLY_ISOLATED_LEGACY_COMMIT` | 24 | 65 | 89 条合同 Lane 均有明确结果 |
+| `TEST_ONLY_ISOLATED_LEGACY_COMMIT` | 25 | 64 | 89 条合同 Lane 均有明确结果 |
 | `PAGE_DUPLICATE_TRIGGER_GUARD` | 1 | 0 | `FIN-014` Lane 通过 |
 | `TRANSACTION_EXACT_REPLAY` | 0 | 1 | 事务动作成功，旧 Case 统计断言失败 |
 | `RESTART_PERSISTENCE` | 5 | 0 | 五条都由新 Worker 读取成功 |
@@ -183,7 +183,7 @@ Case整体仍因原始页面结果与确认语义不一致而为`CASE_FAIL/AI_NO
 商品“帆布袋→保温袋”、数量`100→150`、单价`6→8`，金额按既有规则
 `600→900→1200`；`originalText`未变，最终Legacy草稿也使用新值。该题不再以
 `CONFIRMATION_ERROR/HOME_PRIMARY_ITEM_NOT_SYNCED`失败，当前最早差异是
-`LOCAL_PARSE_ERROR`。
+`ROUTE_ERROR`；订单交期必填和正式Diff为零均保持。
 
 Preflight仍因订单交期缺失及人工商品没有原文证据而阻断。Runner没有绕过安全规则保存，
 正式业务Diff为零、最终保存记录为空。因此已确认页面模型同步修复，但尚未证明该题完成
@@ -337,15 +337,18 @@ BLOCKED        0
 ```
 
 Failure Stage从上一基线的`LOCAL_PARSE_ERROR=11 / AI_NORMALIZE_ERROR=21 /
-PREFLIGHT_ERROR=19`变为`9 / 22 / 20`；其余Stage数量不变。Ownership中的
+PREFLIGHT_ERROR=19 / ROUTE_ERROR=44`变为`9 / 23 / 20 / 43`。第三条变化来自同一
+payment完成语义边界的`AMB-016`从Route差异推进到Fake字段差异。Ownership中的
 `CONFIRMED_LOCAL_PARSER_DEFECT`从5降为3，新增两条下游
-`UNCLASSIFIED_REQUIRES_REVIEW`。其他118题的顶层Case状态、主失败、Ownership和Route均
-不变；Evidence层另有4条直接相关修正：`FIN-004`、`PAGE-004`补齐raw收款金额，
+`UNCLASSIFIED_REQUIRES_REVIEW`。除两条目标和`AMB-016`外，其他117题的顶层Case状态、
+主失败和Ownership均不变；Evidence层另有4条直接相关修正：`FIN-004`、`PAGE-004`补齐raw收款金额，
 `FIN-013`不再把明确付款误投影为todo，`CHAT-001`的聊天确认“收到”不再被误当付款。
 其余114题的raw/semantic/proposal/outcome/Preflight/业务Diff比较无变化。
 
 65条P0失败全部单题重跑、P1分层抽查13条；31个Cluster覆盖110/110失败。Parser专项、
 Runner、页面选择、Release A、Preflight、Shared Confirmation、Flow Gate、五步用户链、
 AI/P0、Route和Voice Fake回归全部通过。两轮全部隔离与parser调用图硬门禁为0。
+所有命令由默认离线且fail-closed的白名单入口执行，进程级network guard attempt为0；
+网络误触审计和门禁合同见`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`。
 
 详细规则、负例和目标证据见`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`。

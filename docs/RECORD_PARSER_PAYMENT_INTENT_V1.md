@@ -147,7 +147,7 @@ paymentAmount = 600
 专项测试覆盖：
 
 ```text
-完成型收款              16
+完成型收款              28
 待收/未完成保护           7
 定金保护                  6
 非金融误判保护           28
@@ -166,15 +166,20 @@ BLOCKED        0
 ```
 
 两轮完全一致；65条P0失败全部单题重跑，P1分层抽查13条。`LOCAL_PARSE_ERROR`
-从11降为9，`AI_NORMALIZE_ERROR`从21增至22，`PREFLIGHT_ERROR`从19增至20。
+从11降为9，`AI_NORMALIZE_ERROR`从21增至23，`PREFLIGHT_ERROR`从19增至20，
+`ROUTE_ERROR`从44降至43。新增推进的`AMB-016`原文“王总转来1000元，没说是哪一单”
+属于同一完成型payment边界：raw/semantic已成为payment/record_payment，整体继续暴露
+Fake字段差异。
 这表示两条观测已推进到下一处真实差异，不表示两条Case整体通过。
 
-与上一可信基线逐题比较，其他118题的顶层Case状态、主失败、Ownership和Route均不变。
+与上一可信基线逐题比较，除两条目标和同边界`AMB-016`外，其他117题的顶层Case状态、
+主失败与Ownership均不变。
 Evidence层另有4条与本规则直接相关的修正：`FIN-004`与`PAGE-004`的raw金额缺失消除，
 `FIN-013`从错误todo raw改为payment，`CHAT-001`的“我：收到”不再被当成第二笔付款。
-其余114题的raw/semantic/proposal/outcome/Preflight/业务Diff比较无变化。
+其余113题的raw/semantic/proposal/outcome/Preflight/业务Diff比较无变化。
 
-网络、未知Fake Route、真实wx Storage、宿主文件Storage、fixture修改、跨Case污染、
+网络误触审计和默认离线门禁见`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`。正式重跑中
+网络guard attempt、未知Fake Route、真实wx Storage、宿主文件Storage、fixture修改、跨Case污染、
 Journal、Backup、parser evidence missing、orphan、uncorrelated、shadow和未执行隔离
 审计计数在两轮均为0。
 
