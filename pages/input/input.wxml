@@ -199,6 +199,33 @@
       </view>
       <button wx:if="{{selectedOrderId}}" class="secondary-button order-selection-clear" bindtap="clearOrderSelection">取消关联</button>
     </view>
+    <view wx:if="{{showGenericQuotationSelection}}" class="order-selection-box quotation-selection-box">
+      <view class="order-selection-head">
+        <view>
+          <view class="card-title">选择关联报价</view>
+          <view class="order-selection-reason">{{quotationSelectionReason}}</view>
+        </view>
+        <view wx:if="{{quotationSelectionRequired}}" class="order-selection-required">必须选择</view>
+      </view>
+      <view wx:for="{{quotationCandidates}}" wx:key="id" class="order-candidate {{item.id === selectedQuotationId ? 'order-candidate-selected' : ''}}">
+        <view class="order-candidate-title">{{item.customerDisplayName}} · {{item.productSummary || '未填产品'}}</view>
+        <view class="order-candidate-meta">
+          {{item.itemCount}}项 · {{item.status || '-'}} · 报价日期{{item.quoteDate || '-'}}
+        </view>
+        <view wx:if="{{item.quotationAmount}}" class="order-candidate-meta">报价金额：{{item.quotationAmount}}元</view>
+      </view>
+      <view wx:if="{{showGenericQuotationPicker}}" class="field match-picker-field">
+        <text class="label">原话指的是哪张报价</text>
+        <picker mode="selector" range="{{quotationRange}}" value="{{selectedQuotationIndex}}" bindchange="changeQuotation">
+          <view class="input date-picker-input">
+            <text wx:if="{{selectedQuotationIndex >= 0}}">{{selectedQuotationLabel}}</text>
+            <text wx:else class="placeholder-text">请选择报价</text>
+            <text class="picker-arrow">选择</text>
+          </view>
+        </picker>
+      </view>
+      <button wx:if="{{selectedQuotationId}}" class="secondary-button order-selection-clear" bindtap="clearQuotationSelection">取消关联</button>
+    </view>
     <view wx:if="{{showProductSuggestion}}" class="confirm-warning" data-value="{{productSuggestionValue}}" bindtap="applyProductSuggestion">{{productSuggestionText}} 点这里采用建议</view>
     <view wx:if="{{showItemList}}" class="item-list-field">
       <view class="label">商品明细</view>

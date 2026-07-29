@@ -876,6 +876,139 @@ function rebuildAfterGenericOrderFieldEdit(state, pageData, baseResult, intent, 
   return confirmationState;
 }
 
+function buildGenericQuotationSelectionState(fields, operation, domainPreflight) {
+  const nextFields = Object.assign({}, fields);
+  const preflightCandidates = (((domainPreflight || {}).candidates || {})
+    .quotationSelectionCandidates || []);
+  const quotationCandidates = preflightCandidates.map((item) => ({
+    id: String(item.id || item.quotationId || ''),
+    quotationId: String(item.quotationId || item.id || ''),
+    customerId: String(item.customerId || ''),
+    customerDisplayName: String(item.customerDisplayName || ''),
+    productSummary: String(item.productSummary || ''),
+    itemCount: Number(item.itemCount || 0),
+    quotationAmount: item.quotationAmount || '',
+    status: String(item.status || ''),
+    quoteDate: String(item.quoteDate || ''),
+    validUntil: String(item.validUntil || ''),
+    createdAt: String(item.createdAt || '')
+  })).filter((item) => item.id);
+  const selectedQuotationId = String(nextFields.quotationId || '');
+  const selectedQuotation = quotationCandidates
+    .find((item) => item.id === selectedQuotationId) || null;
+  const requiredSelections = (domainPreflight && domainPreflight.requiredSelections) || [];
+  const blockingIssues = (domainPreflight && domainPreflight.blockingIssues) || [];
+  const quotationSelectionRequired = requiredSelections.includes('quotationId');
+  const quotationActionRequired = blockingIssues
+    .some((item) => item.requiredAction === 'SELECT_QUOTATION');
+  const operationSupportsQuotation = ['update_quotation', 'create_order'].includes(operation);
+  const showGenericQuotationSelection = operationSupportsQuotation && (
+    quotationSelectionRequired
+    || quotationActionRequired
+    || Boolean(selectedQuotationId)
+  );
+  let quotationSelectionReason = '';
+  if (quotationSelectionRequired) {
+    quotationSelectionReason = quotationCandidates.length > 1
+      ? '找到多张可用报价，请选择原话指的是哪一张。'
+      : '请确认这次业务关联哪一张报价。';
+  } else if (quotationActionRequired) {
+    quotationSelectionReason = '当前报价关系不安全，请重新选择同一客户的有效报价。';
+  } else if (selectedQuotationId) {
+    quotationSelectionReason = '已关联报价；如需更换，请重新选择。';
+  }
+  if (showGenericQuotationSelection && !quotationCandidates.length) {
+    quotationSelectionReason = '没有找到可选择的同客户有效报价，当前不能完成报价关联。';
+  }
+  const quotationOptions = quotationCandidates.map((item) => ({
+    id: item.id,
+    label: `${item.customerDisplayName} · ${item.productSummary || '未填产品'} · ${item.status || '-'} · 报价${item.quotationAmount || '-'}元`
+  }));
+  const selectedQuotationIndex = quotationOptions
+    .findIndex((item) => item.id === selectedQuotationId);
+
+  return {
+    fields: nextFields,
+    quotationCandidates,
+    quotationOptions,
+    quotationRange: quotationOptions.map((item) => item.label),
+    selectedQuotationId,
+    selectedQuotation,
+    selectedQuotationIndex,
+    selectedQuotationLabel: selectedQuotationIndex >= 0
+      ? quotationOptions[selectedQuotationIndex].label
+      : '',
+    quotationSelectionRequired,
+    quotationSelectionReason,
+    quotationSelectionConfirmed: Boolean(
+      selectedQuotation && nextFields.quotationSelectionConfirmed === true
+    ),
+    quotationSelectionBaseFields: null,
+    showGenericQuotationSelection,
+    showGenericQuotationPicker: quotationOptions.length > 0
+  };
+}
+
+function copyQuotationSelectionBaseFields(fields) {
+  const base = Object.assign({}, fields);
+  if (Array.isArray(fields.items)) {
+    base.items = fields.items.map((item) => Object.assign({}, item));
+  }
+  delete base.quotationId;
+  delete base.quotationSelectionConfirmed;
+  return base;
+}
+
+function mergeQuotationSelectionDraftFields(state, baseFields, quotationId) {
+  const selectedId = String(quotationId || '');
+  const historicalFields = hydrateQuotationFields(state, {
+    quotationId: selectedId
+  });
+  const patchFields = copyQuotationSelectionBaseFields(baseFields || {});
+  if (!historicalFields) {
+    return Object.assign({}, patchFields, {
+      quotationId: selectedId,
+      quotationSelectionConfirmed: true
+    });
+  }
+
+  const historicalItems = normalizeConfirmItems(historicalFields);
+  const patchItems = Array.isArray(patchFields.items)
+    ? patchFields.items.map(normalizeConfirmItem)
+    : [];
+  const itemCount = Math.max(historicalItems.length, patchItems.length);
+  const items = [];
+  for (let index = 0; index < itemCount; index += 1) {
+    const historicalItem = historicalItems[index] || {};
+    const patchItem = patchItems[index] || {};
+    const item = mergePresentFields(historicalItem, patchItem);
+    if (hasConfirmItemValue(item)) items.push(item);
+  }
+
+  const merged = mergePresentFields(historicalFields, patchFields);
+  if (items.length) merged.items = items;
+  merged.quotationId = selectedId;
+  merged.quotationSelectionConfirmed = true;
+  return merged;
+}
+
+function rebuildAfterQuotationFieldEdit(state, pageData, baseResult, intent, nextBaseFields) {
+  const selectedId = String(pageData.selectedQuotationId || '');
+  if (!selectedId || !pageData.quotationSelectionBaseFields) {
+    return buildConfirmationState(state, baseResult, intent, nextBaseFields);
+  }
+  const baseFields = copyQuotationSelectionBaseFields(nextBaseFields);
+  const fields = mergeQuotationSelectionDraftFields(state, baseFields, selectedId);
+  const confirmationState = buildConfirmationState(state, baseResult, intent, fields);
+  const stillSafe = (confirmationState.quotationCandidates || [])
+    .some((item) => item.id === selectedId);
+  if (!stillSafe) {
+    return buildConfirmationState(state, baseResult, intent, baseFields);
+  }
+  confirmationState.quotationSelectionBaseFields = baseFields;
+  return confirmationState;
+}
+
 function getFieldVisibility(intent, operation, fields = {}) {
   const quoteOrOrder = ['quotation', 'order'].includes(intent);
   const todo = ['todo', 'dunning'].includes(intent);
@@ -1157,8 +1290,8 @@ function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields, 
 }
 
 function buildConfirmationState(state, parseResult, intent, fields) {
-  let operation = parseResult.operation === 'update_order'
-    ? 'update_order'
+  let operation = ['update_order', 'update_quotation'].includes(parseResult.operation)
+    ? parseResult.operation
     : (operationByIntent[intent] || 'pending');
   let nextFields = Object.assign({}, fields);
   let missingFields = [];
@@ -1306,6 +1439,11 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     operation,
     domainPreflight
   );
+  const genericQuotationSelectionState = buildGenericQuotationSelectionState(
+    nextFields,
+    operation,
+    domainPreflight
+  );
   const orderSelectionState = operation === 'record_order_deposit'
     ? Object.assign({}, orderDepositState, {
       orderCandidates: [],
@@ -1345,6 +1483,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showHistoryDefaultWarning: Boolean(normalizedParseResult.history_default_warning_text),
     domainCanSaveFormal: domainPreflight.domainCanSaveFormal,
     domainCanSavePending: domainPreflight.domainCanSavePending,
+    domainPreflight,
     preflightFingerprint: domainPreflight.preflightFingerprint,
     preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
     fieldConflictLines,
@@ -1371,7 +1510,8 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showOrderDepositConfirm: operation === 'record_order_deposit',
     showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1,
     showDeepReviewButton: Boolean((normalizedParseResult.parse_route || {}).deep_review_available)
-  }, visibility, finalWarningState, paymentState, orderSelectionState, customerMatchState);
+  }, visibility, finalWarningState, paymentState, orderSelectionState,
+  genericQuotationSelectionState, customerMatchState);
 }
 
 function getSourceState(source) {
@@ -1467,6 +1607,19 @@ function getEmptyConfirmationData() {
     orderSelectionBaseFields: null,
     showGenericOrderSelection: false,
     showGenericOrderPicker: false,
+    quotationOptions: [],
+    quotationRange: [],
+    selectedQuotationIndex: -1,
+    selectedQuotationLabel: '',
+    selectedQuotationId: '',
+    selectedQuotation: null,
+    quotationCandidates: [],
+    quotationSelectionRequired: false,
+    quotationSelectionReason: '',
+    quotationSelectionConfirmed: false,
+    quotationSelectionBaseFields: null,
+    showGenericQuotationSelection: false,
+    showGenericQuotationPicker: false,
     showCustomerMatchBox: false,
     showCustomerPicker: false,
     showCustomerDisambiguationField: false,
@@ -1633,6 +1786,19 @@ Page({
     orderSelectionBaseFields: null,
     showGenericOrderSelection: false,
     showGenericOrderPicker: false,
+    quotationOptions: [],
+    quotationRange: [],
+    selectedQuotationIndex: -1,
+    selectedQuotationLabel: '',
+    selectedQuotationId: '',
+    selectedQuotation: null,
+    quotationCandidates: [],
+    quotationSelectionRequired: false,
+    quotationSelectionReason: '',
+    quotationSelectionConfirmed: false,
+    quotationSelectionBaseFields: null,
+    showGenericQuotationSelection: false,
+    showGenericQuotationPicker: false,
     showCustomerMatchBox: false,
     showCustomerPicker: false,
     showCustomerDisambiguationField: false,
@@ -2038,13 +2204,21 @@ Page({
       return;
     }
     const state = getState();
+    const intentChanged = intent !== this.data.intent;
     const baseResult = Object.assign({}, this.data.parseResult, {
+      operation: intentChanged
+        ? (operationByIntent[intent] || 'pending')
+        : this.data.parseResult.operation,
       missing_fields: [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
-    const fields = this.data.orderSelectionBaseFields
-      ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
-      : this.data.fields;
+    const fields = this.data.quotationSelectionBaseFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+      : (this.data.orderSelectionBaseFields
+        ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+        : Object.assign({}, this.data.fields));
+    delete fields.quotationId;
+    delete fields.quotationSelectionConfirmed;
     const confirmationState = buildConfirmationState(state, baseResult, intent, fields);
     this.setData(Object.assign({}, confirmationState, {
       intent,
@@ -2057,13 +2231,19 @@ Page({
     const patch = {};
     patch[`fields.${field}`] = event.detail.value;
     if (this.data.parseResult) {
+      const hasGenericQuotationSelection = Boolean(
+        this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+      );
       const hasGenericOrderSelection = Boolean(
         this.data.selectedOrderId && this.data.orderSelectionBaseFields
       );
       const fieldInvalidatesOrderSelection = ['customerName', 'phone', 'productName'].includes(field);
-      const sourceFields = hasGenericOrderSelection
-        ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
-        : this.data.fields;
+      const fieldInvalidatesQuotationSelection = ['customerName', 'phone'].includes(field);
+      const sourceFields = hasGenericQuotationSelection
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : (hasGenericOrderSelection
+          ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+          : this.data.fields);
       const nextFields = Object.assign({}, sourceFields, {
         [field]: event.detail.value
       });
@@ -2077,6 +2257,8 @@ Page({
         delete nextFields.unlinkedOrderDepositCustomerId;
         delete nextFields.receivableSelectionConfirmed;
         delete nextFields.orderSelectionConfirmed;
+        delete nextFields.quotationId;
+        delete nextFields.quotationSelectionConfirmed;
         delete nextFields.customerHistoryConfirmed;
         delete nextFields.customerSelectionConfirmed;
         if (field === 'customerName') delete nextFields.forceNewCustomer;
@@ -2095,7 +2277,15 @@ Page({
       const state = getState();
       Object.assign(
         patch,
-        hasGenericOrderSelection && !fieldInvalidatesOrderSelection
+        hasGenericQuotationSelection && !fieldInvalidatesQuotationSelection
+          ? rebuildAfterQuotationFieldEdit(
+            state,
+            this.data,
+            baseResult,
+            this.data.intent,
+            nextFields
+          )
+          : (hasGenericOrderSelection && !fieldInvalidatesOrderSelection
           ? rebuildAfterGenericOrderFieldEdit(
             state,
             this.data,
@@ -2103,7 +2293,7 @@ Page({
             this.data.intent,
             nextFields
           )
-          : buildConfirmationState(state, baseResult, this.data.intent, nextFields)
+          : buildConfirmationState(state, baseResult, this.data.intent, nextFields))
       );
     }
     this.setData(patch);
@@ -2113,7 +2303,10 @@ Page({
     if (!this.data.parseResult) return;
     const index = Number(event.currentTarget.dataset.index || 0);
     const field = event.currentTarget.dataset.field;
-    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    const sourceFields = this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+      : this.data.fields;
+    const items = normalizeConfirmItems(sourceFields, { ensureFirst: true });
     if (!items[index] || !field) return;
     const value = ['unit', 'priceUnit'].includes(field) ? normalizeUnit(event.detail.value) : event.detail.value;
     items[index] = Object.assign({}, items[index], {
@@ -2128,7 +2321,7 @@ Page({
         ? formatMoneyValue(Number(items[index].quantity) * Number(items[index].unitPrice))
         : '';
     }
-    const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, {
+    const fields = syncFirstItemToLegacyFields(Object.assign({}, sourceFields, {
       items
     }), {
       preserveConfirmedAmount: manualFields.includes('amount')
@@ -2153,13 +2346,26 @@ Page({
         .filter((item) => !(item && item.field === 'priceUnit' && ['unit', 'priceUnit', 'totalAmount'].includes(field)))
     });
     const state = getState();
-    this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
+    this.setData(
+      this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+        ? rebuildAfterQuotationFieldEdit(
+          state,
+          this.data,
+          baseResult,
+          this.data.intent,
+          fields
+        )
+        : buildConfirmationState(state, baseResult, this.data.intent, fields)
+    );
   },
 
   changeFollowupDays(event) {
     if (!this.data.parseResult) return;
     const days = FOLLOWUP_DAY_VALUES[Number(event.detail.value)] || DEFAULT_QUOTATION_FOLLOWUP_DAYS;
-    const fields = Object.assign({}, this.data.fields, {
+    const sourceFields = this.data.quotationSelectionBaseFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+      : this.data.fields;
+    const fields = Object.assign({}, sourceFields, {
       followupDays: String(days)
     });
     const baseResult = Object.assign({}, this.data.parseResult, {
@@ -2168,7 +2374,17 @@ Page({
         .filter((item) => !['followupDays', 'dueDate'].includes(item))
     });
     const state = getState();
-    this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
+    this.setData(
+      this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+        ? rebuildAfterQuotationFieldEdit(
+          state,
+          this.data,
+          baseResult,
+          this.data.intent,
+          fields
+        )
+        : buildConfirmationState(state, baseResult, this.data.intent, fields)
+    );
   },
 
   changeDateField(event) {
@@ -2177,12 +2393,17 @@ Page({
     const patch = {};
     patch[`fields.${field}`] = value;
     if (this.data.parseResult) {
+      const hasGenericQuotationSelection = Boolean(
+        this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+      );
       const hasGenericOrderSelection = Boolean(
         this.data.selectedOrderId && this.data.orderSelectionBaseFields
       );
-      const sourceFields = hasGenericOrderSelection
-        ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
-        : this.data.fields;
+      const sourceFields = hasGenericQuotationSelection
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : (hasGenericOrderSelection
+          ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+          : this.data.fields);
       const nextFields = Object.assign({}, sourceFields, {
         [field]: value
       });
@@ -2194,7 +2415,15 @@ Page({
       const state = getState();
       Object.assign(
         patch,
-        hasGenericOrderSelection
+        hasGenericQuotationSelection
+          ? rebuildAfterQuotationFieldEdit(
+            state,
+            this.data,
+            baseResult,
+            this.data.intent,
+            nextFields
+          )
+          : (hasGenericOrderSelection
           ? rebuildAfterGenericOrderFieldEdit(
             state,
             this.data,
@@ -2202,7 +2431,7 @@ Page({
             this.data.intent,
             nextFields
           )
-          : buildConfirmationState(state, baseResult, this.data.intent, nextFields)
+          : buildConfirmationState(state, baseResult, this.data.intent, nextFields))
       );
     }
     this.setData(patch);
@@ -2215,12 +2444,14 @@ Page({
     const fields = Object.assign({}, this.data.fields);
     delete fields.receivableId;
     delete fields.orderId;
+    delete fields.quotationId;
     delete fields.allowUnlinkedPayment;
     delete fields.allowUnlinkedOrderDeposit;
     delete fields.unlinkedPaymentCustomerId;
     delete fields.unlinkedOrderDepositCustomerId;
     delete fields.receivableSelectionConfirmed;
     delete fields.orderSelectionConfirmed;
+    delete fields.quotationSelectionConfirmed;
     if (selected.id === NEW_CUSTOMER_OPTION_ID) {
       delete fields.customerId;
       delete fields.customerSelectionConfirmed;
@@ -2258,12 +2489,14 @@ Page({
     delete fields.customerId;
     delete fields.receivableId;
     delete fields.orderId;
+    delete fields.quotationId;
     delete fields.allowUnlinkedPayment;
     delete fields.allowUnlinkedOrderDeposit;
     delete fields.unlinkedPaymentCustomerId;
     delete fields.unlinkedOrderDepositCustomerId;
     delete fields.receivableSelectionConfirmed;
     delete fields.orderSelectionConfirmed;
+    delete fields.quotationSelectionConfirmed;
     delete fields.customerHistoryConfirmed;
     delete fields.customerSelectionConfirmed;
     fields.forceNewCustomer = true;
@@ -2402,6 +2635,105 @@ Page({
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
+  },
+
+  applyQuotationSelection(quotationId) {
+    if (!this.data.parseResult) return false;
+    const selectedId = String(quotationId || '');
+    if (!['update_quotation', 'create_order'].includes(this.data.operation)
+      || !this.data.showGenericQuotationSelection
+      || !this.data.showGenericQuotationPicker) {
+      wx.showToast({ title: '当前不需要选择报价', icon: 'none' });
+      return false;
+    }
+    const state = getState();
+    const baseFields = this.data.quotationSelectionBaseFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+      : copyQuotationSelectionBaseFields(this.data.fields);
+    const baseResult = Object.assign({}, this.data.parseResult, {
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((field) => field !== 'quotationId'),
+      low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
+        .filter((field) => field !== 'quotationId')
+    });
+    const freshSelectionState = buildConfirmationState(
+      state,
+      baseResult,
+      this.data.intent,
+      baseFields
+    );
+    const freshCandidate = (freshSelectionState.quotationCandidates || [])
+      .find((item) => item.id === selectedId);
+    if (!freshCandidate) {
+      const currentSelectedId = String(this.data.selectedQuotationId || '');
+      const currentStillSafe = (freshSelectionState.quotationCandidates || [])
+        .some((item) => item.id === currentSelectedId);
+      if (currentStillSafe) {
+        const retainedState = buildConfirmationState(
+          state,
+          baseResult,
+          this.data.intent,
+          mergeQuotationSelectionDraftFields(state, baseFields, currentSelectedId)
+        );
+        retainedState.quotationSelectionBaseFields = baseFields;
+        this.setData(retainedState);
+      } else {
+        this.setData(freshSelectionState);
+      }
+      wx.showToast({ title: '这张报价已不可选，请重新确认', icon: 'none' });
+      return false;
+    }
+    const fields = mergeQuotationSelectionDraftFields(
+      state,
+      baseFields,
+      freshCandidate.id
+    );
+    const confirmationState = buildConfirmationState(
+      state,
+      baseResult,
+      this.data.intent,
+      fields
+    );
+    const accepted = (confirmationState.quotationCandidates || [])
+      .some((item) => item.id === selectedId)
+      && String((confirmationState.fields || {}).quotationId || '') === selectedId;
+    if (!accepted) {
+      this.setData(freshSelectionState);
+      wx.showToast({ title: '这张报价已不可选，请重新确认', icon: 'none' });
+      return false;
+    }
+    confirmationState.quotationSelectionBaseFields = baseFields;
+    confirmationState.quotationSelectionConfirmed = true;
+    this.setData(confirmationState);
+    return true;
+  },
+
+  changeQuotation(event) {
+    const selected = (this.data.quotationOptions || [])[Number(event.detail.value)];
+    if (!selected) return false;
+    return this.applyQuotationSelection(selected.id);
+  },
+
+  selectQuotationCandidate(event) {
+    return this.applyQuotationSelection(event.currentTarget.dataset.quotationId);
+  },
+
+  clearQuotationSelection() {
+    if (!this.data.parseResult) return false;
+    const fields = this.data.quotationSelectionBaseFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+      : copyQuotationSelectionBaseFields(this.data.fields);
+    const baseResult = Object.assign({}, this.data.parseResult, {
+      missing_fields: this.data.parseResult.missing_fields || [],
+      low_confidence_fields: this.data.parseResult.low_confidence_fields || []
+    });
+    this.setData(buildConfirmationState(
+      getState(),
+      baseResult,
+      this.data.intent,
+      fields
+    ));
+    return true;
   },
 
   addConfirmItem() {
