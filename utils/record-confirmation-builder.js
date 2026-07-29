@@ -185,10 +185,8 @@ function candidateDisplayName(candidate, type) {
   return String(candidate.id || '');
 }
 
-function normalizeCandidateList(value, type, selectedId) {
+function normalizeCandidateList(value, type, selectedId, selectionRequired) {
   const source = Array.isArray(value) ? value.filter((item) => item && typeof item === 'object') : [];
-  const selectionRequired = source.length > 1
-    && !source.some((candidate) => String(candidate.id || '') === String(selectedId || ''));
   return source.map((candidate) => ({
     id: String(candidate.id || ''),
     displayName: candidateDisplayName(candidate, type),
@@ -196,7 +194,7 @@ function normalizeCandidateList(value, type, selectedId) {
     confidence: Number.isFinite(Number(candidate.confidence)) ? Number(candidate.confidence) : null,
     isExact: candidate.isExact === true || candidate.is_exact === true,
     isSelected: Boolean(selectedId && String(candidate.id || '') === String(selectedId)),
-    selectionRequired: candidate.selectionRequired === true || selectionRequired
+    selectionRequired: candidate.selectionRequired === true || selectionRequired === true
   }));
 }
 
@@ -205,17 +203,25 @@ function getCandidateSource(result, localResult, candidateContext, resultScope, 
   const contextField = `${type}Candidates`;
   const resolvedField = `${type}CandidatesResolved`;
   if (candidateContext && Array.isArray(candidateContext[contextField])) {
-    return { value: candidateContext[contextField], resolved: candidateContext[resolvedField] === true };
+    return {
+      value: candidateContext[contextField],
+      resolved: candidateContext[resolvedField] === true,
+      selectionRequired: candidateContext[`${type}SelectionRequired`] === true
+    };
   }
   if (type === 'customer' && resultScope !== 'AI_ONLY_RESULT'
     && localResult && Array.isArray(localResult[field])) {
-    return { value: localResult[field], resolved: true };
+    return {
+      value: localResult[field],
+      resolved: true,
+      selectionRequired: localResult[`${type}_selection_required`] === true
+    };
   }
   // Candidate identities are business-context facts. Model output may mention
   // candidates, but it cannot establish that those records really exist.
   // Only trusted caller context or the existing local history resolver may
   // populate selectable candidates.
-  return { value: [], resolved: false };
+  return { value: [], resolved: false, selectionRequired: false };
 }
 
 function buildCandidates(result, resultScope, candidateContext = {}, localResult = null) {
@@ -230,13 +236,23 @@ function buildCandidates(result, resultScope, candidateContext = {}, localResult
   let allResolved = true;
   definitions.forEach(([type, idField]) => {
     const source = getCandidateSource(result, localResult, candidateContext, resultScope, type);
-    const items = normalizeCandidateList(source.value, type, fields[idField]);
+    const items = normalizeCandidateList(
+      source.value,
+      type,
+      fields[idField],
+      source.selectionRequired
+    );
     const title = `${type}Candidates`;
     candidates[title] = items;
     candidates[`${title}Resolved`] = source.resolved;
-    candidates[`${type}SelectionRequired`] = items.some((item) => item.selectionRequired);
+    candidates[`${type}SelectionRequired`] = source.selectionRequired === true;
     if (!source.resolved) allResolved = false;
   });
+  candidates.quotationSelectionCandidates = safeClone(candidates.quotationCandidates);
+  candidates.quotationSelectionCandidatesResolved = candidates.quotationCandidatesResolved === true;
+  candidates.rejectedQuotationReferences = safeClone(
+    candidateContext.rejectedQuotationReferences || []
+  );
   candidates.candidatesResolved = allResolved;
   return candidates;
 }
@@ -605,6 +621,8 @@ function buildRecordConfirmation(input = {}) {
         customerCandidates: [], customerCandidatesResolved: false, customerSelectionRequired: false,
         orderCandidates: [], orderCandidatesResolved: false, orderSelectionRequired: false,
         quotationCandidates: [], quotationCandidatesResolved: false, quotationSelectionRequired: false,
+        quotationSelectionCandidates: [], quotationSelectionCandidatesResolved: false,
+        rejectedQuotationReferences: [],
         receivableCandidates: [], receivableCandidatesResolved: false, receivableSelectionRequired: false,
         candidatesResolved: false,
         customerHistoryConfirmationRequired: false,
