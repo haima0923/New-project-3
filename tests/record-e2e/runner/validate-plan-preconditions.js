@@ -141,11 +141,72 @@ function validateSuccessLaneContract(testCase, errors) {
   }
 }
 
+function validateRelationTamperContract(testCase, state, errors) {
+  const lanes = testCase.execution.lanes || [];
+  const hasLane = lanes.includes('RELATION_REFERENCE_TAMPER_GUARD');
+  const tamper = testCase.execution.relationReferenceTamper;
+  const expected = testCase.expected.relationReferenceTamper;
+  if (!hasLane) {
+    if (tamper || expected) errors.push('RELATION_TAMPER_CONTRACT_WITHOUT_LANE');
+    return;
+  }
+  if (!tamper || !expected) {
+    errors.push('RELATION_TAMPER_CONTRACT_MISSING');
+    return;
+  }
+  const quotation = (state.quotations || []).find((item) => (
+    item && String(item.id || '') === String(tamper.injectedId || '')
+  ));
+  const selectedCustomerId = tamper.preflightContext
+    && tamper.preflightContext.selectedCustomerId;
+  const customerExists = (state.customers || []).some((item) => (
+    item && String(item.id || '') === String(selectedCustomerId || '')
+  ));
+  if (!quotation) errors.push('RELATION_TAMPER_QUOTATION_NOT_FOUND');
+  if (!customerExists) errors.push('RELATION_TAMPER_CUSTOMER_NOT_FOUND');
+  if (tamper.sourceDraft !== 'EXPLICIT_SECURITY_TEST_DRAFT'
+    || tamper.relationKind !== 'QUOTATION'
+    || tamper.targetPath !== 'fields.quotationId') {
+    errors.push('RELATION_TAMPER_INPUT_CONTRACT_INVALID');
+  }
+  if (tamper.baseDraft
+    && tamper.baseDraft.fields
+    && Object.prototype.hasOwnProperty.call(tamper.baseDraft.fields, 'quotationId')) {
+    errors.push('RELATION_TAMPER_REFERENCE_PREINJECTED');
+  }
+  if ((testCase.interaction.userSelections || []).some((item) => (
+    item.kind === 'quotationId'
+  )) || (testCase.interaction.requiredCapabilities || []).includes('SELECT_QUOTATION')) {
+    errors.push('RELATION_TAMPER_MIXED_WITH_USER_SELECTION');
+  }
+  const blocking = new Set(expected.blockingCodes || []);
+  if (quotation && blocking.has('QUOTATION_CUSTOMER_MISMATCH')
+    && String(quotation.customerId || '') === String(selectedCustomerId || '')) {
+    errors.push('RELATION_TAMPER_CUSTOMER_MISMATCH_FACT_MISSING');
+  }
+  const reverseOrder = quotation && (state.orders || []).find((item) => (
+    item && String(item.quotationId || '') === String(quotation.id || '')
+  ));
+  if (blocking.has('QUOTATION_ALREADY_CONVERTED') && quotation
+    && !quotation.convertedOrderId
+    && String(quotation.status || '') !== '已转订单'
+    && !reverseOrder) {
+    errors.push('RELATION_TAMPER_CONVERSION_FACT_MISSING');
+  }
+  if (testCase.interaction.requestedSaveAction !== 'DO_NOT_SAVE'
+    || expected.domainCanSaveFormal !== false
+    || expected.saveAttempted !== false
+    || expected.formalBusinessDiff !== 'ZERO_SIDE_EFFECTS') {
+    errors.push('RELATION_TAMPER_ZERO_SIDE_EFFECT_CONTRACT_INVALID');
+  }
+}
+
 function validateExecutionPlanPreconditions(testCase, state) {
   const errors = [];
   validatePendingEditContract(testCase, state || {}, errors);
   validateSelectionTargets(testCase, state || {}, errors);
   validateSuccessLaneContract(testCase, errors);
+  validateRelationTamperContract(testCase, state || {}, errors);
   return Array.from(new Set(errors));
 }
 

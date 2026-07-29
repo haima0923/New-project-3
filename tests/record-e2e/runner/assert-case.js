@@ -75,7 +75,7 @@ function createCollector() {
   return { assertions, check };
 }
 
-function resultFromEvidence(evidence) {
+function resultFromEvidence(testCase, evidence) {
   const page = evidence.pageDerivationEvidence || evidence.pageEvidence || {};
   return page.afterEdits && page.afterEdits.parseResult || {};
 }
@@ -91,7 +91,7 @@ const RESULT_FIELD_ALIASES = Object.freeze({
 
 function assertExpectedResult(testCase, evidence, collector) {
   const expected = testCase.expected.result;
-  const actual = resultFromEvidence(evidence);
+  const actual = resultFromEvidence(testCase, evidence);
   collector.check('RESULT', 'businessType', actual.intent, expected.businessType);
   collector.check('RESULT', 'operation', actual.operation, expected.operation);
   collector.check(
@@ -228,6 +228,8 @@ function assertProductionLayers(testCase, evidence, collector) {
   const expected = testCase.expected;
   const page = evidence.pageDerivationEvidence || evidence.pageEvidence || {};
   const snapshot = page.afterEdits || {};
+  const actualPreflight = evidence.preflightEvidence;
+  const actualProductionObservation = evidence.productionObservation;
   collector.check('ROUTE', 'route', evidence.routeEvidence.actualRoute, expected.route, {
     compare: (actual, wanted) => {
       const allowed = expected.allowedRoutes || [];
@@ -238,13 +240,13 @@ function assertProductionLayers(testCase, evidence, collector) {
   collector.check(
     'PREFLIGHT',
     'domainCanSaveFormal',
-    evidence.preflightEvidence.domainCanSaveFormal,
+    actualPreflight.domainCanSaveFormal,
     expected.preflight.domainCanSaveFormal
   );
   collector.check(
     'PREFLIGHT',
     'domainCanSavePending',
-    evidence.preflightEvidence.domainCanSavePending,
+    actualPreflight.domainCanSavePending,
     expected.preflight.domainCanSavePending
   );
   (expected.confirmation.requiredFields || []).forEach((path) => {
@@ -280,7 +282,7 @@ function assertProductionLayers(testCase, evidence, collector) {
   collector.check(
     'PREFLIGHT',
     'blockingCodes',
-    normalizeCodes(evidence.preflightEvidence.blockingCodes),
+    normalizeCodes(actualPreflight.blockingCodes),
     normalizeCodes(expected.preflight.blockingCodes)
   );
   collector.check(
@@ -299,7 +301,7 @@ function assertProductionLayers(testCase, evidence, collector) {
     collector.check(
       'PRODUCTION_OBSERVATION',
       key,
-      evidence.productionObservation[key],
+      actualProductionObservation[key],
       expected.productionObservation[key],
       {
         compare: key === 'blockingCodes'
@@ -362,6 +364,133 @@ function assertProductionLayers(testCase, evidence, collector) {
 
 function assertLaneSpecific(testCase, evidence, collector) {
   const expected = testCase.expected;
+  if (testCase.execution.lanes.includes('RELATION_REFERENCE_TAMPER_GUARD')) {
+    const actual = evidence.relationReferenceTamperEvidence || {};
+    const contract = expected.relationReferenceTamper || {};
+    const injectedId = testCase.execution.relationReferenceTamper
+      && testCase.execution.relationReferenceTamper.injectedId;
+    const rejected = actual.rejectedQuotationReferences || [];
+    collector.check('RELATION_TAMPER', 'present', Boolean(
+      evidence.relationReferenceTamperEvidence
+    ), true);
+    collector.check(
+      'RELATION_TAMPER',
+      'sourceDraft',
+      actual.sourceDraft,
+      'EXPLICIT_SECURITY_TEST_DRAFT'
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'injectedRelation.id',
+      actual.injectedRelation && actual.injectedRelation.id,
+      injectedId
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'injectedRelation.targetPath',
+      actual.injectedRelation && actual.injectedRelation.targetPath,
+      'fields.quotationId'
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'mutationPaths',
+      actual.mutationPaths,
+      ['fields.quotationId']
+    );
+    const injectedDraft = actual.draftAfterInjection || {};
+    collector.check(
+      'RELATION_TAMPER',
+      'draft.businessType',
+      injectedDraft.intent,
+      expected.result.businessType
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'draft.operation',
+      injectedDraft.operation,
+      expected.result.operation
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'draft.originalText',
+      injectedDraft.original_text || injectedDraft.originalText || '',
+      expected.result.originalText
+    );
+    Object.keys(expected.result.fields || {}).forEach((field) => {
+      const actualPath = getPath(
+        injectedDraft.fields || {},
+        RESULT_FIELD_ALIASES[field] || field
+      );
+      collector.check(
+        'RELATION_TAMPER',
+        `draft.fields.${field}`,
+        actualPath.value,
+        expected.result.fields[field]
+      );
+    });
+    collector.check(
+      'RELATION_TAMPER',
+      'domainCanSaveFormal',
+      actual.domainCanSaveFormal,
+      contract.domainCanSaveFormal
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'blockingCodes',
+      normalizeCodes(actual.blockingCodes),
+      normalizeCodes(contract.blockingCodes)
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'injectedReferenceExcludedFromSafeCandidates',
+      actual.injectedReferenceExcludedFromSafeCandidates,
+      contract.injectedReferenceExcludedFromSafeCandidates
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'rejectedReferencePresent',
+      rejected.some((item) => String(item.quotationId || '') === String(injectedId || '')),
+      true
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'saveAttempted',
+      actual.saveAttempted,
+      contract.saveAttempted
+    );
+    collector.check('RELATION_TAMPER', 'pageSelectionMethodCalled',
+      actual.pageSelectionMethodCalled, false);
+    collector.check('RELATION_TAMPER', 'pageMethodInvocationCount',
+      actual.pageMethodInvocationCount, 0);
+    collector.check('RELATION_TAMPER', 'businessSaveCalled',
+      actual.businessSaveCalled, false);
+    collector.check('RELATION_TAMPER', 'businessSaveAttemptCount',
+      actual.businessSaveAttemptCount, 0);
+    collector.check('RELATION_TAMPER', 'storageSaveAttemptCount',
+      actual.storageSaveAttemptCount, 0);
+    collector.check('RELATION_TAMPER', 'storageWriteCount',
+      actual.storageWriteCount, 0);
+    collector.check('RELATION_TAMPER', 'transactionBeginCount',
+      actual.transactionBeginCount, 0);
+    collector.check('RELATION_TAMPER', 'activityAuditPerformed',
+      actual.activityAudit && actual.activityAudit.auditPerformed, true);
+    collector.check('RELATION_TAMPER', 'instrumentationPresent',
+      actual.activityAudit && actual.activityAudit.instrumentationPresent, true);
+    collector.check('RELATION_TAMPER', 'stateUnchanged', actual.stateUnchanged, true);
+    collector.check(
+      'RELATION_TAMPER',
+      'businessDiffEmpty',
+      isCollectionDiffEmpty(actual.businessDiff || {}),
+      contract.formalBusinessDiff === 'ZERO_SIDE_EFFECTS'
+    );
+    collector.check(
+      'RELATION_TAMPER',
+      'preflightFingerprintPresent',
+      Boolean(actual.preflightAfterInjection
+        && actual.preflightAfterInjection.preflightFingerprint),
+      true
+    );
+  }
   if (expected.isolatedExecution.enabled) {
     const isolated = evidence.isolatedCommitEvidence;
     collector.check('ISOLATED_COMMIT', 'present', Boolean(isolated), true);
@@ -570,6 +699,7 @@ const STAGE_ORDER = [
   'CONFIRMATION',
   'PRODUCTION_OBSERVATION',
   'SURFACE',
+  'RELATION_TAMPER',
   'ISOLATED_COMMIT',
   'TRANSACTION_REPLAY',
   'DUPLICATE_TRIGGER',
@@ -589,6 +719,7 @@ function failureStageFor(assertion, testCase) {
     CONFIRMATION: 'CONFIRMATION_ERROR',
     PRODUCTION_OBSERVATION: 'PREFLIGHT_ERROR',
     SURFACE: 'SURFACE_ERROR',
+    RELATION_TAMPER: 'PREFLIGHT_ERROR',
     ISOLATED_COMMIT: 'LEGACY_BUSINESS_ERROR',
     TRANSACTION_REPLAY: 'STORAGE_TRANSACTION_ERROR',
     DUPLICATE_TRIGGER: 'SAVE_DECISION_ERROR',
@@ -648,18 +779,25 @@ function assertCase(testCase, evidence, options = {}) {
   const layerLane = {
     INPUT: observationName,
     ROUTE: observationName,
-    RESULT: testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
-      ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
-      : observationName,
+    RESULT: (
+      testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
+        ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
+        : observationName
+    ),
     PREFLIGHT: observationName,
-    CONFIRMATION: testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
-      ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
-      : observationName,
+    CONFIRMATION: (
+      testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
+        ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
+        : observationName
+    ),
     PAGE_DERIVATION: 'PAGE_CONFIRMED_DRAFT_DERIVATION',
     PRODUCTION_OBSERVATION: observationName,
     SURFACE: observationName,
+    RELATION_TAMPER: 'RELATION_REFERENCE_TAMPER_GUARD',
     ISOLATED_COMMIT: 'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
-    STATE_DIFF: 'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
+    STATE_DIFF: testCase.execution.lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')
+      ? 'TEST_ONLY_ISOLATED_LEGACY_COMMIT'
+      : observationName,
     TRANSACTION_REPLAY: 'TRANSACTION_EXACT_REPLAY',
     DUPLICATE_TRIGGER: 'PAGE_DUPLICATE_TRIGGER_GUARD',
     CONCURRENT: 'CONCURRENT_BASE_REVISION',

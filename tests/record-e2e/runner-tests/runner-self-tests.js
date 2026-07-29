@@ -148,15 +148,18 @@ const tests = [
   {
     name: 'missing-page-capability-is-product-surface-failure',
     async run() {
-      const item = bundle('REC-E2E-REL-007');
-      const result = await executeOne(item);
-      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
-      const pageLane = result.laneResults.find((lane) => lane.lane === 'PAGE_PRODUCTION_OBSERVATION');
+      const evidence = await modifiedWorker('REC-E2E-BASIC-012', (spec, plan) => {
+        spec.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+        plan.requiredCapabilities.push('SELECT_QUOTATION');
+      });
+      const pageLane = evidence.laneResults.find((lane) => (
+        lane.lane === 'PAGE_PRODUCTION_OBSERVATION'
+      ));
       assert(pageLane);
       assert.strictEqual(pageLane.status, 'CASE_FAIL');
       assert.strictEqual(pageLane.failureStage, 'SURFACE_ERROR');
-      assert(result.surfaceEvidence.missingCapabilities.includes('SELECT_QUOTATION'));
-      assert.strictEqual(result.businessDiff.orders.created.length, 0);
+      assert(evidence.surfaceEvidence.missingCapabilities.includes('SELECT_QUOTATION'));
+      assert.strictEqual(evidence.businessDiff.orders.created.length, 0);
     }
   },
   {
@@ -516,7 +519,14 @@ const tests = [
   {
     name: 'surface-gap-remains-primary-over-route-findings',
     async run() {
-      const item = bundle('REC-E2E-REL-007');
+      const item = bundle('REC-E2E-BASIC-012');
+      item.testCase = safeClone(item.testCase);
+      item.workerSpec = safeClone(item.workerSpec);
+      item.plan = safeClone(item.plan);
+      item.testCase.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+      item.workerSpec.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+      item.plan.requiredCapabilities.push('SELECT_QUOTATION');
+      item.testCase.expected.route = 'AI_DEEP';
       const result = await executeOne(item);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
       assert.strictEqual(result.failureStage, 'SURFACE_ERROR');
@@ -612,7 +622,13 @@ const tests = [
   {
     name: 'surface-zero-side-effect-uses-runtime-storage-diff',
     async run() {
-      const item = bundle('REC-E2E-REL-007');
+      const item = bundle('REC-E2E-BASIC-012');
+      item.testCase = safeClone(item.testCase);
+      item.workerSpec = safeClone(item.workerSpec);
+      item.plan = safeClone(item.plan);
+      item.testCase.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+      item.workerSpec.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+      item.plan.requiredCapabilities.push('SELECT_QUOTATION');
       const result = await executeOne(item, {
         hooks: { mutateSurfaceBusinessStorage: true }
       });
@@ -623,6 +639,126 @@ const tests = [
           entry.name === 'formalBusinessDiffEmpty' && !entry.pass
         ))
       );
+    }
+  },
+  {
+    name: 'relation-tamper-uses-real-preflight-without-page-selection-or-save',
+    async run() {
+      for (const caseId of ['REC-E2E-REL-007', 'REC-E2E-REL-008']) {
+        const evidence = await worker(caseId);
+        const tamper = evidence.relationReferenceTamperEvidence;
+        assert(tamper);
+        assert.strictEqual(tamper.pageSelectionMethodCalled, false);
+        assert.strictEqual(tamper.businessSaveCalled, false);
+        assert.strictEqual(tamper.saveAttempted, false);
+        assert.strictEqual(tamper.domainCanSaveFormal, false);
+        assert.strictEqual(tamper.stateUnchanged, true);
+        assert.strictEqual(tamper.mutationPaths.length, 1);
+        assert.strictEqual(tamper.mutationPaths[0], 'fields.quotationId');
+      }
+    }
+  },
+  {
+    name: 'relation-tamper-dangerous-quotation-never-becomes-safe-candidate',
+    async run() {
+      for (const caseId of ['REC-E2E-REL-007', 'REC-E2E-REL-008']) {
+        const evidence = await worker(caseId);
+        const tamper = evidence.relationReferenceTamperEvidence;
+        assert.strictEqual(tamper.injectedReferenceExcludedFromSafeCandidates, true);
+        assert(!tamper.candidateIds.includes(tamper.injectedRelation.id));
+        assert(tamper.rejectedQuotationReferences.some((item) => (
+          item.quotationId === tamper.injectedRelation.id
+        )));
+      }
+    }
+  },
+  {
+    name: 'relation-tamper-save-or-business-call-evidence-cannot-pass',
+    async run() {
+      const item = bundle('REC-E2E-REL-007');
+      const evidence = await worker(item.testCase.caseId);
+      evidence.relationReferenceTamperEvidence.businessSaveCalled = true;
+      evidence.relationReferenceTamperEvidence.saveAttempted = true;
+      const result = assertCase(item.testCase, evidence);
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'RELATION_TAMPER' && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'relation-tamper-dynamic-business-call-is-detected',
+    async run() {
+      const item = bundle('REC-E2E-REL-007');
+      const result = await executeOne(item, {
+        hooks: { relationTamperInvokeBusinessSave: true }
+      });
+      const lane = result.laneResults.find((entry) => (
+        entry.lane === 'RELATION_REFERENCE_TAMPER_GUARD'
+      ));
+      assert.strictEqual(result.caseStatus, 'RUNNER_ERROR');
+      assert.strictEqual(lane.status, 'RUNNER_ERROR');
+      assert.strictEqual(lane.failureCode, 'RELATION_TAMPER_FORBIDDEN_ACTIVITY');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'RELATION_TAMPER'
+        && entry.name === 'businessSaveAttemptCount'
+        && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'relation-tamper-dynamic-page-method-call-is-detected',
+    async run() {
+      const item = bundle('REC-E2E-REL-007');
+      const result = await executeOne(item, {
+        hooks: { relationTamperInvokePageMethod: true }
+      });
+      const lane = result.laneResults.find((entry) => (
+        entry.lane === 'RELATION_REFERENCE_TAMPER_GUARD'
+      ));
+      assert.strictEqual(result.caseStatus, 'RUNNER_ERROR');
+      assert.strictEqual(lane.status, 'RUNNER_ERROR');
+      assert.strictEqual(lane.failureCode, 'RELATION_TAMPER_FORBIDDEN_ACTIVITY');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'RELATION_TAMPER'
+        && entry.name === 'pageMethodInvocationCount'
+        && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'relation-tamper-dynamic-storage-write-is-detected',
+    async run() {
+      const item = bundle('REC-E2E-REL-007');
+      const result = await executeOne(item, {
+        hooks: { relationTamperMutateStorage: true }
+      });
+      const lane = result.laneResults.find((entry) => (
+        entry.lane === 'RELATION_REFERENCE_TAMPER_GUARD'
+      ));
+      assert.strictEqual(result.caseStatus, 'RUNNER_ERROR');
+      assert.strictEqual(lane.status, 'RUNNER_ERROR');
+      assert.strictEqual(lane.failureCode, 'RELATION_TAMPER_FORBIDDEN_ACTIVITY');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'RELATION_TAMPER'
+        && entry.name === 'storageWriteCount'
+        && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'relation-tamper-missing-instrumentation-is-runner-error',
+    async run() {
+      const item = bundle('REC-E2E-REL-007');
+      const result = await executeOne(item, {
+        hooks: { relationTamperDropInstrumentation: true }
+      });
+      const lane = result.laneResults.find((entry) => (
+        entry.lane === 'RELATION_REFERENCE_TAMPER_GUARD'
+      ));
+      assert.strictEqual(result.caseStatus, 'RUNNER_ERROR');
+      assert.strictEqual(lane.status, 'RUNNER_ERROR');
+      assert.strictEqual(lane.failureCode, 'ISOLATION_AUDIT_NOT_EXECUTED');
     }
   },
   {

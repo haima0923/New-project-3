@@ -1411,12 +1411,34 @@
       "execution": {
         "schemaVersion": "record-e2e-execution-boundary-v1",
         "lanes": [
-          "PAGE_PRODUCTION_OBSERVATION"
+          "PAGE_PRODUCTION_OBSERVATION",
+          "RELATION_REFERENCE_TAMPER_GUARD"
         ],
         "observationSurface": "FULL_PAGE",
         "missingCapabilityDisposition": "CASE_FAIL",
         "missingCapabilityFailureStage": "SURFACE_ERROR",
-        "draftSourceSurface": "NOT_APPLICABLE"
+        "draftSourceSurface": "NOT_APPLICABLE",
+        "relationReferenceTamper": {
+          "sourceDraft": "EXPLICIT_SECURITY_TEST_DRAFT",
+          "relationKind": "QUOTATION",
+          "targetPath": "fields.quotationId",
+          "injectedId": "quo-cross-b",
+          "baseDraft": {
+            "intent": "quotation",
+            "operation": "update_quotation",
+            "original_text": "把合成乙厂的报价算到合成甲厂名下，单价改17元",
+            "fields": {
+              "customerId": "cus-cross-a",
+              "unitPrice": 17
+            },
+            "missing_fields": [],
+            "low_confidence_fields": [],
+            "field_conflicts": []
+          },
+          "preflightContext": {
+            "selectedCustomerId": "cus-cross-a"
+          }
+        }
       },
       "input": {
         "channel": "TYPED_TEXT",
@@ -1439,22 +1461,10 @@
       },
       "interaction": {
         "userEdits": [],
-        "userSelections": [
-          {
-            "kind": "customerId",
-            "selectedId": "cus-cross-a"
-          },
-          {
-            "kind": "quotationId",
-            "selectedId": "quo-cross-b"
-          }
-        ],
+        "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
         "restartAfterSave": false,
-        "requiredCapabilities": [
-          "SELECT_CUSTOMER",
-          "SELECT_QUOTATION"
-        ]
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -1498,12 +1508,10 @@
         },
         "surface": {
           "home": {
-            "status": "REQUIRES_FULL_PAGE",
-            "surfaceCanCompleteFormal": false,
+            "status": "BLOCKED",
+            "surfaceCanCompleteFormal": true,
             "effectiveCanSaveFormal": false,
-            "missingCapabilities": [
-              "SELECT_QUOTATION"
-            ]
+            "missingCapabilities": []
           },
           "fullPage": {
             "status": "BLOCKED",
@@ -1588,6 +1596,15 @@
           "sourceLane": "NOT_APPLICABLE",
           "target": "NONE",
           "stateDiff": "ZERO_SIDE_EFFECTS"
+        },
+        "relationReferenceTamper": {
+          "domainCanSaveFormal": false,
+          "blockingCodes": [
+            "QUOTATION_CUSTOMER_MISMATCH"
+          ],
+          "saveAttempted": false,
+          "injectedReferenceExcludedFromSafeCandidates": true,
+          "formalBusinessDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],
@@ -1627,12 +1644,35 @@
       "execution": {
         "schemaVersion": "record-e2e-execution-boundary-v1",
         "lanes": [
-          "PAGE_PRODUCTION_OBSERVATION"
+          "PAGE_PRODUCTION_OBSERVATION",
+          "RELATION_REFERENCE_TAMPER_GUARD"
         ],
         "observationSurface": "FULL_PAGE",
         "missingCapabilityDisposition": "CASE_FAIL",
         "missingCapabilityFailureStage": "SURFACE_ERROR",
-        "draftSourceSurface": "NOT_APPLICABLE"
+        "draftSourceSurface": "NOT_APPLICABLE",
+        "relationReferenceTamper": {
+          "sourceDraft": "EXPLICIT_SECURITY_TEST_DRAFT",
+          "relationKind": "QUOTATION",
+          "targetPath": "fields.quotationId",
+          "injectedId": "quo-syn-a-1",
+          "baseDraft": {
+            "intent": "order",
+            "operation": "create_order",
+            "original_text": "把王总那个保温杯报价再转成订单",
+            "fields": {
+              "customerName": "王总",
+              "customerId": "cus-syn-a",
+              "productName": "保温杯"
+            },
+            "missing_fields": [],
+            "low_confidence_fields": [],
+            "field_conflicts": []
+          },
+          "preflightContext": {
+            "selectedCustomerId": "cus-syn-a"
+          }
+        }
       },
       "input": {
         "channel": "TYPED_TEXT",
@@ -1655,17 +1695,10 @@
       },
       "interaction": {
         "userEdits": [],
-        "userSelections": [
-          {
-            "kind": "quotationId",
-            "selectedId": "quo-syn-a-1"
-          }
-        ],
+        "userSelections": [],
         "requestedSaveAction": "DO_NOT_SAVE",
         "restartAfterSave": false,
-        "requiredCapabilities": [
-          "SELECT_QUOTATION"
-        ]
+        "requiredCapabilities": []
       },
       "expected": {
         "result": {
@@ -1709,12 +1742,10 @@
         },
         "surface": {
           "home": {
-            "status": "REQUIRES_FULL_PAGE",
-            "surfaceCanCompleteFormal": false,
+            "status": "BLOCKED",
+            "surfaceCanCompleteFormal": true,
             "effectiveCanSaveFormal": false,
-            "missingCapabilities": [
-              "SELECT_QUOTATION"
-            ]
+            "missingCapabilities": []
           },
           "fullPage": {
             "status": "BLOCKED",
@@ -1799,6 +1830,15 @@
           "sourceLane": "NOT_APPLICABLE",
           "target": "NONE",
           "stateDiff": "ZERO_SIDE_EFFECTS"
+        },
+        "relationReferenceTamper": {
+          "domainCanSaveFormal": false,
+          "blockingCodes": [
+            "QUOTATION_ALREADY_CONVERTED"
+          ],
+          "saveAttempted": false,
+          "injectedReferenceExcludedFromSafeCandidates": true,
+          "formalBusinessDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],

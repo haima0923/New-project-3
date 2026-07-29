@@ -1,7 +1,8 @@
 const {
   createStateDiff,
   isCollectionDiffEmpty,
-  safeClone
+  safeClone,
+  stableHash
 } = require('../../../utils/record-state-diff');
 const { stripRecordStorageControl } = require('../../../utils/record-storage-state-projector');
 const { BUSINESS_STORAGE_KEY } = require('./constants');
@@ -13,6 +14,9 @@ const {
   prepareLegacyDraft
 } = require('./execute-isolated-legacy-commit');
 const { executePageObservation } = require('./execute-page-observation');
+const {
+  executeRelationReferenceTamper
+} = require('./execute-relation-reference-tamper');
 const { executeTransactionReplay } = require('./execute-transaction-replay');
 const { executedLane, preconditionFailedLane } = require('./lane-state');
 const {
@@ -87,6 +91,104 @@ function publicObservation(observation) {
     route: observation.route,
     transportIdentityAdaptation: observation.transportIdentityAdaptation || null
   };
+}
+
+function countValues(value = {}) {
+  return Object.values(value).reduce((sum, item) => (
+    sum + (Number.isFinite(Number(item)) ? Number(item) : 0)
+  ), 0);
+}
+
+function captureRelationTamperActivity(runtime, observation) {
+  const driverEvidence = observation && observation.driver
+    && observation.driver.evidence || {};
+  const rawState = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || {};
+  const fakeWxAudit = runtime.fakeWx.audit();
+  const storage = require('../../../utils/storage');
+  const infrastructure = storage.getRecordStorageInfrastructureStatus();
+  return {
+    businessSaveCalls: countValues(driverEvidence.productionBusinessCalls),
+    pageMethodCalls: countValues(driverEvidence.pageMethodCalls),
+    pagePrimaryActionCalls: countValues(
+      driverEvidence.pagePrimaryActionCalls
+        && driverEvidence.pagePrimaryActionCalls.byMethod
+    ),
+    pageQuotationSelectionCalls: Number(
+      driverEvidence.pageMethodCalls
+        && driverEvidence.pageMethodCalls.changeQuotation || 0
+    ),
+    instrumentationPresent: Boolean(
+      driverEvidence.pageMethodCalls
+      && driverEvidence.pagePrimaryActionCalls
+      && driverEvidence.productionBusinessCalls
+      && driverEvidence.productionStorageCalls
+      && fakeWxAudit.auditPerformed === true
+      && Array.isArray(fakeWxAudit.storageEvents)
+      && Array.isArray(infrastructure.monitorEvents)
+    ),
+    rawState: safeClone(rawState),
+    state: stripRecordStorageControl(rawState),
+    storageEvents: safeClone(fakeWxAudit.storageEvents || []),
+    storageSaveCalls: countValues(driverEvidence.productionStorageCalls),
+    transactionDecisionCount: (infrastructure.monitorEvents || [])
+      .filter((event) => event.type === 'LEGACY_WRITE_DECISION').length
+  };
+}
+
+function completeRelationTamperActivity(runtime, observation, before, relationTamper, direct) {
+  const after = captureRelationTamperActivity(runtime, observation);
+  const diff = createStateDiff(before.state, after.state);
+  const newStorageEvents = after.storageEvents.slice(before.storageEvents.length);
+  const storageWriteCount = newStorageEvents.filter((event) => (
+    event.operation === 'SET' || event.operation === 'REMOVE'
+  )).length;
+  const pageMethodInvocationCount = after.pageMethodCalls - before.pageMethodCalls;
+  const pagePrimaryActionCount = after.pagePrimaryActionCalls - before.pagePrimaryActionCalls;
+  const pageSelectionMethodInvocationCount = after.pageQuotationSelectionCalls
+    - before.pageQuotationSelectionCalls;
+  const businessSaveAttemptCount = after.businessSaveCalls - before.businessSaveCalls
+    + direct.businessSaveCalls;
+  const storageSaveAttemptCount = after.storageSaveCalls - before.storageSaveCalls
+    + direct.storageSaveCalls;
+  const transactionBeginCount = after.transactionDecisionCount
+    - before.transactionDecisionCount;
+  const saveAttempted = pagePrimaryActionCount > 0
+    || businessSaveAttemptCount > 0
+    || storageSaveAttemptCount > 0
+    || transactionBeginCount > 0
+    || storageWriteCount > 0;
+  return Object.assign(relationTamper, {
+    activityAudit: {
+      auditPerformed: true,
+      businessSaveAttemptCount,
+      pageMethodInvocationCount,
+      pagePrimaryActionCount,
+      pageSelectionMethodInvocationCount,
+      instrumentationPresent: before.instrumentationPresent
+        && after.instrumentationPresent
+        && direct.instrumentationPresent !== false,
+      storageSaveAttemptCount,
+      storageWriteCount,
+      transactionBeginCount
+    },
+    businessDiff: diff.businessDiff,
+    businessSaveAttemptCount,
+    businessSaveCalled: businessSaveAttemptCount > 0,
+    completionEvidencePresent: Boolean(
+      relationTamper.preflightAfterInjection
+      && relationTamper.preflightAfterInjection.preflightFingerprint
+    ),
+    fullDiff: diff.fullDiff,
+    pageMethodInvocationCount,
+    pageSelectionMethodCalled: pageSelectionMethodInvocationCount > 0,
+    saveAttempted,
+    stateFingerprintAfter: stableHash(after.state, 'relation-tamper-state-v1'),
+    stateFingerprintBefore: stableHash(before.state, 'relation-tamper-state-v1'),
+    stateUnchanged: isCollectionDiffEmpty(diff.fullDiff),
+    storageSaveAttemptCount,
+    storageWriteCount,
+    transactionBeginCount
+  });
 }
 
 function runActualPendingPageSave(spec, observation, runtime) {
@@ -330,6 +432,101 @@ async function executeLanes(runtime, spec, plan, options = {}) {
         failureStage: 'SURFACE_ERROR',
         status: 'CASE_FAIL'
       } : {}
+    ));
+  }
+
+  let relationTamper = null;
+  if (lanes.includes('RELATION_REFERENCE_TAMPER_GUARD')) {
+    const relationObservation = draftObservation || observation;
+    const latestState = stripRecordStorageControl(
+      runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || runtimeStateBefore
+    );
+    const activityBefore = captureRelationTamperActivity(
+      runtime,
+      relationObservation
+    );
+    const directActivity = { businessSaveCalls: 0, storageSaveCalls: 0 };
+    directActivity.instrumentationPresent = !(
+      options.hooks && options.hooks.relationTamperDropInstrumentation
+    );
+    const business = require('../../../utils/business');
+    const storage = require('../../../utils/storage');
+    const originalBusinessSave = business.saveConfirmedDraft;
+    const originalStorageSave = storage.saveState;
+    business.saveConfirmedDraft = (...args) => {
+      directActivity.businessSaveCalls += 1;
+      return originalBusinessSave(...args);
+    };
+    storage.saveState = (...args) => {
+      directActivity.storageSaveCalls += 1;
+      return originalStorageSave(...args);
+    };
+    try {
+      relationTamper = executeRelationReferenceTamper(spec, latestState);
+      if (options.hooks && options.hooks.relationTamperInvokePageMethod
+        && relationObservation.driver
+        && typeof relationObservation.driver.page.onShow === 'function') {
+        relationObservation.driver.page.onShow();
+      }
+      if (options.hooks && options.hooks.relationTamperInvokeBusinessSave) {
+        business.saveConfirmedDraft(
+          safeClone(latestState),
+          safeClone(relationTamper.draftAfterInjection)
+        );
+      }
+      if (options.hooks && options.hooks.relationTamperMutateStorage) {
+        const leaked = safeClone(
+          runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY) || latestState
+        );
+        leaked.orders = (leaked.orders || []).concat({
+          id: `self-test-relation-tamper-leak:${spec.caseId}`
+        });
+        runtime.fakeWx.wx.setStorageSync(BUSINESS_STORAGE_KEY, leaked);
+      }
+    } finally {
+      business.saveConfirmedDraft = originalBusinessSave;
+      storage.saveState = originalStorageSave;
+    }
+    relationTamper = completeRelationTamperActivity(
+      runtime,
+      relationObservation,
+      activityBefore,
+      relationTamper,
+      directActivity
+    );
+    const instrumentationMissing = relationTamper.activityAudit
+      .instrumentationPresent !== true;
+    const forbiddenActivity = relationTamper.saveAttempted
+      || relationTamper.pageMethodInvocationCount > 0
+      || relationTamper.businessSaveAttemptCount > 0
+      || relationTamper.storageSaveAttemptCount > 0
+      || relationTamper.storageWriteCount > 0
+      || relationTamper.transactionBeginCount > 0
+      || relationTamper.stateUnchanged !== true;
+    laneResults.push(executedLane(
+      'RELATION_REFERENCE_TAMPER_GUARD',
+      {
+        activityAudit: safeClone(relationTamper.activityAudit),
+        blockingCodes: safeClone(relationTamper.blockingCodes),
+        domainCanSaveFormal: relationTamper.domainCanSaveFormal,
+        injectedRelation: safeClone(relationTamper.injectedRelation),
+        saveAttempted: relationTamper.saveAttempted,
+        stateUnchanged: relationTamper.stateUnchanged
+      },
+      instrumentationMissing || forbiddenActivity
+        ? {
+          completionEvidencePresent: relationTamper.completionEvidencePresent === true,
+          failureCode: instrumentationMissing
+            ? 'ISOLATION_AUDIT_NOT_EXECUTED'
+            : 'RELATION_TAMPER_FORBIDDEN_ACTIVITY',
+          failureStage: 'AUTOMATION_DRIVER_ERROR',
+          primaryActionSucceeded: false,
+          status: 'RUNNER_ERROR'
+        }
+        : {
+          completionEvidencePresent: relationTamper.completionEvidencePresent === true,
+          primaryActionSucceeded: relationTamper.completionEvidencePresent === true
+        }
     ));
   }
 
@@ -591,6 +788,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       domainCanSavePending: primaryProductionObservation.domainCanSavePending
     },
     productionObservation: primaryProductionObservation,
+    relationReferenceTamperEvidence: relationTamper,
     restartEvidence: restart,
     restartRequest,
     routeEvidence: { actualRoute: observation.route },

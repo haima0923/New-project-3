@@ -43,6 +43,7 @@ const EXPECTED_EXECUTION_LANE_COUNTS = Object.freeze({
   TEST_ONLY_ISOLATED_LEGACY_COMMIT: 89,
   PAGE_DUPLICATE_TRIGGER_GUARD: 1,
   TRANSACTION_EXACT_REPLAY: 1,
+  RELATION_REFERENCE_TAMPER_GUARD: 2,
   RESTART_PERSISTENCE: 5,
   CONCURRENT_BASE_REVISION: 1
 });
@@ -63,8 +64,6 @@ const REQUIRED_CAPABILITY_BY_SELECTION = Object.freeze({
 const KNOWN_PAGE_CAPABILITY_GAPS = Object.freeze({
   'REC-E2E-BASIC-010': ['SELECT_ORDER'],
   'REC-E2E-REL-003': ['SELECT_ORDER'],
-  'REC-E2E-REL-007': ['SELECT_CUSTOMER', 'SELECT_QUOTATION'],
-  'REC-E2E-REL-008': ['SELECT_QUOTATION'],
   'REC-E2E-REL-009': ['SELECT_CUSTOMER', 'SELECT_ORDER']
 });
 const REQUIRED_EXACT_REPLAY_IDENTITY_FIELDS = Object.freeze([
@@ -505,6 +504,8 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
       if (fixture.kind === 'FAKE_RESPONSE' || fixture.kind === 'REPLAY_RESPONSE') {
         const responseFields = cloneJson((fixture.response && fixture.response.fields) || {});
         const responseItems = asArray(responseFields.items);
+        const relationTamper = testCase.execution
+          && testCase.execution.relationReferenceTamper;
         testCase.interaction.userSelections.forEach((selection) => {
           responseFields[selection.kind] = selection.selectedId;
         });
@@ -525,11 +526,21 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
         }
         const responseComparableFields = cloneJson(responseFields);
         delete responseComparableFields.items;
-        if (canonicalJson(responseComparableFields) !== canonicalJson(testCase.expected.result.fields)) {
-          fail(`${label} AI fixture应用选择/编辑后的fields与expected.result.fields不一致`);
-        }
-        if (canonicalJson(responseItems) !== canonicalJson(testCase.expected.result.items)) {
-          fail(`${label} AI fixture应用选择/编辑后的items与expected.result.items不一致`);
+        if (relationTamper) {
+          if (Object.prototype.hasOwnProperty.call(responseComparableFields, 'quotationId')) {
+            fail(`${label} 危险quotationId不得由AI fixture直接建立`);
+          }
+          if (fixture.response.intent !== relationTamper.baseDraft.intent
+            || fixture.response.operation !== relationTamper.baseDraft.operation) {
+            fail(`${label} AI fixture生产观察语义与危险关系测试底稿不兼容`);
+          }
+        } else {
+          if (canonicalJson(responseComparableFields) !== canonicalJson(testCase.expected.result.fields)) {
+            fail(`${label} AI fixture应用选择/编辑后的fields与expected.result.fields不一致`);
+          }
+          if (canonicalJson(responseItems) !== canonicalJson(testCase.expected.result.items)) {
+            fail(`${label} AI fixture应用选择/编辑后的items与expected.result.items不一致`);
+          }
         }
       }
       const fixtureResponse = (fixture.response && typeof fixture.response === 'object')
@@ -818,6 +829,83 @@ function validateSurface(testCase, enums) {
   });
 }
 
+function validateRelationReferenceTamperContract(testCase) {
+  const label = testCase.caseId;
+  const lanes = testCase.execution.lanes || [];
+  const hasLane = lanes.includes('RELATION_REFERENCE_TAMPER_GUARD');
+  const contract = testCase.execution.relationReferenceTamper;
+  const expected = testCase.expected.relationReferenceTamper;
+  if (!hasLane) {
+    if (contract !== undefined || expected !== undefined) {
+      fail(`${label} 无危险关系Lane不得携带relationReferenceTamper合同`);
+    }
+    return;
+  }
+  if (!isObject(contract) || !isObject(expected)) {
+    fail(`${label} 危险关系Lane必须同时声明执行输入和Expected`);
+    return;
+  }
+  if (lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')) {
+    fail(`${label} 危险关系注入不得与隔离正式提交Lane并存`);
+  }
+  if (contract.sourceDraft !== 'EXPLICIT_SECURITY_TEST_DRAFT'
+    || contract.relationKind !== 'QUOTATION'
+    || contract.targetPath !== 'fields.quotationId') {
+    fail(`${label} 危险报价引用必须来自显式安全测试底稿且只能注入fields.quotationId`);
+  }
+  checkString(contract.injectedId, `${label}.execution.relationReferenceTamper.injectedId`);
+  const baseDraft = checkRequiredObject(
+    contract.baseDraft,
+    `${label}.execution.relationReferenceTamper.baseDraft`,
+    ['intent', 'operation', 'original_text', 'fields',
+      'missing_fields', 'low_confidence_fields', 'field_conflicts']
+  );
+  if (baseDraft.original_text !== testCase.input.originalText) {
+    fail(`${label} 危险关系测试底稿必须保留Case原文`);
+  }
+  if (Object.prototype.hasOwnProperty.call(baseDraft.fields || {}, 'quotationId')) {
+    fail(`${label} 危险quotationId只能由专用Lane单字段注入`);
+  }
+  if (baseDraft.intent !== testCase.expected.result.businessType
+    || baseDraft.operation !== testCase.expected.result.operation) {
+    fail(`${label} 危险关系测试底稿业务类型或operation与业务Expected不一致`);
+  }
+  if ((testCase.expected.result.fields || {}).quotationId !== contract.injectedId) {
+    fail(`${label} 危险关系注入ID必须等于业务Expected中的quotationId`);
+  }
+  const quoteSelections = asArray(testCase.interaction.userSelections)
+    .filter((item) => item.kind === 'quotationId');
+  if (quoteSelections.length
+    || asArray(testCase.interaction.requiredCapabilities).includes('SELECT_QUOTATION')) {
+    fail(`${label} 危险报价引用不得同时表达为用户SELECT_QUOTATION`);
+  }
+  if (testCase.interaction.requestedSaveAction !== 'DO_NOT_SAVE'
+    || testCase.expected.save.action !== 'DO_NOT_SAVE'
+    || testCase.expected.save.status !== 'BLOCKED'
+    || testCase.expected.preflight.domainCanSaveFormal !== false
+    || testCase.expected.isolatedExecution.enabled !== false) {
+    fail(`${label} 危险关系注入必须阻断正式保存且禁止隔离提交`);
+  }
+  const expectedCodes = unique(asArray(expected.blockingCodes)).sort();
+  const preflightCodes = unique(asArray(testCase.expected.preflight.blockingCodes)).sort();
+  if (expected.domainCanSaveFormal !== false
+    || expected.saveAttempted !== false
+    || expected.injectedReferenceExcludedFromSafeCandidates !== true
+    || expected.formalBusinessDiff !== 'ZERO_SIDE_EFFECTS'
+    || canonicalJson(expectedCodes) !== canonicalJson(preflightCodes)
+    || hasAnyBusinessDiff(testCase)) {
+    fail(`${label} 危险关系Expected必须精确阻断、排除候选且零正式副作用`);
+  }
+  if (expectedCodes.includes('QUOTATION_CUSTOMER_MISMATCH')
+    && baseDraft.operation !== 'update_quotation') {
+    fail(`${label} 跨客户报价引用底稿必须使用update_quotation`);
+  }
+  if (expectedCodes.includes('QUOTATION_ALREADY_CONVERTED')
+    && baseDraft.operation !== 'create_order') {
+    fail(`${label} 已转报价引用底稿必须使用create_order`);
+  }
+}
+
 function validateExecutionBoundaries(testCase, enums) {
   const label = testCase.caseId;
   const execution = checkRequiredObject(testCase.execution, `${label}.execution`, [
@@ -1042,6 +1130,7 @@ function validateExecutionBoundaries(testCase, enums) {
   }))) {
     fail(`${label} 执行边界不得使用生产正式提交或真实AI提交伪称`);
   }
+  validateRelationReferenceTamperContract(testCase);
 
   Object.entries(KNOWN_PAGE_CAPABILITY_GAPS).forEach(([caseId, capabilities]) => {
     if (label !== caseId) return;
@@ -1504,6 +1593,56 @@ function validateStateReferences(testCase, resolvedStateFixtureMap) {
       fail(`${label} pendingNoteId原文与Case input.originalText不一致`);
     }
   }
+  const tamper = testCase.execution && testCase.execution.relationReferenceTamper;
+  if (tamper) {
+    const quotation = asArray(state.quotations).find((item) => (
+      item && String(item.id || '') === String(tamper.injectedId || '')
+    ));
+    const customerId = tamper.preflightContext
+      && tamper.preflightContext.selectedCustomerId;
+    const customerExists = asArray(state.customers).some((item) => (
+      item && String(item.id || '') === String(customerId || '')
+    ));
+    if (!quotation) fail(`${label} 危险quotationId在初始State中不存在`);
+    if (!customerExists) fail(`${label} 危险关系selectedCustomerId在初始State中不存在`);
+    const expectedCodes = asArray(testCase.expected.relationReferenceTamper
+      && testCase.expected.relationReferenceTamper.blockingCodes);
+    if (quotation && expectedCodes.includes('QUOTATION_CUSTOMER_MISMATCH')
+      && String(quotation.customerId || '') === String(customerId || '')) {
+      fail(`${label} 跨客户引用测试的报价与当前客户实际相同`);
+    }
+    const reverseOrder = quotation && asArray(state.orders).find((item) => (
+      item && String(item.quotationId || '') === String(quotation.id || '')
+    ));
+    const converted = quotation && (
+      Boolean(quotation.convertedOrderId)
+      || String(quotation.status || '') === '已转订单'
+      || Boolean(reverseOrder)
+    );
+    if (expectedCodes.includes('QUOTATION_ALREADY_CONVERTED') && !converted) {
+      fail(`${label} 已转报价引用测试的fixture没有转换事实`);
+    }
+    if (quotation && customerExists) {
+      const factualCodes = String(quotation.customerId || '') !== String(customerId || '')
+        ? ['QUOTATION_CUSTOMER_MISMATCH']
+        : (
+          tamper.baseDraft.operation === 'create_order' && converted
+            ? ['QUOTATION_ALREADY_CONVERTED']
+            : []
+        );
+      const expectedPreflightCodes = asArray(testCase.expected.preflight.blockingCodes)
+        .slice()
+        .sort();
+      if (!factualCodes.length) {
+        fail(`${label} 危险报价引用fixture没有可验证的跨客户或重复转单事实`);
+      } else if (
+        canonicalJson(expectedCodes.slice().sort()) !== canonicalJson(factualCodes)
+        || canonicalJson(expectedPreflightCodes) !== canonicalJson(factualCodes)
+      ) {
+        fail(`${label} 危险报价引用阻断码必须由fixture事实独立决定：${factualCodes.join(',')}`);
+      }
+    }
+  }
   validateExecutionPlanPreconditions(testCase, state)
     .forEach((code) => fail(`${label} execution plan前置条件失败：${code}`));
 }
@@ -1802,7 +1941,7 @@ function captureValidationFailures(callback) {
   return captured;
 }
 
-function runExecutionBoundaryContractSelfTests(cases, enums) {
+function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtureMap) {
   const results = [];
   function expectMutationFailure(name, sourceCase, mutate, validator) {
     const candidate = cloneJson(sourceCase);
@@ -1823,7 +1962,10 @@ function runExecutionBoundaryContractSelfTests(cases, enums) {
   const blocked = cases.find((item) => item.expected.save.status === 'BLOCKED');
   const orderSelection = cases.find((item) => item.caseId === 'REC-E2E-BASIC-010');
   const exactReplay = cases.find((item) => item.caseId === 'REC-E2E-PERSIST-003');
-  if (!safeFake || !blocked || !orderSelection || !exactReplay) {
+  const tamperCrossCustomer = cases.find((item) => item.caseId === 'REC-E2E-REL-007');
+  const tamperConverted = cases.find((item) => item.caseId === 'REC-E2E-REL-008');
+  if (!safeFake || !blocked || !orderSelection || !exactReplay
+    || !tamperCrossCustomer || !tamperConverted) {
     fail('合同自测基础Case缺失');
     return results;
   }
@@ -1936,6 +2078,129 @@ function runExecutionBoundaryContractSelfTests(cases, enums) {
     },
     (item) => validateExecutionBoundaries(item, enums)
   );
+  expectMutationFailure(
+    '危险relation injection缺专用Lane',
+    tamperCrossCustomer,
+    (item) => {
+      item.execution.lanes = item.execution.lanes.filter((lane) => (
+        lane !== 'RELATION_REFERENCE_TAMPER_GUARD'
+      ));
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '危险relation injection缺具体ID',
+    tamperCrossCustomer,
+    (item) => { item.execution.relationReferenceTamper.injectedId = ''; },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '危险quotationId混入用户选择',
+    tamperCrossCustomer,
+    (item) => {
+      item.interaction.userSelections.push({
+        kind: 'quotationId',
+        selectedId: item.execution.relationReferenceTamper.injectedId
+      });
+      item.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+    },
+    (item) => {
+      validateInteraction(item, enums);
+      validateExecutionBoundaries(item, enums);
+    }
+  );
+  expectMutationFailure(
+    '危险quotationId错误声明为安全候选',
+    tamperCrossCustomer,
+    (item) => {
+      item.expected.relationReferenceTamper
+        .injectedReferenceExcludedFromSafeCandidates = false;
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '危险关系Lane错误允许正式保存',
+    tamperCrossCustomer,
+    (item) => {
+      item.expected.relationReferenceTamper.domainCanSaveFormal = true;
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '危险关系Lane缺零正式副作用',
+    tamperCrossCustomer,
+    (item) => {
+      item.expected.stateDiff.business.collections.customers = {
+        createdCount: 1,
+        updatedCount: 0,
+        deletedCount: 0
+      };
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '跨客户引用缺客户不匹配码',
+    tamperCrossCustomer,
+    (item) => {
+      item.expected.relationReferenceTamper.blockingCodes = [
+        'QUOTATION_ALREADY_CONVERTED'
+      ];
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '已转报价引用缺重复转换阻断码',
+    tamperConverted,
+    (item) => {
+      item.expected.relationReferenceTamper.blockingCodes = [
+        'QUOTATION_CUSTOMER_MISMATCH'
+      ];
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '跨客户引用同步篡改两层阻断码仍必须失败',
+    tamperCrossCustomer,
+    (item) => {
+      item.expected.relationReferenceTamper.blockingCodes = [
+        'QUOTATION_ALREADY_CONVERTED'
+      ];
+      item.expected.preflight.blockingCodes = [
+        'QUOTATION_ALREADY_CONVERTED'
+      ];
+    },
+    (item) => validateStateReferences(item, resolvedStateFixtureMap)
+  );
+  expectMutationFailure(
+    '已转引用同步篡改两层阻断码仍必须失败',
+    tamperConverted,
+    (item) => {
+      item.expected.relationReferenceTamper.blockingCodes = [
+        'QUOTATION_CUSTOMER_MISMATCH'
+      ];
+      item.expected.preflight.blockingCodes = [
+        'QUOTATION_CUSTOMER_MISMATCH'
+      ];
+    },
+    (item) => validateStateReferences(item, resolvedStateFixtureMap)
+  );
+  expectMutationFailure(
+    '危险关系Lane混用SELECT_QUOTATION能力',
+    tamperConverted,
+    (item) => {
+      item.interaction.requiredCapabilities.push('SELECT_QUOTATION');
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
+  expectMutationFailure(
+    '危险quotationId在底稿中预注入',
+    tamperConverted,
+    (item) => {
+      item.execution.relationReferenceTamper.baseDraft.fields.quotationId
+        = item.execution.relationReferenceTamper.injectedId;
+    },
+    (item) => validateExecutionBoundaries(item, enums)
+  );
 
   const knownGapFailures = Object.keys(KNOWN_PAGE_CAPABILITY_GAPS).flatMap((caseId) => {
     const item = cases.find((candidate) => candidate.caseId === caseId);
@@ -1995,7 +2260,11 @@ function main() {
   const duplicateStats = validateDuplicates(loaded.cases);
   const coverage = validateCoverage(loaded.cases, decisions, indexDocument);
   const selfTestResults = process.argv.includes('--contract-self-test')
-    ? runExecutionBoundaryContractSelfTests(coverage.active, enums)
+    ? runExecutionBoundaryContractSelfTests(
+      coverage.active,
+      enums,
+      fixtureContext.resolvedStateFixtureMap
+    )
     : [];
 
   const active = coverage.active;
@@ -2046,6 +2315,7 @@ function main() {
   console.log(`业务安全阻断且隔离执行禁止数量: ${businessBlockedAndIsolatedForbiddenCount}`);
   console.log(`SELECT_ORDER Case数量: ${capabilityCounts.SELECT_ORDER || 0}`);
   console.log(`SELECT_QUOTATION Case数量: ${capabilityCounts.SELECT_QUOTATION || 0}`);
+  console.log(`RELATION_REFERENCE_TAMPER_GUARD数量: ${coverage.laneCounts.RELATION_REFERENCE_TAMPER_GUARD || 0}`);
   console.log(`TRANSACTION_EXACT_REPLAY数量: ${coverage.laneCounts.TRANSACTION_EXACT_REPLAY || 0}`);
   console.log(`RESTART_PERSISTENCE数量: ${coverage.laneCounts.RESTART_PERSISTENCE || 0}`);
   console.log(`CONCURRENT_BASE_REVISION数量: ${coverage.laneCounts.CONCURRENT_BASE_REVISION || 0}`);

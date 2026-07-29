@@ -12,6 +12,7 @@ function expectedLayerNames(lanes) {
   const names = ['productionObservation'];
   if (lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')) names.push('isolatedExecution');
   if (lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')) names.push('pageDuplicateTrigger');
+  if (lanes.includes('RELATION_REFERENCE_TAMPER_GUARD')) names.push('relationReferenceTamper');
   if (lanes.includes('TRANSACTION_EXACT_REPLAY')) names.push('transactionExactReplay');
   if (lanes.includes('RESTART_PERSISTENCE')) names.push('restart');
   if (lanes.includes('CONCURRENT_BASE_REVISION')) names.push('concurrentBaseRevision');
@@ -100,6 +101,7 @@ function buildExecutionPlan(testCase, fixtureResolver) {
     aiFixtureRef: testCase.ai.fixtureRef || null,
     interactionSteps: safeClone(testCase.interaction.sequence || []),
     pageActionPlan,
+    relationReferenceTamper: safeClone(testCase.execution.relationReferenceTamper || null),
     expectedLayers: expectedLayerNames(lanes)
   };
   plan.planFingerprint = stableHash(plan, 'record-e2e-execution-plan-v1');
