@@ -309,3 +309,43 @@ raw operation为空失败，仍因Route/交期合同阻断且正式Diff为零；
 `parserEvidenceMissing/orphan/uncorrelated/shadow=0`，120题中真实零Raw调用路径为0。
 详细25条逐题迁移表见
 `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`。
+
+## 12. Payment Intent Parser V1 重基线
+
+`BASIC-012`和`PAGE-003`原先都因明确收款被本地parser识别为order而成为
+`LOCAL_PARSE_ERROR/CONFIRMED_LOCAL_PARSER_DEFECT`。本阶段只调整本地parser的窄收款
+证据、非金融“收到”负例和payment中的订单关系/mixed边界：
+
+- `BASIC-012`现在raw为`payment/null`、Route为`AI_DEEP`、semantic operation为
+  `record_payment`；隔离提交产生一条600元收款、订单增量0。Case继续因未关联收款标记
+  映射差异成为`CASE_FAIL/AI_NORMALIZE_ERROR`。
+- `PAGE-003`现在raw为`payment/null`，本次收款4500、关系上下文剩余4000，Route为
+  `AI_DEEP`。Preflight继续阻断超额收款，正式业务Diff为0；Case成为
+  `CASE_FAIL/PREFLIGHT_ERROR`。
+
+两题不再属于确认的本地parser缺陷。`BASIC-006`、`BASIC-010`和`AMB-005`继续保持
+`LOCAL_PARSE_ERROR/CONFIRMED_LOCAL_PARSER_DEFECT/HIGH`，没有被语义投影或新payment
+规则隐藏。
+
+120条双轮结果仍为：
+
+```text
+PASS          10
+CASE_FAIL    110
+RUNNER_ERROR   0
+BLOCKED        0
+```
+
+Failure Stage从上一基线的`LOCAL_PARSE_ERROR=11 / AI_NORMALIZE_ERROR=21 /
+PREFLIGHT_ERROR=19`变为`9 / 22 / 20`；其余Stage数量不变。Ownership中的
+`CONFIRMED_LOCAL_PARSER_DEFECT`从5降为3，新增两条下游
+`UNCLASSIFIED_REQUIRES_REVIEW`。其他118题的顶层Case状态、主失败、Ownership和Route均
+不变；Evidence层另有4条直接相关修正：`FIN-004`、`PAGE-004`补齐raw收款金额，
+`FIN-013`不再把明确付款误投影为todo，`CHAT-001`的聊天确认“收到”不再被误当付款。
+其余114题的raw/semantic/proposal/outcome/Preflight/业务Diff比较无变化。
+
+65条P0失败全部单题重跑、P1分层抽查13条；31个Cluster覆盖110/110失败。Parser专项、
+Runner、页面选择、Release A、Preflight、Shared Confirmation、Flow Gate、五步用户链、
+AI/P0、Route和Voice Fake回归全部通过。两轮全部隔离与parser调用图硬门禁为0。
+
+详细规则、负例和目标证据见`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`。

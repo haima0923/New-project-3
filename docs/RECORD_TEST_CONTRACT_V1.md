@@ -1015,3 +1015,55 @@ Expected 均未降低。最终双轮为
 真实零Raw调用路径为0，parser Evidence缺失、orphan、uncorrelated和shadow调用均为0。
 详情见
 `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`。
+
+## 29. 明确已收款本地parser合同
+
+本地parser必须区分资金已经发生、资金尚未发生、订单定金、普通订单关系和非金融对象。
+
+明确完成型付款或明确执行收款与金额邻近时，raw业务候选应为`payment`。订单、这单、
+那笔等词只用于后续关系解析，不得覆盖主payment语义。Raw operation可以继续为空，但
+Domain Preflight的既有canonical resolver必须产生`record_payment`。
+
+完成型动作后的数字只有在具备明确货币单位时才能成为收款金额。日期、商品数量、次数、
+笔数和“一点”等模糊量不得投影为paymentAmount；金额缺失时必须继续由既有Preflight
+阻断。客户称呼必须来自原文证据，“收到王总”应解析为王总，泛称“客户刚打款”不得
+编造名为“刚”的客户。
+
+以下内容不得仅凭单字命中payment：
+
+```text
+收
+到
+付
+款
+钱
+转
+```
+
+“收到货、消息、报价、样品、文件、通知、快递、订单”属于非金融接收；“付款方式、
+准备付款、等客户付款、未付款、未到账”不表示钱已经收到；“转文件、转报价、转订单”
+也不表示收款。含有定金、订金或预付款时继续使用既有定金合同，完整新订单加定金不能被
+普通payment抢占。
+
+payment中的否定关系说明，例如“不关联旧订单”，不得被`mixed_business`当成第二笔
+order业务。但真实订单更新、生产、做好、开工、排产或返单加付款仍必须作为多业务阻断，
+不能由payment优先级吞掉。否定/非金融判断必须局限在相应分句，不能压掉后续独立的真实
+收款分句。
+
+`BASIC-012`和`PAGE-003`是该raw parser合同的强断言Case。修复后两题必须满足：
+
+```text
+rawParser.intent = payment
+rawParser.businessType = payment
+rawParser.operation = null
+semanticResult.effectiveOperation = record_payment
+route = AI_DEEP
+```
+
+这只消除payment→order的本地parser缺陷，不豁免后续AI、Confirmation、Preflight、
+Surface、State Diff断言。`PAGE-003`仍必须阻断4500大于剩余4000的收款，正式业务Diff
+为0；`BASIC-012`只允许在既有隔离提交合同中验证未关联收款。
+
+保护Case`BASIC-006`、`BASIC-010`、`AMB-005`必须继续暴露其各自的本地parser缺陷。
+专项测试还必须覆盖完成型收款、待收/未完成、定金、非金融接收和普通订单五组边界。
+详细证据见`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`。

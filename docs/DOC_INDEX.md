@@ -2,15 +2,17 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前观察语义工作分支：`fix/record-e2e-observation-semantics-v1`。E2E V1.2 已把
+> 当前parser收款语义工作分支：`fix/record-parser-payment-intent-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
-> disposition，不再覆盖推测业务类型。25条观测映射题迁移后重新完成120题双轮：
+> disposition，不再覆盖推测业务类型。明确已收款parser修复后重新完成120题双轮：
 > `PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`；65条P0失败全部单题重跑，
 > P1分层抽查13条，31个Cluster覆盖110条失败；Hybrid/Raw parser调用图两轮一致，
 > evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
-> 事务清理门禁均通过。5条高置信
-> parser缺陷继续暴露；PAGE-008不再因raw空operation失败，BASIC-010仍为本地待收识别
-> 缺陷。未修改生产代码、parser或业务安全Expected。
+> 事务清理门禁均通过。`BASIC-012`和`PAGE-003`不再把payment识别为order，已推进到
+> 下游AI Normalize与Preflight真实差异；`BASIC-006`、`BASIC-010`、`AMB-005`三条高置信
+> parser缺陷继续暴露。日期、数量、次数、笔数、非金融“收到”与真实第二订单动作均有
+> 强负例门禁。除`utils/parser.js`的窄规则修复外，未修改页面、Route、AI、
+> Preflight、business、Storage或业务安全Expected。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 
@@ -60,6 +62,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md` | 完整页只消费Preflight安全报价候选、选择/取消/改选、保存前复核及两条合法补充E2E题 |
 | `docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md` | 首页单商品以items[0]为业务核心、顶层投影原子同步、金额规则、多商品保护和PAGE-008证据边界 |
 | `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md` | Hybrid/Raw parser调用图、raw parser状态、semantic result、proposal、outcome四层合同，25条迁移和保护Case证据 |
+| `docs/RECORD_PARSER_PAYMENT_INTENT_V1.md` | 明确已收款本地parser证据、待收/定金/订单/非金融负例边界及BASIC-012、PAGE-003重基线 |
 | `docs/RECORD_WX_STORAGE_RUNTIME_TEST_PLAYBOOK.md` | Phase 1E.2A.2 微信开发者工具隔离 Storage 事务验证步骤、恢复顺序和清理规则 |
 | `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` | Phase 1E.2B.1 共享保存受控切换、资格、回退、Recovery Lock、监测和 Release A/B/C 计划；不代表生产已开启 |
 | `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` | Release A RC1 的23个Legacy writer、启动恢复、事务失败、旧Bundle升级、回滚兼容和人工发布评审清单；尚未上传或发布 |
@@ -78,7 +81,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 - `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
 - `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
 - `docs/RECORD_E2E_CASE_CONTRACT_V1.md` 管 120 条核心题的机器结构和跨 Runner 复用边界；PAGE、HEADLESS、TEST_ONLY隔离提交和事务exact replay必须分lane判分。
-- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`管raw/semantic/proposal/outcome分层；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择；`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`管首页单商品编辑同步与保存前一致性门禁。它们都不代表WXML/DOM页面E2E或真实千问质量。
+- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`管raw/semantic/proposal/outcome分层；`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`管明确已收款parser与负例边界；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择；`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`管首页单商品编辑同步与保存前一致性门禁。它们都不代表WXML/DOM页面E2E或真实千问质量。
 - `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 管共享保存切换控制与发布顺序；它从属于共享核心安全合同，不能覆盖生产固定 `LEGACY_ONLY` 或自行批准 canary。
 - `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` 管 Release A 候选证据和发布前人工检查；它不构成上传、发布或开启 Shared 的授权。
 - `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；

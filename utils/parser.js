@@ -75,6 +75,47 @@ function normalizeOriginalText(text) {
     .trim();
 }
 
+function getPaymentClauses(text) {
+  return String(text || '')
+    .split(/[，,。；;\n]/)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+}
+
+function hasNonFinancialReceiveSignal(text) {
+  const amount = numberPattern();
+  return getPaymentClauses(text).some((clause) => (
+    /收到[^，,。；;\n]{0,10}(?:货(?!款)|报价|消息|样品|文件|通知|快递|订单)/.test(clause)
+    || new RegExp(`收到[^，,。；;\\n]{0,4}(?:${amount})\\s*(?:${UNIT_PATTERN}|批|次|笔|份)(?!\\s*(?:元|块|块钱))`).test(clause)
+  ));
+}
+
+function hasNonFinancialPaymentActionSignal(text) {
+  const amount = numberPattern();
+  return getPaymentClauses(text).some((clause) => (
+    /(?:打了|刚打)[^，,。；;\n]{0,8}(?:电话|样品|打样)|(?:还了|给了)[^，,。；;\n]{0,8}(?:货(?!款)|样品|文件)|(?:文件|报价|订单)[^，,。；;\n]{0,8}转(?:了|过来)?|转(?:了|过来)?[^，,。；;\n]{0,8}(?:文件|报价|订单)/.test(clause)
+    || new RegExp(`(?:打款|打了|刚打|转了|刚转|收了|收到)[^，,。；;\\n]{0,4}(?:${amount})\\s*(?:${UNIT_PATTERN}|次|笔|份)(?!\\s*(?:元|块|块钱))`).test(clause)
+  ));
+}
+
+function hasNegativeOrFuturePaymentSignal(text) {
+  return /(?:没|未|没有|尚未|还没|并未)[^，,。；;\n]{0,8}(?:收(?:到|款)?|付(?:款)?|打款|转账|到账)|(?:准备|打算|计划|等待?|等着|等客户|将要|之后再|以后再)[^，,。；;\n]{0,8}(?:收(?:款)?|付(?:款)?|打款|转账|到账)/.test(String(text || ''));
+}
+
+function hasExplicitCompletedPaymentSignal(text) {
+  const source = String(text || '');
+  return getPaymentClauses(source).some((clause) => {
+    if (DEPOSIT_PATTERN.test(clause)) return false;
+    if (hasNegativeOrFuturePaymentSignal(clause)) return false;
+    if (extractPaymentAmount(clause).value) return true;
+    if (hasNonFinancialReceiveSignal(clause) || hasNonFinancialPaymentActionSignal(clause)) return false;
+    const financialObjectCompleted = /(?:货款|尾款|款项|这笔钱|这单的钱|订单的钱)[^，,。；;\n]{0,8}(?:已(?:经)?到账|到账了?|收了|已收|付了|已付)/.test(clause)
+      || /(?:收了|已收|收到|付了|已付)[^，,。；;\n]{0,6}(?:一点)?(?:钱|货款|尾款|款项)/.test(clause);
+    const intrinsicallyFinancialCompletion = /(?:已(?:经)?付款|付款了|刚(?:刚)?打款|打款了)(?!方式)/.test(clause);
+    return financialObjectCompleted || intrinsicallyFinancialCompletion;
+  });
+}
+
 function buildRemarkText(originalText) {
   const normalized = normalizeOriginalText(normalizeBusinessText(originalText))
     .replace(/[,，]{2,}/g, '，')
@@ -104,7 +145,7 @@ function cleanCustomerName(value) {
   let cleaned = String(value || '')
     .replace(/^(?:(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)\s*)?(?:元|块)/, '')
     .replace(/^(今天|明天|明日|后天|大后天|晚上|上午|下午|礼拜[一二三四五六日天]|星期[一二三四五六日天]|周[一二三四五六日天]|下周[一二三四五六日天]?|下个月\d{1,2}号?|号)/, '')
-    .replace(/^(刚才|刚刚|别忘了|提醒我|提醒|记得|报给|报价给|发给|卖给|转给|给|帮|找|问|回一下|回|催|联系|那个|这个|义乌|客户)/, '')
+    .replace(/^(刚才|刚刚|别忘了|提醒我|提醒|记得|报给|报价给|发给|卖给|转给|给|帮|找|问|回一下|回|催|联系|那个|这个|义乌|客户|收到|收)/, '')
     .replace(/(那单|那笔|上一笔|上次).*$/, '')
     .trim();
   for (let index = 0; index < 3; index += 1) {
@@ -117,7 +158,7 @@ function cleanCustomerName(value) {
   if (!cleaned) return '';
   // “老板今天要……”里的“老板”是说话对象，不是客户名。不能把日期的一部分吞进客户名。
   if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天|大后天)/.test(cleaned)) return '';
-  if (/^(客户|老客户|这个客户|那个客户|老板|今天|明天|后天|刚才|刚刚|义乌|那笔|上一笔|不|不要|先|再|还有|另外|那个|这个)$/.test(cleaned)) return '';
+  if (/^(客户|老客户|这个客户|那个客户|老板|昨天|昨天没|今天|明天|后天|刚|刚才|刚刚|又|义乌|那笔|上一笔|不|不要|先|再|还有|另外|那个|这个)$/.test(cleaned)) return '';
   if (/客户/.test(cleaned) && !/(总|老板|经理|姐|哥|先生|女士)$/.test(cleaned)) return '';
   if (/^(今天|明天|后天|月底|下周|下个月)$/.test(cleaned)) return '';
   return cleaned;
@@ -558,7 +599,7 @@ function extractUnitPrice(text) {
 
 function extractAmount(text) {
   const correction = text.match(new RegExp(`(?:是|应为|改成)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?\\s*不是\\s*(?:${numberPattern()})`));
-  const explicit = text.match(new RegExp(`(?:总价|总共|一共|合计|金额|欠(?:我|款)?|应收|还差|尾款|定金|订金|预付款?|收了|收到|先收|付了|先付|付款|刚?转了?|刚转|先转|打了|刚打|打款|到账|已经到账|先打|给了|还我|还了)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还|后|后面|剩)`));
+  const explicit = text.match(new RegExp(`(?:总价|总共|一共|合计|金额|欠(?:我|款)?|应收|还差|只剩|尾款|定金|订金|预付款?|收了|收到|先收|强行收|付了|先付|付款|刚?转了?|刚转|先转|打了|刚打|打款|到账|已经到账|先打|给了|还我|还了)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还|后|后面|剩)`));
   const fallback = correction || explicit
     || text.match(new RegExp(`(?:付|收|给|转|打)?\\s*(?:定金|订金|预付款?)\\D{0,4}?(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还)`))
     || text.match(new RegExp(`(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=\\s*(?:定金|订金|预付款?))`))
@@ -574,6 +615,27 @@ function extractAmount(text) {
   };
 }
 
+function extractPaymentAmount(text) {
+  const amount = numberPattern();
+  const moneyUnit = '(万元|元|块钱|块)';
+  const bareAmountBoundary = `(?=$|[，,。；;\\s]|货款|尾款|款项|这笔|那笔|顶在|算在|记在|哪笔)`;
+  const nonMoneyUnit = `(?:${UNIT_PATTERN}|次|笔|份|月|日|号)`;
+  for (const clause of getPaymentClauses(text)) {
+    if (hasNegativeOrFuturePaymentSignal(clause)) continue;
+    if (hasNonFinancialReceiveSignal(clause) || hasNonFinancialPaymentActionSignal(clause)) continue;
+    const afterAction = clause.match(new RegExp(`(?:付了|已(?:经)?付款|付款了|刚(?:刚)?打款|打款了?|(?:刚(?:刚)?)?(?:微信)?打了|给了|还了|刚(?:刚)?转(?:账|了|过来)|转(?:了|过来)|强行收|收了|已收|收到|已(?:经)?到账|到账了?)[^，,。；;\\n\\d零〇一二两三四五六七八九十百千万俩]{0,8}(${amount})\\s*${moneyUnit}`));
+    const afterActionWithoutUnit = clause.match(new RegExp(`(?:付了|(?:刚(?:刚)?)?(?:微信)?打了|给了|还了|刚(?:刚)?转(?:了|过来)|转(?:了|过来)|收了)[^，,。；;\\n\\d零〇一二两三四五六七八九十百千万俩]{0,8}(${amount})(?!\\s*${nonMoneyUnit})${bareAmountBoundary}`));
+    const beforeCompletion = clause.match(new RegExp(`(${amount})\\s*${moneyUnit}[^，,。；;\\n]{0,6}(?:已(?:经)?到账|到账了?|付了|已付|收了|已收)`));
+    const match = afterAction || afterActionWithoutUnit || beforeCompletion;
+    if (!match) continue;
+    return {
+      value: toCleanNumber(parseChineseNumber(`${match[1]}${match[2] && match[2].includes('万') && !String(match[1]).includes('万') ? '万' : ''}`)),
+      source: 'rule:completed_payment_amount'
+    };
+  }
+  return { value: '', source: '' };
+}
+
 function extractDepositAmount(text) {
   const beforeAmount = text.match(new RegExp(`(?:付|收|给|转|打)?\\s*(?:定金|订金|预付款?)\\D{0,4}?(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=$|[，,。；;\\s]|月底|明天|今天|下个月|前|结|给|说|还)`));
   const afterAmount = text.match(new RegExp(`(${numberPattern()})\\s*(万|万元|块|元|块钱)?(?=\\s*(?:定金|订金|预付款?))`));
@@ -587,7 +649,7 @@ function extractDepositAmount(text) {
 }
 
 function extractRemainingAmount(text) {
-  const match = text.match(new RegExp(`(?:还剩|剩下|剩余|未收|没收|还差)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?`));
+  const match = text.match(new RegExp(`(?:还剩|只剩|剩下|剩余|未收|没收|还差)\\s*(${numberPattern()})\\s*(万|万元|块|元|块钱)?`));
   if (!match) return { value: '', source: '' };
   const amount = parseChineseNumber(`${match[1]}${match[2] && match[2].includes('万') ? '万' : ''}`);
   return {
@@ -1173,10 +1235,12 @@ function scoreIntent(text, context, businessDate) {
     || hasBareUnitPrice;
   const hasStrongQuotationSignal = /报价|报架|报个价|问价|多少钱|问.*(?:价格|价|多少钱)/.test(text);
   const hasExplicitQuotePlan = /(?:问[^，,。；;]{0,12}(?:价|报)|(?:先)?给(?:他|她)?报|先看看价|看(?:看)?价)/.test(text);
+  const hasExplicitCompletedPayment = hasExplicitCompletedPaymentSignal(text);
 
   if (hasTodoSignal) scores.todo += 7;
   if (/问/.test(text) && /(回|回复|答复)/.test(text) && parseChineseDate(text, businessDate)) scores.todo += 3;
-  if (/收了|已收|收到|先收|转了|刚转|先转|转账|打了|刚打|已付款|已付|打款|到账|已经到账|还我|还了|给了|定金|订金|预付|预付款/.test(text)) scores.payment += 5;
+  if (hasExplicitCompletedPayment) scores.payment += 8;
+  if (DEPOSIT_PATTERN.test(text)) scores.payment += 5;
   if (DEPOSIT_PATTERN.test(text) && new RegExp(`(${numberPattern()})`).test(text) && !hasQuantity) scores.payment += 4;
   if (DEPOSIT_PATTERN.test(text) && /转了|付了|收了|收到|打了|打款|到账/.test(text) && !hasQuantity) scores.payment += 3;
   if (new RegExp(`(${numberPattern()})\\s*(?:已经到账|到账|已到账)`).test(text)) scores.payment += 5;
@@ -1378,9 +1442,15 @@ function detectMixedBusiness(text) {
     && !(hasTodoSignal && /报价单/.test(source) && !hasItemQuantity);
   if (hasQuotationSignal) kinds.push('quotation');
   const hasExplicitNoOrder = /(?:还没|没有|没|未)(?:正式)?下单/.test(source);
-  if ((!hasExplicitNoOrder && /下单|订单|订|定了|先做|做货|要货|交货|发货/.test(source))
+  const hasCompletedPayment = hasExplicitCompletedPaymentSignal(source);
+  const hasOrderAction = /下单|先下|订货|定了|先做|做货|要货|交货|发货|要发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|返单/.test(source)
+    || new RegExp(`补\\s*(?:${numberPattern()})`).test(source)
+    || new RegExp(`订(?!单)[^，,。；;\\n]{0,6}(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})`).test(source)
+    || /(?:那单|这单|订单|交期|数量)[^，,。；;\n]{0,12}(?:改|提前|延期|取消|备注|追加)|(?:改|提前|延期|取消|备注|追加)[^，,。；;\n]{0,12}(?:那单|这单|订单|交期|数量)/.test(source);
+  const hasOrderReference = /订单/.test(source);
+  if ((!hasExplicitNoOrder && (hasOrderAction || (!hasCompletedPayment && hasOrderReference)))
     || (hasItemQuantity && /(?:明天|后天|本周|这周|下周|周[一二三四五六日天]|交|拿|发)/.test(source))) kinds.push('order');
-  if (/(?:刚|已经|已)?(?:微信)?(?:打了|转了|付了|收了|收到|到账)|收款/.test(source) && !/(?:定金|订金|预付)/.test(source)) kinds.push('payment');
+  if (hasCompletedPayment && !/(?:定金|订金|预付)/.test(source)) kinds.push('payment');
   if (/欠款|还差|未结|没结|尾款|待收/.test(source)) kinds.push('receivable');
   if (hasTodoSignal) kinds.push('todo');
   const uniqueKinds = Array.from(new Set(kinds));
@@ -1434,6 +1504,7 @@ function parseInput({
   const unitPrice = extractUnitPrice(normalized);
   const priceUnit = extractPriceUnit(normalized);
   const explicitAmount = extractAmount(normalized);
+  const explicitPaymentAmount = extractPaymentAmount(normalized);
   const depositAmount = extractDepositAmount(normalized);
   const remainingAmount = extractRemainingAmount(normalized);
   const product = extractProduct(normalized);
@@ -1453,7 +1524,9 @@ function parseInput({
   // 单商品以已确认的全句数量 × 单价计算，不能让倒装句里局部候选的“1 个”覆盖真实数量。
   const itemTotalAmount = useItems && itemDrafts.length > 1 ? getItemsTotal(itemDrafts) : '';
   const hasDepositSignal = DEPOSIT_PAYMENT_PATTERN.test(normalized);
-  const paymentAmount = (intent === 'payment' || /先收|收了|已收|先付|已付|先转|已转|定金|订金|预付|预付款/.test(normalized)) ? (depositAmount.value || explicitAmount.value) : '';
+  const paymentAmount = (intent === 'payment' || /先收|收了|已收|先付|已付|先转|已转|定金|订金|预付|预付款/.test(normalized))
+    ? (depositAmount.value || explicitPaymentAmount.value || explicitAmount.value)
+    : '';
   const receivableAmount = explicitAmount.value || (intent === 'receivable' ? remainingAmount.value : '');
   const explicitAmountIsDeposit = hasDepositSignal && depositAmount.value && explicitAmount.value === depositAmount.value;
   const calculatedAmount = itemTotalAmount || computedAmount;
@@ -1636,7 +1709,7 @@ function parseInput({
       unitPrice: getDraftFieldSource(structuredDraft, 'unitPrice', unitPrice.source),
       priceUnit: priceUnitValue ? 'rule:unit_price_unit' : '',
       items: fields.items && fields.items.length ? (structuredItems.length ? 'paste_meta:structuredDraft.items' : 'rule:item_details') : '',
-      paymentAmount: paymentAmount ? explicitAmount.source : '',
+      paymentAmount: paymentAmount ? (depositAmount.source || explicitPaymentAmount.source || explicitAmount.source) : '',
       depositAmount: hasDepositSignal && (depositAmount.value || paymentAmount) ? (depositAmount.source || explicitAmount.source) : '',
       paymentKind: hasDepositSignal ? 'rule:deposit_keyword' : '',
       amount: statedAmount ? explicitAmount.source : (calculatedAmount ? 'rule:quantity_times_unit_price' : ''),

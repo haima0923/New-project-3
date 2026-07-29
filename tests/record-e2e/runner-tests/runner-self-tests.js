@@ -1030,9 +1030,7 @@ const tests = [
       for (const caseId of [
         'REC-E2E-BASIC-006',
         'REC-E2E-BASIC-010',
-        'REC-E2E-AMB-005',
-        'REC-E2E-BASIC-012',
-        'REC-E2E-PAGE-003'
+        'REC-E2E-AMB-005'
       ]) {
         const result = await executeOne(bundle(caseId));
         assert.strictEqual(result.caseStatus, 'CASE_FAIL');
@@ -1043,6 +1041,28 @@ const tests = [
           entry.layer === 'RAW_PARSER'
           && entry.name === 'businessType'
           && entry.pass === false
+        )));
+      }
+    }
+  },
+  {
+    name: 'completed-payment-parser-fixes-advance-to-real-downstream-differences',
+    async run() {
+      for (const caseId of [
+        'REC-E2E-BASIC-012',
+        'REC-E2E-PAGE-003'
+      ]) {
+        const result = await executeOne(bundle(caseId));
+        const raw = initialCanonicalRawResult(result);
+        assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+        assert.notStrictEqual(result.failureStage, 'LOCAL_PARSE_ERROR');
+        assert.notStrictEqual(result.failureOwnership, 'CONFIRMED_LOCAL_PARSER_DEFECT');
+        assert.strictEqual(result.routeEvidence.actualRoute, 'AI_DEEP');
+        assert.strictEqual(raw.intent, 'payment');
+        assert.strictEqual(raw.businessType, 'payment');
+        assert.strictEqual(raw.operation, null);
+        assert(!result.assertions.some((entry) => (
+          entry.layer === 'RAW_PARSER' && entry.pass === false
         )));
       }
     }
