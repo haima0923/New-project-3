@@ -17,12 +17,59 @@ AI、Route、页面、Confirmation 生产实现、Domain Preflight、business �
 
 ### 2.1 `rawParser`
 
-`rawParser` 是实际本地 parser 的原始证据，保留原始 `intent`、`businessType`、
-`operation`、缺失字段、置信度和安全信息。空 `operation` 保持 `null`，不会被 Runner
-改写成 `create_order` 或 `none`。
+`rawParser` 是实际本地 parser 调用图，不再假设一个 Hybrid 只调用一次 Raw Parser。
+它记录总体状态、Hybrid 调用、Direct Raw 父调用、每个 Raw 子调用、父子关系、稳定序号、
+输入指纹、调用角色、结果摘要和异常。完整聊天原文不会复制进调用图。
 
-普通用户 E2E 默认只要求该证据存在。只有显式声明 `assertionScope=RAW_PARSER` 的 parser
-专项题，才以 raw 字段直接判分。
+总体状态严格区分：
+
+- `RAW_PARSER_INVOKED`：至少一条真实 Raw 调用已完整采集；
+- `RAW_PARSER_NOT_INVOKED_BY_PRODUCTION_PATH`：监控完整且真实调用为零；
+- `RAW_PARSER_INVOCATION_FAILED`：真实调用开始后异常；
+- `RAW_PARSER_EVIDENCE_MISSING`：监控、父子关联或采集完整性无法证明，必须是 Runner Error。
+
+普通用户 E2E 使用 `EVIDENCE_ONLY`。只有显式声明 `assertionScope=REQUIRED` 的五条 parser
+保护题才以对应 Hybrid 的 canonical local Raw 结果判分。不得默认取第一条或最后一条
+Raw 调用，也不得补跑 shadow parser。
+
+普通生产页面路径明确禁止`Direct Raw`父级；只有独立parser专项合同可显式声明允许。
+分支依赖页面出现0次调用时，必须由注册表和实际页面状态共同证明为无业务确认分支，否则
+以`UNRESOLVED_ZERO_PARSER_INVOCATION`硬失败。parser或后续Lane抛错时，已完成的调用图会
+随Worker错误一并返回，隔离审计继续在finally完成。
+
+### 2.1.1 Hybrid/Raw 调用图
+
+Instrumentation 在生产 `utils/ai-parser.js` 加载前安装，以 Node 内置
+`AsyncLocalStorage`关联异步父子调用。采集过程只记录开始、结果/异常和 finally 完成；
+数量、角色和路径验证在采集完成后执行，因此验证失败不会再次清空已经取得的 Evidence。
+
+`REC-E2E-MULTI-009` 的真实链为：
+
+```text
+FULL_PAGE / CLIPBOARD_CHAT
+→ pasteClipboard()
+→ readClipboardToInput()
+→ runParse()
+→ parseHybridInput(INITIAL_PARSE)
+→ requestDeepReview()
+→ runParse()
+→ parseHybridInput(DEEP_REVIEW)
+```
+
+输入包含三条聊天消息。每个 Hybrid 的 Raw 调用数来自当前生产实现：
+
+```text
+1 次整段 primary local parse
++ 3 次单价冲突扫描
++ 3 次数量冲突扫描
++ 3 次最新单价扫描
++ 3 次最新数量扫描
+= 13 次
+```
+
+因此该题实际为 `2 Hybrid / 26 Raw`；两组结构和指纹序列相同、Hybrid ID不同，
+`orphan/uncorrelated/shadow=0`。`13`不是全局固定产品合同，而是
+`1 + 4 × 当前非空聊天消息数`这一生产实现结构的动态基数。
 
 ### 2.2 `semanticResult`
 
@@ -125,11 +172,11 @@ Validator 同时强制：
 | BASIC-018 | LOCAL_PARSE | ROUTE | dunning/null | todo/create_todo | BLOCKED | route |
 | AMB-012 | LOCAL_PARSE | ROUTE | unknown/null | unknown/none | BLOCKED | route |
 | BASIC-019 | LOCAL_PARSE | PREFLIGHT | order/null | order/create_order | PENDING_NOTE | blockingCodes |
-| BASIC-020 | LOCAL_PARSE | PREFLIGHT | order/null | order/create_order | PENDING_NOTE | blockingCodes |
-| AMB-001 | LOCAL_PARSE | STATE_DIFF | order/null | order/create_order | PENDING_NOTE | operationLogs 映射 |
+| BASIC-020 | LOCAL_PARSE | LOCAL_PARSE | order/null | order/create_order | PENDING_NOTE | proposal.productName |
+| AMB-001 | LOCAL_PARSE | LOCAL_PARSE | order/null | order/create_order | PENDING_NOTE | proposal.productName |
 | AMB-002 | LOCAL_PARSE | STATE_DIFF | order/null | order/create_order | PENDING_NOTE | operationLogs 映射 |
 | AMB-008 | AI_NORMALIZE | ROUTE | order/null | order/create_order | PENDING_NOTE | route |
-| AMB-014 | LOCAL_PARSE | CONFIRMATION | order/null | order/create_order | PENDING_NOTE | missingFields |
+| AMB-014 | LOCAL_PARSE | LOCAL_PARSE | order/null | order/create_order | PENDING_NOTE | proposal.productName |
 | AMB-015 | AI_NORMALIZE | ROUTE | order/null | order/create_order | PENDING_NOTE | route |
 
 25 条中 6 条转为 PASS；19 条仍为 `CASE_FAIL`，但已移动到下一处真实差异。所有 7 条
@@ -165,8 +212,12 @@ RUNNER_ERROR   0
 BLOCKED        0
 ```
 
-65 条 P0 失败全部单题重跑，P1 分层抽查 14 条；28 个 Cluster 覆盖 110/110
-`CASE_FAIL`。两轮的网络、未知 Fake Route、真实 wx Storage、宿主文件 Storage、fixture
-修改、跨 Case 污染、Journal 和 Backup 计数均为零。
+65 条 P0 失败全部单题重跑，P1 分层抽查 13 条；31 个 Cluster 覆盖 110/110
+`CASE_FAIL`。两轮的 parser 调用图数量、阶段、父子关系和输入指纹序列一致；120题中
+合法零Raw调用路径为0。网络、未知 Fake Route、真实 wx Storage、宿主文件 Storage、
+fixture修改、跨 Case 污染、Journal、Backup、parser evidence missing、orphan、
+uncorrelated、shadow 和未执行隔离审计计数均为零。
+
+Parser Invocation Graph专项21/21、Runner Kernel自测68/68、全量/报告自测17/17通过。
 
 这是 Local/Fake/Replay Headless 基线，不是真实千问质量测试，也不是微信 WXML/DOM E2E。

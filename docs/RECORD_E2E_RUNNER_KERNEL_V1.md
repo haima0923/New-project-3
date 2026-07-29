@@ -303,8 +303,9 @@ failureStage。只排除 PID、Boot ID 等非业务运行标识。
 `items[0]`未同步，最早失败层是`CONFIRMATION_ERROR`。
 
 当前首页已使用原子主商品同步：顶层字段与`items[0]`逐步一致，派生金额同步，
-`originalText`保留，最终Legacy草稿使用用户新值。该题当前最早差异为
-`LOCAL_PARSE_ERROR`。Preflight仍因订单交期和人工商品原文证据阻断，Runner没有绕过安全
+`originalText`保留，最终Legacy草稿使用用户新值。Observation Semantics迁移消除了
+raw空operation造成的假差异后，该题当前最早差异为`ROUTE_ERROR`。Preflight仍因订单
+交期和人工商品原文证据阻断，Runner没有绕过安全
 规则取得最终订单；因此已确认页面模型同步修复，但尚未据此宣称最终订单保存成功。
 
 ## 15. 当前限制与本轮结果
@@ -313,10 +314,33 @@ failureStage。只排除 PID、Boot ID 等非业务运行标识。
 - `CASE_FAIL` 会完整保留，不能用 knownRisk 或 Expected Fail 消除。
 - R2的24题双轮Smoke为 `PASS=0 / CASE_FAIL=24 / RUNNER_ERROR=0 / BLOCKED=0`，两轮语义
   fingerprint一致。产品 Case 失败不被豁免，也不影响 Runner 完整性完成判断。
-- R1的120题双轮为`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`，65条P0失败
+- R1历史基线的120题双轮为`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`，65条P0失败
   全部单题重跑，P1分层抽查10条，两轮及重跑语义一致。当前首页同步重基线不再包含
   Confirmation不同步Cluster，111条差异保持待人工判责。
+- Observation Semantics V1当前重基线为
+  `PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`。两轮Hybrid/Raw调用图一致，
+  65条P0失败全部重跑，P1分层抽查13条，31个Cluster覆盖110/110失败。
 - `PERSIST-003`、`PERSIST-004`、`FIN-014`和Restart的事务证据来自对应 Case 的真实生产
   seam与隔离 Store，不再只由自测替代。
-- 微信 WXML/真机、真实千问和截图仍属于后续阶段。全量结果、37个当前Cluster和重点Evidence
+- 微信 WXML/真机、真实千问和截图仍属于后续阶段。全量结果、31个当前Cluster和重点Evidence
   见`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`。
+
+## 16. Hybrid / Raw Parser调用图门禁
+
+Runner在生产模块加载前安装parser instrumentation。每个真实Hybrid调用记录页面方法、
+阶段、输入指纹、结果和异常；每个Raw调用通过Node内置`AsyncLocalStorage`绑定唯一Hybrid
+父级，Direct Raw专项Lane则使用独立父级。采集器在`finally`保存开始、结束、异常和全部
+子调用，cardinality与角色验证在采集完成后执行，验证失败也不会丢失调用图。
+
+`MULTI-009`的FULL_PAGE剪贴板聊天路径包含INITIAL_PARSE和DEEP_REVIEW两个Hybrid。每次
+面对三条聊天消息执行一次主解析和四组逐消息扫描，因此Raw数量为
+`1 + 4 × 3 = 13`，总计26次。Runner按输入结构验证该路径，不全局放行任意次数，也不把
+第一条或最后一条当成伪造Primary结果。semanticResult继续来自实际Confirmation、
+Domain Preflight或Hybrid canonical结果，不从Raw集合推测。
+
+当前120题两轮中真实零Raw路径为0；`parserEvidenceMissing`、orphan、
+uncorrelated、shadow parser与隔离审计未执行计数均为0。Parser Invocation Graph专项
+21/21、Runner Kernel自测68/68、全量/报告自测17/17通过。普通生产页面路径禁止Direct
+Raw父级；分支依赖页面无法解释的0次调用必须硬失败。parser或后续Lane异常时，调用图随
+Worker错误返回，最终网络、Storage、fixture、Worker和Journal/Backup审计仍在finally
+完成。

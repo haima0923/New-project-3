@@ -82,9 +82,8 @@ backupCount = 0
 primary failure、Ownership、Route、Preflight、Confirmation、业务 Diff、Receipt、
 revision、Restart 和 Concurrent 语义。PID、Boot ID 和绝对耗时不参与业务判分。
 
-完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次Cluster Fix重跑
-临时文件为`/private/tmp/record-e2e-observation-semantics-v1.json`，不属于源码、
-不提交Git，也不能替代由固定提交重新运行生成的证据。
+完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次最终重跑未生成
+仓库内报告文件，也不能用临时输出替代由固定提交重新运行生成的证据。
 
 ## 4. 风险、阶段与 Ownership
 
@@ -115,12 +114,11 @@ Primary failure stage：
 | Stage | Case数 |
 | --- | ---: |
 | `AI_NORMALIZE_ERROR` | 21 |
-| `LOCAL_PARSE_ERROR` | 3 |
-| `PREFLIGHT_ERROR` | 20 |
-| `CONFIRMATION_ERROR` | 1 |
-| `SURFACE_ERROR` | 9 |
-| `ROUTE_ERROR` | 50 |
-| `STATE_DIFF_ERROR` | 5 |
+| `LOCAL_PARSE_ERROR` | 11 |
+| `PREFLIGHT_ERROR` | 19 |
+| `SURFACE_ERROR` | 10 |
+| `ROUTE_ERROR` | 44 |
+| `STATE_DIFF_ERROR` | 4 |
 | `STORAGE_TRANSACTION_ERROR` | 1 |
 
 Ownership：
@@ -130,23 +128,22 @@ Ownership：
 | `CONFIRMED_LOCAL_PARSER_DEFECT` | 5 | 保护的高置信 parser 缺陷 |
 | `CONFIRMED_OPERATION_MAPPING_DEFECT` | 1 | `REL-008`报价转订单 operation |
 | `CONFIRMED_ROUTE_DEFECT` | 1 | 已确认 Route 缺陷 |
-| `CONFIRMED_CONFIRMATION_DEFECT` | 1 | Confirmation 差异 |
 | `EXPECTED_MAPPING_MISMATCH_CANDIDATE` | 1 | State Diff/字段映射候选，未改合同 |
-| `OBSERVABILITY_EXPECTATION_MISMATCH` | 5 | 可观测边界候选 |
+| `OBSERVABILITY_EXPECTATION_MISMATCH` | 4 | 可观测边界候选 |
 | `TEST_CONTRACT_MISMATCH_CANDIDATE` | 4 | 执行 Lane 正确但旧统计/超时合同冲突 |
-| `UNCLASSIFIED_REQUIRES_REVIEW` | 92 | 证据不足以判产品或测试合同责任 |
+| `UNCLASSIFIED_REQUIRES_REVIEW` | 94 | 证据不足以判产品或测试合同责任 |
 
-Ownership 不改变 Case 状态和 Expected。尤其不得把 92 条未分类差异直接称为产品 Bug，
+Ownership 不改变 Case 状态和 Expected。尤其不得把 94 条未分类差异直接称为产品 Bug，
 也不得用“候选”标签自动修改题库。
 
 ## 5. Lane 与 Case 结果必须分开
 
 | Lane | PASS | CASE_FAIL | 说明 |
 | --- | ---: | ---: | --- |
-| `PAGE_PRODUCTION_OBSERVATION` | 12 | 98 | 110 条页面观察全部执行 |
+| `PAGE_PRODUCTION_OBSERVATION` | 11 | 99 | 110 条页面观察全部执行 |
 | `HEADLESS_PRODUCTION_OBSERVATION` | 4 | 6 | 10 条 Headless 观察全部执行 |
 | `PAGE_CONFIRMED_DRAFT_DERIVATION` | 5 | 1 | `PAGE-008`主商品一致性已通过；`AMB-015`仍有解析/确认差异 |
-| `TEST_ONLY_ISOLATED_LEGACY_COMMIT` | 23 | 66 | 89 条合同 Lane 均有明确结果 |
+| `TEST_ONLY_ISOLATED_LEGACY_COMMIT` | 24 | 65 | 89 条合同 Lane 均有明确结果 |
 | `PAGE_DUPLICATE_TRIGGER_GUARD` | 1 | 0 | `FIN-014` Lane 通过 |
 | `TRANSACTION_EXACT_REPLAY` | 0 | 1 | 事务动作成功，旧 Case 统计断言失败 |
 | `RESTART_PERSISTENCE` | 5 | 0 | 五条都由新 Worker 读取成功 |
@@ -274,15 +271,16 @@ items.length和fields.customerId组。这表示真实订单选择入口已存在
 ## 9. 重跑与回归
 
 - 65 条 `P0 + CASE_FAIL` 全部逐条单题重跑，语义 fingerprint 与全量一致。
-- P1 按 failure stage、Ownership 和业务分类分层选择 14 条，全部一致：
-  `AMB-005`、`AMB-008`、`AMB-011`、`AMB-014`、`BASIC-002`、`BASIC-019`、
+- P1 按 failure stage、Ownership 和业务分类分层选择 13 条，全部一致：
+  `AMB-005`、`AMB-008`、`AMB-011`、`BASIC-002`、`BASIC-019`、
   `CHAT-001`、`CHAT-002`、`DATE-004`、`PAGE-005`、`REL-001`、`VOICE-001`、
   `VOICE-004`、`VOICE-006`。
 - Corpus Validator 与执行边界合同自测为 120 题通过、32/32；报价候选专项22/22，
   报价选择Surface专项23/23；首页主商品同步专项16/16。
-- Runner Kernel 自测 65/65（含四层观察语义、危险关系页面、business、Storage和事务动态零调用门禁，
+- Runner Kernel 自测 68/68（含四层观察语义、危险关系页面、business、Storage和事务动态零调用门禁，
   以及审计缺失强制`RUNNER_ERROR`）；
-  Page Action注册表自测14/14；订单选择Surface专项测试15/15；全量/报告自测15/15。
+  Parser Invocation Graph专项21/21；Page Action注册表自测14/14；订单选择Surface专项测试
+  15/15；全量/报告自测17/17。
 - Release A RC1 16/16、Domain Preflight 20/20、Record Flow Gate 50题/99入口、
   五步用户测试 28/28、AI/P0、route/status、AI模型路由、Voice Recognition Fake
   全部通过。
@@ -300,11 +298,14 @@ Cluster判责，不能在页面任务中顺手放宽安全或修改Expected。
 pending持久化结果混为一层。V1.2 现在分别记录 `rawParser`、`semanticResult`、
 `proposal`和`outcome`，并要求 semantic/outcome 都来自Actual生产等价证据。
 
-迁移后6条变为PASS，19条移动到下一处真实差异；`LOCAL_PARSE_ERROR`由27条降至3条，
-同时Route差异不再被raw空operation遮挡。5条高置信parser缺陷仍为CASE_FAIL并得到明确
-Ownership；`PAGE-008`不再因raw operation为空失败，仍因Route/交期合同阻断且正式Diff
-为零；`BASIC-010`仍是高置信待收款识别缺陷。
+迁移后6条变为PASS，19条移动到下一处真实差异；raw空operation不再遮挡Route、
+Preflight、字段和State Diff差异。当前`LOCAL_PARSE_ERROR=11`，其中5条高置信parser
+缺陷仍为CASE_FAIL并得到明确Ownership；其余仍需后续按Case证据判责。`PAGE-008`不再因
+raw operation为空失败，仍因Route/交期合同阻断且正式Diff为零；`BASIC-010`仍是高置信
+待收款识别缺陷。
 
 两轮均为`PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`，65条P0失败全部单题
-重跑，P1分层抽查14条，28个Cluster覆盖110/110。详细25条逐题迁移表见
+重跑，P1分层抽查13条，31个Cluster覆盖110/110。两轮parser调用图完全一致，
+`parserEvidenceMissing/orphan/uncorrelated/shadow=0`，120题中真实零Raw调用路径为0。
+详细25条逐题迁移表见
 `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`。

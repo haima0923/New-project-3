@@ -6,7 +6,9 @@
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。25条观测映射题迁移后重新完成120题双轮：
 > `PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`；65条P0失败全部单题重跑，
-> P1分层抽查14条，网络/真实Storage/fixture/Worker/事务清理门禁均通过。5条高置信
+> P1分层抽查13条，31个Cluster覆盖110条失败；Hybrid/Raw parser调用图两轮一致，
+> evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
+> 事务清理门禁均通过。5条高置信
 > parser缺陷继续暴露；PAGE-008不再因raw空operation失败，BASIC-010仍为本地待收识别
 > 缺陷。未修改生产代码、parser或业务安全Expected。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
@@ -57,7 +59,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md` | Domain Preflight安全报价候选真值源、危险引用分离、REL-007/008专用Lane及后续合法picker题边界 |
 | `docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md` | 完整页只消费Preflight安全报价候选、选择/取消/改选、保存前复核及两条合法补充E2E题 |
 | `docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md` | 首页单商品以items[0]为业务核心、顶层投影原子同步、金额规则、多商品保护和PAGE-008证据边界 |
-| `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md` | raw parser、semantic result、proposal、outcome四层合同，25条迁移和保护Case证据 |
+| `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md` | Hybrid/Raw parser调用图、raw parser状态、semantic result、proposal、outcome四层合同，25条迁移和保护Case证据 |
 | `docs/RECORD_WX_STORAGE_RUNTIME_TEST_PLAYBOOK.md` | Phase 1E.2A.2 微信开发者工具隔离 Storage 事务验证步骤、恢复顺序和清理规则 |
 | `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` | Phase 1E.2B.1 共享保存受控切换、资格、回退、Recovery Lock、监测和 Release A/B/C 计划；不代表生产已开启 |
 | `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` | Release A RC1 的23个Legacy writer、启动恢复、事务失败、旧Bundle升级、回滚兼容和人工发布评审清单；尚未上传或发布 |

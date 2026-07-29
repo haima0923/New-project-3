@@ -974,7 +974,26 @@ outcome
 ```
 
 `rawParser` 原样记录本地 parser；空 operation 保持 `null`，普通用户 E2E 默认不以它
-直接判分。只有显式 `assertionScope=RAW_PARSER` 的 parser 专项题才强断言 raw。
+直接判分。只有显式 `assertionScope=REQUIRED` 的 parser 专项题才强断言 raw。
+
+Raw Evidence不是单个“最终parser结果”，而是相关调用图。每条真实
+`parseHybridInput()`调用形成一个Hybrid父节点；其内部0到N次真实`parseInput()`调用形成
+Raw子节点，并记录稳定序号、输入指纹、调用角色、结果摘要和异常。Direct Raw专项Lane使用
+独立父类型。采集器必须先在`finally`保存全部调用，再独立验证cardinality、父子关系和
+阶段，不能因第二次调用或cardinality差异提前抛错并清空Evidence。
+
+总体状态区分`RAW_PARSER_INVOKED`、
+`RAW_PARSER_NOT_INVOKED_BY_PRODUCTION_PATH`、`RAW_PARSER_INVOCATION_FAILED`和
+`RAW_PARSER_EVIDENCE_MISSING`。普通E2E使用`EVIDENCE_ONLY`；只有生产路径注册表明确声明
+且实际完整监控为零时才能使用NOT_INVOKED。监控未安装、父子关联不完整、采集提前结束或
+调用发生但记录丢失都必须是Runner Error。禁止shadow parser，禁止默认取第一条或最后一条
+Raw调用，禁止从Raw集合投票生成semanticResult。
+
+`REC-E2E-MULTI-009`的真实FULL_PAGE剪贴板聊天路径包含INITIAL_PARSE和DEEP_REVIEW两个
+Hybrid调用。三条聊天消息在每个Hybrid内产生
+`1 + 4 × 3 = 13`次Raw调用：一次主解析，以及冲突单价、冲突数量、最新单价、最新数量
+四组逐消息扫描。两次Hybrid合计26次Raw，全部有唯一父级；这是一条从实际输入结构推导的
+路径cardinality，不是全局“必须13次”的产品合同。
 
 `semanticResult` 必须来自实际 Domain Preflight、页面 Confirmation 或 normalized
 production result；Runner 不得根据关键词推导 operation。`dunning` 可以集中投影为
@@ -992,5 +1011,7 @@ business type 猜测。
 25 条观测映射 Case 已机械迁移，业务 Route、Preflight、安全、State Diff 和原文
 Expected 均未降低。最终双轮为
 `PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`；5 条高置信本地 parser 缺陷、
-`REL-008` operation 映射、语音异步与超时合同问题继续暴露。详情见
+`REL-008` operation 映射、语音异步与超时合同问题继续暴露。两轮parser调用图一致，
+真实零Raw调用路径为0，parser Evidence缺失、orphan、uncorrelated和shadow调用均为0。
+详情见
 `docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`。
