@@ -19,6 +19,10 @@ function createFakeVoice(transcript = '') {
           if (typeof manager.onStop === 'function') {
             manager.onStop({ result: transcript, synthetic: true });
           }
+          // START only proves that recognition was requested. The page's
+          // asynchronous parser is not reachable until the stop callback has
+          // delivered the transcript and triggered the real page flow.
+          events.push({ type: 'TRANSCRIPT_DELIVERED' });
         });
       },
       stop() {
@@ -32,7 +36,7 @@ function createFakeVoice(transcript = '') {
     audit() {
       return {
         events: JSON.parse(JSON.stringify(events)),
-        transcriptDelivered: events.some((item) => item.type === 'START')
+        transcriptDelivered: events.some((item) => item.type === 'TRANSCRIPT_DELIVERED')
       };
     },
     plugin: {

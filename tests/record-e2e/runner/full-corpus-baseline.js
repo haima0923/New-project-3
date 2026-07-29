@@ -84,11 +84,20 @@ function compareResultOrThrow(baseline, rerun, label) {
   const expected = normalizeRunResult(baseline);
   const actual = normalizeRunResult(rerun);
   if (expected.fingerprint !== actual.fingerprint) {
-    throw integrityError('DETERMINISM_MISMATCH', `${label} semantic result drifted`, {
+    const changedPaths = findChangedPaths(expected.semantic, actual.semantic);
+    const parserGraphDrift = changedPaths.some((changedPath) => (
+      changedPath.startsWith('observationSemantics.rawParser')
+      || changedPath.startsWith('parserObservation')
+    ));
+    throw integrityError(
+      parserGraphDrift
+        ? 'PARSER_INVOCATION_GRAPH_DETERMINISM_MISMATCH'
+        : 'DETERMINISM_MISMATCH',
+      `${label} semantic result drifted`, {
       actual: actual.fingerprint,
       baseline: expected.fingerprint,
       caseId: baseline.caseId,
-      changedPaths: findChangedPaths(expected.semantic, actual.semantic)
+      changedPaths
     });
   }
   return {
@@ -249,7 +258,14 @@ async function runFullCorpusBaseline(options = {}) {
     timeoutMs: options.timeoutMs
   });
   if (!run.determinism.stable) {
-    throw integrityError('DETERMINISM_MISMATCH', 'Full corpus attempts were not deterministic', {
+    const parserGraphDrift = run.determinism.mismatches.some((mismatch) => (
+      mismatch.failureCode === 'PARSER_INVOCATION_GRAPH_DETERMINISM_MISMATCH'
+    ));
+    throw integrityError(
+      parserGraphDrift
+        ? 'PARSER_INVOCATION_GRAPH_DETERMINISM_MISMATCH'
+        : 'DETERMINISM_MISMATCH',
+      'Full corpus attempts were not deterministic', {
       mismatches: run.determinism.mismatches
     });
   }

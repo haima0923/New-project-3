@@ -24,6 +24,13 @@ function collectFinalAudit(runtime, spec, fixtureBefore) {
     finalTransactionAudit,
     fixtureMutationAudit,
     hostFilesystemAudit: runtimeAudit.hostFilesystemAudit,
+    isolationAuditCompletion: {
+      fixtureAuditCompleted: true,
+      journalBackupAuditCompleted: true,
+      networkAuditCompleted: Boolean(runtimeAudit.networkAudit),
+      storageAuditCompleted: Boolean(runtimeAudit.storageAudit),
+      workerCleanupCompleted: false
+    },
     networkAudit: runtimeAudit.networkAudit,
     storageAudit: runtimeAudit.storageAudit,
     voiceAudit: runtimeAudit.voiceAudit
@@ -71,12 +78,39 @@ async function executeCaseInWorker(message) {
     }
   } catch (error) {
     primaryError = error;
+    const retainedParserEvidence = runtime.parserObservationEvidence || {};
+    if (!primaryError.parserObservation && retainedParserEvidence.parserObservation) {
+      primaryError.parserObservation = safeClone(
+        retainedParserEvidence.parserObservation
+      );
+      primaryError.productionPathObservation = safeClone(
+        retainedParserEvidence.productionPathObservation || null
+      );
+    }
+    if (message.hooks && message.hooks.forceFinalAuditFailureAfterLaneError) {
+      spec.initialState.state.__runnerFinalAuditFailureSentinel = true;
+    }
   } finally {
     try {
       finalAudit = collectFinalAudit(runtime, spec, fixtureBefore);
     } catch (auditError) {
       finalAudit = auditError.finalAudit || finalAudit;
       if (primaryError) {
+        auditError.parserObservation = safeClone(
+          primaryError.parserObservation
+          || runtime.parserObservationEvidence
+          && runtime.parserObservationEvidence.parserObservation
+          || null
+        );
+        auditError.productionPathObservation = safeClone(
+          primaryError.productionPathObservation
+          || runtime.parserObservationEvidence
+          && runtime.parserObservationEvidence.productionPathObservation
+          || null
+        );
+        auditError.parserObservationCollectionFailure = safeClone(
+          primaryError.parserObservationCollectionFailure || null
+        );
         auditError.secondaryError = {
           code: primaryError.code || 'AUTOMATION_DRIVER_ERROR',
           message: primaryError.message
@@ -85,9 +119,21 @@ async function executeCaseInWorker(message) {
       primaryError = auditError;
     }
     runtime.dispose();
+    if (finalAudit && finalAudit.isolationAuditCompletion) {
+      finalAudit.isolationAuditCompletion.workerCleanupCompleted = true;
+    }
   }
   if (primaryError) {
     primaryError.finalAudit = sanitizeEvidence(finalAudit || {});
+    primaryError.parserObservation = sanitizeEvidence(
+      primaryError.parserObservation || {}
+    );
+    primaryError.productionPathObservation = sanitizeEvidence(
+      primaryError.productionPathObservation || {}
+    );
+    primaryError.parserObservationCollectionFailure = sanitizeEvidence(
+      primaryError.parserObservationCollectionFailure || null
+    );
     throw primaryError;
   }
   evidence.caseId = spec.caseId;
@@ -105,6 +151,7 @@ async function executeCaseInWorker(message) {
   };
   evidence.finalTransactionAudit = finalAudit.finalTransactionAudit;
   evidence.hostFilesystemAudit = finalAudit.hostFilesystemAudit;
+  evidence.isolationAuditCompletion = finalAudit.isolationAuditCompletion;
   evidence.networkAudit = finalAudit.networkAudit;
   evidence.storageAudit = finalAudit.storageAudit;
   evidence.voiceAudit = finalAudit.voiceAudit;

@@ -75,6 +75,15 @@ async function expectWorkerError(caseId, hooks, code) {
   }
   assert(caught, `${caseId} should have produced a worker error`);
   assert.strictEqual(caught.code, code);
+  return caught;
+}
+
+function initialCanonicalRawResult(evidence) {
+  const raw = evidence.observationSemantics.rawParser;
+  const matches = raw.summary.canonicalLocalResults
+    .filter((item) => item.phase === 'INITIAL_PARSE');
+  assert.strictEqual(matches.length, 1);
+  return matches[0].resultSummary;
 }
 
 const tests = [
@@ -171,11 +180,16 @@ const tests = [
   {
     name: 'driver-skipping-existing-page-method-is-runner-error',
     async run() {
-      await expectWorkerError(
+      const error = await expectWorkerError(
         'REC-E2E-PAGE-008',
         { skipPageEditMethod: true },
         'AUTOMATION_DRIVER_ERROR'
       );
+      assert(error.parserObservation);
+      assert.strictEqual(error.parserObservation.status, 'RAW_PARSER_INVOKED');
+      assert.strictEqual(error.parserObservation.collectionCompleted, true);
+      assert.strictEqual(error.finalAudit.isolationAuditCompletion.networkAuditCompleted, true);
+      assert.strictEqual(error.finalAudit.isolationAuditCompletion.storageAuditCompleted, true);
     }
   },
   {
@@ -186,6 +200,26 @@ const tests = [
         { repeatPageEditMethod: true },
         'AUTOMATION_DRIVER_ERROR'
       );
+    }
+  },
+  {
+    name: 'parent-and-final-audit-errors-retain-parser-graph',
+    async run() {
+      const error = await expectWorkerError(
+        'REC-E2E-PAGE-008',
+        {
+          forceFinalAuditFailureAfterLaneError: true,
+          skipPageEditMethod: true
+        },
+        'AUTOMATION_FIXTURE_MUTATION_ERROR'
+      );
+      assert(error.parserObservation);
+      assert.strictEqual(error.parserObservation.status, 'RAW_PARSER_INVOKED');
+      assert.strictEqual(error.parserObservation.collectionCompleted, true);
+      assert.strictEqual(error.secondaryError.code, 'AUTOMATION_DRIVER_ERROR');
+      assert.strictEqual(error.finalAudit.fixtureMutationAudit.unchanged, false);
+      assert.strictEqual(error.finalAudit.isolationAuditCompletion.networkAuditCompleted, true);
+      assert.strictEqual(error.finalAudit.isolationAuditCompletion.storageAuditCompleted, true);
     }
   },
   {
@@ -802,7 +836,7 @@ const tests = [
     async run() {
       const item = bundle('REC-E2E-BASIC-001');
       const evidence = await worker(item.testCase.caseId);
-      assert.strictEqual(evidence.observationSemantics.rawParser.operation, null);
+      assert.strictEqual(initialCanonicalRawResult(evidence).operation, null);
       assert.strictEqual(
         evidence.observationSemantics.semanticResult.effectiveOperation,
         'create_order'
@@ -848,7 +882,7 @@ const tests = [
       const evidence = await worker(item.testCase.caseId);
       const contract = safeClone(item.testCase);
       contract.expected.observationSemantics.rawParser = {
-        assertionScope: 'RAW_PARSER',
+        assertionScope: 'REQUIRED',
         businessType: 'order',
         intent: 'order',
         operation: 'create_order'
@@ -867,7 +901,7 @@ const tests = [
     name: 'dunning-is-canonically-projected-to-todo',
     async run() {
       const evidence = await worker('REC-E2E-BASIC-017');
-      assert.strictEqual(evidence.observationSemantics.rawParser.intent, 'dunning');
+      assert.strictEqual(initialCanonicalRawResult(evidence).intent, 'dunning');
       assert.strictEqual(evidence.observationSemantics.semanticResult.businessType, 'todo');
       assert.strictEqual(
         evidence.observationSemantics.semanticResult.effectiveOperation,
@@ -1017,7 +1051,7 @@ const tests = [
     name: 'page-008-raw-null-no-longer-masks-next-real-difference',
     async run() {
       const result = await executeOne(bundle('REC-E2E-PAGE-008'));
-      assert.strictEqual(result.observationSemantics.rawParser.operation, null);
+      assert.strictEqual(initialCanonicalRawResult(result).operation, null);
       assert.strictEqual(
         result.observationSemantics.semanticResult.effectiveOperation,
         'create_order'
@@ -1052,11 +1086,15 @@ const tests = [
     async run() {
       const evidence = await worker('REC-E2E-BASIC-001');
       assert.strictEqual(
-        evidence.observationSemantics.rawParser.source,
-        'PRODUCTION_LOCAL_PARSER'
+        evidence.observationSemantics.rawParser.productionPath.source,
+        'PRODUCTION_PATH_OBSERVATION_REGISTRY'
       );
       assert.strictEqual(
-        evidence.observationSemantics.rawParser.sameHybridInvocation,
+        evidence.observationSemantics.rawParser.collectionCompleted,
+        true
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.rawParser.validationCompleted,
         true
       );
       assert.strictEqual(

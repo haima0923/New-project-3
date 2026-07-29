@@ -12,6 +12,10 @@ process.once('message', async (message) => {
           code: error.code || 'AUTOMATION_DRIVER_ERROR',
           finalAudit: error.finalAudit || null,
           message: error.message,
+          parserObservation: error.parserObservation || null,
+          parserObservationCollectionFailure:
+            error.parserObservationCollectionFailure || null,
+          productionPathObservation: error.productionPathObservation || null,
           secondaryError: error.secondaryError || null,
           stack: error.stack
         }

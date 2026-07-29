@@ -109,6 +109,45 @@ function assertRuntimeIsolation(result) {
     );
   }
   assertWorkerAudit(result.workerExitAudit, result.caseId);
+  const completion = result.isolationAuditCompletion;
+  if (!completion
+    || completion.networkAuditCompleted !== true
+    || completion.storageAuditCompleted !== true
+    || completion.fixtureAuditCompleted !== true
+    || completion.workerCleanupCompleted !== true
+    || completion.journalBackupAuditCompleted !== true) {
+    throw integrityError(
+      'ISOLATION_AUDIT_NOT_EXECUTED',
+      `${result.caseId} isolation audit completion evidence missing`,
+      { completion }
+    );
+  }
+
+  const raw = result.observationSemantics && result.observationSemantics.rawParser;
+  if (!raw || raw.status === 'RAW_PARSER_EVIDENCE_MISSING'
+    || raw.validationCompleted !== true
+    || (raw.errors || []).length) {
+    throw integrityError(
+      'RAW_PARSER_EVIDENCE_MISSING',
+      `${result.caseId} raw parser evidence missing`,
+      { raw }
+    );
+  }
+  assertAuditZero(
+    (raw.shadowParserInvocations || []).length,
+    `${result.caseId}.shadowParserInvocationCount`,
+    'SHADOW_PARSER_INVOCATION_DETECTED'
+  );
+  assertAuditZero(
+    (raw.orphanRawInvocations || []).length,
+    `${result.caseId}.orphanRawInvocationCount`,
+    'ORPHAN_RAW_INVOCATION_DETECTED'
+  );
+  assertAuditZero(
+    Number(raw.uncorrelatedInvocationCount || 0),
+    `${result.caseId}.uncorrelatedInvocationCount`,
+    'UNCORRELATED_RAW_INVOCATION_DETECTED'
+  );
 
   const transaction = result.finalTransactionAudit;
   if (!transaction
@@ -218,9 +257,14 @@ function assertFullAttemptIntegrity(attempt, plans) {
     crossCaseLeakCount: 0,
     fixtureMutationCount: 0,
     hostFilesystemStorageCalls: 0,
+    isolationAuditNotExecutedCount: 0,
     journalCount: 0,
+    orphanRawInvocationCount: 0,
+    parserEvidenceMissingCount: 0,
     realNetworkRequests: 0,
     realWxStorageCalls: 0,
+    shadowParserInvocationCount: 0,
+    uncorrelatedInvocationCount: 0,
     unknownFakeRouteRequests: 0
   };
 }

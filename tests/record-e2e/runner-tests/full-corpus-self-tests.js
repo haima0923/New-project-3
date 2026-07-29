@@ -45,12 +45,45 @@ function cleanResult(caseId, laneName = 'PAGE_PRODUCTION_OBSERVATION') {
       guardInstalled: true,
       hostFilesystemStorageCalls: 0
     },
+    isolationAuditCompletion: {
+      fixtureAuditCompleted: true,
+      journalBackupAuditCompleted: true,
+      networkAuditCompleted: true,
+      storageAuditCompleted: true,
+      workerCleanupCompleted: true
+    },
     laneResults: [lane(laneName)],
     networkAudit: {
       auditPerformed: true,
       guardInstalled: true,
       realNetworkRequests: 0,
       unknownFakeRouteRequests: 0
+    },
+    observationSemantics: {
+      rawParser: {
+        collectionCompleted: true,
+        directRawInvocations: [],
+        errors: [],
+        hybridInvocations: [{
+          hybridInvocationId: 'hybrid-1',
+          rawInvocations: [{
+            completed: true,
+            globalSequence: 1,
+            parentDirectRawInvocationId: null,
+            parentHybridInvocationId: 'hybrid-1',
+            rawInvocationId: 'raw-1',
+            started: true
+          }]
+        }],
+        instrumentationInstalled: true,
+        instrumentationInstalledBeforeAiParserLoad: true,
+        orphanRawInvocations: [],
+        rawInvocationCount: 1,
+        shadowParserInvocations: [],
+        status: 'RAW_PARSER_INVOKED',
+        uncorrelatedInvocationCount: 0,
+        validationCompleted: true
+      }
     },
     runtimeEvidence: { workerIsolation: 'DEDICATED_CHILD_PROCESS' },
     storageAudit: {
@@ -138,6 +171,44 @@ const tests = [
       expectThrow(
         () => compareResultOrThrow(baseline, rerun, 'self-test'),
         'DETERMINISM_MISMATCH'
+      );
+    }
+  },
+  {
+    name: 'determinism-parser-invocation-graph-drift-is-rejected',
+    run() {
+      const baseline = cleanResult('CASE-A');
+      const rerun = cleanResult('CASE-A');
+      rerun.observationSemantics.rawParser.hybridInvocations[0]
+        .rawInvocations.push({
+          completed: true,
+          globalSequence: 2,
+          parentDirectRawInvocationId: null,
+          parentHybridInvocationId: 'hybrid-1',
+          rawInvocationId: 'raw-2',
+          started: true
+        });
+      rerun.observationSemantics.rawParser.rawInvocationCount = 2;
+      expectThrow(
+        () => compareResultOrThrow(baseline, rerun, 'parser graph self-test'),
+        'PARSER_INVOCATION_GRAPH_DETERMINISM_MISMATCH'
+      );
+    }
+  },
+  {
+    name: 'full-attempt-rejects-missing-parser-evidence',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = cleanResult('CASE-A');
+      result.observationSemantics.rawParser.status = 'RAW_PARSER_EVIDENCE_MISSING';
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'RAW_PARSER_EVIDENCE_MISSING'
       );
     }
   },

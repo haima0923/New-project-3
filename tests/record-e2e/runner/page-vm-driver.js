@@ -10,8 +10,8 @@ const {
 } = require('./page-action-registry');
 const {
   loadObservedAiParser,
-  rawParserCursor,
-  takeRawParserInvocation
+  parserObservationCursor,
+  runWithPageMethodContext
 } = require('./observed-ai-parser');
 
 const BUSINESS_PATH = require.resolve('../../../utils/business');
@@ -46,13 +46,7 @@ function businessDraftPayload(result = {}) {
 
 function createTransportIdentityAdapter(original, profile, evidence) {
   return async function transportIdentityAdapter(payload) {
-    const cursor = rawParserCursor();
-    let result;
-    try {
-      result = await original(payload);
-    } finally {
-      evidence.rawParserCalls.push(takeRawParserInvocation(cursor));
-    }
+    const result = await original(payload);
     if (!['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(profile)) return result;
     const fallback = result && result.ai_fallback || {};
     if (fallback.status !== 'used' || fallback.business_result_valid !== true) return result;
@@ -75,7 +69,7 @@ function createTransportIdentityAdapter(original, profile, evidence) {
   };
 }
 
-function instantiatePage(definition, evidence) {
+function instantiatePage(definition, evidence, surface) {
   if (!definition) {
     throw Object.assign(new Error('Page definition was not captured'), {
       code: 'AUTOMATION_DRIVER_ERROR'
@@ -114,7 +108,10 @@ function instantiatePage(definition, evidence) {
           evidence.pagePrimaryActionCalls.savePending += 1;
         }
       }
-      return definition[key].apply(page, args);
+      return runWithPageMethodContext({
+        methodName: key,
+        surface
+      }, () => definition[key].apply(page, args));
     };
   });
   return page;
@@ -158,10 +155,10 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     productionStorageCalls: {
       saveState: 0
     },
-    transportIdentityAdaptations: [],
-    rawParserCalls: []
+    transportIdentityAdaptations: []
   };
   const aiParser = loadObservedAiParser();
+  evidence.parserObservationCursor = parserObservationCursor();
   const business = require(BUSINESS_PATH);
   const storage = require(STORAGE_PATH);
   const originalHybrid = aiParser.parseHybridInput;
@@ -217,7 +214,7 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     business.savePendingNote = originalSavePending;
     storage.saveState = originalSaveState;
   }
-  const page = instantiatePage(definition, evidence);
+  const page = instantiatePage(definition, evidence, surface);
   const availableCapabilities = detectCapabilities(surface, page);
   evidence.availableCapabilities = safeClone(availableCapabilities);
   evidence.capabilityProbes = {

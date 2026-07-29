@@ -3,10 +3,16 @@ const { analyzeClipboardText, getPasteMeta } = require('../../../utils/clipboard
 const { businessDraftPayload } = require('./page-vm-driver');
 const { routeFromResult } = require('./execute-page-observation');
 const {
+  collectParserObservationSince,
   loadObservedAiParser,
-  rawParserCursor,
-  takeRawParserInvocation
+  parserObservationCursor
 } = require('./observed-ai-parser');
+const {
+  resolveProductionPathObservation
+} = require('./production-path-observation-registry');
+const {
+  validateParserInvocationGraph
+} = require('./validate-parser-invocation-graph');
 
 function adaptTransportIdentity(result, profile) {
   if (!['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(profile)) {
@@ -63,9 +69,50 @@ async function executeHeadlessObservation(spec) {
     payload.pasteMeta = getPasteMeta(analysis);
   }
   const aiParser = loadObservedAiParser();
-  const rawCursor = rawParserCursor();
-  const original = await aiParser.parseHybridInput(payload);
-  const rawParserEvidence = takeRawParserInvocation(rawCursor);
+  const parserCursor = parserObservationCursor();
+  let original;
+  let parserObservation;
+  let productionPathObservation;
+  try {
+    original = await aiParser.parseHybridInput(payload);
+  } catch (error) {
+    parserObservation = collectParserObservationSince(parserCursor);
+    try {
+      productionPathObservation = resolveProductionPathObservation({
+        actualPageMethod: 'parseHybridInput',
+        entrySurface: 'HEADLESS',
+        inputChannel: spec.input.channel,
+        hybridInvocationCount: parserObservation.hybridInvocations.length,
+        rawInvocationCount: parserObservation.rawInvocationCount,
+        page: null
+      });
+      parserObservation = validateParserInvocationGraph(
+        parserObservation,
+        productionPathObservation
+      );
+    } catch (collectionError) {
+      error.parserObservationCollectionFailure = {
+        code: collectionError.code || 'RAW_PARSER_EVIDENCE_MISSING',
+        message: collectionError.message
+      };
+    }
+    error.parserObservation = safeClone(parserObservation);
+    error.productionPathObservation = safeClone(productionPathObservation || null);
+    throw error;
+  }
+  parserObservation = collectParserObservationSince(parserCursor);
+  productionPathObservation = resolveProductionPathObservation({
+    actualPageMethod: 'parseHybridInput',
+    entrySurface: 'HEADLESS',
+    inputChannel: spec.input.channel,
+    hybridInvocationCount: parserObservation.hybridInvocations.length,
+    rawInvocationCount: parserObservation.rawInvocationCount,
+    page: null
+  });
+  parserObservation = validateParserInvocationGraph(
+    parserObservation,
+    productionPathObservation
+  );
   const adapted = adaptTransportIdentity(original, spec.ai.profile);
   const result = adapted.result;
   return {
@@ -94,7 +141,8 @@ async function executeHeadlessObservation(spec) {
     interaction: { evidence: { edits: [], selections: [] }, failures: [] },
     missingCapabilities: [],
     route: routeFromResult(result),
-    rawParserEvidence,
+    parserObservation,
+    productionPathObservation,
     transportIdentityAdaptation: adapted.adaptation
   };
 }

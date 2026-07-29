@@ -1,0 +1,322 @@
+const { safeClone, stableHash } = require('../../../utils/record-state-diff');
+
+const RAW_PARSER_STATUSES = Object.freeze({
+  INVOCATION_FAILED: 'RAW_PARSER_INVOCATION_FAILED',
+  INVOKED: 'RAW_PARSER_INVOKED',
+  EVIDENCE_MISSING: 'RAW_PARSER_EVIDENCE_MISSING',
+  NOT_INVOKED: 'RAW_PARSER_NOT_INVOKED_BY_PRODUCTION_PATH'
+});
+
+const CONVERSATION_ROLES = Object.freeze([
+  'CONVERSATION_CONFLICT_UNIT_PRICE_SCAN',
+  'CONVERSATION_CONFLICT_QUANTITY_SCAN',
+  'CONVERSATION_LATEST_UNIT_PRICE_SCAN',
+  'CONVERSATION_LATEST_QUANTITY_SCAN'
+]);
+
+function countBy(values, read) {
+  return values.reduce((output, value) => {
+    const key = read(value);
+    output[key] = (output[key] || 0) + 1;
+    return output;
+  }, {});
+}
+
+function duplicateValues(values) {
+  return Array.from(new Set(
+    values.filter((value, index) => values.indexOf(value) !== index)
+  )).sort();
+}
+
+function push(errors, code, detail = {}) {
+  errors.push({ code, detail });
+}
+
+function validateHybridCardinality(hybrid, errors) {
+  const raw = hybrid.rawInvocations || [];
+  const expected = hybrid.rawCardinalityExpectation || {};
+  if (raw.length !== Number(expected.expectedCount)) {
+    push(errors, 'HYBRID_RAW_CARDINALITY_MISMATCH', {
+      actual: raw.length,
+      expected: expected.expectedCount,
+      hybridInvocationId: hybrid.hybridInvocationId,
+      policy: expected.policy
+    });
+  }
+  const roleCounts = countBy(raw, (item) => item.role);
+  if (expected.policy === 'EXACTLY_ONE') {
+    if (roleCounts.HYBRID_PRIMARY_LOCAL_PARSE !== 1) {
+      push(errors, 'HYBRID_PRIMARY_RAW_ROLE_MISSING', {
+        hybridInvocationId: hybrid.hybridInvocationId,
+        roleCounts
+      });
+    }
+    return;
+  }
+  if (expected.policy === 'DERIVED_FROM_INPUT_STRUCTURE') {
+    const messageCount = Number(expected.rawMessageCount || 0);
+    if (roleCounts.HYBRID_PRIMARY_LOCAL_PARSE !== 1) {
+      push(errors, 'HYBRID_PRIMARY_RAW_ROLE_MISSING', {
+        hybridInvocationId: hybrid.hybridInvocationId,
+        roleCounts
+      });
+    }
+    CONVERSATION_ROLES.forEach((role) => {
+      if (Number(roleCounts[role] || 0) !== messageCount) {
+        push(errors, 'HYBRID_CONVERSATION_RAW_ROLE_COUNT_MISMATCH', {
+          actual: Number(roleCounts[role] || 0),
+          expected: messageCount,
+          hybridInvocationId: hybrid.hybridInvocationId,
+          role
+        });
+      }
+    });
+    const allowed = new Set(['HYBRID_PRIMARY_LOCAL_PARSE'].concat(CONVERSATION_ROLES));
+    raw.filter((item) => !allowed.has(item.role)).forEach((item) => {
+      push(errors, 'HYBRID_RAW_ROLE_UNCLASSIFIED', {
+        hybridInvocationId: hybrid.hybridInvocationId,
+        rawInvocationId: item.rawInvocationId,
+        role: item.role
+      });
+    });
+  }
+}
+
+function validateParserInvocationGraph(observation, productionPath) {
+  const graph = safeClone(observation || {});
+  const errors = [];
+  const hybrids = graph.hybridInvocations || [];
+  const directs = graph.directRawInvocations || [];
+  const raw = hybrids.flatMap((item) => item.rawInvocations || [])
+    .concat(directs.flatMap((item) => item.rawInvocations || []))
+    .concat(graph.orphanRawInvocations || []);
+  if (graph.instrumentationInstalled !== true
+    || graph.instrumentationInstalledBeforeAiParserLoad !== true) {
+    push(errors, 'PARSER_INSTRUMENTATION_NOT_INSTALLED_BEFORE_LOAD');
+  }
+  if (graph.collectionCompleted !== true) {
+    push(errors, 'PARSER_INVOCATION_COLLECTION_INCOMPLETE');
+  }
+  if (!productionPath || !productionPath.productionPath) {
+    push(errors, 'PARSER_PRODUCTION_PATH_EVIDENCE_MISSING');
+  }
+  const hybridIds = hybrids.map((item) => item.hybridInvocationId);
+  const directIds = directs.map((item) => item.directRawInvocationId);
+  const rawIds = raw.map((item) => item.rawInvocationId);
+  duplicateValues(hybridIds).forEach((id) => push(
+    errors,
+    'DUPLICATE_HYBRID_INVOCATION_ID',
+    { id }
+  ));
+  duplicateValues(directIds).forEach((id) => push(
+    errors,
+    'DUPLICATE_DIRECT_RAW_PARENT_ID',
+    { id }
+  ));
+  duplicateValues(rawIds).forEach((id) => push(
+    errors,
+    'DUPLICATE_RAW_INVOCATION_ID',
+    { id }
+  ));
+  hybrids.forEach((hybrid) => {
+    if (hybrid.started !== true || hybrid.completed !== true) {
+      push(errors, 'HYBRID_INVOCATION_INCOMPLETE', {
+        hybridInvocationId: hybrid.hybridInvocationId
+      });
+    }
+    if (!['INITIAL_PARSE', 'DEEP_REVIEW'].includes(hybrid.phase)) {
+      push(errors, 'HYBRID_PHASE_NOT_FROM_PRODUCTION_CONTEXT', {
+        hybridInvocationId: hybrid.hybridInvocationId,
+        phase: hybrid.phase
+      });
+    }
+    if (!hybrid.inputFingerprint || !hybrid.callerAction) {
+      push(errors, 'HYBRID_INVOCATION_EVIDENCE_MISSING', {
+        hybridInvocationId: hybrid.hybridInvocationId
+      });
+    }
+    (hybrid.rawInvocations || []).forEach((item, index) => {
+      if (item.parentHybridInvocationId !== hybrid.hybridInvocationId
+        || item.parentDirectRawInvocationId !== null) {
+        push(errors, 'RAW_HYBRID_PARENT_MISMATCH', {
+          hybridInvocationId: hybrid.hybridInvocationId,
+          rawInvocationId: item.rawInvocationId
+        });
+      }
+      if (Number(item.sequenceInHybrid) !== index + 1) {
+        push(errors, 'RAW_HYBRID_SEQUENCE_MISMATCH', {
+          hybridInvocationId: hybrid.hybridInvocationId,
+          rawInvocationId: item.rawInvocationId
+        });
+      }
+    });
+    validateHybridCardinality(hybrid, errors);
+  });
+  directs.forEach((direct) => {
+    if (direct.started !== true || direct.completed !== true) {
+      push(errors, 'DIRECT_RAW_INVOCATION_INCOMPLETE', {
+        directRawInvocationId: direct.directRawInvocationId
+      });
+    }
+    if (!(direct.rawInvocations || []).length) {
+      push(errors, 'DIRECT_RAW_INVOCATION_EMPTY', {
+        directRawInvocationId: direct.directRawInvocationId
+      });
+    }
+    (direct.rawInvocations || []).forEach((item, index) => {
+      if (item.parentDirectRawInvocationId !== direct.directRawInvocationId
+        || item.parentHybridInvocationId !== null) {
+        push(errors, 'RAW_DIRECT_PARENT_MISMATCH', {
+          directRawInvocationId: direct.directRawInvocationId,
+          rawInvocationId: item.rawInvocationId
+        });
+      }
+      if (Number(item.sequenceInDirectRaw) !== index + 1) {
+        push(errors, 'RAW_DIRECT_SEQUENCE_MISMATCH', {
+          directRawInvocationId: direct.directRawInvocationId,
+          rawInvocationId: item.rawInvocationId
+        });
+      }
+    });
+  });
+  raw.forEach((item) => {
+    const parentCount = Number(Boolean(item.parentHybridInvocationId))
+      + Number(Boolean(item.parentDirectRawInvocationId));
+    if (parentCount !== 1) {
+      push(errors, 'ORPHAN_OR_MULTIPLE_PARENT_RAW_INVOCATION', {
+        rawInvocationId: item.rawInvocationId
+      });
+    }
+    if (item.started !== true || item.completed !== true
+      || !item.inputFingerprint || !item.calledFunction) {
+      push(errors, 'RAW_INVOCATION_EVIDENCE_INCOMPLETE', {
+        rawInvocationId: item.rawInvocationId
+      });
+    }
+  });
+  if (raw.length !== Number(graph.rawInvocationCount || 0)) {
+    push(errors, 'RAW_INVOCATION_TOTAL_MISMATCH', {
+      actualGraphCount: raw.length,
+      recordedTotal: graph.rawInvocationCount
+    });
+  }
+  if ((graph.orphanRawInvocations || []).length
+    || Number(graph.uncorrelatedInvocationCount || 0)
+    || (graph.shadowParserInvocations || []).length) {
+    push(errors, 'UNPARENTED_OR_SHADOW_RAW_INVOCATION', {
+      orphanCount: (graph.orphanRawInvocations || []).length,
+      shadowCount: (graph.shadowParserInvocations || []).length,
+      uncorrelatedInvocationCount: graph.uncorrelatedInvocationCount
+    });
+  }
+  if (productionPath) {
+    if (productionPath.directRawInvocationPolicy !== 'ALLOWED_REQUIRED'
+      && directs.length !== 0) {
+      push(errors, 'DIRECT_RAW_INVOCATION_FORBIDDEN_ON_PRODUCTION_PATH', {
+        directRawInvocationCount: directs.length,
+        productionPath: productionPath.productionPath
+      });
+    }
+    if (productionPath.directRawInvocationPolicy === 'ALLOWED_REQUIRED'
+      && directs.length < 1) {
+      push(errors, 'REQUIRED_DIRECT_RAW_INVOCATION_MISSING');
+    }
+    if (productionPath.hybridInvocationPolicy === 'AT_LEAST_ONE'
+      && hybrids.length < 1) {
+      push(errors, 'REQUIRED_HYBRID_INVOCATION_MISSING');
+    }
+    if (productionPath.hybridInvocationPolicy === 'EXACTLY_ZERO'
+      && hybrids.length !== 0) {
+      push(errors, 'UNEXPECTED_HYBRID_INVOCATION');
+    }
+    if (productionPath.hybridInvocationPolicy === 'AT_LEAST_ONE_OR_NO_BUSINESS_CONFIRMATION'
+      && hybrids.length === 0
+      && productionPath.parserInvocationNotApplicable !== true) {
+      push(errors, 'UNRESOLVED_ZERO_PARSER_INVOCATION', {
+        productionBranch: productionPath.productionBranch
+      });
+    }
+    if (raw.length === 0
+      && productionPath.zeroInvocationResolved !== true) {
+      push(errors, 'ZERO_PARSER_INVOCATION_PATH_UNPROVEN', {
+        productionBranch: productionPath.productionBranch
+      });
+    }
+    if (productionPath.parserInvocationExpected === true && raw.length < 1) {
+      push(errors, 'REQUIRED_RAW_PARSER_INVOCATION_MISSING');
+    }
+    if (productionPath.parserInvocationNotApplicable === true && raw.length !== 0) {
+      push(errors, 'NOT_APPLICABLE_RAW_PARSER_WAS_INVOKED');
+    }
+  }
+  const rawFailures = raw.filter((item) => item.failure);
+  let status;
+  if (errors.length) status = RAW_PARSER_STATUSES.EVIDENCE_MISSING;
+  else if (rawFailures.length) status = RAW_PARSER_STATUSES.INVOCATION_FAILED;
+  else if (raw.length) status = RAW_PARSER_STATUSES.INVOKED;
+  else status = RAW_PARSER_STATUSES.NOT_INVOKED;
+  const canonicalLocalResults = hybrids.map((hybrid) => {
+    const primary = (hybrid.rawInvocations || []).find(
+      (item) => item.role === 'HYBRID_PRIMARY_LOCAL_PARSE'
+    );
+    return {
+      hybridInvocationId: hybrid.hybridInvocationId,
+      phase: hybrid.phase,
+      rawInvocationId: primary && primary.rawInvocationId || null,
+      resultSummary: primary && safeClone(primary.resultSummary) || null
+    };
+  });
+  const summary = {
+    canonicalLocalResults,
+    directRawResults: directs.flatMap((direct) => (
+      (direct.rawInvocations || []).map((item) => ({
+        directRawInvocationId: direct.directRawInvocationId,
+        rawInvocationId: item.rawInvocationId,
+        resultSummary: safeClone(item.resultSummary)
+      }))
+    )),
+    directRawInvocationCount: directs.length,
+    hybridInvocationCount: hybrids.length,
+    rawInvocationCount: raw.length,
+    rawInvocationCountsByHybrid: hybrids.map((item) => ({
+      hybridInvocationId: item.hybridInvocationId,
+      phase: item.phase,
+      rawInvocationCount: (item.rawInvocations || []).length
+    })),
+    rawRoleCounts: countBy(raw, (item) => item.role),
+    rawFailureCount: rawFailures.length
+  };
+  const validated = Object.assign(graph, {
+    errors,
+    graphFingerprint: stableHash({
+      directs,
+      hybrids,
+      rawSequence: raw.map((item) => ({
+        inputFingerprint: item.inputFingerprint,
+        parentDirectRawInvocationId: item.parentDirectRawInvocationId,
+        parentHybridInvocationId: item.parentHybridInvocationId,
+        role: item.role,
+        sequenceInHybrid: item.sequenceInHybrid
+      }))
+    }, 'parser-invocation-graph-v1'),
+    productionPath: safeClone(productionPath),
+    status,
+    summary,
+    validationCompleted: true
+  });
+  return validated;
+}
+
+function graphErrors(observation) {
+  if (!observation || observation.validationCompleted !== true) {
+    return [{ code: 'PARSER_INVOCATION_GRAPH_NOT_VALIDATED' }];
+  }
+  return safeClone(observation.errors || []);
+}
+
+module.exports = {
+  CONVERSATION_ROLES,
+  RAW_PARSER_STATUSES,
+  graphErrors,
+  validateParserInvocationGraph
+};

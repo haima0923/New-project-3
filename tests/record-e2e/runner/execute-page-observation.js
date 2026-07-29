@@ -7,6 +7,15 @@ const {
   loadProductionPage,
   waitForPageParse
 } = require('./page-vm-driver');
+const {
+  collectParserObservationSince
+} = require('./observed-ai-parser');
+const {
+  resolveProductionPathObservation
+} = require('./production-path-observation-registry');
+const {
+  validateParserInvocationGraph
+} = require('./validate-parser-invocation-graph');
 
 function routeFromResult(result = {}) {
   const decision = result.parse_route && result.parse_route.decision;
@@ -62,6 +71,40 @@ function pageSnapshot(driver) {
   };
 }
 
+function expectedPageInputMethod(surface, channel) {
+  if (channel === 'TYPED_TEXT') {
+    return surface === 'HOME_QUICK' ? 'submitComposer' : 'runParse';
+  }
+  if (channel === 'CLIPBOARD_CHAT') return 'pasteClipboard';
+  if (channel === 'VOICE_TRANSCRIPT') {
+    return surface === 'HOME_QUICK' ? 'beginVoiceRecognition' : 'startVoice';
+  }
+  if (channel === 'PENDING_EDIT') return 'runParse';
+  return '';
+}
+
+function collectValidatedPageParserObservation(driver, actualPageMethod, surface, spec) {
+  let parserObservation = collectParserObservationSince(
+    driver.evidence.parserObservationCursor
+  );
+  const productionPathObservation = resolveProductionPathObservation({
+    actualPageMethod,
+    entrySurface: surface,
+    inputChannel: spec.input.channel,
+    hybridInvocationCount: parserObservation.hybridInvocations.length,
+    rawInvocationCount: parserObservation.rawInvocationCount,
+    page: driver.page
+  });
+  parserObservation = validateParserInvocationGraph(
+    parserObservation,
+    productionPathObservation
+  );
+  driver.evidence.actualPageMethod = actualPageMethod;
+  driver.evidence.parserObservation = safeClone(parserObservation);
+  driver.evidence.productionPathObservation = safeClone(productionPathObservation);
+  return { parserObservation, productionPathObservation };
+}
+
 async function submitTyped(driver, text, hooks = {}) {
   const { page, surface } = driver;
   if (hooks.skipInputMethod === true) {
@@ -77,6 +120,7 @@ async function submitTyped(driver, text, hooks = {}) {
     }
     page.onComposerInput({ detail: { value: text } });
     page.submitComposer();
+    return 'submitComposer';
   } else {
     if (typeof page.onTextInput !== 'function' || typeof page.runParse !== 'function') {
       throw Object.assign(new Error('Input page typed method missing'), {
@@ -85,6 +129,7 @@ async function submitTyped(driver, text, hooks = {}) {
     }
     page.onTextInput({ detail: { value: text } });
     page.runParse();
+    return 'runParse';
   }
 }
 
@@ -96,6 +141,7 @@ async function submitClipboard(driver, runtime, spec) {
     });
   }
   driver.page.pasteClipboard();
+  return 'pasteClipboard';
 }
 
 async function submitVoice(driver) {
@@ -106,6 +152,7 @@ async function submitVoice(driver) {
       });
     }
     driver.page.beginVoiceRecognition();
+    return 'beginVoiceRecognition';
   } else {
     if (typeof driver.page.startVoice !== 'function') {
       throw Object.assign(new Error('Input page voice method missing'), {
@@ -113,6 +160,7 @@ async function submitVoice(driver) {
       });
     }
     driver.page.startVoice();
+    return 'startVoice';
   }
 }
 
@@ -227,70 +275,103 @@ async function executePageObservation(runtime, spec, options = {}) {
     runLifecycle: true
   });
   const rawBefore = pageSnapshot(driver);
-  if (spec.input.channel === 'TYPED_TEXT') {
-    await submitTyped(driver, spec.input.originalText, options.hooks);
-  } else if (spec.input.channel === 'CLIPBOARD_CHAT') {
-    await submitClipboard(driver, runtime, spec);
-  } else if (spec.input.channel === 'VOICE_TRANSCRIPT') {
-    await submitVoice(driver);
-    await waitForVoiceTranscript(runtime);
-  } else if (spec.input.channel === 'PENDING_EDIT') {
-    if (typeof driver.page.runParse !== 'function') {
-      throw Object.assign(new Error('Pending edit parse method missing'), {
+  let actualPageMethod = expectedPageInputMethod(surface, spec.input.channel);
+  try {
+    if (spec.input.channel === 'TYPED_TEXT') {
+      await submitTyped(driver, spec.input.originalText, options.hooks);
+    } else if (spec.input.channel === 'CLIPBOARD_CHAT') {
+      await submitClipboard(driver, runtime, spec);
+    } else if (spec.input.channel === 'VOICE_TRANSCRIPT') {
+      await submitVoice(driver);
+      await waitForVoiceTranscript(runtime);
+    } else if (spec.input.channel === 'PENDING_EDIT') {
+      if (typeof driver.page.runParse !== 'function') {
+        throw Object.assign(new Error('Pending edit parse method missing'), {
+          code: 'AUTOMATION_DRIVER_ERROR'
+        });
+      }
+      driver.page.runParse();
+    } else {
+      throw Object.assign(new Error(`Unsupported page input channel: ${spec.input.channel}`), {
         code: 'AUTOMATION_DRIVER_ERROR'
       });
     }
-    driver.page.runParse();
-  } else {
-    throw Object.assign(new Error(`Unsupported page input channel: ${spec.input.channel}`), {
-      code: 'AUTOMATION_DRIVER_ERROR'
-    });
-  }
-  await waitForPageParse(driver.page);
-  await maybeDeepReview(driver, spec);
-  await flushAsync();
-  const beforeEdits = pageSnapshot(driver);
-  const missingCapabilities = (spec.interaction.requiredCapabilities || [])
-    .filter((capability) => driver.availableCapabilities[capability] !== true);
-  const interaction = await applyPageInteractions(driver, spec.interaction, options.hooks);
-  const afterEdits = pageSnapshot(driver);
-  const pageEditConsistency = collectPageEditConsistency(
-    driver,
-    interaction,
-    beforeEdits,
-    afterEdits
-  );
-  const actualPageText = afterEdits.originalInput || beforeEdits.originalInput || '';
-  let clipboardEvidence = null;
-  if (spec.input.channel === 'CLIPBOARD_CHAT') {
-    const analysis = driver.page.data.pasteAnalysis || {};
-    clipboardEvidence = {
-      rawText: analysis.rawText || '',
-      extractedText: analysis.extractedText || '',
-      status: analysis.status || ''
+    await waitForPageParse(driver.page);
+    await maybeDeepReview(driver, spec);
+    await flushAsync();
+    const beforeEdits = pageSnapshot(driver);
+    const missingCapabilities = (spec.interaction.requiredCapabilities || [])
+      .filter((capability) => driver.availableCapabilities[capability] !== true);
+    const interaction = await applyPageInteractions(driver, spec.interaction, options.hooks);
+    const afterEdits = pageSnapshot(driver);
+    const collected = collectValidatedPageParserObservation(
+      driver,
+      actualPageMethod,
+      surface,
+      spec
+    );
+    const pageEditConsistency = collectPageEditConsistency(
+      driver,
+      interaction,
+      beforeEdits,
+      afterEdits
+    );
+    const actualPageText = afterEdits.originalInput || beforeEdits.originalInput || '';
+    let clipboardEvidence = null;
+    if (spec.input.channel === 'CLIPBOARD_CHAT') {
+      const analysis = driver.page.data.pasteAnalysis || {};
+      clipboardEvidence = {
+        rawText: analysis.rawText || '',
+        extractedText: analysis.extractedText || '',
+        status: analysis.status || ''
+      };
+    }
+    return {
+      actualInput: {
+        channel: spec.input.channel,
+        originalText: spec.input.originalText,
+        pageText: actualPageText,
+        source: afterEdits.parseResult.source || driver.page.data.source || '',
+        clipboard: clipboardEvidence
+      },
+      afterEdits,
+      beforeEdits,
+      driver,
+      inputBefore: rawBefore,
+      interaction,
+      missingCapabilities,
+      pageEditConsistency,
+      parserObservation: collected.parserObservation,
+      productionPathObservation: collected.productionPathObservation,
+      route: routeFromResult(afterEdits.parseResult)
     };
+  } catch (error) {
+    try {
+      const collected = collectValidatedPageParserObservation(
+        driver,
+        actualPageMethod,
+        surface,
+        spec
+      );
+      error.parserObservation = safeClone(collected.parserObservation);
+      error.productionPathObservation = safeClone(collected.productionPathObservation);
+    } catch (collectionError) {
+      const partial = collectParserObservationSince(
+        driver.evidence.parserObservationCursor
+      );
+      error.parserObservation = safeClone(partial);
+      error.parserObservationCollectionFailure = {
+        code: collectionError.code || 'RAW_PARSER_EVIDENCE_MISSING',
+        message: collectionError.message
+      };
+    }
+    throw error;
   }
-  return {
-    actualInput: {
-      channel: spec.input.channel,
-      originalText: spec.input.originalText,
-      pageText: actualPageText,
-      source: afterEdits.parseResult.source || driver.page.data.source || '',
-      clipboard: clipboardEvidence
-    },
-    afterEdits,
-    beforeEdits,
-    driver,
-    inputBefore: rawBefore,
-    interaction,
-    missingCapabilities,
-    pageEditConsistency,
-    route: routeFromResult(afterEdits.parseResult)
-  };
 }
 
 module.exports = {
   executePageObservation,
+  expectedPageInputMethod,
   pageDraft,
   pageSnapshot,
   routeFromResult

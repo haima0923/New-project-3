@@ -74,8 +74,9 @@ async function executeOne(item, options = {}) {
     requiredCapabilities: (item.testCase.interaction.requiredCapabilities || []).slice(),
     riskLevel: item.testCase.riskLevel
   };
+  let evidence = null;
   try {
-    const evidence = await runCaseWorker({
+    evidence = await runCaseWorker({
       attempt: options.attempt || 1,
       hooks: options.hooks || {},
       plan: item.plan,
@@ -98,7 +99,15 @@ async function executeOne(item, options = {}) {
     });
     return Object.assign(result, classifyFailureOwnership(item.testCase, result));
   } catch (error) {
-    const finalAudit = error.finalAudit || {};
+    const finalAudit = error.finalAudit || evidence && {
+      finalTransactionAudit: evidence.finalTransactionAudit,
+      fixtureMutationAudit: evidence.fixtureMutationAudit,
+      hostFilesystemAudit: evidence.hostFilesystemAudit,
+      isolationAuditCompletion: evidence.isolationAuditCompletion,
+      networkAudit: evidence.networkAudit,
+      storageAudit: evidence.storageAudit,
+      voiceAudit: evidence.voiceAudit
+    } || {};
     return Object.assign({
       assertions: [],
       caseId: item.testCase.caseId,
@@ -107,7 +116,21 @@ async function executeOne(item, options = {}) {
         message: error.message,
         workerStack: error.workerStack || ''
       }
-    }, metadata, finalAudit, {
+    }, metadata, finalAudit, evidence ? {
+      observationSemantics: evidence.observationSemantics,
+      rawParserInstrumentation: evidence.rawParserInstrumentation,
+      runtimeEvidence: evidence.runtimeEvidence
+    } : (error.parserObservation ? {
+      observationSemantics: {
+        rawParser: safeClone(error.parserObservation)
+      },
+      parserObservationCollectionFailure: safeClone(
+        error.parserObservationCollectionFailure || null
+      ),
+      productionPathObservation: safeClone(
+        error.productionPathObservation || null
+      )
+    } : {}), {
       workerExitAudit: error.workerExitAudit || null
     }, classifyWorkerError(error), {
       failureOwnership: 'UNCLASSIFIED_REQUIRES_REVIEW',
@@ -211,14 +234,22 @@ async function runSuite(options = {}) {
         const normalized = normalizeRunResult(result);
         const baselineResult = baseline.get(result.caseId);
         if (!baselineResult || baselineResult.fingerprint !== normalized.fingerprint) {
+          const changedPaths = baselineResult
+            ? findChangedPaths(baselineResult.semantic, normalized.semantic)
+            : ['$'];
+          const parserGraphDrift = changedPaths.some((changedPath) => (
+            changedPath.startsWith('observationSemantics.rawParser')
+            || changedPath.startsWith('parserObservation')
+          ));
           determinism.mismatches.push({
             attempt: attempt.attempt,
             caseId: result.caseId,
             baseline: baselineResult && baselineResult.fingerprint || '',
             actual: normalized.fingerprint,
-            changedPaths: baselineResult
-              ? findChangedPaths(baselineResult.semantic, normalized.semantic)
-              : ['$']
+            changedPaths,
+            failureCode: parserGraphDrift
+              ? 'PARSER_INVOCATION_GRAPH_DETERMINISM_MISMATCH'
+              : 'DETERMINISM_MISMATCH'
           });
         }
       });

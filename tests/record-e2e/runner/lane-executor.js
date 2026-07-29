@@ -30,6 +30,9 @@ const {
   proposalFromDraft
 } = require('./observation-semantics');
 const {
+  parserInstrumentationAudit
+} = require('./observed-ai-parser');
+const {
   RECORD_STORAGE_BACKUP_KEY,
   RECORD_STORAGE_JOURNAL_KEY
 } = require('../../../utils/record-storage-transaction-contract');
@@ -97,11 +100,18 @@ function publicObservation(observation) {
     pageEditConsistency: observation.pageEditConsistency || null,
     missingCapabilities: observation.missingCapabilities,
     pageDriverEvidence: observation.driver && observation.driver.evidence || null,
-    rawParserEvidence: observation.rawParserEvidence || (
-      observation.driver
-      && observation.driver.evidence.rawParserCalls
-      && observation.driver.evidence.rawParserCalls[0]
-    ) || null,
+    parserObservation: safeClone(
+      observation.parserObservation || (
+        observation.driver
+        && observation.driver.evidence.parserObservation
+      ) || null
+    ),
+    productionPathObservation: safeClone(
+      observation.productionPathObservation || (
+        observation.driver
+        && observation.driver.evidence.productionPathObservation
+      ) || null
+    ),
     route: observation.route,
     transportIdentityAdaptation: observation.transportIdentityAdaptation || null
   };
@@ -413,6 +423,18 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     });
     draftObservation = observation;
   }
+  runtime.parserObservationEvidence = {
+    observations: [observation, draftObservation]
+      .filter((item, index, values) => item && values.indexOf(item) === index)
+      .map((item) => ({
+        parserObservation: safeClone(item.parserObservation || null),
+        productionPathObservation: safeClone(item.productionPathObservation || null)
+      })),
+    parserObservation: safeClone(observation.parserObservation || null),
+    productionPathObservation: safeClone(
+      observation.productionPathObservation || null
+    )
+  };
   const primaryProductionObservation = deriveProductionObservation(spec, observation);
   const driverFailures = []
     .concat(observation.interaction && observation.interaction.failures || [])
@@ -816,12 +838,41 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     requestedSaveAction: spec.interaction.requestedSaveAction,
     route: observation.route
   });
+  const rawParserInstrumentation = parserInstrumentationAudit();
+  if (rawParserInstrumentation.orphanRawInvocationCount !== 0
+    || rawParserInstrumentation.uncorrelatedInvocationCount !== 0
+    || rawParserInstrumentation.shadowParserInvocationCount !== 0) {
+    throw Object.assign(new Error('Parser instrumentation found unparented raw calls'), {
+      code: 'RAW_PARSER_EVIDENCE_MISSING',
+      rawParserInstrumentation
+    });
+  }
+  const rawParser = safeClone(observationPublic.parserObservation);
+  if (!rawParser) {
+    throw Object.assign(new Error('Parser invocation graph evidence is missing'), {
+      code: 'RAW_PARSER_EVIDENCE_MISSING'
+    });
+  }
+  if (rawParser.status === 'RAW_PARSER_EVIDENCE_MISSING') {
+    throw Object.assign(new Error(
+      rawParser.errors && rawParser.errors[0] && rawParser.errors[0].code
+        || 'Raw parser observation evidence is missing'
+    ), {
+      code: 'RAW_PARSER_EVIDENCE_MISSING',
+      rawParser
+    });
+  }
+  if ((rawParser.shadowParserInvocations || []).length !== 0) {
+    throw Object.assign(new Error('Shadow parser invocation detected'), {
+      code: 'SHADOW_PARSER_INVOCATION_DETECTED',
+      rawParser
+    });
+  }
   const observationSemantics = {
     contractVersion: 'record-e2e-observation-semantics-v1',
     outcome,
     proposal,
-    rawParser: safeClone(observationPublic.rawParserEvidence
-      && observationPublic.rawParserEvidence.result || null),
+    rawParser,
     semanticResult
   };
   return {
@@ -841,6 +892,8 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     laneResults,
     networkAudit: audit.networkAudit,
     observationSemantics,
+    parserObservation: rawParser,
+    rawParserInstrumentation,
     hostFilesystemAudit: audit.hostFilesystemAudit,
     pageDerivationEvidence: draftPublic,
     pageEvidence: observationPublic,
