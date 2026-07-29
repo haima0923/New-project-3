@@ -1029,7 +1029,6 @@ const tests = [
     async run() {
       for (const caseId of [
         'REC-E2E-BASIC-006',
-        'REC-E2E-BASIC-010',
         'REC-E2E-AMB-005'
       ]) {
         const result = await executeOne(bundle(caseId));
@@ -1043,6 +1042,39 @@ const tests = [
           && entry.pass === false
         )));
       }
+    }
+  },
+  {
+    name: 'safe-local-receivable-cases-use-actual-route-and-selection-evidence',
+    async run() {
+      for (const caseId of [
+        'REC-E2E-BASIC-009',
+        'REC-E2E-BASIC-010'
+      ]) {
+        const result = await executeOne(bundle(caseId));
+        const raw = initialCanonicalRawResult(result);
+        assert.strictEqual(result.routeEvidence.actualRoute, 'LOCAL');
+        assert.strictEqual(result.routeEvidence.safeLocalReceivableEligible, true);
+        assert.strictEqual(result.routeEvidence.AIRequestCount, 0);
+        assert.strictEqual(result.routeEvidence.evidenceSource, 'ACTUAL_PARSE_ROUTE');
+        assert.strictEqual(raw.intent, 'receivable');
+        assert.strictEqual(raw.businessType, 'receivable');
+        assert(!result.assertions.some((entry) => (
+          entry.layer === 'RAW_PARSER'
+          && entry.name === 'businessType'
+          && entry.pass === false
+        )));
+      }
+      const relationResult = await executeOne(bundle('REC-E2E-BASIC-010'));
+      assert.strictEqual(relationResult.caseStatus, 'PASS');
+      assert.deepStrictEqual(
+        relationResult.interactionEvidence.evidence.selections.map((item) => ({
+          applied: item.applied,
+          method: item.method,
+          selectedId: item.selectedId
+        })),
+        [{ applied: true, method: 'changeOrder', selectedId: 'ord-active-a' }]
+      );
     }
   },
   {

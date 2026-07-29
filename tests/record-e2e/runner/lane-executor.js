@@ -117,6 +117,33 @@ function publicObservation(observation) {
   };
 }
 
+function buildRouteEvidence(observation, rawParser) {
+  const parseResult = observation && observation.afterEdits
+    && observation.afterEdits.parseResult || {};
+  const route = parseResult.parse_route || {};
+  const aiFallback = parseResult.ai_fallback || {};
+  const hybridInvocations = rawParser && rawParser.hybridInvocations || [];
+  return {
+    actualRoute: observation && observation.route || route.decision || null,
+    safeLocalReceivableEligible: Object.prototype.hasOwnProperty.call(
+      route,
+      'safe_local_receivable_eligible'
+    ) ? route.safe_local_receivable_eligible === true : null,
+    safeLocalReceivableReasonCodes: safeClone(
+      route.safe_local_receivable_reason_codes || []
+    ),
+    receivableRiskExclusions: safeClone(
+      route.receivable_risk_exclusions || []
+    ),
+    AIRequestCount: aiFallback.attempted === true ? 1 : 0,
+    deepReviewAvailable: route.deep_review_available === true,
+    deepReviewRequested: hybridInvocations.some((item) => (
+      item && item.phase === 'DEEP_REVIEW'
+    )),
+    evidenceSource: 'ACTUAL_PARSE_ROUTE'
+  };
+}
+
 function countValues(value = {}) {
   return Object.values(value).reduce((sum, item) => (
     sum + (Number.isFinite(Number(item)) ? Number(item) : 0)
@@ -910,7 +937,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     relationReferenceTamperEvidence: relationTamper,
     restartEvidence: restart,
     restartRequest,
-    routeEvidence: { actualRoute: observation.route },
+    routeEvidence: buildRouteEvidence(sourceObservation, rawParser),
     storageAudit: audit.storageAudit,
     finalTransactionAudit,
     surfaceEvidence: {

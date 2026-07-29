@@ -437,11 +437,20 @@ const tests = [
         assert.strictEqual(result.surfaceEvidence.missingCapabilities.includes('SELECT_ORDER'), false);
         assert.notStrictEqual(result.failureCode, 'REQUIRED_PAGE_CAPABILITY_MISSING');
         if (caseId === 'REC-E2E-BASIC-010') {
-          assert.strictEqual(result.interactionEvidence.evidence.selections.length, 0);
-          assert.strictEqual(
-            result.interactionEvidence.failures[0].reason,
-            'PAGE_INTERACTION_NOT_VISIBLE'
+          assert.strictEqual(result.caseStatus, 'PASS');
+          assert.deepStrictEqual(
+            result.interactionEvidence.evidence.selections.map((item) => ({
+              applied: item.applied,
+              method: item.method,
+              selectedId: item.selectedId
+            })),
+            [{ applied: true, method: 'changeOrder', selectedId: 'ord-active-a' }]
           );
+          assert.deepStrictEqual(result.interactionEvidence.failures, []);
+          assert.strictEqual(result.routeEvidence.actualRoute, 'LOCAL');
+          assert.strictEqual(result.routeEvidence.safeLocalReceivableEligible, true);
+          assert.strictEqual(result.routeEvidence.AIRequestCount, 0);
+          assert.deepStrictEqual(result.preflightEvidence.requiredSelections, []);
         }
       }
     }

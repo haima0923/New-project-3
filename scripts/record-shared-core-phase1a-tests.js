@@ -353,7 +353,6 @@ test('local路径从原文调用真实parser且AI调用0次', async () => {
 test('pending复杂内容保留深度核对入口且不会自动调用AI', async () => {
   const cases = [
     baseInput('王总水杯100个，5块5一个，改成后天交'),
-    baseInput('王总还欠5000元'),
     baseInput('还是上次的价格，王总礼品盒再做500个'),
     baseInput('[王总] 水杯按上次做\n[我] 那批月底交', {
       inputSource: 'chat',
@@ -370,6 +369,18 @@ test('pending复杂内容保留深度核对入口且不会自动调用AI', async
     assert.strictEqual(noAi.getCallCount(), 0);
     assert.strictEqual(output.saveEligibility.allowed, false);
   }
+});
+
+test('字段完整的明确待收款走LOCAL且不会自动调用AI', async () => {
+  const input = baseInput('王总还欠5000元');
+  const noAi = createNoAiAdapter();
+  const output = await runRecordFlow(input, { aiAdapter: noAi });
+  assert.strictEqual(output.trace.routing.productionRoute, PRODUCTION_ROUTES.LOCAL);
+  assert.strictEqual(output.trace.routing.executionPath, EXECUTION_PATHS.PRODUCTION_LOCAL);
+  assert.strictEqual(output.trace.ai.requested, false);
+  assert.strictEqual(noAi.getCallCount(), 0);
+  assert.strictEqual(output.result.intent, 'receivable');
+  assert.strictEqual(output.result.parse_route.safe_local_receivable_eligible, true);
 });
 
 test('standard fake AI只调用一次并沿用现有合并逻辑', async () => {
@@ -679,7 +690,7 @@ test('八类合成题的新旧入口关键结果等价', async () => {
   const cases = [
     { title: '简单订单', input: baseInput('王总订礼品盒500个，单价3.8元，下周五交'), expected: { intent: 'order', route: 'local', ai: 'not_requested' } },
     { title: '简单报价', input: baseInput('给李总报水杯100个，每个5元'), expected: { intent: 'quotation', route: 'local', ai: 'not_requested' } },
-    { title: '待收款', input: baseInput('王总还欠5000元'), expected: { intent: 'receivable', route: 'pending', ai: 'not_requested' } },
+    { title: '待收款', input: baseInput('王总还欠5000元'), expected: { intent: 'receivable', route: 'local', ai: 'not_requested' } },
     { title: '收款', input: baseInput('今天收到李总3000元'), expected: { intent: 'payment', route: 'pending', ai: 'not_requested' } },
     { title: '提醒', input: baseInput('明天提醒我催王总'), expected: { intent: 'todo', route: 'local', ai: 'not_requested' } },
     { title: '缺字段', input: baseInput('帮我记一笔订单'), expected: { intent: 'order', route: 'pending', ai: 'not_requested' } },
@@ -710,7 +721,9 @@ test('起始HEAD冻结的十一类完整关键结果金样本保持不变', asyn
   const cases = [
     { name: 'local_order', input: baseInput('王总订礼品盒500个，单价3.8元'), hash: '2567cce0fdab70d7156c1569e6dda131c3408e4d61539a702a6f29828f3e3675', allowed: false },
     { name: 'local_quote', input: baseInput('给李总报水杯100个，每个5元'), hash: '0c3acab97fd075a898d0753d2a89f5973c51d0d1caebb414d883b06f84182e1e', allowed: true },
-    { name: 'pending_receivable', input: baseInput('王总还欠5000元'), hash: 'bfb248aa786c0d3346ad9a7cd063f31ff3ca0650aa160303aa2195fd1a744979', allowed: false },
+    // LOCAL只表示无需AI即可进入确认与安全检查；这里的allowed是确认后可提交资格，
+    // runRecordFlow本身不会自动保存。
+    { name: 'local_receivable', input: baseInput('王总还欠5000元'), hash: 'dd785621c3b31bb4c11d463fbf5ef415d5bea156fb2c94a50b78ccdf726b6bb7', allowed: true },
     { name: 'pending_payment', input: baseInput('2026年8月1日收到李总3000元'), hash: '65791ab5dea3231d13950f2b9bdc0a94e35476736eb9bd867336d6d4bffa7e1e', allowed: false },
     { name: 'local_todo', input: baseInput('2026年8月1日提醒我催王总'), hash: '8c3e66ed1493a159ec3b092cc881e058ae2c29d9545b9490d06a4e17fd76d841', allowed: true },
     { name: 'missing', input: baseInput('帮我记一笔订单'), hash: '8e6e1492d86691ee14c099fcbf25de418a2ddbf14499ff09b32f5f5e73cb83fd', allowed: false },

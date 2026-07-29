@@ -458,6 +458,79 @@ function uniqueReasonTexts(values) {
   return uniqueStrings(values).slice(0, 4);
 }
 
+function evaluateSafeLocalReceivableRoute(facts = {}) {
+  const fields = facts.fields || {};
+  const fieldSources = facts.fieldSources || {};
+  const safety = facts.safety || {};
+  const validations = safety.field_validations || {};
+  const missingFields = uniqueStrings([]
+    .concat(facts.missingFields || [], safety.missing_fields || []));
+  const lowConfidenceFields = uniqueStrings([]
+    .concat(facts.lowConfidenceFields || [], safety.low_confidence_fields || []));
+  const conflicts = toArray(facts.conflicts || []);
+  const invalidFields = uniqueStrings(validations.invalid_fields || []);
+  const semanticLowFields = uniqueStrings(validations.semantic_low_fields || []);
+  const safetyConflictFields = uniqueStrings(validations.conflict_fields || []);
+  const intentCandidates = uniqueStrings(facts.intentCandidates || []);
+  const amount = Number(fields.amount);
+  const operation = String(facts.operation || '');
+  const suggestedOperation = String(facts.suggestedOperation || '');
+  const amountSource = String(fieldSources.amount || fieldSources.statedAmount || '');
+  const exclusions = [];
+  const reasonCodes = [];
+
+  if (facts.intent !== 'receivable') exclusions.push('NOT_RECEIVABLE_INTENT');
+  else reasonCodes.push('RECEIVABLE_INTENT_CONFIRMED');
+
+  if ((operation && operation !== 'create_receivable')
+    || (suggestedOperation && suggestedOperation !== 'create_receivable')) {
+    exclusions.push('OPERATION_NOT_CREATE_RECEIVABLE');
+  } else {
+    reasonCodes.push('CREATE_RECEIVABLE_CANDIDATE');
+  }
+  if (!String(fields.customerName || '').trim()) exclusions.push('CUSTOMER_NOT_CONFIRMED');
+  else reasonCodes.push('CUSTOMER_PRESENT');
+  if (!Number.isFinite(amount) || amount <= 0) {
+    exclusions.push('RECEIVABLE_AMOUNT_NOT_POSITIVE');
+  } else if (amountSource !== 'rule:explicit_receivable_amount') {
+    exclusions.push('RECEIVABLE_AMOUNT_NOT_EXPLICIT');
+  } else {
+    reasonCodes.push('EXPLICIT_RECEIVABLE_AMOUNT');
+  }
+  if (missingFields.length) exclusions.push('MISSING_FIELDS');
+  else reasonCodes.push('NO_MISSING_FIELDS');
+  if (lowConfidenceFields.length) exclusions.push('LOW_CONFIDENCE_FIELDS');
+  else reasonCodes.push('NO_LOW_CONFIDENCE_FIELDS');
+  if (conflicts.length || safetyConflictFields.length) exclusions.push('FIELD_CONFLICTS');
+  else reasonCodes.push('NO_FIELD_CONFLICTS');
+  if (invalidFields.length) exclusions.push('INVALID_FIELDS');
+  if (semanticLowFields.length) exclusions.push('SEMANTIC_LOW_CONFIDENCE');
+  if (safety.evidence_sufficient !== true) exclusions.push('SOURCE_EVIDENCE_INSUFFICIENT');
+  if (uniqueStrings(safety.unsafe_fields || []).length) exclusions.push('UNSAFE_FIELDS');
+  if (facts.formalSaveBlocked) exclusions.push('FORMAL_SAVE_BLOCKED');
+  if (facts.mixedBusiness) exclusions.push('MIXED_BUSINESS');
+  else reasonCodes.push('SINGLE_BUSINESS');
+  if (facts.requiresExistingRecord) exclusions.push('REQUIRES_EXISTING_RECORD');
+  if (facts.contextPolicy && facts.contextPolicy !== 'none') exclusions.push('CONTEXT_POLICY_REQUIRES_REVIEW');
+  if (facts.hasHistoryReference) exclusions.push('HISTORY_REFERENCE_REQUIRES_REVIEW');
+  if (facts.hasSemanticDeepRisk) exclusions.push('SEMANTIC_DEEP_RISK');
+  if (facts.forceAiRequired) exclusions.push('AI_POLICY_REQUIRES_REVIEW');
+  if (facts.hasConversationRisk) exclusions.push('MULTI_MESSAGE_INPUT');
+  if (Number(facts.itemCount || 0) > 1) exclusions.push('MULTI_ITEM_INPUT');
+  if (fields.paymentAmount) exclusions.push('PAYMENT_SIGNAL_PRESENT');
+  if (fields.depositAmount || fields.paymentKind === 'deposit') exclusions.push('DEPOSIT_SIGNAL_PRESENT');
+  if (intentCandidates.some((intent) => intent !== 'receivable')) {
+    exclusions.push('INTENT_CONFLICT');
+  }
+  if (facts.deepReviewRequested) exclusions.push('DEEP_REVIEW_REQUESTED');
+
+  return {
+    eligible: exclusions.length === 0,
+    reasonCodes: uniqueStrings(reasonCodes),
+    exclusions: uniqueStrings(exclusions)
+  };
+}
+
 function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') {
   const source = payload.source || localResult.source || 'typed';
   const text = normalizeBusinessText(String(payload.rawText || payload.text || localResult.original_text || ''));
@@ -498,58 +571,95 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     && !hasSemanticDeepRisk
     && !deepReviewRequested;
   const localReasons = uniqueReasonTexts(safety.reason_texts || []);
+  const safeLocalReceivable = evaluateSafeLocalReceivableRoute({
+    conflicts,
+    contextPolicy: policy,
+    deepReviewRequested,
+    fieldSources: localResult.field_sources || {},
+    fields,
+    forceAiRequired: shouldForceAi(payload, localResult),
+    formalSaveBlocked: localResult.formal_save_blocked === true,
+    hasConversationRisk,
+    hasHistoryReference,
+    hasSemanticDeepRisk,
+    intent: localResult.intent,
+    intentCandidates: localResult.intent_candidates || [],
+    itemCount: items.length,
+    lowConfidenceFields: localResult.low_confidence_fields || [],
+    missingFields: localResult.missing_fields || [],
+    mixedBusiness: localResult.mixed_business === true,
+    operation: localResult.operation,
+    requiresExistingRecord: localResult.requires_existing_record === true,
+    safety,
+    suggestedOperation: localResult.suggested_operation
+  });
+  const withRouteAudit = (route) => localResult.intent === 'receivable'
+    ? Object.assign({}, route, {
+      receivable_risk_exclusions: safeLocalReceivable.exclusions,
+      safe_local_receivable_eligible: safeLocalReceivable.eligible,
+      safe_local_receivable_reason_codes: safeLocalReceivable.reasonCodes
+    })
+    : route;
 
   if (localResult.formal_save_blocked) {
-    return {
+    return withRouteAudit({
       decision: ROUTE_PENDING,
       label: '需要先确认原记录',
       reasons: uniqueReasonTexts([
         localResult.block_reason || '这条内容不能直接变成新的正式记录。'
       ].concat(localReasons))
-    };
+    });
   }
 
   if (safety.status === 'NO_RECORD') {
-    return {
+    return withRouteAudit({
       decision: ROUTE_PENDING,
       label: ROUTE_LABELS[ROUTE_PENDING],
       reasons: ['没有识别到一笔明确业务，先不替老板猜。']
-    };
+    });
   }
 
   if (hasMissingCriticalFact && !hasFinancialRisk && !hasConversationRisk && !hasHistoryReference) {
-    return {
+    return withRouteAudit({
       decision: ROUTE_PENDING,
       label: '待补充后再保存',
       reasons: uniqueReasonTexts(['原文缺少关键信息，不能让 AI 替老板猜。'].concat(localReasons))
-    };
+    });
+  }
+
+  if (safeLocalReceivable.eligible) {
+    return withRouteAudit({
+      decision: ROUTE_LOCAL,
+      label: ROUTE_LABELS[ROUTE_LOCAL],
+      reasons: ['待收款客户、金额和原文证据明确；关系选择和正式保存仍由确认卡与安全检查决定。']
+    });
   }
 
   if (hasProductSuggestion && (!hasDeepRisk || canConfirmProductAndUnitLocally)) {
-    return {
+    return withRouteAudit({
       decision: ROUTE_LOCAL,
       label: ROUTE_LABELS[ROUTE_LOCAL],
       reasons: [canConfirmProductAndUnitLocally
         ? '商品名称和计价单位都可在确认卡直接核对；系统不猜单位换算，也不额外等待 AI。'
         : '商品名称已有明确确认建议，点选或手改后再保存，不让 AI 替你猜。']
-    };
+    });
   }
 
   // 原文明确缺少关键事实时，AI 也不能凭空补造客户、商品或金额。
   // 这类内容不浪费等待时间，直接让老板补充或放待整理；但历史、改价和账款等复杂情况仍交给深度 AI。
   if (safety.status === 'NEEDS_USER_CONFIRM' && !hasDeepRisk) {
     if (hasCompleteButUnverifiedEvidence) {
-      return {
+      return withRouteAudit({
         decision: ROUTE_AI_STANDARD,
         label: ROUTE_LABELS[ROUTE_AI_STANDARD],
         reasons: uniqueReasonTexts(['本地已经整理出字段，但有一项不能直接从原话核对。'].concat(localReasons))
-      };
+      });
     }
-    return {
+    return withRouteAudit({
       decision: ROUTE_PENDING,
       label: '待补充后再保存',
       reasons: uniqueReasonTexts(['原文缺少关键信息，不能让 AI 替老板猜。'].concat(localReasons))
-    };
+    });
   }
 
   if (hasDeepRisk || (localResult.intent === 'unknown' && safety.status !== 'SAFE_LOCAL')) {
@@ -562,35 +672,35 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     if (hasSemanticDeepRisk) reasons.push('出现改价、最终确认、特殊要求等复杂说法。');
     if (localResult.intent === 'unknown') reasons.push('本地没有稳定判断出业务类型。');
     if (deepReviewRequested) {
-      return {
+      return withRouteAudit({
         decision: ROUTE_AI_DEEP,
         label: ROUTE_LABELS[ROUTE_AI_DEEP],
         reasons: uniqueReasonTexts(['老板主动要求深度核对。'].concat(reasons, localReasons))
-      };
+      });
     }
-    return {
+    return withRouteAudit({
       decision: ROUTE_PENDING,
       label: '需要深度核对',
       deep_review_available: true,
       reasons: uniqueReasonTexts(['这条内容不能在首页自动猜，先由你决定是否深度核对。'].concat(reasons, localReasons))
-    };
+    });
   }
 
   if (safety.status === 'NEEDS_AI' || shouldForceAi(payload, localResult)) {
     const reasons = [];
     if (safety.status === 'NEEDS_AI') reasons.push('本地发现有不稳定字段。');
-    return {
+    return withRouteAudit({
       decision: ROUTE_AI_STANDARD,
       label: ROUTE_LABELS[ROUTE_AI_STANDARD],
       reasons: uniqueReasonTexts(reasons.concat(localReasons))
-    };
+    });
   }
 
-  return {
+  return withRouteAudit({
     decision: ROUTE_LOCAL,
     label: ROUTE_LABELS[ROUTE_LOCAL],
     reasons: ['文字是一件清楚的业务，本次先按本地规则整理。']
-  };
+  });
 }
 
 function getBusinessDraftSummary(result = {}) {
@@ -883,7 +993,7 @@ function getContextPolicy(text, localResult = {}) {
   if (/改|改成|延期|提前|那单|那笔|上次那笔|改价|改数量/.test(source)) return 'record_update';
   if (
     intent === 'receivable'
-    && /应收|欠|欠款|还差|尾款|货款|记账|月结|月底结|月底给|未结清应收/.test(source)
+    && /应收|待收|尚欠|还欠|欠款|还差|余款|剩余款|尾款|货款|记账|月结|月底结|月底给|未结清应收|未收|没收/.test(source)
     && !/还我|还了|刚?转了|到账|付了|付款|收了|已收|先打|结清了|已结清/.test(source)
   ) {
     return 'none';
@@ -1865,13 +1975,36 @@ function withAiStatus(localResult, status, metadata = {}) {
   return result;
 }
 
+function applySafeLocalReceivableRouteProjection(localResult, route) {
+  if (!route
+    || route.decision !== ROUTE_LOCAL
+    || route.safe_local_receivable_eligible !== true) {
+    return localResult;
+  }
+  const financialReviewReason = '涉及收款、欠款、定金或催款，必须核对后再保存';
+  const retainedUnsafeReasons = uniqueStrings(localResult.unsafe_reasons || [])
+    .filter((reason) => !String(reason).includes(financialReviewReason));
+  const routeReason = '待收款客户和金额已有明确本地证据；关系及正式保存仍需确认卡和安全检查。';
+  return Object.assign({}, localResult, {
+    ai_fallback: Object.assign({}, localResult.ai_fallback || {}, {
+      needed: false
+    }),
+    local_parse_safety: Object.assign({}, localResult.local_parse_safety || {}, {
+      reason_texts: retainedUnsafeReasons.concat(routeReason),
+      safe_to_auto_accept: true,
+      status: 'SAFE_LOCAL'
+    }),
+    unsafe_reasons: retainedUnsafeReasons
+  });
+}
+
 function prepareHybridLocalStage(payload) {
   const totalStartedAt = Date.now();
   const localParsedResult = parseInput(payload);
   const policy = getContextPolicy(payload.text, localParsedResult);
   const mentionedCustomerName = extractMentionedCustomerName(payload.text, localParsedResult);
   const scopedHistory = findScopedHistory(payload.state || {}, mentionedCustomerName, policy);
-  const localReviewedResult = applyProductTranscriptionSafety(applyLocalParseSafety(
+  const localSafetyResult = applyProductTranscriptionSafety(applyLocalParseSafety(
     attachConversationReview(attachHistoryInfo(localParsedResult, policy, scopedHistory), payload),
     {
       normalizedText: normalizeBusinessText(payload.rawText || payload.text || localParsedResult.original_text || ''),
@@ -1881,7 +2014,8 @@ function prepareHybridLocalStage(payload) {
     }
   ));
   const localDurationMs = Date.now() - totalStartedAt;
-  const route = getParseRouteDecision(payload, localReviewedResult, policy);
+  const route = getParseRouteDecision(payload, localSafetyResult, policy);
+  const localReviewedResult = applySafeLocalReceivableRouteProjection(localSafetyResult, route);
   const shouldRequestAi = [ROUTE_AI_STANDARD, ROUTE_AI_DEEP].includes(route.decision);
   const localResult = attachParseTrace(
     shouldRequestAi ? markAiNeeded(localReviewedResult, route) : Object.assign({}, localReviewedResult, { parse_route: route }),
@@ -2059,6 +2193,8 @@ module.exports = {
   getAiFailureStatus,
   getAiBusinessResultValidity,
   getParseRouteDecision,
+  evaluateSafeLocalReceivableRoute,
+  applySafeLocalReceivableRouteProjection,
   getBusinessDraftSummary,
   getAiWaitLimitMs,
   finishHybridWithoutAi,

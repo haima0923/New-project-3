@@ -3,6 +3,7 @@ const { parseInput } = require('../utils/parser');
 const { saveConfirmedDraft } = require('../utils/business');
 const {
   parseHybridInput,
+  evaluateSafeLocalReceivableRoute,
   requestWithDeadline,
   ROUTE_AI_STANDARD,
   ROUTE_AI_DEEP,
@@ -81,6 +82,58 @@ function withFakeWechat(mode, run) {
     });
 }
 
+function safeReceivableFacts(overrides = {}) {
+  const base = {
+    conflicts: [],
+    contextPolicy: 'none',
+    deepReviewRequested: false,
+    fieldSources: {
+      amount: 'rule:explicit_receivable_amount',
+      customerName: 'rule:customer_title'
+    },
+    fields: {
+      amount: '5000',
+      customerName: '王总'
+    },
+    formalSaveBlocked: false,
+    forceAiRequired: false,
+    hasConversationRisk: false,
+    hasHistoryReference: false,
+    hasSemanticDeepRisk: false,
+    intent: 'receivable',
+    intentCandidates: ['receivable'],
+    itemCount: 0,
+    lowConfidenceFields: [],
+    missingFields: [],
+    mixedBusiness: false,
+    operation: '',
+    requiresExistingRecord: false,
+    safety: {
+      evidence_sufficient: true,
+      field_validations: {
+        conflict_fields: [],
+        invalid_fields: [],
+        semantic_low_fields: []
+      },
+      low_confidence_fields: [],
+      missing_fields: [],
+      unsafe_fields: []
+    },
+    suggestedOperation: ''
+  };
+  return Object.assign({}, base, overrides, {
+    fieldSources: Object.assign({}, base.fieldSources, overrides.fieldSources || {}),
+    fields: Object.assign({}, base.fields, overrides.fields || {}),
+    safety: Object.assign({}, base.safety, overrides.safety || {}, {
+      field_validations: Object.assign(
+        {},
+        base.safety.field_validations,
+        overrides.safety && overrides.safety.field_validations || {}
+      )
+    })
+  });
+}
+
 async function main() {
   const screenshotLocal = parseInput({
     text: '老板今天要订5个椅子，20块钱一个。这周日交货',
@@ -105,6 +158,165 @@ async function main() {
   const clearVoice = await parseHybridInput(payload('王总订水杯100个，5块5一个，明天交', 'voice'));
   assert.strictEqual(clearVoice.parse_route.decision, ROUTE_LOCAL, '清楚的语音转写文字应与手打文字同路由');
   assert.strictEqual(clearVoice.ai_fallback.status, 'not_requested', '清楚的语音转写文字不应因为来源而等待 AI');
+
+  const localReceivable = await parseHybridInput(payload('刘姐那批货还欠3200元，7月31日前收', 'typed'));
+  assert.strictEqual(localReceivable.intent, 'receivable', '明确欠款必须保留receivable业务类型');
+  assert.strictEqual(localReceivable.parse_route.decision, ROUTE_LOCAL, '字段完整的明确待收款必须走LOCAL');
+  assert.strictEqual(localReceivable.parse_route.safe_local_receivable_eligible, true, 'LOCAL待收款必须记录窄资格命中');
+  assert.strictEqual(localReceivable.ai_fallback.needed, false, 'Safe Local待收款不需要AI结果');
+  assert.strictEqual(localReceivable.ai_fallback.attempted, false, 'Safe Local待收款不得调用AI');
+  assert.strictEqual(localReceivable.local_parse_safety.status, 'SAFE_LOCAL', 'Route专属安全投影必须与LOCAL一致');
+
+  const localVoiceReceivable = await parseHybridInput(payload(
+    '刘姐那批货还欠3200元，7月31日前收',
+    'voice'
+  ));
+  assert.strictEqual(localVoiceReceivable.parse_route.decision, ROUTE_LOCAL, '输入渠道本身不能覆盖完整明确的Safe Local事实');
+  assert.strictEqual(localVoiceReceivable.ai_fallback.attempted, false, '明确的语音转写待收款也不得自动调用AI');
+
+  for (const text of [
+    '王总余款5000元未收，7月25日收',
+    '王总应收款还有4000元，7月25日收',
+    '王总尚欠货款6000元，7月25日收'
+  ]) {
+    const explicitReceivable = await parseHybridInput(payload(text, 'typed'));
+    assert.strictEqual(explicitReceivable.intent, 'receivable', `${text}必须保留receivable语义`);
+    assert.strictEqual(explicitReceivable.context_policy, 'none', `${text}不得被误投影为历史收款核销`);
+    assert.strictEqual(explicitReceivable.parse_route.decision, ROUTE_LOCAL, `${text}字段完整时必须走LOCAL`);
+    assert.strictEqual(explicitReceivable.ai_fallback.attempted, false, `${text}不得自动调用AI`);
+  }
+
+  const relatedReceivable = await parseHybridInput(payload(
+    '王总收纳盒这单还有8000元待收，7月25日收',
+    'typed'
+  ));
+  assert.strictEqual(relatedReceivable.parse_route.decision, ROUTE_LOCAL, '关系待选择不能把明确待收款降为PENDING');
+  assert.strictEqual(relatedReceivable.fields.orderId, undefined, 'Route不得扫描State或自动写入orderId');
+  assert.strictEqual(relatedReceivable.ai_fallback.attempted, false, '关系待选择的Safe Local待收款不得调用AI');
+
+  const unsafeFactCases = [
+    {
+      name: '缺金额',
+      facts: safeReceivableFacts({
+        fields: { amount: '' },
+        missingFields: ['amount'],
+        safety: { missing_fields: ['amount'] }
+      }),
+      code: 'RECEIVABLE_AMOUNT_NOT_POSITIVE'
+    },
+    {
+      name: '客户不明确',
+      facts: safeReceivableFacts({
+        fields: { customerName: '' },
+        missingFields: ['customerName'],
+        safety: { missing_fields: ['customerName'] }
+      }),
+      code: 'CUSTOMER_NOT_CONFIRMED'
+    },
+    {
+      name: '金额不是明确待收证据',
+      facts: safeReceivableFacts({
+        fieldSources: { amount: 'rule:quantity_times_unit_price' }
+      }),
+      code: 'RECEIVABLE_AMOUNT_NOT_EXPLICIT'
+    },
+    {
+      name: '金额冲突',
+      facts: safeReceivableFacts({
+        conflicts: [{ field: 'amount' }]
+      }),
+      code: 'FIELD_CONFLICTS'
+    },
+    {
+      name: '低置信字段',
+      facts: safeReceivableFacts({
+        lowConfidenceFields: ['customerName']
+      }),
+      code: 'LOW_CONFIDENCE_FIELDS'
+    },
+    {
+      name: 'payment与receivable混合',
+      facts: safeReceivableFacts({
+        fields: { paymentAmount: '1000' },
+        mixedBusiness: true
+      }),
+      code: 'PAYMENT_SIGNAL_PRESENT'
+    },
+    {
+      name: 'deposit与receivable混合',
+      facts: safeReceivableFacts({
+        fields: { depositAmount: '1000', paymentKind: 'deposit' }
+      }),
+      code: 'DEPOSIT_SIGNAL_PRESENT'
+    },
+    {
+      name: '语义冲突',
+      facts: safeReceivableFacts({
+        intentCandidates: ['receivable', 'payment']
+      }),
+      code: 'INTENT_CONFLICT'
+    },
+    {
+      name: '多轮输入',
+      facts: safeReceivableFacts({
+        hasConversationRisk: true
+      }),
+      code: 'MULTI_MESSAGE_INPUT'
+    },
+    {
+      name: '历史关系策略',
+      facts: safeReceivableFacts({
+        contextPolicy: 'receivable_history'
+      }),
+      code: 'CONTEXT_POLICY_REQUIRES_REVIEW'
+    },
+    {
+      name: '历史指代',
+      facts: safeReceivableFacts({
+        hasHistoryReference: true
+      }),
+      code: 'HISTORY_REFERENCE_REQUIRES_REVIEW'
+    },
+    {
+      name: '复杂语义',
+      facts: safeReceivableFacts({
+        hasSemanticDeepRisk: true
+      }),
+      code: 'SEMANTIC_DEEP_RISK'
+    },
+    {
+      name: '既有AI策略',
+      facts: safeReceivableFacts({
+        forceAiRequired: true
+      }),
+      code: 'AI_POLICY_REQUIRES_REVIEW'
+    },
+    {
+      name: '用户主动Deep',
+      facts: safeReceivableFacts({
+        deepReviewRequested: true
+      }),
+      code: 'DEEP_REVIEW_REQUESTED'
+    }
+  ];
+  unsafeFactCases.forEach((item) => {
+    const qualification = evaluateSafeLocalReceivableRoute(item.facts);
+    assert.strictEqual(qualification.eligible, false, `${item.name}不得取得Safe Local资格`);
+    assert(qualification.exclusions.includes(item.code), `${item.name}必须记录排除原因${item.code}`);
+  });
+
+  const incompleteReceivable = await parseHybridInput(payload('王总还有货款待收', 'typed'));
+  assert.strictEqual(incompleteReceivable.intent, 'receivable', '缺金额仍应保留receivable候选');
+  assert.strictEqual(incompleteReceivable.parse_route.decision, ROUTE_PENDING, '缺金额receivable必须保持PENDING');
+  assert.strictEqual(incompleteReceivable.parse_route.safe_local_receivable_eligible, false, '缺金额不得取得Safe Local资格');
+  assert.strictEqual(incompleteReceivable.parse_route.deep_review_available, true, '不安全receivable必须保留主动Deep入口');
+  assert.strictEqual(incompleteReceivable.ai_fallback.attempted, false, '未主动Deep不得请求AI');
+
+  const incompleteDeep = await withFakeWechat('success', () => parseHybridInput(Object.assign(
+    payload('王总还有货款待收', 'typed'),
+    { reviewMode: 'deep' }
+  )));
+  assert.strictEqual(incompleteDeep.parse_route.decision, ROUTE_AI_DEEP, '只有用户主动触发后不安全receivable才进入AI_DEEP');
 
   const suggestedProduct = await withFakeWechat('success', () => parseHybridInput(payload(
     '王总那个礼合要5套，三块八一套，下周三拿',

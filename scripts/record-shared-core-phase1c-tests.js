@@ -109,7 +109,7 @@ test('LOCAL_ONLY跨LOCAL STANDARD DEEP PENDING路线始终零AI调用', async ()
     ['王总要订5个水悲，五块五一个，明天交', 'standard', PRODUCTION_ROUTES.AI_STANDARD],
     ['王总水杯100个5块5一个，礼品盒200个3块一个，改成后天交', 'deep', PRODUCTION_ROUTES.AI_DEEP],
     ['还是上次的价格，王总礼品盒再做500个', 'standard', PRODUCTION_ROUTES.PENDING],
-    ['王总还欠5000元', 'standard', PRODUCTION_ROUTES.PENDING]
+    ['王总还欠5000元', 'standard', PRODUCTION_ROUTES.LOCAL]
   ];
   for (const [text, reviewMode, expectedRoute] of cases) {
     const adapter = createNoAiAdapter();

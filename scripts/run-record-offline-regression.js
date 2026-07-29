@@ -182,6 +182,7 @@ const TESTS = Object.freeze({
   'e2e-amb-005': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-AMB-005']),
   'e2e-amb-011': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-AMB-011']),
   'e2e-basic-006': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-BASIC-006']),
+  'e2e-basic-009': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-BASIC-009']),
   'e2e-basic-010': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-BASIC-010']),
   'e2e-basic-012': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-BASIC-012']),
   'e2e-page-003': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-PAGE-003']),
@@ -205,6 +206,8 @@ const TESTS = Object.freeze({
   'release-a-rc1': testEntry('scripts/record-release-a-rc1-tests.js'),
   'route-status': testEntry('scripts/parse-route-observability-tests.js'),
   'runner-kernel': testEntry('tests/record-e2e/runner-tests/runner-self-tests.js'),
+  'shared-core-phase1a': testEntry('scripts/record-shared-core-phase1a-tests.js'),
+  'shared-core-phase1c': testEntry('scripts/record-shared-core-phase1c-tests.js'),
   'shared-confirmation': testEntry('scripts/record-shared-core-phase1d-tests.js'),
   'ui-structure': testEntry('scripts/ui-release-tests.js'),
   'voice-fake': testEntry('scripts/voice-recognition-tests.js')
