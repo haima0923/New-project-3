@@ -1,4 +1,5 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
+const { normalizeUnit } = require('../../../utils/units');
 const { applyPageInteractions } = require('./apply-page-interactions');
 const {
   businessDraftPayload,
@@ -130,24 +131,77 @@ async function waitForVoiceTranscript(runtime, timeoutMs = 3000) {
 function collectPageEditConsistency(driver, interaction, beforeEdits, afterEdits) {
   const checks = [];
   if (driver.surface !== 'HOME_QUICK') return { checks, consistent: true };
-  (interaction.evidence.edits || []).forEach((edit) => {
+  (interaction.evidence.edits || []).forEach((edit, stepIndex) => {
     if (edit.scope === 'ITEM' || !['productName', 'quantity', 'unit', 'unitPrice'].includes(edit.field)) {
       return;
     }
-    const topValue = afterEdits.fields[edit.field];
-    const itemValue = afterEdits.items[0] && afterEdits.items[0][edit.field];
+    const projectionBefore = edit.projectionBefore || {};
+    const projectionAfter = edit.projectionAfter || {};
+    const topValue = projectionAfter.topLevel
+      ? projectionAfter.topLevel[edit.field]
+      : afterEdits.fields[edit.field];
+    const itemValue = projectionAfter.item0
+      ? projectionAfter.item0[edit.field]
+      : (afterEdits.items[0] && afterEdits.items[0][edit.field]);
+    const topAmount = projectionAfter.derivedAmount
+      ? projectionAfter.derivedAmount.topLevelAmount
+      : afterEdits.fields.amount;
+    const itemAmount = projectionAfter.derivedAmount
+      ? projectionAfter.derivedAmount.itemTotalAmount
+      : (afterEdits.items[0] && afterEdits.items[0].totalAmount);
+    const originalTextPreserved = projectionBefore.originalText === projectionAfter.originalText;
+    const itemCountPreserved = projectionBefore.itemsLength === projectionAfter.itemsLength;
+    const requestedValue = edit.field === 'unit'
+      ? normalizeUnit(edit.value)
+      : edit.value;
+    const fieldSynchronized = String(topValue) === String(itemValue)
+      && String(topValue) === String(requestedValue);
+    const derivedAmountSynchronized = String(topAmount || '') === String(itemAmount || '');
+    const methodInvokedOnce = edit.methodInvocationDelta === 1;
     checks.push({
+      derivedAmountSynchronized,
       field: edit.field,
+      fieldSynchronized,
+      itemCountPreserved,
       method: edit.method,
-      beforeTopValue: beforeEdits.fields[edit.field],
-      beforeItemValue: beforeEdits.items[0] && beforeEdits.items[0][edit.field],
+      methodInvokedOnce,
+      originalTextPreserved,
+      projectionAfter,
+      projectionBefore,
+      normalizedRequestedValue: safeClone(requestedValue),
+      requestedValue: safeClone(edit.value),
+      stepIndex,
+      beforeTopValue: projectionBefore.topLevel
+        ? projectionBefore.topLevel[edit.field]
+        : beforeEdits.fields[edit.field],
+      beforeItemValue: projectionBefore.item0
+        ? projectionBefore.item0[edit.field]
+        : (beforeEdits.items[0] && beforeEdits.items[0][edit.field]),
       topValue,
       itemValue,
-      synchronized: String(topValue) === String(itemValue)
+      synchronized: fieldSynchronized
+        && derivedAmountSynchronized
+        && originalTextPreserved
+        && itemCountPreserved
+        && methodInvokedOnce
     });
   });
+  const editTrace = checks.map((item) => ({
+    confirmedFieldsAfterEdit: safeClone(item.projectionAfter.confirmedFields || []),
+    derivedAmountAfterEachEdit: safeClone(item.projectionAfter.derivedAmount || {}),
+    field: item.field,
+    itemAfterEachEdit: safeClone(item.projectionAfter.item0 || {}),
+    itemBeforeEdit: safeClone(item.projectionBefore.item0 || {}),
+    preflightAfterEdit: safeClone(item.projectionAfter.preflight || {}),
+    stepIndex: item.stepIndex,
+    topLevelAfterEachEdit: safeClone(item.projectionAfter.topLevel || {}),
+    topLevelBeforeEdit: safeClone(item.projectionBefore.topLevel || {})
+  }));
   return {
     checks,
+    editTrace,
+    finalLegacyDraft: safeClone(afterEdits.parseResult || {}),
+    finalSavedRecord: null,
     consistent: checks.every((item) => item.synchronized)
   };
 }

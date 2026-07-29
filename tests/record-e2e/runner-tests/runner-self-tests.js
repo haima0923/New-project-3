@@ -173,6 +173,16 @@ const tests = [
     }
   },
   {
+    name: 'driver-repeating-page-edit-method-is-runner-error',
+    async run() {
+      await expectWorkerError(
+        'REC-E2E-PAGE-008',
+        { repeatPageEditMethod: true },
+        'AUTOMATION_DRIVER_ERROR'
+      );
+    }
+  },
+  {
     name: 'fake-provider-blocked-in-production-but-safe-isolated-commit-runs',
     async run() {
       const evidence = await worker('REC-E2E-FIN-001');
@@ -199,6 +209,26 @@ const tests = [
         evidence.isolatedCommitEvidence.prepared.blockingCodes.includes(
           'RECEIVABLE_PAYMENT_INVALID'
         )
+      );
+    }
+  },
+  {
+    name: 'uncommitted-business-record-is-not-final-saved-record',
+    async run() {
+      const item = bundle('REC-E2E-PAGE-006');
+      item.workerSpec.input.originalText = '钱姐要200个文件袋，每个4元，7月20日交';
+      const evidence = await runCaseWorker({
+        attempt: 1,
+        hooks: { skipSaveEntry: true },
+        plan: item.plan,
+        spec: item.workerSpec
+      });
+      assert.strictEqual(evidence.isolatedCommitEvidence.committed, false);
+      assert.strictEqual(evidence.isolatedCommitEvidence.reason, 'SAVE_ENTRY_SKIPPED');
+      assert.strictEqual(evidence.isolatedCommitEvidence.diff.stateChanged, true);
+      assert.strictEqual(
+        evidence.pageEvidence.pageEditConsistency.finalSavedRecord,
+        null
       );
     }
   },

@@ -621,6 +621,28 @@ async function executeLanes(runtime, spec, plan, options = {}) {
         }));
     }
   }
+  if (observationPublic.pageEditConsistency) {
+    const businessRecord = isolated && isolated.businessResult
+      ? isolated.businessResult.record
+      : null;
+    const persistedRecord = isolated && isolated.committed === true
+      && businessRecord
+      && businessRecord.id
+      ? Object.values(isolated.stateAfter || {})
+        .filter((value) => Array.isArray(value))
+        .reduce((found, collection) => (
+          found || collection.find((record) => (
+            record && record.id === businessRecord.id
+          )) || null
+        ), null)
+      : null;
+    observationPublic.pageEditConsistency.finalLegacyDraft = safeClone(
+      isolated && isolated.prepared && isolated.prepared.draft
+        ? isolated.prepared.draft
+        : sourceDraft
+    );
+    observationPublic.pageEditConsistency.finalSavedRecord = safeClone(persistedRecord);
+  }
 
   let duplicate = null;
   if (lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')) {

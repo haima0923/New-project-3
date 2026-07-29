@@ -16,7 +16,12 @@ function failedAssertionNames(result) {
 }
 
 function clusterKey(result) {
-  if (result.caseId === 'REC-E2E-PAGE-008') return 'CONFIRMATION:PRIMARY_ITEM_SYNC';
+  if (result.entrySurface === 'HOME_QUICK'
+    && result.pageEvidence
+    && result.pageEvidence.pageEditConsistency
+    && result.pageEvidence.pageEditConsistency.consistent === false) {
+    return 'CONFIRMATION:PRIMARY_ITEM_SYNC';
+  }
   const missing = result.surfaceEvidence && result.surfaceEvidence.missingCapabilities || [];
   if (result.failureCode === 'REQUIRED_PAGE_CAPABILITY_MISSING' && missing.length) {
     return `SURFACE_CAPABILITY:${missing.slice().sort().join('+')}`;

@@ -13,6 +13,44 @@ function indexForId(options, selectedId) {
   return (options || []).findIndex((item) => item && item.id === selectedId);
 }
 
+function captureEditProjection(page) {
+  const result = page.data.parseResult || {};
+  const fields = result.fields || page.data.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  const firstItem = items[0] && typeof items[0] === 'object' ? items[0] : {};
+  return {
+    confirmedFields: safeClone(result.manual_fields || []),
+    derivedAmount: {
+      calculatedAmount: fields.calculatedAmount || '',
+      itemTotalAmount: firstItem.totalAmount || '',
+      topLevelAmount: fields.amount || fields.totalAmount || ''
+    },
+    item0: safeClone({
+      productName: firstItem.productName || '',
+      quantity: firstItem.quantity || '',
+      unit: firstItem.unit || '',
+      unitPrice: firstItem.unitPrice || '',
+      totalAmount: firstItem.totalAmount || ''
+    }),
+    itemsLength: items.length,
+    originalText: result.original_text || result.originalText || '',
+    preflight: {
+      blockingCodes: safeClone(page.data.preflightBlockingReasons || []),
+      domainCanSaveFormal: page.data.domainCanSaveFormal === true,
+      effectiveCanSaveFormal: page.data.disableQuickSave !== true
+        && page.data.disableFormalSave !== true,
+      fingerprint: page.data.preflightFingerprint || ''
+    },
+    topLevel: safeClone({
+      productName: fields.productName || '',
+      quantity: fields.quantity || '',
+      unit: fields.unit || '',
+      unitPrice: fields.unitPrice || '',
+      amount: fields.amount || fields.totalAmount || ''
+    })
+  };
+}
+
 async function applySelection(driver, selection, evidence) {
   const { page, surface } = driver;
   const kind = selection.kind;
@@ -212,13 +250,34 @@ async function applyEdit(driver, edit, evidence, hooks = {}) {
       method
     };
   }
+  const projectionBefore = captureEditProjection(page);
+  const invocationCountBefore = Number(
+    driver.evidence.pageMethodCalls[method] || 0
+  );
   page[method](event);
+  if (hooks.repeatPageEditMethod === true) page[method](event);
   await flushAsync();
+  const projectionAfter = captureEditProjection(page);
+  const invocationCountAfter = Number(
+    driver.evidence.pageMethodCalls[method] || 0
+  );
+  const methodInvocationDelta = invocationCountAfter - invocationCountBefore;
+  if (methodInvocationDelta !== 1) {
+    throw Object.assign(
+      new Error(`Page edit method ${method} invoked ${methodInvocationDelta} times, expected 1`),
+      { code: 'AUTOMATION_DRIVER_ERROR' }
+    );
+  }
   const item = {
     applied: true,
     field: edit.field,
     itemIndex: edit.itemIndex,
     method,
+    methodInvocationCountAfter: invocationCountAfter,
+    methodInvocationCountBefore: invocationCountBefore,
+    methodInvocationDelta,
+    projectionAfter,
+    projectionBefore,
     scope: edit.scope,
     value: safeClone(edit.value)
   };

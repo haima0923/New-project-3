@@ -212,7 +212,7 @@ function classifyFailureOwnership(testCase, result) {
   const capability = missingCapabilityOwnership(result);
   if (capability) return capability;
 
-  if (testCase.caseId === 'REC-E2E-PAGE-008'
+  if (result.entrySurface === 'HOME_QUICK'
     && result.pageEvidence
     && result.pageEvidence.pageEditConsistency
     && result.pageEvidence.pageEditConsistency.consistent === false) {
