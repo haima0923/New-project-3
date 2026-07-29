@@ -933,3 +933,31 @@ Runner中的选择能力由中央Page Capability Registry解析，`SELECT_QUOTAT
 新草稿中；历史多商品的第二件及后续商品编辑必须保存为稀疏补丁，不能因原始解析只有一件
 商品而丢失。完整页报价选择专项23/23、Page Action Registry 14/14，核心120题双轮仍为
 `PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致。
+
+## 27. 首页单商品主商品同步合同
+
+首页简单单商品确认以`items[0]`为最终业务商品结构，顶层商品、数量、单位、单价和金额
+字段只是兼容展示投影。真实`updateConfirmField()`编辑这些字段时，必须在同一份安全复制
+草稿中更新`items[0]`、同步顶层投影、按既有规则更新派生金额，再一次性更新页面并重建
+Confirmation与Domain Preflight。
+
+金额继续遵守既有政策：明确`statedAmount`或用户手工编辑金额优先；否则数量和单价变化
+可按单位一致的现有公式更新`calculatedAmount`和总金额。本合同不新增金额优先政策。
+
+该同步只适用于唯一商品。多商品不得被压成一件、不得删除第二件及后续商品，首页继续要求
+完整页处理。正式保存前必须再次检查顶层投影与`items[0]`一致；不一致或非法数量、单价
+必须阻断，不能交给business自行选取一份数据。
+
+Runner必须逐步记录真实首页方法每次调用前后的顶层字段、`items[0]`、派生金额、
+`manual_fields`、Preflight、最终Legacy草稿和最终保存记录，不能只比较最终State，也
+不能直接修改`page.data`。
+
+`REC-E2E-PAGE-008`现在每一步顶层字段与`items[0]`一致，金额为
+`600→900→1200`，`originalText`不变，不再发生
+`CONFIRMATION_ERROR/HOME_PRIMARY_ITEM_NOT_SYNCED`。该题当前因既有本地解析及订单安全
+差异成为`CASE_FAIL/LOCAL_PARSE_ERROR`；Preflight阻断后没有隔离提交，正式业务Diff为
+零，不能把“同步已修复”扩大为“最终订单已保存”。
+
+首页同步专项16/16、Runner Kernel自测50/50；核心120题双轮均为
+`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致。详情见
+`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`。

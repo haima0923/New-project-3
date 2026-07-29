@@ -256,7 +256,7 @@ exact replay、重复触发和并发。Case 内容仍以 Corpus 为唯一来源�
 
 ## 13. 自测与假绿防护
 
-Runner 当前 41 项自测覆盖：
+Runner 当前 50 项自测覆盖：
 
 1. 错误 Expected；
 2. 漏执行保存；
@@ -289,16 +289,23 @@ Runner 当前 41 项自测覆盖：
 29. 网络/Storage审计未执行、fixture mutation、Journal残留和宿主文件写入均硬失败。
 30. Restart子Worker在运行时建立后报错，仍必须由finally返回network、Storage、host FS、
     fixture、Journal/Backup和worker exit完整审计。
+31. 页面编辑方法调用计数不是一次时必须是`RUNNER_ERROR/AUTOMATION_DRIVER_ERROR`，
+    不能误报为产品Confirmation失败。
+32. business内存mutation完成但Coordinator提交未发生时，`finalSavedRecord`必须为空；
+    只有成功提交且能在持久State按ID反查的记录才可作为最终保存证据。
 
 Smoke `--repeat 2` 比较 Case/Lane状态、Route、Preflight、页面业务语义、Diff、Receipt 和
 failureStage。只排除 PID、Boot ID 等非业务运行标识。
 
 ## 14. PAGE-008 证据边界
 
-`REC-E2E-PAGE-008`真实调用首页编辑方法后，已观察到顶层商品/数量/单价更新但
-`items[0]`未同步，最早失败层是 `CONFIRMATION_ERROR`。由于页面模型已在保存前不一致，
-Runner不绕过Preflight取得最终订单；因此当前只确认页面确认模型同步缺陷，尚未据此宣称
-错误旧 item 已写入最终业务 State。
+修复前，`REC-E2E-PAGE-008`真实调用首页编辑方法后出现顶层商品/数量/单价更新但
+`items[0]`未同步，最早失败层是`CONFIRMATION_ERROR`。
+
+当前首页已使用原子主商品同步：顶层字段与`items[0]`逐步一致，派生金额同步，
+`originalText`保留，最终Legacy草稿使用用户新值。该题当前最早差异为
+`LOCAL_PARSE_ERROR`。Preflight仍因订单交期和人工商品原文证据阻断，Runner没有绕过安全
+规则取得最终订单；因此已确认页面模型同步修复，但尚未据此宣称最终订单保存成功。
 
 ## 15. 当前限制与本轮结果
 
@@ -307,9 +314,9 @@ Runner不绕过Preflight取得最终订单；因此当前只确认页面确认�
 - R2的24题双轮Smoke为 `PASS=0 / CASE_FAIL=24 / RUNNER_ERROR=0 / BLOCKED=0`，两轮语义
   fingerprint一致。产品 Case 失败不被豁免，也不影响 Runner 完整性完成判断。
 - R1的120题双轮为`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`，65条P0失败
-  全部单题重跑，P1分层抽查10条，两轮及重跑语义一致。Ownership中只有1条确认
-  Confirmation缺陷和5条确认页面能力缺口；105条仍待人工判责。
+  全部单题重跑，P1分层抽查10条，两轮及重跑语义一致。当前首页同步重基线不再包含
+  Confirmation不同步Cluster，111条差异保持待人工判责。
 - `PERSIST-003`、`PERSIST-004`、`FIN-014`和Restart的事务证据来自对应 Case 的真实生产
   seam与隔离 Store，不再只由自测替代。
-- 微信 WXML/真机、真实千问和截图仍属于后续阶段。全量结果、39个Cluster和重点Evidence
+- 微信 WXML/真机、真实千问和截图仍属于后续阶段。全量结果、37个当前Cluster和重点Evidence
   见`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`。

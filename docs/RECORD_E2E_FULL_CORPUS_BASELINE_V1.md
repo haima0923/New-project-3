@@ -21,8 +21,9 @@ E2E，也不构成产品发布结论。`CASE_FAIL` 只表示 Actual 与人工合
 原始 Phase 2B.2-R1 基线没有修改生产代码。后续 `SELECT_ORDER` Cluster Fix只修改
 完整输入页的订单候选交互；报价候选真值源阶段只修改Domain Preflight安全候选投影、
 Shared Confirmation投影和E2E危险引用合同；随后完整页只消费该安全投影实现报价
-选择、取消、改选和保存前复核。parser、AI、business、Storage、Coordinator和120条题
-的业务正确Expected仍未修改。
+选择、取消、改选和保存前复核。首页主商品同步阶段只修改首页单商品人工编辑、保存前
+一致性门禁和Runner逐步Evidence。parser、AI、Domain Preflight政策、business、Storage、
+Coordinator和120条题的业务正确Expected仍未修改。
 
 ## 2. 跨页面动作注册表
 
@@ -77,8 +78,8 @@ primary failure、Ownership、Route、Preflight、Confirmation、业务 Diff、R
 revision、Restart 和 Concurrent 语义。PID、Boot ID 和绝对耗时不参与业务判分。
 
 完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次Cluster Fix重跑
-临时文件为`/private/tmp/record-e2e-select-quotation-ui-v1.json`，不属于源码、不提交Git，也不能
-替代由固定提交重新运行生成的证据。
+临时文件为`/private/tmp/record-e2e-home-primary-item-sync-v1.json`，不属于源码、
+不提交Git，也不能替代由固定提交重新运行生成的证据。
 
 ## 4. 风险、阶段与 Ownership
 
@@ -103,25 +104,23 @@ Primary failure stage：
 | Stage | Case数 |
 | --- | ---: |
 | `AI_NORMALIZE_ERROR` | 46 |
-| `LOCAL_PARSE_ERROR` | 26 |
+| `LOCAL_PARSE_ERROR` | 27 |
 | `PREFLIGHT_ERROR` | 18 |
 | `SURFACE_ERROR` | 9 |
 | `ROUTE_ERROR` | 12 |
 | `STATE_DIFF_ERROR` | 3 |
-| `CONFIRMATION_ERROR` | 1 |
 | `STORAGE_TRANSACTION_ERROR` | 1 |
 
 Ownership：
 
 | Ownership | Case数 | 含义 |
 | --- | ---: | --- |
-| `CONFIRMED_CONFIRMATION_DEFECT` | 1 | 已有生产等价页面方法证据 |
 | `EXPECTED_MAPPING_MISMATCH_CANDIDATE` | 1 | State Diff/字段映射候选，未改合同 |
 | `OBSERVABILITY_EXPECTATION_MISMATCH` | 2 | operationLogs 可观测预期差异 |
 | `TEST_CONTRACT_MISMATCH_CANDIDATE` | 2 | 执行 Lane 正确但旧统计合同冲突 |
-| `UNCLASSIFIED_REQUIRES_REVIEW` | 110 | 证据不足以判产品或测试合同责任 |
+| `UNCLASSIFIED_REQUIRES_REVIEW` | 111 | 证据不足以判产品或测试合同责任 |
 
-Ownership 不改变 Case 状态和 Expected。尤其不得把 110 条未分类差异直接称为产品 Bug，
+Ownership 不改变 Case 状态和 Expected。尤其不得把 111 条未分类差异直接称为产品 Bug，
 也不得用“候选”标签自动修改题库。
 
 ## 5. Lane 与 Case 结果必须分开
@@ -130,7 +129,7 @@ Ownership 不改变 Case 状态和 Expected。尤其不得把 110 条未分类�
 | --- | ---: | ---: | --- |
 | `PAGE_PRODUCTION_OBSERVATION` | 4 | 106 | 110 条页面观察全部执行 |
 | `HEADLESS_PRODUCTION_OBSERVATION` | 4 | 6 | 10 条 Headless 观察全部执行 |
-| `PAGE_CONFIRMED_DRAFT_DERIVATION` | 5 | 1 | `PAGE-008`在页面模型层失败 |
+| `PAGE_CONFIRMED_DRAFT_DERIVATION` | 5 | 1 | `PAGE-008`主商品一致性已通过；`AMB-015`仍有解析/确认差异 |
 | `TEST_ONLY_ISOLATED_LEGACY_COMMIT` | 23 | 66 | 89 条合同 Lane 均有明确结果 |
 | `PAGE_DUPLICATE_TRIGGER_GUARD` | 1 | 0 | `FIN-014` Lane 通过 |
 | `TRANSACTION_EXACT_REPLAY` | 0 | 1 | 事务动作成功，旧 Case 统计断言失败 |
@@ -159,18 +158,23 @@ Diff仍为零。只有`REL-003`在原始输入链实际到达可见选择控件�
 安全候选中，不调用页面选择或business保存，正式副作用为零。两个安全Lane均PASS。
 
 Case整体仍因原始页面结果与确认语义不一致而为`CASE_FAIL/AI_NORMALIZE_ERROR`：
-`REL-007`最早是operation差异，`REL-008`最早是businessType差异；Ownership保持
+`REL-007`最早是`fields.customerId`差异，`REL-008`最早是businessType差异；Ownership保持
 `UNCLASSIFIED_REQUIRES_REVIEW`。当前120题中合法`SELECT_QUOTATION`用户选择Case为0；
 两条独立补充题已通过同一Runner真实调用完整页`changeQuotation()`，验证安全候选、
 取消、改选、危险ID拒绝和草稿关系绑定。两题当前因既有`LOW_CONFIDENCE_FIELD`成为
 `CASE_FAIL/PREFLIGHT_ERROR`，不是Surface能力缺失。
 
-### 6.3 首页编辑与 `items[0]` 不同步
+### 6.3 首页编辑与 `items[0]` 同步已修复
 
-`PAGE-008` 为一条 P0。真实首页编辑方法把顶层商品从“帆布袋”改为“保温袋”、数量从
-100 改为 150、单价从 6 改为 8，但 `items[0]` 保留旧值。最早失败层是
-`CONFIRMATION_ERROR`。Preflight 阻断后 Runner 没有绕过安全规则保存，因此当前确认的是
-页面确认模型不同步，尚未证明错误旧值最终写入订单。
+`PAGE-008` 为一条 P0。真实首页编辑方法现在使顶层字段和`items[0]`逐步保持一致：
+商品“帆布袋→保温袋”、数量`100→150`、单价`6→8`，金额按既有规则
+`600→900→1200`；`originalText`未变，最终Legacy草稿也使用新值。该题不再以
+`CONFIRMATION_ERROR/HOME_PRIMARY_ITEM_NOT_SYNCED`失败，当前最早差异是
+`LOCAL_PARSE_ERROR`。
+
+Preflight仍因订单交期缺失及人工商品没有原文证据而阻断。Runner没有绕过安全规则保存，
+正式业务Diff为零、最终保存记录为空。因此已确认页面模型同步修复，但尚未证明该题完成
+最终订单保存。详细证据见`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`。
 
 ## 7. 重点事务 Case
 
@@ -236,20 +240,20 @@ Cluster。该表保留为修复前证据，不再代表当前页面能力：
 | Fake/Replay标准化差异：FAKE_DEEP / fields.explicitNewRecord | 1 | P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 | Fake/Replay标准化差异：FAKE_DEEP / items.length | 1 | P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 
-完整页安全报价选择阶段重新生成38个当前Cluster，仍覆盖116/116。与本次修订直接相关
-的当前主Cluster为：
+首页主商品同步阶段重新生成37个当前Cluster，仍覆盖116/116。首页顶层与`items[0]`
+不同步Cluster已移除；`PAGE-008`现在进入本地解析operation差异。其余主要Cluster包括：
 
 | 当前Cluster | Case数 | 风险 | Stage | Ownership |
 | --- | ---: | --- | --- | --- |
 | Fake/Replay标准化差异：FAKE_DEEP / businessType（含REL-008） | 13 | P0 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
-| Fake/Replay标准化差异：FAKE_DEEP / operation（含REL-007） | 2 | P0 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
-| 首页顶层编辑与items[0]不同步 | 1 | P0 | CONFIRMATION_ERROR | CONFIRMED_CONFIRMATION_DEFECT |
 | 本地解析字段差异：receivable / businessType | 1 | P0 | LOCAL_PARSE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
-| Fake/Replay标准化差异：FAKE_DEEP / items.length | 3 | P0/P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
-| Fake/Replay标准化差异：FAKE_DEEP / fields.customerId | 2 | P0 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
+| 本地解析字段差异：order / operation（含PAGE-008） | 10 | P0/P1 | LOCAL_PARSE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
+| Fake/Replay标准化差异：FAKE_DEEP / items.length | 4 | P0/P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
+| Fake/Replay标准化差异：FAKE_DEEP / fields.customerId（含REL-007） | 3 | P0 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 
-其中后三组分别包含`BASIC-010`、`REL-003`和`REL-009`。这表示真实订单选择入口已存在，
-但Case继续暴露更早的上游差异；它不授权把这些差异自动归为产品Bug。
+其中`BASIC-010`、`REL-003`和`REL-009`分别位于receivable/businessType、
+items.length和fields.customerId组。这表示真实订单选择入口已存在，但Case继续暴露更早
+的上游差异；它不授权把这些差异自动归为产品Bug。
 
 ## 9. 重跑与回归
 
@@ -258,8 +262,8 @@ Cluster。该表保留为修复前证据，不再代表当前页面能力：
   `AMB-005`、`AMB-008`、`BASIC-001`、`CHAT-001`、`DATE-002`、`DATE-004`、
   `PAGE-001`、`REL-001`、`REL-014`、`VOICE-001`。
 - Corpus Validator 与执行边界合同自测为 120 题通过、25/25；报价候选专项22/22，
-  报价选择Surface专项23/23。
-- Runner Kernel 自测 48/48（含危险关系页面、business、Storage和事务动态零调用门禁，
+  报价选择Surface专项23/23；首页主商品同步专项16/16。
+- Runner Kernel 自测 50/50（含危险关系页面、business、Storage和事务动态零调用门禁，
   以及审计缺失强制`RUNNER_ERROR`）；
   Page Action注册表自测14/14；订单选择Surface专项测试15/15；全量/报告自测14/14。
 - Release A RC1 16/16、Domain Preflight 20/20、Record Flow Gate 50题/99入口、
@@ -268,7 +272,7 @@ Cluster。该表保留为修复前证据，不再代表当前页面能力：
 
 ## 10. 建议修复顺序
 
-`SELECT_ORDER`和`SELECT_QUOTATION`页面能力Cluster均已独立完成，报价候选继续以
-Preflight为唯一真值源。下一优先建议是独立处理`PAGE-008`（1条已确认P0页面模型不同步）；
-解析/安全低置信度差异和其他未分类Case必须按各自Cluster判责，不能在页面选择任务中
-顺手放宽安全或修改Expected。
+`SELECT_ORDER`、`SELECT_QUOTATION`和首页单商品编辑同步Cluster均已独立完成，报价候选
+继续以Preflight为唯一真值源。下一优先建议是独立处理`BASIC-010`、`PAGE-008`等本地
+解析operation/字段映射Cluster；解析/安全低置信度差异和其他未分类Case必须按各自
+Cluster判责，不能在页面任务中顺手放宽安全或修改Expected。
