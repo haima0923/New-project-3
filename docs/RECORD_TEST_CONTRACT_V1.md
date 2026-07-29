@@ -880,3 +880,20 @@ Preflight政策或Legacy保存语义。
 `SELECT_QUOTATION`和`PAGE-008`不属于本次修复范围，Expected保持不变。订单选择专项
 测试15/15，全量120题两轮仍为`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 /
 BLOCKED=0`且确定性一致。
+
+## 25. 安全报价候选与危险引用合同
+
+Domain Preflight是报价候选唯一真值源。安全候选必须来自最新State，并按当前客户、
+operation、活动状态、删除事实和转单关系筛选；页面和AI fixture不得建立候选身份。
+Shared Confirmation只投影该结果，不复制安全规则，也不根据候选数量自动选择或强迫选择。
+
+`REL-007`和`REL-008`不是合法报价picker题，已改由
+`RELATION_REFERENCE_TAMPER_GUARD`明确注入跨客户或已转报价ID，再执行真实Preflight。
+两题继续保持P0、原阻断码和零副作用Expected，不调用页面选择或business保存。
+
+本阶段报价候选专项22/22、合同自测24/24、Runner Kernel自测48/48。危险关系Lane的
+页面方法、business、Storage和事务零调用结论来自动态前后计数及Storage Diff，不使用
+硬编码`false`；出现非零活动或审计仪表缺失时必须归为`RUNNER_ERROR`。120题双轮仍为
+`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致；两条危险关系Lane
+均PASS，Case整体仍因上游AI标准化/确认语义差异失败。详情见
+`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`。

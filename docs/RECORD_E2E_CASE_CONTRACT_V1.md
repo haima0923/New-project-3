@@ -165,17 +165,18 @@ expectedAiCall = MUST_NOT_CALL
 
 `interaction.userEdits` 支持字段和指定 `itemIndex` 的商品编辑；`userSelections` 支持客户、订单、报价和待收候选。每个选择或编辑必须同时声明`interaction.requiredCapabilities`，包括客户、普通订单、报价、待收、定金订单、主商品、后续商品和普通确认字段编辑。复杂幂等/并发题可用封闭的 `interaction.sequence` 表达 PREPARE、COMMIT、RESTART、事务材料捕获和exact replay等步骤。
 
-当前完整页缺少通用订单/报价选择方法的5条ACTIVE题仍保留正确能力与业务Expected：
+Phase 2A最初曾把5条关系题都表达为页面能力题；当前合同已进一步拆分：
 
 | Case | 必要能力 |
 | --- | --- |
 | `REC-E2E-BASIC-010` | `SELECT_ORDER` |
 | `REC-E2E-REL-003` | `SELECT_ORDER` |
-| `REC-E2E-REL-007` | `SELECT_CUSTOMER`、`SELECT_QUOTATION` |
-| `REC-E2E-REL-008` | `SELECT_QUOTATION` |
 | `REC-E2E-REL-009` | `SELECT_CUSTOMER`、`SELECT_ORDER` |
 
-未来Runner发现页面没有这些方法时，页面lane产生`CASE_FAIL/SURFACE_ERROR`，State Diff为零且保存入口不成功；不得伪造事件、直接改对象、记为Runner错误或Expected Fail。产品补齐页面后，同一Case自然继续到后续lane。
+上述订单能力已在完整页实现，Case会继续暴露更早或更后的真实差异。`REL-007/008`已改为
+危险关系注入题，不再声明`SELECT_QUOTATION`；未来合法报价picker必须由新Case覆盖。
+Runner发现真正缺失的合同页面能力时仍产生`CASE_FAIL/SURFACE_ERROR`，不得伪造事件、
+直接改对象、记为Runner错误或Expected Fail。
 
 `requestedSaveAction` 只有：
 
@@ -312,13 +313,13 @@ node scripts/validate-record-e2e-corpus.js --contract-self-test
 - JSON、实际 Schema 子集、必填字段、封闭枚举、fixture 继承/引用和 caseId 唯一性；
 - 固定时钟、时区投影和明确 ISO 日期；
 - Result 标准字段层、Route、AI profile、Preflight、Surface、业务Save与Diff的交叉关系；
-- 六类execution lane、生产观察/隔离执行分离、requiredCapability映射、restart/exact replay/concurrent双向合同；
+- 九类execution lane、生产观察/隔离执行/危险关系注入分离、requiredCapability映射、restart/exact replay/concurrent双向合同；
 - Sequence、fieldAssertions、relationAssertions 的封闭结构和引用对象；
 - P0 零副作用、多候选、Fake/Replay 隔离；
 - 多商品第二件、金融超额和关系安全；
 - 隐私、密钥、allowances、knownRisk；
 - 原文重复、疑似仅换数字重复、分类和风险配额；
-- Fake/Replay生产资格、业务安全不可绕过、exact replay同一身份和页面能力缺口分类的12个合同哨兵；
+- Fake/Replay生产资格、业务安全不可绕过、exact replay同一身份、页面能力分类和危险关系注入的22个合同哨兵；
 - ACTIVE、PAGE_E2E、REAL_QWEN_QUALITY、输入渠道、路由、保存、lane、能力和fixtures的覆盖统计。
 
 校验只输出控制台统计，不生成或提交运行报告。
@@ -365,8 +366,25 @@ Phase 2 Runner 应：
 | PAGE_CONFIRMED_DRAFT_DERIVATION | 6 |
 | TEST_ONLY_ISOLATED_LEGACY_COMMIT | 89 |
 | PAGE_DUPLICATE_TRIGGER_GUARD | 1 |
+| RELATION_REFERENCE_TAMPER_GUARD | 2 |
 | TRANSACTION_EXACT_REPLAY | 1 |
 | RESTART_PERSISTENCE | 5 |
 | CONCURRENT_BASE_REVISION | 1 |
 
 79条正式业务语义题与10条待整理题允许TEST_ONLY隔离执行；29条BLOCKED与2条NO_RECORD题禁止隔离提交。受保护的`riskLevel/result/route/routing/preflight/confirmation/surface/save action+status/stateDiff`迁移前后指纹保持一致。本阶段没有实现Runner、修改产品代码或形成任何运行通过结论。
+
+## 20. 危险关系注入与报价候选
+
+`RELATION_REFERENCE_TAMPER_GUARD`只用于合同明确的合成异常关系。它必须声明
+`EXPLICIT_SECURITY_TEST_DRAFT`、唯一注入路径和ID；Runner只能改变该路径，然后调用
+真实Domain Preflight。它不得调用页面选择方法、business或保存入口，必须期待正式阻断、
+危险ID不在安全候选中且正式State Diff为0。
+
+危险ID不得同时出现在`userSelections`或`requiredCapabilities=SELECT_QUOTATION`。
+REL-007/008分别注入跨客户和已转订单报价；原P0阻断Expected保持不变，但不再代表合法
+报价picker能力。
+
+报价安全候选只来自Domain Preflight最新State输出。AI fixture中的
+`quotation_candidates`不能建立用户可选身份，Shared Confirmation只能投影Preflight，
+不能自行筛选或因候选数量自动要求选择。当前120题中合法`SELECT_QUOTATION`用户选择题
+为0，后续页面阶段必须另建合法选择Case。
