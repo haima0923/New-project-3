@@ -11,6 +11,7 @@ const { evaluateRecordDomainPreflight, getTrustedRecordFlowContext } = require('
 const { getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
 const { getFieldLabel, isVisibleField } = require('../../utils/display');
+const { normalizeUnit, unitsMatch } = require('../../utils/units');
 const {
   analyzeClipboardText,
   buildNoBusinessPasteResult,
@@ -69,6 +70,8 @@ const requiredFieldsByOperation = {
 
 const digitFields = ['quantity', 'unitPrice', 'amount', 'depositAmount', 'paymentAmount', 'remainingAmount'];
 const dateFields = ['dueDate'];
+const homePrimaryItemEditableFields = ['productName', 'quantity', 'unit', 'unitPrice', 'amount'];
+const homePrimaryItemProjectionFields = ['productName', 'quantity', 'unit', 'unitPrice'];
 const VOICE_HOLD_DELAY_MS = 260;
 function hasResolvedAiFallback(parseResult = {}) {
   const aiFallback = parseResult.ai_fallback || {};
@@ -95,6 +98,118 @@ function toMoney(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number)) return 0;
   return Number(number.toFixed(2));
+}
+
+function hasMoneyValue(value) {
+  return value !== undefined
+    && value !== null
+    && value !== ''
+    && Number.isFinite(Number(value));
+}
+
+function formatMoneyValue(value) {
+  const number = toMoney(value);
+  return String(number);
+}
+
+function getHomePrimaryItems(fields = {}) {
+  return Array.isArray(fields.items)
+    ? fields.items.filter((item) => item && typeof item === 'object')
+    : [];
+}
+
+function shouldPreserveHomeConfirmedAmount(parseResult = {}, fields = {}) {
+  return hasFieldValue(fields, 'statedAmount')
+    || uniqueFields(parseResult.manual_fields || []).includes('amount');
+}
+
+function calculateHomePrimaryItemAmount(item = {}) {
+  if (!hasMoneyValue(item.quantity) || !hasMoneyValue(item.unitPrice)) return '';
+  if (Number(item.quantity) <= 0 || Number(item.unitPrice) <= 0) return '';
+  if (!unitsMatch(item.unit, item.priceUnit)) return '';
+  return formatMoneyValue(Number(item.quantity) * Number(item.unitPrice));
+}
+
+function applyHomePrimaryItemEdit(parseResult = {}, field, rawValue) {
+  const fields = Object.assign({}, parseResult.fields || {});
+  const items = getHomePrimaryItems(fields);
+  if (!['quotation', 'order'].includes(parseResult.intent)
+    || !homePrimaryItemEditableFields.includes(field)) {
+    return {
+      applied: false,
+      reason: 'NOT_PRIMARY_ITEM_FIELD',
+      fields: Object.assign({}, fields, { [field]: rawValue })
+    };
+  }
+  if (items.length !== 1) {
+    return {
+      applied: false,
+      reason: items.length > 1 ? 'MULTI_ITEM_REQUIRES_FULL_PAGE' : 'PRIMARY_ITEM_MISSING',
+      fields
+    };
+  }
+
+  const value = field === 'unit' ? normalizeUnit(rawValue) : rawValue;
+  const firstItem = Object.assign({}, items[0]);
+  if (field === 'amount') firstItem.totalAmount = value;
+  else firstItem[field] = value;
+
+  const preserveConfirmedAmount = field === 'amount'
+    || shouldPreserveHomeConfirmedAmount(parseResult, fields);
+  const calculatedAmount = calculateHomePrimaryItemAmount(firstItem);
+  const confirmedAmount = preserveConfirmedAmount
+    ? (field === 'amount'
+      ? value
+      : (fields.amount || fields.totalAmount || fields.statedAmount || calculatedAmount || ''))
+    : calculatedAmount;
+
+  firstItem.totalAmount = confirmedAmount;
+  const nextFields = Object.assign({}, fields, {
+    items: [firstItem],
+    productName: firstItem.productName || '',
+    quantity: firstItem.quantity || '',
+    unit: firstItem.unit || '',
+    unitPrice: firstItem.unitPrice || '',
+    priceUnit: firstItem.priceUnit || '',
+    amount: confirmedAmount,
+    totalAmount: confirmedAmount,
+    calculatedAmount: calculatedAmount || ''
+  });
+  return {
+    applied: true,
+    reason: '',
+    fields: nextFields
+  };
+}
+
+function evaluateHomePrimaryItemConsistency(parseResult = {}) {
+  if (!['quotation', 'order'].includes(parseResult.intent)) {
+    return { consistent: true, issues: [] };
+  }
+  const fields = parseResult.fields || {};
+  const items = getHomePrimaryItems(fields);
+  if (items.length !== 1) {
+    return {
+      consistent: items.length > 1,
+      issues: items.length ? [] : ['items[0]']
+    };
+  }
+  const firstItem = items[0];
+  const issues = homePrimaryItemProjectionFields
+    .filter((field) => String(fields[field] || '') !== String(firstItem[field] || ''));
+  ['quantity', 'unitPrice'].forEach((field) => {
+    if (firstItem[field] === undefined || firstItem[field] === null || firstItem[field] === '') return;
+    if (!Number.isFinite(Number(firstItem[field])) || Number(firstItem[field]) <= 0) {
+      issues.push(`${field}:invalid`);
+    }
+  });
+  const topAmount = fields.amount || fields.totalAmount || '';
+  const itemAmount = firstItem.totalAmount || '';
+  if (String(topAmount) !== String(itemAmount)) issues.push('amount');
+  return {
+    consistent: issues.length === 0,
+    issues
+  };
 }
 
 function getReceivableRemaining(receivable = {}) {
@@ -335,6 +450,7 @@ function getFullInputConfirmationReason(parseResult = {}) {
 function buildHomeConfirmState(parseResult, state = getState()) {
   const normalized = normalizeEditableParseResult(parseResult, state);
   const fullInputReason = getFullInputConfirmationReason(normalized);
+  const primaryItemConsistency = evaluateHomePrimaryItemConsistency(normalized);
   const flowContext = getTrustedRecordFlowContext(normalized);
   const domainPreflight = evaluateRecordDomainPreflight({
     mode: flowContext.mode || 'PRODUCTION_ROUTING',
@@ -354,7 +470,9 @@ function buildHomeConfirmState(parseResult, state = getState()) {
   ));
   const needsFullInput = Boolean(fullInputReason) || relationSelectionRequired;
   const surfaceCanCompleteFormal = !needsFullInput;
-  const quickReady = domainPreflight.domainCanSaveFormal === true && surfaceCanCompleteFormal;
+  const quickReady = domainPreflight.domainCanSaveFormal === true
+    && surfaceCanCompleteFormal
+    && primaryItemConsistency.consistent;
   const safetyBlockText = getQuickSaveSafetyBlockText(normalized);
   const fieldConflictLines = formatFieldConflicts(normalized.field_conflicts || []);
   const supersededFactLines = formatSupersededFacts(normalized.superseded_facts || []);
@@ -368,6 +486,8 @@ function buildHomeConfirmState(parseResult, state = getState()) {
     requiresFullPage: needsFullInput,
     preflightFingerprint: domainPreflight.preflightFingerprint,
     preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
+    homePrimaryItemConsistent: primaryItemConsistency.consistent,
+    homePrimaryItemConsistencyIssues: primaryItemConsistency.issues,
     parseEvidence: buildParseEvidence(normalized),
     showParseEvidence: false,
     confirmFields: buildConfirmFields(normalized, state),
@@ -375,6 +495,7 @@ function buildHomeConfirmState(parseResult, state = getState()) {
     sourceLabel: INPUT_SOURCE_LABELS[normalized.source] || '输入',
     warningText: fullInputReason
       || (relationSelectionRequired ? '这笔需要选择正确的客户或关联记录，请打开完整记一笔确认。' : '')
+      || (!primaryItemConsistency.consistent ? '商品信息没有同步，请重新确认后再保存。' : '')
       || buildWarningText(normalized),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
@@ -846,9 +967,14 @@ Page({
     if (!this.data.parseResult) return;
     const field = event.currentTarget.dataset.field;
     const value = event.detail.value;
-    const nextFields = Object.assign({}, this.data.parseResult.fields, {
-      [field]: value
-    });
+    const primaryItemEdit = applyHomePrimaryItemEdit(this.data.parseResult, field, value);
+    if (primaryItemEdit.reason === 'MULTI_ITEM_REQUIRES_FULL_PAGE'
+      || primaryItemEdit.reason === 'PRIMARY_ITEM_MISSING') {
+      this.setData(buildHomeConfirmState(this.data.parseResult));
+      wx.showToast({ title: '多件商品请到完整页逐项修改', icon: 'none' });
+      return;
+    }
+    const nextFields = primaryItemEdit.fields;
     if (['customerName', 'phone'].includes(field)) {
       delete nextFields.customerId;
       delete nextFields.receivableId;
@@ -925,7 +1051,12 @@ Page({
     const confirmState = buildHomeConfirmState(this.data.parseResult, state);
     if (confirmState.disableQuickSave) {
       this.setData(confirmState);
-      wx.showToast({ title: confirmState.showFieldConflicts ? '先确认聊天里的冲突信息' : '先补齐卡片里的信息', icon: 'none' });
+      wx.showToast({
+        title: !confirmState.homePrimaryItemConsistent
+          ? '商品信息未同步，请重新确认'
+          : (confirmState.showFieldConflicts ? '先确认聊天里的冲突信息' : '先补齐卡片里的信息'),
+        icon: 'none'
+      });
       return;
     }
     const saved = saveConfirmedDraft(state, confirmState.parseResult);
