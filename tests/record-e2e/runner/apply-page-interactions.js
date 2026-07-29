@@ -1,5 +1,6 @@
 const { safeClone } = require('../../../utils/record-state-diff');
 const { flushAsync } = require('./page-vm-driver');
+const { resolvePageSelection } = require('./page-action-registry');
 
 function eventForValue(value, dataset = {}) {
   return {
@@ -28,8 +29,14 @@ async function applySelection(driver, selection, evidence) {
     depositOperation = page.data.parseResult
       && page.data.parseResult.operation === 'record_order_deposit';
     if (depositOperation) {
-      method = 'changeOrderDeposit';
-      options = page.data.orderOptions;
+      const resolution = resolvePageSelection({
+        availablePageMethods: page,
+        capability: 'SELECT_DEPOSIT_ORDER',
+        entrySurface: surface,
+        selectionKind: kind
+      });
+      method = resolution.resolvedMethodName;
+      options = page.data[resolution.optionsKey];
     } else {
       if (page.data.showGenericOrderSelection !== true
         || page.data.showGenericOrderPicker !== true) {
@@ -41,8 +48,14 @@ async function applySelection(driver, selection, evidence) {
           selectedId: selection.selectedId
         };
       }
-      method = 'changeOrder';
-      options = page.data.orderOptions;
+      const resolution = resolvePageSelection({
+        availablePageMethods: page,
+        capability: 'SELECT_ORDER',
+        entrySurface: surface,
+        selectionKind: kind
+      });
+      method = resolution.resolvedMethodName;
+      options = page.data[resolution.optionsKey];
     }
   } else if (kind === 'quotationId') {
     if (page.data.showGenericQuotationSelection !== true
@@ -55,8 +68,43 @@ async function applySelection(driver, selection, evidence) {
         selectedId: selection.selectedId
       };
     }
-    method = 'changeQuotation';
-    options = page.data.quotationOptions;
+    const resolution = resolvePageSelection({
+      availablePageMethods: page,
+      capability: 'SELECT_QUOTATION',
+      entrySurface: surface,
+      selectionKind: kind
+    });
+    method = resolution.resolvedMethodName;
+    options = page.data[resolution.optionsKey];
+  }
+  const candidateIds = (options || [])
+    .map((item) => item && item.id)
+    .filter(Boolean);
+  if (Array.isArray(selection.expectedCandidateIds)
+    && JSON.stringify(candidateIds) !== JSON.stringify(selection.expectedCandidateIds)) {
+    return {
+      applied: false,
+      reason: 'CANDIDATE_SET_MISMATCH',
+      surface,
+      kind,
+      selectedId: selection.selectedId,
+      candidateIds,
+      expectedCandidateIds: selection.expectedCandidateIds.slice()
+    };
+  }
+  if (Array.isArray(selection.rejectedCandidateIds)
+    && selection.rejectedCandidateIds.some((candidateId) => (
+      candidateIds.includes(candidateId)
+    ))) {
+    return {
+      applied: false,
+      reason: 'REJECTED_CANDIDATE_EXPOSED',
+      surface,
+      kind,
+      selectedId: selection.selectedId,
+      candidateIds,
+      rejectedCandidateIds: selection.rejectedCandidateIds.slice()
+    };
   }
   if (!method || typeof page[method] !== 'function') {
     return {
@@ -75,7 +123,7 @@ async function applySelection(driver, selection, evidence) {
       surface,
       kind,
       selectedId: selection.selectedId,
-      candidateIds: (options || []).map((item) => item && item.id).filter(Boolean)
+      candidateIds
     };
   }
   const accepted = page[method](eventForValue(index));
@@ -120,7 +168,8 @@ async function applySelection(driver, selection, evidence) {
     applied: true,
     kind,
     method,
-    selectedId: selection.selectedId
+    selectedId: selection.selectedId,
+    candidateIds
   };
   evidence.selections.push(item);
   return item;

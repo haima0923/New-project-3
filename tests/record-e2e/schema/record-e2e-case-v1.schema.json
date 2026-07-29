@@ -500,6 +500,22 @@
               "selectedId": {
                 "type": "string",
                 "minLength": 1
+              },
+              "expectedCandidateIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "rejectedCandidateIds": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             }
           }

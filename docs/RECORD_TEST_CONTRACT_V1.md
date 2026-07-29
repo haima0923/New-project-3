@@ -891,7 +891,7 @@ Shared Confirmation只投影该结果，不复制安全规则，也不根据候�
 `RELATION_REFERENCE_TAMPER_GUARD`明确注入跨客户或已转报价ID，再执行真实Preflight。
 两题继续保持P0、原阻断码和零副作用Expected，不调用页面选择或business保存。
 
-本阶段报价候选专项22/22、合同自测24/24、Runner Kernel自测48/48。危险关系Lane的
+本阶段报价候选专项22/22、合同自测25/25、Runner Kernel自测48/48。危险关系Lane的
 页面方法、business、Storage和事务零调用结论来自动态前后计数及Storage Diff，不使用
 硬编码`false`；出现非零活动或审计仪表缺失时必须归为`RUNNER_ERROR`。120题双轮仍为
 `PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致；两条危险关系Lane
@@ -923,3 +923,13 @@ REC-E2E-QSEL-002
 草稿、items和Preflight证据；它们随后因既有`LOW_CONFIDENCE_FIELD`成为
 `CASE_FAIL/PREFLIGHT_ERROR`。这不属于页面能力失败，Expected不放宽，后续应在解析/安全
 Cluster单独处理。
+
+Runner中的选择能力由中央Page Capability Registry解析，`SELECT_QUOTATION`稳定映射到
+完整页真实`changeQuotation()`；补充题在交互合同中显式断言安全候选与拒绝候选ID集合，
+实际Evidence必须同时包含methodName、candidateIds和selectedId。State Diff中任何
+`originalText`精确断言都必须与Case输入原文一致，机械矛盾在执行前由Validator拦截。
+
+报价历史数据与确认页用户补丁必须分层：改选、取消或换客户不能把旧报价的商品明细留在
+新草稿中；历史多商品的第二件及后续商品编辑必须保存为稀疏补丁，不能因原始解析只有一件
+商品而丢失。完整页报价选择专项23/23、Page Action Registry 14/14，核心120题双轮仍为
+`PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致。

@@ -4,7 +4,8 @@ const {
   assertActionInvocation,
   invokeResolvedPageAction,
   lookupPageAction,
-  resolvePageAction
+  resolvePageAction,
+  resolvePageSelection
 } = require('../runner/page-action-registry');
 const { assertRuntimeIsolation } = require('../runner/full-run-integrity');
 const { buildExecutionPlan } = require('../runner/build-execution-plan');
@@ -48,6 +49,24 @@ function resolveReal(caseId, surface, requestedAction, inputChannel = 'TYPED_TEX
 }
 
 const tests = [
+  {
+    name: 'full-page-select-quotation-maps-to-real-handler',
+    run() {
+      const result = withProductionPage(
+        'REC-E2E-REL-010',
+        'FULL_PAGE',
+        (driver) => resolvePageSelection({
+          availablePageMethods: driver.page,
+          capability: 'SELECT_QUOTATION',
+          entrySurface: 'FULL_PAGE',
+          selectionKind: 'quotationId'
+        })
+      );
+      assert.strictEqual(result.resolvedMethodName, 'changeQuotation');
+      assert.strictEqual(result.optionsKey, 'quotationOptions');
+      assert.strictEqual(result.resolutionEvidence.source, 'CENTRAL_PAGE_CAPABILITY_REGISTRY');
+    }
+  },
   {
     name: 'home-quick-save-pending-maps-to-real-dashboard-handler',
     run() {

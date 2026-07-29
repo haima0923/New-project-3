@@ -126,11 +126,13 @@ const tests = [
         assert.deepStrictEqual(
           Object.keys(page.data.quotationCandidates[0]).sort(),
           [
-            'createdAt', 'customerDisplayName', 'customerId', 'id', 'itemCount',
+            'convertedOrderId', 'createdAt', 'customerDisplayName', 'customerId', 'id', 'itemCount',
             'productSummary', 'quotationAmount', 'quotationId', 'quoteDate',
-            'status', 'validUntil'
+            'selectionBlockingCodes', 'selectionEligible', 'status', 'validUntil'
           ].sort()
         );
+        assert.strictEqual(page.data.quotationCandidates[0].selectionEligible, true);
+        assert.deepStrictEqual(page.data.quotationCandidates[0].selectionBlockingCodes, []);
         assert.strictEqual(
           page.data.quotationCandidates[0].originalText,
           undefined
@@ -185,21 +187,161 @@ const tests = [
     name: 'customer-picker-change-clears-old-quotation-selection',
     run() {
       withPage(({ page, runtime }) => {
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), true);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
         replaceState(runtime, (state) => {
           state.customers.push({
             id: 'cus-syn-b',
-            name: '李姐',
+            name: '王总',
             createdAt: '2026-07-01T00:00:00.000Z'
           });
+          state.quotations.push({
+            id: 'quo-syn-b-1',
+            customerId: 'cus-syn-b',
+            productName: '围裙',
+            quantity: 80,
+            unit: '件',
+            unitPrice: 12,
+            totalAmount: 960,
+            items: [{
+              productName: '围裙',
+              quantity: 80,
+              unit: '件',
+              unitPrice: 12,
+              totalAmount: 960
+            }],
+            status: '待确认',
+            quoteDate: '2026-07-13',
+            createdAt: '2026-07-13T02:00:00.000Z'
+          });
         });
-        prepareConfirmation(page, quotationDraft());
-        page.changeQuotation({ detail: { value: 0 } });
         page.setData({
-          customerMatchOptions: [{ id: 'cus-syn-b', label: '李姐' }]
+          customerMatchOptions: [{ id: 'cus-syn-b', label: '王总 · 第2个' }]
         });
         page.changeCustomerMatch({ detail: { value: 0 } });
         assert.strictEqual(page.data.fields.customerId, 'cus-syn-b');
         assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.deepStrictEqual(candidateIds(page), ['quo-syn-b-1']);
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), true);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-b-1');
+        assert.strictEqual(page.data.fields.productName, '围裙');
+        assert.strictEqual(page.data.fields.items[0].productName, '围裙');
+      });
+    }
+  },
+  {
+    name: 'selected-multi-item-quotation-allows-editing-second-item',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.quotations[0].items = [
+            {
+              productName: '保温杯',
+              quantity: 300,
+              unit: '个',
+              unitPrice: 18,
+              totalAmount: 5400
+            },
+            {
+              productName: '杯盖',
+              quantity: 40,
+              unit: '个',
+              unitPrice: 2,
+              totalAmount: 80
+            }
+          ];
+        });
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), true);
+        assert.strictEqual(page.data.fields.items.length, 2);
+        page.updateItemField({
+          currentTarget: { dataset: { index: 1, field: 'quantity' } },
+          detail: { value: 55 }
+        });
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
+        assert.strictEqual(page.data.fields.items[1].productName, '杯盖');
+        assert.strictEqual(page.data.fields.items[1].quantity, 55);
+        assert.strictEqual(page.data.fields.items[1].totalAmount, '110');
+      });
+    }
+  },
+  {
+    name: 'remove-historical-item-is-scoped-to-current-quotation-on-reselect',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.quotations[0].items = [
+            {
+              productName: '保温杯',
+              quantity: 300,
+              unit: '个',
+              unitPrice: 18,
+              totalAmount: 5400
+            },
+            {
+              productName: '杯盖',
+              quantity: 40,
+              unit: '个',
+              unitPrice: 2,
+              totalAmount: 80
+            }
+          ];
+          state.quotations[1].items = [
+            {
+              productName: '饭盒',
+              quantity: 200,
+              unit: '套',
+              unitPrice: 15,
+              totalAmount: 3000
+            },
+            {
+              productName: '饭盒盖',
+              quantity: 200,
+              unit: '个',
+              unitPrice: 1,
+              totalAmount: 200
+            }
+          ];
+        });
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        page.removeConfirmItem({
+          currentTarget: { dataset: { index: 1 } }
+        });
+        assert.strictEqual(page.data.fields.items.length, 1);
+        assert.strictEqual(page.changeQuotation({ detail: { value: 1 } }), true);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.fields.productName, '饭盒');
+        assert.strictEqual(page.data.fields.items[0].productName, '饭盒');
+        assert.strictEqual(page.data.fields.items.length, 2);
+        assert.strictEqual(page.data.fields.items[1].productName, '饭盒盖');
+        assert.strictEqual(
+          page.data.fields.items.some((item) => item.productName === '保温杯'),
+          false
+        );
+      });
+    }
+  },
+  {
+    name: 'added-item-is-scoped-to-current-quotation-and-cleared-on-cancel',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        page.addConfirmItem();
+        assert.strictEqual(page.data.fields.items.length, 2);
+        assert.strictEqual(page.changeQuotation({ detail: { value: 1 } }), true);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.fields.items.length, 1);
+        assert.strictEqual(page.data.fields.items[0].productName, '饭盒');
+        page.changeQuotation({ detail: { value: 0 } });
+        page.addConfirmItem();
+        assert.strictEqual(page.clearQuotationSelection(), true);
+        assert.strictEqual(
+          (page.data.fields.items || []).some((item) => item.productName === '保温杯'),
+          false
+        );
       });
     }
   },

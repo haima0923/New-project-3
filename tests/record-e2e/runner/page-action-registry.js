@@ -31,6 +31,39 @@ const PAGE_ACTION_REGISTRY = Object.freeze({
   })
 });
 
+const PAGE_CAPABILITY_REGISTRY = Object.freeze({
+  SELECT_CUSTOMER: Object.freeze({
+    entrySurface: 'FULL_PAGE',
+    methodName: 'changeCustomerMatch',
+    optionsKey: 'customerMatchOptions',
+    selectionKind: 'customerId'
+  }),
+  SELECT_ORDER: Object.freeze({
+    entrySurface: 'FULL_PAGE',
+    methodName: 'changeOrder',
+    optionsKey: 'orderOptions',
+    selectionKind: 'orderId'
+  }),
+  SELECT_QUOTATION: Object.freeze({
+    entrySurface: 'FULL_PAGE',
+    methodName: 'changeQuotation',
+    optionsKey: 'quotationOptions',
+    selectionKind: 'quotationId'
+  }),
+  SELECT_RECEIVABLE: Object.freeze({
+    entrySurface: 'FULL_PAGE',
+    methodName: 'changeReceivable',
+    optionsKey: 'receivableOptions',
+    selectionKind: 'receivableId'
+  }),
+  SELECT_DEPOSIT_ORDER: Object.freeze({
+    entrySurface: 'FULL_PAGE',
+    methodName: 'changeOrderDeposit',
+    optionsKey: 'orderOptions',
+    selectionKind: 'orderId'
+  })
+});
+
 function actionError(failureCode, message, evidence = {}) {
   return Object.assign(new Error(message), {
     code: 'AUTOMATION_DRIVER_ERROR',
@@ -182,14 +215,71 @@ function invokeResolvedPageAction(page, resolution, options = {}) {
   };
 }
 
+function detectRegisteredCapabilities(entrySurface, page = {}) {
+  return Object.fromEntries(Object.entries(PAGE_CAPABILITY_REGISTRY).map((
+    [capability, entry]
+  ) => [
+    capability,
+    entry.entrySurface === entrySurface
+      && typeof page[entry.methodName] === 'function'
+  ]));
+}
+
+function resolvePageSelection(options = {}) {
+  const entry = PAGE_CAPABILITY_REGISTRY[options.capability];
+  const page = options.availablePageMethods || {};
+  const evidence = {
+    capability: options.capability || '',
+    entrySurface: options.entrySurface || '',
+    selectionKind: options.selectionKind || '',
+    source: 'CENTRAL_PAGE_CAPABILITY_REGISTRY'
+  };
+  if (!entry || entry.selectionKind !== options.selectionKind
+    || entry.entrySurface !== options.entrySurface) {
+    throw actionError(
+      'PAGE_SELECTION_MAPPING_MISSING',
+      `No registered page selection for ${options.entrySurface}|${options.selectionKind}`,
+      Object.assign(evidence, {
+        capabilityPresent: false,
+        resolvedMethodName: ''
+      })
+    );
+  }
+  const methodType = typeof page[entry.methodName];
+  if (methodType !== 'function') {
+    throw actionError(
+      'PAGE_SELECTION_METHOD_MISSING',
+      `Registered production Page selection method is missing: ${entry.methodName}`,
+      Object.assign(evidence, {
+        capabilityPresent: false,
+        methodType,
+        resolvedMethodName: entry.methodName
+      })
+    );
+  }
+  return {
+    capabilityPresent: true,
+    optionsKey: entry.optionsKey,
+    resolvedMethodName: entry.methodName,
+    resolutionEvidence: Object.assign(evidence, {
+      capabilityPresent: true,
+      methodType,
+      resolvedMethodName: entry.methodName
+    })
+  };
+}
+
 module.exports = {
   PAGE_ACTION_REGISTRY,
+  PAGE_CAPABILITY_REGISTRY,
   actionError,
   assertActionInvocation,
+  detectRegisteredCapabilities,
   deriveEditMode,
   invokeResolvedPageAction,
   lookupPageAction,
   normalizeRequestedAction,
   registryKey,
-  resolvePageAction
+  resolvePageAction,
+  resolvePageSelection
 };

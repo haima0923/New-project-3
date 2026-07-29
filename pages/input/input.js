@@ -891,7 +891,12 @@ function buildGenericQuotationSelectionState(fields, operation, domainPreflight)
     status: String(item.status || ''),
     quoteDate: String(item.quoteDate || ''),
     validUntil: String(item.validUntil || ''),
-    createdAt: String(item.createdAt || '')
+    convertedOrderId: String(item.convertedOrderId || ''),
+    createdAt: String(item.createdAt || ''),
+    selectionEligible: item.selectionEligible === true,
+    selectionBlockingCodes: Array.isArray(item.selectionBlockingCodes)
+      ? item.selectionBlockingCodes.slice()
+      : []
   })).filter((item) => item.id);
   const selectedQuotationId = String(nextFields.quotationId || '');
   const selectedQuotation = quotationCandidates
@@ -944,6 +949,7 @@ function buildGenericQuotationSelectionState(fields, operation, domainPreflight)
       selectedQuotation && nextFields.quotationSelectionConfirmed === true
     ),
     quotationSelectionBaseFields: null,
+    quotationSelectionRootFields: null,
     showGenericQuotationSelection,
     showGenericQuotationPicker: quotationOptions.length > 0
   };
@@ -959,6 +965,8 @@ function copyQuotationSelectionBaseFields(fields) {
   return base;
 }
 
+const QUOTATION_ITEM_REMOVED = '__quotationItemRemoved';
+
 function mergeQuotationSelectionDraftFields(state, baseFields, quotationId) {
   const selectedId = String(quotationId || '');
   const historicalFields = hydrateQuotationFields(state, {
@@ -973,14 +981,16 @@ function mergeQuotationSelectionDraftFields(state, baseFields, quotationId) {
   }
 
   const historicalItems = normalizeConfirmItems(historicalFields);
-  const patchItems = Array.isArray(patchFields.items)
-    ? patchFields.items.map(normalizeConfirmItem)
+  const rawPatchItems = Array.isArray(patchFields.items)
+    ? patchFields.items.map((item) => Object.assign({}, item))
     : [];
-  const itemCount = Math.max(historicalItems.length, patchItems.length);
+  const itemCount = Math.max(historicalItems.length, rawPatchItems.length);
   const items = [];
   for (let index = 0; index < itemCount; index += 1) {
+    const rawPatchItem = rawPatchItems[index] || {};
+    if (rawPatchItem[QUOTATION_ITEM_REMOVED] === true) continue;
     const historicalItem = historicalItems[index] || {};
-    const patchItem = patchItems[index] || {};
+    const patchItem = normalizeConfirmItem(rawPatchItem);
     const item = mergePresentFields(historicalItem, patchItem);
     if (hasConfirmItemValue(item)) items.push(item);
   }
@@ -1006,6 +1016,9 @@ function rebuildAfterQuotationFieldEdit(state, pageData, baseResult, intent, nex
     return buildConfirmationState(state, baseResult, intent, baseFields);
   }
   confirmationState.quotationSelectionBaseFields = baseFields;
+  confirmationState.quotationSelectionRootFields = pageData.quotationSelectionRootFields
+    ? copyQuotationSelectionBaseFields(pageData.quotationSelectionRootFields)
+    : copyQuotationSelectionBaseFields(baseFields);
   return confirmationState;
 }
 
@@ -1618,6 +1631,7 @@ function getEmptyConfirmationData() {
     quotationSelectionReason: '',
     quotationSelectionConfirmed: false,
     quotationSelectionBaseFields: null,
+    quotationSelectionRootFields: null,
     showGenericQuotationSelection: false,
     showGenericQuotationPicker: false,
     showCustomerMatchBox: false,
@@ -1797,6 +1811,7 @@ Page({
     quotationSelectionReason: '',
     quotationSelectionConfirmed: false,
     quotationSelectionBaseFields: null,
+    quotationSelectionRootFields: null,
     showGenericQuotationSelection: false,
     showGenericQuotationPicker: false,
     showCustomerMatchBox: false,
@@ -2212,11 +2227,13 @@ Page({
       missing_fields: [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
-    const fields = this.data.quotationSelectionBaseFields
-      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
-      : (this.data.orderSelectionBaseFields
-        ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
-        : Object.assign({}, this.data.fields));
+    const fields = this.data.quotationSelectionRootFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
+      : (this.data.quotationSelectionBaseFields
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : (this.data.orderSelectionBaseFields
+          ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+          : Object.assign({}, this.data.fields)));
     delete fields.quotationId;
     delete fields.quotationSelectionConfirmed;
     const confirmationState = buildConfirmationState(state, baseResult, intent, fields);
@@ -2240,7 +2257,11 @@ Page({
       const fieldInvalidatesOrderSelection = ['customerName', 'phone', 'productName'].includes(field);
       const fieldInvalidatesQuotationSelection = ['customerName', 'phone'].includes(field);
       const sourceFields = hasGenericQuotationSelection
-        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        ? copyQuotationSelectionBaseFields(
+          fieldInvalidatesQuotationSelection && this.data.quotationSelectionRootFields
+            ? this.data.quotationSelectionRootFields
+            : this.data.quotationSelectionBaseFields
+        )
         : (hasGenericOrderSelection
           ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
           : this.data.fields);
@@ -2303,29 +2324,50 @@ Page({
     if (!this.data.parseResult) return;
     const index = Number(event.currentTarget.dataset.index || 0);
     const field = event.currentTarget.dataset.field;
-    const sourceFields = this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
-      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
-      : this.data.fields;
-    const items = normalizeConfirmItems(sourceFields, { ensureFirst: true });
-    if (!items[index] || !field) return;
+    const hasQuotationSelection = Boolean(
+      this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+    );
+    const displayedItems = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    if (!displayedItems[index] || !field) return;
     const value = ['unit', 'priceUnit'].includes(field) ? normalizeUnit(event.detail.value) : event.detail.value;
-    items[index] = Object.assign({}, items[index], {
+    const manualFields = this.data.parseResult.manual_fields || [];
+    const nextDisplayedItem = Object.assign({}, displayedItems[index], {
       [field]: value
     });
-    const manualFields = this.data.parseResult.manual_fields || [];
     if (['quantity', 'unit', 'unitPrice', 'priceUnit'].includes(field)
       && !manualFields.includes('totalAmount')
-      && hasMoneyValue(items[index].quantity)
-      && hasMoneyValue(items[index].unitPrice)) {
-      items[index].totalAmount = unitsMatch(items[index].unit, items[index].priceUnit)
-        ? formatMoneyValue(Number(items[index].quantity) * Number(items[index].unitPrice))
+      && hasMoneyValue(nextDisplayedItem.quantity)
+      && hasMoneyValue(nextDisplayedItem.unitPrice)) {
+      nextDisplayedItem.totalAmount = unitsMatch(nextDisplayedItem.unit, nextDisplayedItem.priceUnit)
+        ? formatMoneyValue(Number(nextDisplayedItem.quantity) * Number(nextDisplayedItem.unitPrice))
         : '';
     }
-    const fields = syncFirstItemToLegacyFields(Object.assign({}, sourceFields, {
-      items
-    }), {
-      preserveConfirmedAmount: manualFields.includes('amount')
-    });
+    let fields;
+    if (hasQuotationSelection) {
+      fields = copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields);
+      const itemPatches = Array.isArray(fields.items)
+        ? fields.items.map((item) => Object.assign({}, item))
+        : [];
+      while (itemPatches.length <= index) itemPatches.push({});
+      const existingPatch = itemPatches[index][QUOTATION_ITEM_REMOVED] === true
+        ? {}
+        : itemPatches[index];
+      itemPatches[index] = Object.assign({}, existingPatch, {
+        [field]: value
+      });
+      if (Object.prototype.hasOwnProperty.call(nextDisplayedItem, 'totalAmount')) {
+        itemPatches[index].totalAmount = nextDisplayedItem.totalAmount;
+      }
+      fields.items = itemPatches;
+    } else {
+      const items = displayedItems.slice();
+      items[index] = nextDisplayedItem;
+      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, {
+        items
+      }), {
+        preserveConfirmedAmount: manualFields.includes('amount')
+      });
+    }
     if (field === 'productName') {
       delete fields.orderId;
       delete fields.allowUnlinkedOrderDeposit;
@@ -2347,7 +2389,7 @@ Page({
     });
     const state = getState();
     this.setData(
-      this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+      hasQuotationSelection
         ? rebuildAfterQuotationFieldEdit(
           state,
           this.data,
@@ -2441,7 +2483,11 @@ Page({
     if (!this.data.parseResult) return;
     const selected = this.data.customerMatchOptions[Number(event.detail.value)];
     if (!selected) return;
-    const fields = Object.assign({}, this.data.fields);
+    const fields = this.data.quotationSelectionRootFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
+      : (this.data.quotationSelectionBaseFields
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : Object.assign({}, this.data.fields));
     delete fields.receivableId;
     delete fields.orderId;
     delete fields.quotationId;
@@ -2485,7 +2531,11 @@ Page({
 
   createNewCustomerOrder() {
     if (!this.data.parseResult) return;
-    const fields = Object.assign({}, this.data.fields);
+    const fields = this.data.quotationSelectionRootFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
+      : (this.data.quotationSelectionBaseFields
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : Object.assign({}, this.data.fields));
     delete fields.customerId;
     delete fields.receivableId;
     delete fields.orderId;
@@ -2647,9 +2697,18 @@ Page({
       return false;
     }
     const state = getState();
-    const baseFields = this.data.quotationSelectionBaseFields
+    const currentSelectedId = String(this.data.selectedQuotationId || '');
+    const rootFields = this.data.quotationSelectionRootFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
+      : (this.data.quotationSelectionBaseFields
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : copyQuotationSelectionBaseFields(this.data.fields));
+    const currentBaseFields = currentSelectedId && this.data.quotationSelectionBaseFields
       ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
-      : copyQuotationSelectionBaseFields(this.data.fields);
+      : copyQuotationSelectionBaseFields(rootFields);
+    const baseFields = currentSelectedId && currentSelectedId === selectedId
+      ? copyQuotationSelectionBaseFields(currentBaseFields)
+      : copyQuotationSelectionBaseFields(rootFields);
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((field) => field !== 'quotationId'),
@@ -2665,7 +2724,6 @@ Page({
     const freshCandidate = (freshSelectionState.quotationCandidates || [])
       .find((item) => item.id === selectedId);
     if (!freshCandidate) {
-      const currentSelectedId = String(this.data.selectedQuotationId || '');
       const currentStillSafe = (freshSelectionState.quotationCandidates || [])
         .some((item) => item.id === currentSelectedId);
       if (currentStillSafe) {
@@ -2673,9 +2731,10 @@ Page({
           state,
           baseResult,
           this.data.intent,
-          mergeQuotationSelectionDraftFields(state, baseFields, currentSelectedId)
+          mergeQuotationSelectionDraftFields(state, currentBaseFields, currentSelectedId)
         );
-        retainedState.quotationSelectionBaseFields = baseFields;
+        retainedState.quotationSelectionBaseFields = currentBaseFields;
+        retainedState.quotationSelectionRootFields = rootFields;
         this.setData(retainedState);
       } else {
         this.setData(freshSelectionState);
@@ -2703,6 +2762,7 @@ Page({
       return false;
     }
     confirmationState.quotationSelectionBaseFields = baseFields;
+    confirmationState.quotationSelectionRootFields = rootFields;
     confirmationState.quotationSelectionConfirmed = true;
     this.setData(confirmationState);
     return true;
@@ -2720,9 +2780,11 @@ Page({
 
   clearQuotationSelection() {
     if (!this.data.parseResult) return false;
-    const fields = this.data.quotationSelectionBaseFields
-      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
-      : copyQuotationSelectionBaseFields(this.data.fields);
+    const fields = this.data.quotationSelectionRootFields
+      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
+      : (this.data.quotationSelectionBaseFields
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+        : copyQuotationSelectionBaseFields(this.data.fields));
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: this.data.parseResult.missing_fields || [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
@@ -2738,28 +2800,79 @@ Page({
 
   addConfirmItem() {
     if (!this.data.parseResult) return;
+    const hasQuotationSelection = Boolean(
+      this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+    );
     const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
     const previous = items[items.length - 1] || {};
-    items.push(normalizeConfirmItem({
+    const addedItem = normalizeConfirmItem({
       productName: previous.productName || '',
       unit: previous.unit || '',
       unitPrice: previous.unitPrice || '',
       priceUnit: previous.priceUnit || previous.unit || ''
-    }));
-    const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+    });
+    let fields;
+    if (hasQuotationSelection) {
+      fields = copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields);
+      const itemPatches = Array.isArray(fields.items)
+        ? fields.items.map((item) => Object.assign({}, item))
+        : [];
+      while (itemPatches.length < items.length) itemPatches.push({});
+      itemPatches.push(addedItem);
+      fields.items = itemPatches;
+    } else {
+      items.push(addedItem);
+      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+    }
     const baseResult = markManualField(this.data.parseResult, 'items');
-    this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
+    this.setData(
+      hasQuotationSelection
+        ? rebuildAfterQuotationFieldEdit(
+          getState(),
+          this.data,
+          baseResult,
+          this.data.intent,
+          fields
+        )
+        : buildConfirmationState(getState(), baseResult, this.data.intent, fields)
+    );
   },
 
   removeConfirmItem(event) {
     if (!this.data.parseResult) return;
     const index = Number(event.currentTarget.dataset.index || 0);
+    const hasQuotationSelection = Boolean(
+      this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
+    );
     const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
     if (items.length <= 1 || !items[index]) return;
-    items.splice(index, 1);
-    const fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+    let fields;
+    if (hasQuotationSelection) {
+      fields = copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields);
+      const itemPatches = Array.isArray(fields.items)
+        ? fields.items.map((item) => Object.assign({}, item))
+        : [];
+      while (itemPatches.length <= index) itemPatches.push({});
+      itemPatches[index] = {
+        [QUOTATION_ITEM_REMOVED]: true
+      };
+      fields.items = itemPatches;
+    } else {
+      items.splice(index, 1);
+      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+    }
     const baseResult = markManualField(this.data.parseResult, 'items');
-    this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
+    this.setData(
+      hasQuotationSelection
+        ? rebuildAfterQuotationFieldEdit(
+          getState(),
+          this.data,
+          baseResult,
+          this.data.intent,
+          fields
+        )
+        : buildConfirmationState(getState(), baseResult, this.data.intent, fields)
+    );
   },
 
   applyProductSuggestion(event) {

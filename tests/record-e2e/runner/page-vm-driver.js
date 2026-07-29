@@ -4,7 +4,10 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
 const { PAGE_PATHS, ROOT } = require('./constants');
-const { PAGE_ACTION_REGISTRY } = require('./page-action-registry');
+const {
+  PAGE_ACTION_REGISTRY,
+  detectRegisteredCapabilities
+} = require('./page-action-registry');
 
 const AI_PARSER_PATH = require.resolve('../../../utils/ai-parser');
 const BUSINESS_PATH = require.resolve('../../../utils/business');
@@ -109,12 +112,7 @@ function instantiatePage(definition, evidence) {
 
 function detectCapabilities(surface, page) {
   const full = surface === 'FULL_PAGE';
-  return {
-    SELECT_CUSTOMER: full && typeof page.changeCustomerMatch === 'function',
-    SELECT_ORDER: full && typeof page.changeOrder === 'function',
-    SELECT_QUOTATION: full && typeof page.changeQuotation === 'function',
-    SELECT_RECEIVABLE: full && typeof page.changeReceivable === 'function',
-    SELECT_DEPOSIT_ORDER: full && typeof page.changeOrderDeposit === 'function',
+  return Object.assign(detectRegisteredCapabilities(surface, page), {
     EDIT_CONFIRMATION_FIELD: full
       ? typeof page.updateField === 'function'
       : typeof page.updateConfirmField === 'function',
@@ -122,7 +120,7 @@ function detectCapabilities(surface, page) {
       ? typeof page.updateItemField === 'function'
       : typeof page.updateConfirmField === 'function',
     EDIT_ADDITIONAL_ITEM: full && typeof page.updateItemField === 'function'
-  };
+  });
 }
 
 function loadProductionPage(surface, runtime, spec, options = {}) {

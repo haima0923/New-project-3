@@ -77,7 +77,7 @@ primary failure、Ownership、Route、Preflight、Confirmation、业务 Diff、R
 revision、Restart 和 Concurrent 语义。PID、Boot ID 和绝对耗时不参与业务判分。
 
 完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次Cluster Fix重跑
-临时文件为`/private/tmp/record-e2e-quotation-candidate-source-v1.json`，不属于源码、不提交Git，也不能
+临时文件为`/private/tmp/record-e2e-select-quotation-ui-v1.json`，不属于源码、不提交Git，也不能
 替代由固定提交重新运行生成的证据。
 
 ## 4. 风险、阶段与 Ownership
@@ -236,7 +236,7 @@ Cluster。该表保留为修复前证据，不再代表当前页面能力：
 | Fake/Replay标准化差异：FAKE_DEEP / fields.explicitNewRecord | 1 | P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 | Fake/Replay标准化差异：FAKE_DEEP / items.length | 1 | P1 | AI_NORMALIZE_ERROR | UNCLASSIFIED_REQUIRES_REVIEW |
 
-安全报价候选真值源阶段重新生成39个当前Cluster，仍覆盖116/116。与本次修订直接相关
+完整页安全报价选择阶段重新生成38个当前Cluster，仍覆盖116/116。与本次修订直接相关
 的当前主Cluster为：
 
 | 当前Cluster | Case数 | 风险 | Stage | Ownership |
@@ -257,11 +257,11 @@ Cluster。该表保留为修复前证据，不再代表当前页面能力：
 - P1 按 failure stage、Ownership 和业务分类分层选择 10 条，全部一致：
   `AMB-005`、`AMB-008`、`BASIC-001`、`CHAT-001`、`DATE-002`、`DATE-004`、
   `PAGE-001`、`REL-001`、`REL-014`、`VOICE-001`。
-- Corpus Validator 与执行边界合同自测为 120 题通过、24/24；报价候选专项22/22，
-  报价选择Surface专项20/20。
+- Corpus Validator 与执行边界合同自测为 120 题通过、25/25；报价候选专项22/22，
+  报价选择Surface专项23/23。
 - Runner Kernel 自测 48/48（含危险关系页面、business、Storage和事务动态零调用门禁，
   以及审计缺失强制`RUNNER_ERROR`）；
-  Page Action注册表自测13/13；订单选择Surface专项测试15/15；全量/报告自测14/14。
+  Page Action注册表自测14/14；订单选择Surface专项测试15/15；全量/报告自测14/14。
 - Release A RC1 16/16、Domain Preflight 20/20、Record Flow Gate 50题/99入口、
   五步用户测试 28/28、AI/P0、route/status、AI模型路由、Voice Recognition Fake
   全部通过。

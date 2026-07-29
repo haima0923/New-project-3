@@ -76,7 +76,12 @@
         "userSelections": [
           {
             "kind": "quotationId",
-            "selectedId": "quo-syn-a-2"
+            "selectedId": "quo-syn-a-2",
+            "expectedCandidateIds": [
+              "quo-syn-a-1",
+              "quo-syn-a-2"
+            ],
+            "rejectedCandidateIds": []
           }
         ],
         "requestedSaveAction": "SAVE_FORMAL",
@@ -183,7 +188,7 @@
                 "change": "UPDATED",
                 "path": "originalText",
                 "assert": "EXACT",
-                "value": "王总上次那个报价单价改成16元"
+                "value": "王总饭盒200套那个报价单价改成16元"
               }
             ],
             "relationAssertions": [
@@ -339,7 +344,15 @@
         "userSelections": [
           {
             "kind": "quotationId",
-            "selectedId": "quo-safe-a"
+            "selectedId": "quo-safe-a",
+            "expectedCandidateIds": [
+              "quo-safe-a"
+            ],
+            "rejectedCandidateIds": [
+              "quo-cross-b",
+              "quo-converted-a",
+              "quo-deleted-a"
+            ]
           }
         ],
         "requestedSaveAction": "SAVE_FORMAL",

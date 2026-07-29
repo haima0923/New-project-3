@@ -636,6 +636,34 @@ function validateInteraction(testCase, enums) {
     if (requiredCapability && !requiredCapabilities.includes(requiredCapability)) {
       fail(`${label} 选择${selection.kind}缺requiredCapability=${requiredCapability}`);
     }
+    const expectedCandidateIds = selection.expectedCandidateIds === undefined
+      ? []
+      : checkArray(
+        selection.expectedCandidateIds,
+        `${label}.interaction.userSelections[${index}].expectedCandidateIds`
+      );
+    const rejectedCandidateIds = selection.rejectedCandidateIds === undefined
+      ? []
+      : checkArray(
+        selection.rejectedCandidateIds,
+        `${label}.interaction.userSelections[${index}].rejectedCandidateIds`
+      );
+    expectedCandidateIds.concat(rejectedCandidateIds).forEach((candidateId) => {
+      checkString(candidateId, `${label}.interaction.userSelections[${index}].candidateId`);
+    });
+    if (duplicateValues(expectedCandidateIds).length
+      || duplicateValues(rejectedCandidateIds).length) {
+      fail(`${label} 选择候选断言不得包含重复ID`);
+    }
+    if (expectedCandidateIds.length
+      && !expectedCandidateIds.includes(selection.selectedId)) {
+      fail(`${label} selectedId必须位于expectedCandidateIds`);
+    }
+    if (expectedCandidateIds.some((candidateId) => (
+      rejectedCandidateIds.includes(candidateId)
+    ))) {
+      fail(`${label} 安全候选与拒绝候选不得重叠`);
+    }
   });
   checkEnum(interaction.requestedSaveAction, enumSet(enums, 'saveActions'), `${label}.interaction.requestedSaveAction`);
   if (typeof interaction.restartAfterSave !== 'boolean') fail(`${label}.interaction.restartAfterSave必须为boolean`);
@@ -1411,6 +1439,16 @@ function validateDiff(testCase, enums) {
       )) fail(`${label} 阻断/NO_RECORD题必须声明${collection}零副作用`);
     });
   }
+  const originalTextAssertions = ['business', 'full'].flatMap((scopeName) => (
+    stateDiff[scopeName].fieldAssertions || []
+  )).filter((assertion) => (
+    assertion.path === 'originalText' && assertion.assert === 'EXACT'
+  ));
+  if (originalTextAssertions.some((assertion) => (
+    assertion.value !== testCase.input.originalText
+  ))) {
+    fail(`${label} State Diff中的originalText精确断言必须等于输入原文`);
+  }
 }
 
 function validateMultiItem(testCase) {
@@ -1595,6 +1633,18 @@ function validateStateReferences(testCase, resolvedStateFixtureMap) {
     const intentionalMissing = blockingCodes.some((code) => /TARGET_NOT_FOUND|DELETED|INVALID_TARGET/.test(code));
     if (!exists && !intentionalMissing) {
       fail(`${label} 选择${selection.kind}=${selection.selectedId}在初始State中不存在`);
+    }
+    if (selection.kind === 'quotationId') {
+      asArray(selection.expectedCandidateIds)
+        .concat(asArray(selection.rejectedCandidateIds))
+        .forEach((quotationId) => {
+          const quotationExists = asArray(state.quotations).some((item) => (
+            item && String(item.id || '') === String(quotationId || '')
+          ));
+          if (!quotationExists) {
+            fail(`${label} 报价候选合同ID在初始State中不存在：${quotationId}`);
+          }
+        });
     }
   });
   testCase.expected.preflight.requiredSelections.forEach((selectionKind) => {
@@ -2268,6 +2318,24 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
     },
     (item) => validateExecutionBoundaries(item, enums)
   );
+  const originalTextCase = cases.find((item) => (
+    (item.expected.stateDiff.business.fieldAssertions || [])
+      .some((assertion) => assertion.path === 'originalText')
+  ));
+  if (!originalTextCase) {
+    fail('合同自测缺少originalText State Diff基础Case');
+  } else {
+    expectMutationFailure(
+      'State Diff originalText与输入原文矛盾',
+      originalTextCase,
+      (item) => {
+        const assertion = item.expected.stateDiff.business.fieldAssertions
+          .find((entry) => entry.path === 'originalText');
+        assertion.value = `${item.input.originalText}（错误）`;
+      },
+      (item) => validateDiff(item, enums)
+    );
+  }
 
   const knownGapFailures = Object.keys(KNOWN_PAGE_CAPABILITY_GAPS).flatMap((caseId) => {
     const item = cases.find((candidate) => candidate.caseId === caseId);

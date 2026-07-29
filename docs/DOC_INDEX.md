@@ -8,7 +8,7 @@
 > 新增两条独立合法选择补充题，不计入核心120题。重新完成120题双轮：
 > `PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`；65条P0失败全部单题重跑，
 > P1分层抽查10条，网络/真实Storage/fixture/Worker/事务清理门禁均通过；报价候选
-> 22/22、报价页面20/20、订单页面15/15。
+> 22/22、报价页面23/23、订单页面15/15、Page Action Registry 14/14。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 

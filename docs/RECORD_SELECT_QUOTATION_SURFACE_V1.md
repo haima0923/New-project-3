@@ -30,9 +30,10 @@ quotationSelectionReason
 quotationSelectionConfirmed
 ```
 
-候选只保留安全展示投影：报价 ID、客户 ID/称呼、商品摘要、商品数、金额、状态、
-报价日期、有效期和创建时间。页面不会把完整报价对象、聊天原文、手机号、地址或内部日志
-绑定到 WXML。
+候选只保留 Preflight 已给出的安全展示投影：报价 ID、客户 ID/称呼、商品摘要、商品数、
+金额、状态、报价日期、有效期、创建时间，以及 `selectionEligible`、
+`selectionBlockingCodes` 和只读 `convertedOrderId` 审计字段。页面不会把完整报价对象、
+聊天原文、手机号、地址或内部日志绑定到 WXML。
 
 选择区仅在以下情形显示：
 
@@ -58,9 +59,10 @@ clearQuotationSelection()
 安全候选中。接受后，稳定 `quotationId` 写入页面确认草稿，
 `quotationSelectionConfirmed=true`，并再次重建 Preflight 和 Surface。
 
-选中历史报价时，页面以该报价的现有商品明细为底稿，再合并老板原话和确认卡中的明确
-修改；稀疏更新草稿不能把历史 `items[]` 覆盖为空。`originalText` 和完整 `items[]`
-继续保留。
+选中历史报价时，页面以该报价的现有商品明细为底稿，再叠加老板在确认卡中的稀疏用户
+补丁；补丁与历史报价分层保存，改选报价时不会把旧报价的商品明细冻结为新报价的用户
+输入。历史多商品的第二件及后续商品可以继续编辑和移除，稀疏更新草稿不能把未编辑
+`items[]` 覆盖为空。`originalText` 和完整 `items[]` 继续保留。
 
 取消选择会清除 `quotationId`、确认标记和 resolved relation，并重新恢复
 `QUOTATION_TARGET_REQUIRED` 阻断。改选时先回到不含旧关系的 base fields，再验证和
@@ -112,15 +114,22 @@ Confirmation 和 Domain Preflight，因此以下变化都会阻断保存：
 绑定和 `items[]` 均符合合同。正确的正式提交 Expected 没有被放宽，这个上游解析/安全
 差异不在本 Cluster 修复。
 
+补充 Case 还会在 Runner 内直接断言候选 ID 集合：QSEL-001 必须看到两张同客户安全
+报价；QSEL-002 必须只看到 `quo-safe-a`，并证明跨客户、已转和删除报价均不在候选中。
+实际交互 Evidence 必须记录中央能力注册表解析出的 `changeQuotation`、候选集合和最终
+选中 ID；不能直接改 `page.data`。
+
 ## 7. 回归结果
 
 专项结果：
 
 ```text
 安全报价候选真值源       22/22
-完整页报价选择            20/20
+完整页报价选择            23/23
 完整页订单选择            15/15
-Page Action Registry      13/13
+Page Action Registry      14/14
+Runner Kernel             48/48
+Corpus合同自测             25/25
 ```
 
 核心120条重新执行两轮：
@@ -133,11 +142,15 @@ RUNNER_ERROR   0
 BLOCKED        0
 ```
 
-两轮确定性一致；65条P0失败全部单题重跑，P1分层抽查10条一致。报价 UI 没有改变核心
+完整脱敏 Evidence 位于仓库外临时文件
+`/private/tmp/record-e2e-select-quotation-ui-v1.json`，未加入 Git。两轮确定性一致；
+65条P0失败全部单题重跑，P1分层抽查10条一致。报价 UI 没有改变核心
 120题统计，因为其中没有合法 `SELECT_QUOTATION` 用户选择题；REL-007/008仍是危险关系
 测试。
 
-`SELECT_ORDER` 15/15 保持通过。`PAGE-008`、金融、持久化和生产模式没有改变。
+`SELECT_ORDER` 15/15 保持通过。报价专项额外锁定“报价专属商品补丁不跨报价重放”：
+选择A后编辑/增删第二项，再改选B、取消或更换客户，A的商品和删除标记不得污染B或无关系
+草稿。`PAGE-008`、金融、持久化和生产模式没有改变。
 
 ## 8. 未完成范围
 

@@ -163,7 +163,7 @@ expectedAiCall = MUST_NOT_CALL
 
 ## 9. 用户交互
 
-`interaction.userEdits` 支持字段和指定 `itemIndex` 的商品编辑；`userSelections` 支持客户、订单、报价和待收候选。每个选择或编辑必须同时声明`interaction.requiredCapabilities`，包括客户、普通订单、报价、待收、定金订单、主商品、后续商品和普通确认字段编辑。复杂幂等/并发题可用封闭的 `interaction.sequence` 表达 PREPARE、COMMIT、RESTART、事务材料捕获和exact replay等步骤。
+`interaction.userEdits` 支持字段和指定 `itemIndex` 的商品编辑；`userSelections` 支持客户、订单、报价和待收候选。每个选择或编辑必须同时声明`interaction.requiredCapabilities`，包括客户、普通订单、报价、待收、定金订单、主商品、后续商品和普通确认字段编辑。合法候选选择题可在单次`userSelections[]`中增加`expectedCandidateIds`和`rejectedCandidateIds`，Runner必须先核对真实页面候选集合，再调用中央能力注册表解析出的真实方法；`selectedId`必须位于安全集合且不得与拒绝集合重叠。复杂幂等/并发题可用封闭的 `interaction.sequence` 表达 PREPARE、COMMIT、RESTART、事务材料捕获和exact replay等步骤。
 
 Phase 2A最初曾把5条关系题都表达为页面能力题；当前合同已进一步拆分：
 
@@ -315,6 +315,8 @@ node scripts/validate-record-e2e-corpus.js --contract-self-test
 - Result 标准字段层、Route、AI profile、Preflight、Surface、业务Save与Diff的交叉关系；
 - 九类execution lane、生产观察/隔离执行/危险关系注入分离、requiredCapability映射、restart/exact replay/concurrent双向合同；
 - Sequence、fieldAssertions、relationAssertions 的封闭结构和引用对象；
+- 合法选择的安全/拒绝候选集合、`selectedId`归属，以及State Diff中`originalText`
+  精确断言与输入原文的一致性；
 - P0 零副作用、多候选、Fake/Replay 隔离；
 - 多商品第二件、金融超额和关系安全；
 - 隐私、密钥、allowances、knownRisk；
