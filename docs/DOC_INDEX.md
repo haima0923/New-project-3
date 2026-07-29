@@ -2,13 +2,13 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前报价候选真值源工作分支：`fix/record-quotation-candidate-source-v1`。Domain
-> Preflight已成为安全报价候选唯一真值源；危险已选报价与用户可选候选分离；
-> `REL-007/008`改由专用危险关系Lane验证跨客户和已转报价阻断，不再冒充合法picker题。
-> 本阶段没有实现页面报价picker。重新完成120题双轮：
+> 当前报价选择工作分支：`fix/record-select-quotation-ui-v1`。Domain Preflight仍是
+> 安全报价候选唯一真值源；完整页已实现真实选择、取消、改选和保存前最新State复核；
+> `REL-007/008`继续由专用危险关系Lane验证跨客户和已转报价阻断，不使用picker。
+> 新增两条独立合法选择补充题，不计入核心120题。重新完成120题双轮：
 > `PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`；65条P0失败全部单题重跑，
-> P1分层抽查10条，网络/真实Storage/fixture/Worker/事务清理门禁均通过；报价专项
-> 22/22、执行边界合同24/24、Runner Kernel 48/48。
+> P1分层抽查10条，网络/真实Storage/fixture/Worker/事务清理门禁均通过；报价候选
+> 22/22、报价页面20/20、订单页面15/15。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 
@@ -55,6 +55,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md` | 120题双轮确定性结果及SELECT_ORDER、报价候选真值源修订后的重基线、Ownership、当前Cluster、P0重跑和隔离门禁 |
 | `docs/RECORD_SELECT_ORDER_SURFACE_V1.md` | 完整页通用订单候选、选择/取消/改选、Preflight复核、安全边界和目标Case证据 |
 | `docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md` | Domain Preflight安全报价候选真值源、危险引用分离、REL-007/008专用Lane及后续合法picker题边界 |
+| `docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md` | 完整页只消费Preflight安全报价候选、选择/取消/改选、保存前复核及两条合法补充E2E题 |
 | `docs/RECORD_WX_STORAGE_RUNTIME_TEST_PLAYBOOK.md` | Phase 1E.2A.2 微信开发者工具隔离 Storage 事务验证步骤、恢复顺序和清理规则 |
 | `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` | Phase 1E.2B.1 共享保存受控切换、资格、回退、Recovery Lock、监测和 Release A/B/C 计划；不代表生产已开启 |
 | `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` | Release A RC1 的23个Legacy writer、启动恢复、事务失败、旧Bundle升级、回滚兼容和人工发布评审清单；尚未上传或发布 |
@@ -73,7 +74,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 - `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
 - `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
 - `docs/RECORD_E2E_CASE_CONTRACT_V1.md` 管 120 条核心题的机器结构和跨 Runner 复用边界；PAGE、HEADLESS、TEST_ONLY隔离提交和事务exact replay必须分lane判分。
-- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用。它们都不代表WXML/DOM页面E2E或真实千问质量。
+- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择。它们都不代表WXML/DOM页面E2E或真实千问质量。
 - `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 管共享保存切换控制与发布顺序；它从属于共享核心安全合同，不能覆盖生产固定 `LEGACY_ONLY` 或自行批准 canary。
 - `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` 管 Release A 候选证据和发布前人工检查；它不构成上传、发布或开启 Shared 的授权。
 - `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；

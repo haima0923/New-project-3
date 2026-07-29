@@ -897,3 +897,29 @@ Shared Confirmation只投影该结果，不复制安全规则，也不根据候�
 `PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致；两条危险关系Lane
 均PASS，Case整体仍因上游AI标准化/确认语义差异失败。详情见
 `docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`。
+
+## 26. 完整页安全报价选择合同
+
+完整页报价选择只能消费
+`domainPreflight.candidates.quotationSelectionCandidates`，不得扫描State建立第二套
+候选、读取AI候选身份、自动选择唯一项或接受不在安全列表中的ID。
+
+真实页面方法必须支持选择、取消和改选。每次选择都要用最新State重建Confirmation与
+Domain Preflight；客户或operation变化要清除不再合法的关系；正式保存前必须再次复核
+报价存在性、客户、状态、删除事实和转单关系。历史报价明细与用户明确修改合并时必须保留
+完整`items[]`和`originalText`。
+
+合法报价选择补充题独立于120条核心基线，并由同一Runner加载：
+
+```text
+REC-E2E-QSEL-001
+REC-E2E-QSEL-002
+```
+
+补充题不能复用REL-007/008，不能把危险报价作为正常`userSelections`，也不能因Fake身份
+宣称生产正式提交。REL-007/008继续只由Tamper Guard执行。
+
+当前两条补充题已真实调用完整页`changeQuotation()`并完成安全候选过滤、selected ID、
+草稿、items和Preflight证据；它们随后因既有`LOW_CONFIDENCE_FIELD`成为
+`CASE_FAIL/PREFLIGHT_ERROR`。这不属于页面能力失败，Expected不放宽，后续应在解析/安全
+Cluster单独处理。

@@ -7,8 +7,10 @@ Domain Preflight 是报价候选的唯一安全真值源。它基于每次调用
 `quotationSelectionCandidates`。页面、AI fixture 和 Runner 都不得另行扫描 State
 或从模型的 `quotation_candidates` 建立可选记录身份。
 
-本阶段没有实现完整页报价 picker，没有修改任何页面、parser、AI normalizer、business、
-Storage 或 Coordinator。生产继续为 `LEGACY_ONLY`，Shared 生产 Commit 继续禁用。
+本阶段建立真值源时没有实现完整页报价 picker。后续
+`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md` 已让完整页只消费这里定义的安全候选，
+但没有改变本文件的候选政策，也没有修改parser、AI normalizer、business、Storage或
+Coordinator。生产继续为 `LEGACY_ONLY`，Shared 生产 Commit 继续禁用。
 
 ## 2. 安全候选与危险引用
 
@@ -118,15 +120,18 @@ BLOCKED=0
 65条P0失败全部单题重跑一致，P1分层抽查10条一致。两轮网络、未知Fake路由、真实wx
 Storage、宿主文件Storage、fixture mutation、跨Case泄漏、Journal和Backup均为0。
 
-`RELATION_REFERENCE_TAMPER_GUARD`为2/2 PASS。`SELECT_QUOTATION`合法用户选择Case当前
-为0；REL-007/008只验证危险引用。
+`RELATION_REFERENCE_TAMPER_GUARD`为2/2 PASS。120条核心题中的
+`SELECT_QUOTATION`合法用户选择Case为0；REL-007/008只验证危险引用。后续页面阶段
+另行增加两条不计入核心120的合法选择补充题。
 
-## 7. 下一阶段边界
+## 7. 后续页面实现
 
-实现完整页`SELECT_QUOTATION`前，至少补充两条真正的合法选择Case：
+后续完整页`SELECT_QUOTATION`已经补充两条独立的合法选择Case：
 
 1. 同一客户有多张安全报价，用户明确选择其中一张；
 2. 安全报价与危险报价并存，页面只展示安全报价。
 
-未来页面必须只消费本合同的安全候选，不得自动选择第一项。`PAGE-008`、解析/AI差异
-和其他Cluster不属于本阶段。
+页面只消费本合同的安全候选，不自动选择第一项；两题不计入120条核心基线，并继续使用
+同一Runner。详情见`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`。
+
+`PAGE-008`、解析/AI差异和其他Cluster仍不属于候选真值源或页面选择Cluster。

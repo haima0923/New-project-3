@@ -20,8 +20,9 @@ E2E，也不构成产品发布结论。`CASE_FAIL` 只表示 Actual 与人工合
 
 原始 Phase 2B.2-R1 基线没有修改生产代码。后续 `SELECT_ORDER` Cluster Fix只修改
 完整输入页的订单候选交互；报价候选真值源阶段只修改Domain Preflight安全候选投影、
-Shared Confirmation投影和E2E危险引用合同，没有实现报价picker。parser、AI、
-business、Storage、Coordinator和120条题的业务正确Expected仍未修改。
+Shared Confirmation投影和E2E危险引用合同；随后完整页只消费该安全投影实现报价
+选择、取消、改选和保存前复核。parser、AI、business、Storage、Coordinator和120条题
+的业务正确Expected仍未修改。
 
 ## 2. 跨页面动作注册表
 
@@ -150,7 +151,7 @@ Lane 动作成功但 Case 整体因其他 Expected 失败是合法结果，不�
 Diff仍为零。只有`REL-003`在原始输入链实际到达可见选择控件；另两题因更早差异未调用
 隐藏页面方法，Runner如实保留交互失败证据。本阶段没有修改这些上游差异或Expected。
 
-### 6.2 报价危险引用与未来页面能力
+### 6.2 报价危险引用与完整页选择能力
 
 `REL-007`、`REL-008`不是合法报价picker题。两题分别通过专用
 `RELATION_REFERENCE_TAMPER_GUARD`注入跨客户和已转报价，再调用真实Domain Preflight；
@@ -159,8 +160,10 @@ Diff仍为零。只有`REL-003`在原始输入链实际到达可见选择控件�
 
 Case整体仍因原始页面结果与确认语义不一致而为`CASE_FAIL/AI_NORMALIZE_ERROR`：
 `REL-007`最早是operation差异，`REL-008`最早是businessType差异；Ownership保持
-`UNCLASSIFIED_REQUIRES_REVIEW`。当前120题中合法`SELECT_QUOTATION`用户选择Case为0，
-因此本基线不能声称完整页报价picker已验证或已实现。
+`UNCLASSIFIED_REQUIRES_REVIEW`。当前120题中合法`SELECT_QUOTATION`用户选择Case为0；
+两条独立补充题已通过同一Runner真实调用完整页`changeQuotation()`，验证安全候选、
+取消、改选、危险ID拒绝和草稿关系绑定。两题当前因既有`LOW_CONFIDENCE_FIELD`成为
+`CASE_FAIL/PREFLIGHT_ERROR`，不是Surface能力缺失。
 
 ### 6.3 首页编辑与 `items[0]` 不同步
 
@@ -254,20 +257,18 @@ Cluster。该表保留为修复前证据，不再代表当前页面能力：
 - P1 按 failure stage、Ownership 和业务分类分层选择 10 条，全部一致：
   `AMB-005`、`AMB-008`、`BASIC-001`、`CHAT-001`、`DATE-002`、`DATE-004`、
   `PAGE-001`、`REL-001`、`REL-014`、`VOICE-001`。
-- Corpus Validator 与执行边界合同自测为 120 题通过、24/24；报价候选专项22/22。
+- Corpus Validator 与执行边界合同自测为 120 题通过、24/24；报价候选专项22/22，
+  报价选择Surface专项20/20。
 - Runner Kernel 自测 48/48（含危险关系页面、business、Storage和事务动态零调用门禁，
   以及审计缺失强制`RUNNER_ERROR`）；
-  Page Action
-  注册表自测13/13；订单选择Surface专项测试15/15；全量/报告自测14/14。
+  Page Action注册表自测13/13；订单选择Surface专项测试15/15；全量/报告自测14/14。
 - Release A RC1 16/16、Domain Preflight 20/20、Record Flow Gate 50题/99入口、
   五步用户测试 28/28、AI/P0、route/status、AI模型路由、Voice Recognition Fake
   全部通过。
 
 ## 10. 建议修复顺序
 
-`SELECT_ORDER`页面能力Cluster已经独立完成，安全报价候选也已有唯一Preflight真值源。
-下一优先建议是基于该真值源实现`SELECT_QUOTATION`页面交互，同时新建至少两条真正合法
-的选择Case：同客户多张安全报价选择，以及安全/危险报价并存时只展示安全项。
-
-其后才是`PAGE-008`（1条P0）以及110条未分类差异的分层Evidence判责。测试合同/映射
-候选必须先修合同，不能据此修改产品代码。
+`SELECT_ORDER`和`SELECT_QUOTATION`页面能力Cluster均已独立完成，报价候选继续以
+Preflight为唯一真值源。下一优先建议是独立处理`PAGE-008`（1条已确认P0页面模型不同步）；
+解析/安全低置信度差异和其他未分类Case必须按各自Cluster判责，不能在页面选择任务中
+顺手放宽安全或修改Expected。
