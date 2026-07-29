@@ -149,8 +149,8 @@ const tests = [
     name: 'missing-page-capability-is-product-surface-failure',
     async run() {
       const evidence = await modifiedWorker('REC-E2E-BASIC-012', (spec, plan) => {
-        spec.interaction.requiredCapabilities.push('SELECT_QUOTATION');
-        plan.requiredCapabilities.push('SELECT_QUOTATION');
+        spec.interaction.requiredCapabilities.push('SELECT_FUTURE_RELATION');
+        plan.requiredCapabilities.push('SELECT_FUTURE_RELATION');
       });
       const pageLane = evidence.laneResults.find((lane) => (
         lane.lane === 'PAGE_PRODUCTION_OBSERVATION'
@@ -158,7 +158,7 @@ const tests = [
       assert(pageLane);
       assert.strictEqual(pageLane.status, 'CASE_FAIL');
       assert.strictEqual(pageLane.failureStage, 'SURFACE_ERROR');
-      assert(evidence.surfaceEvidence.missingCapabilities.includes('SELECT_QUOTATION'));
+      assert(evidence.surfaceEvidence.missingCapabilities.includes('SELECT_FUTURE_RELATION'));
       assert.strictEqual(evidence.businessDiff.orders.created.length, 0);
     }
   },
@@ -523,9 +523,9 @@ const tests = [
       item.testCase = safeClone(item.testCase);
       item.workerSpec = safeClone(item.workerSpec);
       item.plan = safeClone(item.plan);
-      item.testCase.interaction.requiredCapabilities.push('SELECT_QUOTATION');
-      item.workerSpec.interaction.requiredCapabilities.push('SELECT_QUOTATION');
-      item.plan.requiredCapabilities.push('SELECT_QUOTATION');
+      item.testCase.interaction.requiredCapabilities.push('SELECT_FUTURE_RELATION');
+      item.workerSpec.interaction.requiredCapabilities.push('SELECT_FUTURE_RELATION');
+      item.plan.requiredCapabilities.push('SELECT_FUTURE_RELATION');
       item.testCase.expected.route = 'AI_DEEP';
       const result = await executeOne(item);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
@@ -626,9 +626,9 @@ const tests = [
       item.testCase = safeClone(item.testCase);
       item.workerSpec = safeClone(item.workerSpec);
       item.plan = safeClone(item.plan);
-      item.testCase.interaction.requiredCapabilities.push('SELECT_QUOTATION');
-      item.workerSpec.interaction.requiredCapabilities.push('SELECT_QUOTATION');
-      item.plan.requiredCapabilities.push('SELECT_QUOTATION');
+      item.testCase.interaction.requiredCapabilities.push('SELECT_FUTURE_RELATION');
+      item.workerSpec.interaction.requiredCapabilities.push('SELECT_FUTURE_RELATION');
+      item.plan.requiredCapabilities.push('SELECT_FUTURE_RELATION');
       const result = await executeOne(item, {
         hooks: { mutateSurfaceBusinessStorage: true }
       });

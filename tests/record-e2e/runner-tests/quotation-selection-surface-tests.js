@@ -1,0 +1,437 @@
+#!/usr/bin/env node
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { buildExecutionPlan } = require('../runner/build-execution-plan');
+const { BUSINESS_STORAGE_KEY, ROOT } = require('../runner/constants');
+const { createCaseRuntime } = require('../runner/create-case-runtime');
+const { loadCorpus } = require('../runner/load-corpus');
+const { loadProductionPage } = require('../runner/page-vm-driver');
+
+const corpus = loadCorpus();
+
+function bundle() {
+  const testCase = corpus.byId.get('REC-E2E-REL-010');
+  assert(testCase, 'Missing quotation selection fixture Case');
+  return {
+    testCase,
+    ...buildExecutionPlan(testCase, corpus.fixtureResolver)
+  };
+}
+
+function withPage(run) {
+  const item = bundle();
+  const runtime = createCaseRuntime(item.workerSpec, { attempt: 1 });
+  try {
+    const driver = loadProductionPage('FULL_PAGE', runtime, item.workerSpec, {
+      runLifecycle: false
+    });
+    return run({ driver, item, page: driver.page, runtime });
+  } finally {
+    runtime.dispose();
+  }
+}
+
+function prepareConfirmation(page, parseResult) {
+  page.setData({
+    fields: parseResult.fields,
+    intent: parseResult.intent,
+    parseResult
+  });
+  page.changeIntent({ detail: { value: 0 } });
+  page.setData(page.data);
+}
+
+function quotationDraft(fields = {}) {
+  return {
+    intent: 'quotation',
+    operation: 'update_quotation',
+    source: 'typed',
+    original_text: '把王总上次报价改成16元一套',
+    parse_route: { decision: 'local' },
+    fields: Object.assign({
+      customerId: 'cus-syn-a',
+      customerName: '王总',
+      unitPrice: '16'
+    }, fields),
+    missing_fields: [],
+    low_confidence_fields: []
+  };
+}
+
+function replaceState(runtime, mutate) {
+  const state = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY);
+  mutate(state);
+  runtime.fakeWx.wx.setStorageSync(BUSINESS_STORAGE_KEY, state);
+}
+
+function candidateIds(page) {
+  return Array.from(page.data.quotationCandidates || [], (item) => item.id);
+}
+
+const tests = [
+  {
+    name: 'full-page-exposes-real-select-quotation-capability',
+    run() {
+      withPage(({ driver, page }) => {
+        assert.strictEqual(driver.availableCapabilities.SELECT_QUOTATION, true);
+        assert.strictEqual(typeof page.changeQuotation, 'function');
+        assert.strictEqual(typeof page.selectQuotationCandidate, 'function');
+        assert.strictEqual(typeof page.clearQuotationSelection, 'function');
+      });
+    }
+  },
+  {
+    name: 'required-update-shows-two-safe-candidates-without-auto-selection',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(page.data.operation, 'update_quotation');
+        assert.strictEqual(page.data.quotationSelectionRequired, true);
+        assert.strictEqual(page.data.showGenericQuotationSelection, true);
+        assert.strictEqual(page.data.showGenericQuotationPicker, true);
+        assert.deepStrictEqual(candidateIds(page), ['quo-syn-a-1', 'quo-syn-a-2']);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+      });
+    }
+  },
+  {
+    name: 'real-page-method-selects-quotation-and-recomputes-preflight',
+    run() {
+      withPage(({ driver, page }) => {
+        prepareConfirmation(page, quotationDraft());
+        const fingerprintBefore = page.data.preflightFingerprint;
+        const accepted = page.changeQuotation({ detail: { value: 1 } });
+        assert.strictEqual(accepted, true);
+        assert.strictEqual(page.data.selectedQuotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.fields.quotationSelectionConfirmed, true);
+        assert.strictEqual(page.data.quotationSelectionConfirmed, true);
+        assert.strictEqual(page.data.preflightFingerprint === fingerprintBefore, false);
+        assert.strictEqual(
+          page.data.preflightBlockingReasons.includes('QUOTATION_TARGET_REQUIRED'),
+          false
+        );
+        assert.strictEqual(driver.evidence.pageMethodCalls.changeQuotation, 1);
+        assert.strictEqual(driver.evidence.pageMethodCalls.applyQuotationSelection, 1);
+      });
+    }
+  },
+  {
+    name: 'page-binds-only-safe-preflight-projection',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        assert.deepStrictEqual(
+          Object.keys(page.data.quotationCandidates[0]).sort(),
+          [
+            'createdAt', 'customerDisplayName', 'customerId', 'id', 'itemCount',
+            'productSummary', 'quotationAmount', 'quotationId', 'quoteDate',
+            'status', 'validUntil'
+          ].sort()
+        );
+        assert.strictEqual(
+          page.data.quotationCandidates[0].originalText,
+          undefined
+        );
+      });
+    }
+  },
+  {
+    name: 'clear-selection-restores-required-block',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        assert.strictEqual(page.clearQuotationSelection(), true);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.strictEqual(page.data.quotationSelectionRequired, true);
+        assert(page.data.preflightBlockingReasons.includes('QUOTATION_TARGET_REQUIRED'));
+      });
+    }
+  },
+  {
+    name: 'user-can-reselect-a-different-safe-quotation',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
+        page.changeQuotation({ detail: { value: 1 } });
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.selectedQuotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.selectedQuotation.id, 'quo-syn-a-2');
+      });
+    }
+  },
+  {
+    name: 'customer-text-edit-clears-old-quotation-selection',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        page.updateField({
+          currentTarget: { dataset: { field: 'customerName' } },
+          detail: { value: '另一位客户' }
+        });
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+      });
+    }
+  },
+  {
+    name: 'customer-picker-change-clears-old-quotation-selection',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.customers.push({
+            id: 'cus-syn-b',
+            name: '李姐',
+            createdAt: '2026-07-01T00:00:00.000Z'
+          });
+        });
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        page.setData({
+          customerMatchOptions: [{ id: 'cus-syn-b', label: '李姐' }]
+        });
+        page.changeCustomerMatch({ detail: { value: 0 } });
+        assert.strictEqual(page.data.fields.customerId, 'cus-syn-b');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+      });
+    }
+  },
+  {
+    name: 'intent-change-clears-old-quotation-selection',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        page.changeIntent({ detail: { value: 1 } });
+        assert.strictEqual(page.data.intent, 'order');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.strictEqual(page.data.showGenericQuotationSelection, false);
+      });
+    }
+  },
+  {
+    name: 'field-edit-revalidates-and-keeps-safe-selection',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        const before = page.data.preflightFingerprint;
+        page.updateField({
+          currentTarget: { dataset: { field: 'remark' } },
+          detail: { value: '客户已确认新价' }
+        });
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
+        assert.strictEqual(page.data.fields.remark, '客户已确认新价');
+        assert.notStrictEqual(page.data.preflightFingerprint, before);
+      });
+    }
+  },
+  {
+    name: 'forged-cross-customer-id-is-rejected',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.customers.push({ id: 'cus-other', name: '李姐' });
+          state.quotations.push({
+            id: 'quo-other',
+            customerId: 'cus-other',
+            productName: '钥匙扣',
+            status: '待确认'
+          });
+        });
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), true);
+        const accepted = page.selectQuotationCandidate({
+          currentTarget: { dataset: { quotationId: 'quo-other' } }
+        });
+        assert.strictEqual(accepted, false);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
+        assert.strictEqual(page.data.selectedQuotationId, 'quo-syn-a-1');
+        assert.strictEqual(candidateIds(page).includes('quo-other'), false);
+      });
+    }
+  },
+  {
+    name: 'forged-converted-id-is-rejected',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.quotations[0].status = '已转订单';
+          state.quotations[0].convertedOrderId = 'ord-converted';
+        });
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(candidateIds(page).includes('quo-syn-a-1'), false);
+        assert.strictEqual(page.applyQuotationSelection('quo-syn-a-1'), false);
+      });
+    }
+  },
+  {
+    name: 'forged-deleted-id-is-rejected',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.deletedRecords = [{
+            id: 'del-quo-syn-a-1',
+            recordId: 'quo-syn-a-1',
+            recordType: 'quotation'
+          }];
+        });
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(candidateIds(page).includes('quo-syn-a-1'), false);
+        assert.strictEqual(page.applyQuotationSelection('quo-syn-a-1'), false);
+      });
+    }
+  },
+  {
+    name: 'forged-inactive-id-is-rejected',
+    run() {
+      withPage(({ page, runtime }) => {
+        replaceState(runtime, (state) => {
+          state.quotations[0].status = '已失效';
+        });
+        prepareConfirmation(page, quotationDraft());
+        assert.strictEqual(candidateIds(page).includes('quo-syn-a-1'), false);
+        assert.strictEqual(page.applyQuotationSelection('quo-syn-a-1'), false);
+      });
+    }
+  },
+  {
+    name: 'quotation-converted-after-display-is-rejected-on-selection',
+    run() {
+      withPage(({ page, runtime }) => {
+        prepareConfirmation(page, quotationDraft());
+        replaceState(runtime, (state) => {
+          state.quotations[0].status = '已转订单';
+          state.quotations[0].convertedOrderId = 'ord-converted';
+        });
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), false);
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.strictEqual(candidateIds(page).includes('quo-syn-a-1'), false);
+      });
+    }
+  },
+  {
+    name: 'quotation-converted-after-selection-is-blocked-at-save',
+    run() {
+      withPage(({ driver, page, runtime }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        replaceState(runtime, (state) => {
+          state.quotations[0].status = '已转订单';
+          state.quotations[0].convertedOrderId = 'ord-converted';
+        });
+        page.saveFormal();
+        assert.strictEqual(page.data.disableFormalSave, true);
+        assert.strictEqual(driver.evidence.productionBusinessCalls.saveConfirmedDraft, 0);
+        assert.strictEqual(driver.evidence.productionStorageCalls.saveState, 0);
+      });
+    }
+  },
+  {
+    name: 'quotation-deleted-after-selection-is-blocked-at-save',
+    run() {
+      withPage(({ driver, page, runtime }) => {
+        prepareConfirmation(page, quotationDraft());
+        page.changeQuotation({ detail: { value: 0 } });
+        replaceState(runtime, (state) => {
+          state.quotations = state.quotations.filter((item) => item.id !== 'quo-syn-a-1');
+        });
+        page.saveFormal();
+        assert.strictEqual(page.data.disableFormalSave, true);
+        assert.strictEqual(driver.evidence.productionBusinessCalls.saveConfirmedDraft, 0);
+        assert.strictEqual(driver.evidence.productionStorageCalls.saveState, 0);
+      });
+    }
+  },
+  {
+    name: 'explicit-new-quotation-does-not-show-history-picker',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, Object.assign(quotationDraft(), {
+          operation: 'create_quotation',
+          original_text: '给王总新报保温杯300个，18元一个',
+          fields: {
+            customerId: 'cus-syn-a',
+            customerName: '王总',
+            productName: '保温杯'
+          }
+        }));
+        assert.strictEqual(page.data.operation, 'create_quotation');
+        assert.strictEqual(page.data.showGenericQuotationSelection, false);
+      });
+    }
+  },
+  {
+    name: 'explicit-new-order-is-not-forced-to-select-history-quotation',
+    run() {
+      withPage(({ page }) => {
+        page.setData({
+          fields: {
+            customerId: 'cus-syn-a',
+            customerName: '王总',
+            productName: '新款饭盒',
+            dueDate: '2026-07-30'
+          },
+          intent: 'order',
+          parseResult: {
+            intent: 'order',
+            operation: 'create_order',
+            source: 'typed',
+            original_text: '王总新下一单新款饭盒，7月30日交',
+            parse_route: { decision: 'local' },
+            fields: {
+              customerId: 'cus-syn-a',
+              customerName: '王总',
+              productName: '新款饭盒',
+              dueDate: '2026-07-30'
+            },
+            missing_fields: [],
+            low_confidence_fields: []
+          }
+        });
+        page.changeIntent({ detail: { value: 1 } });
+        assert.strictEqual(page.data.operation, 'create_order');
+        assert.strictEqual(page.data.showGenericQuotationSelection, false);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+      });
+    }
+  },
+  {
+    name: 'wxml-binds-quotation-picker-without-changing-home',
+    run() {
+      const inputWxml = fs.readFileSync(path.join(ROOT, 'pages/input/input.wxml'), 'utf8');
+      const dashboardJs = fs.readFileSync(path.join(ROOT, 'pages/dashboard/dashboard.js'), 'utf8');
+      assert(inputWxml.includes('bindchange="changeQuotation"'));
+      assert(inputWxml.includes('bindtap="clearQuotationSelection"'));
+      assert.strictEqual(dashboardJs.includes('changeQuotation(event)'), false);
+    }
+  }
+];
+
+async function main() {
+  let passed = 0;
+  for (const test of tests) {
+    await test.run();
+    passed += 1;
+    console.log(`PASS ${test.name}`);
+  }
+  console.log(`Quotation selection surface tests: ${passed}/${tests.length} passed`);
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  tests
+};

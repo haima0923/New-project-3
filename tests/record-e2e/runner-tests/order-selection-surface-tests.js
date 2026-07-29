@@ -411,11 +411,13 @@ const tests = [
     }
   },
   {
-    name: 'select-quotation-remains-unimplemented',
+    name: 'select-quotation-capability-does-not-replace-select-order',
     run() {
       withPage('REC-E2E-REL-007', ({ driver, page }) => {
-        assert.strictEqual(driver.availableCapabilities.SELECT_QUOTATION, false);
-        assert.strictEqual(typeof page.changeQuotation, 'undefined');
+        assert.strictEqual(driver.availableCapabilities.SELECT_ORDER, true);
+        assert.strictEqual(driver.availableCapabilities.SELECT_QUOTATION, true);
+        assert.strictEqual(typeof page.changeOrder, 'function');
+        assert.strictEqual(typeof page.changeQuotation, 'function');
       });
     }
   },

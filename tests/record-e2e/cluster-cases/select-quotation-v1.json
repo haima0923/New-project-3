@@ -1,0 +1,528 @@
+{
+  "schemaVersion": "record-e2e-case-file-v1",
+  "category": "CUSTOMER_HISTORY_RELATIONS",
+  "description": "完整页合法报价选择Cluster补充题；不计入120条核心基线。",
+  "cases": [
+    {
+      "schemaVersion": "record-e2e-case-v1.1",
+      "caseId": "REC-E2E-QSEL-001",
+      "title": "同客户两张安全报价选择第二张更新",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "CUSTOMER_HISTORY_RELATIONS",
+      "tags": [
+        "QUOTATION_UPDATE",
+        "SAFE_SELECTION",
+        "MULTIPLE_QUOTES"
+      ],
+      "provenance": {
+        "sources": [
+          "NEW_COVERAGE"
+        ],
+        "sourceCaseIds": [
+          "REC-E2E-REL-010"
+        ],
+        "adaptation": "NEW_SYNTHETIC",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E"
+      ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "王总饭盒200套那个报价单价改成16元"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-customer-two-quotations-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "FAKE_DEEP",
+        "expectedRoute": "AI_DEEP",
+        "fixtureRef": "ai-case-rec-e2e-qsel-001-v1"
+      },
+      "interaction": {
+        "userEdits": [
+          {
+            "scope": "ITEM",
+            "itemIndex": 0,
+            "field": "unitPrice",
+            "value": 16
+          }
+        ],
+        "userSelections": [
+          {
+            "kind": "quotationId",
+            "selectedId": "quo-syn-a-2"
+          }
+        ],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_QUOTATION",
+          "EDIT_PRIMARY_ITEM"
+        ]
+      },
+      "expected": {
+        "result": {
+          "businessType": "quotation",
+          "operation": "update_quotation",
+          "originalText": "王总饭盒200套那个报价单价改成16元",
+          "fields": {
+            "customerName": "王总",
+            "customerId": "cus-syn-a",
+            "quotationId": "quo-syn-a-2",
+            "productName": "饭盒",
+            "quantity": 200,
+            "unit": "套",
+            "unitPrice": 16,
+            "amount": 3200
+          },
+          "items": [
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 16,
+              "totalAmount": 3200
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [],
+          "conflictValues": {}
+        },
+        "route": "AI_DEEP",
+        "routing": {
+          "productionRoute": "AI_DEEP",
+          "executionPath": "PRODUCTION_DEEP",
+          "localSafetyStatus": "NEEDS_DEEP_REVIEW",
+          "expectedAiCall": "MUST_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "quotationId"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "SELECT_QUOTATION"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED"
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "quotations": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "quotations",
+                "change": "UPDATED",
+                "path": "id",
+                "assert": "EXACT",
+                "value": "quo-syn-a-2"
+              },
+              {
+                "collection": "quotations",
+                "change": "UPDATED",
+                "path": "unitPrice",
+                "assert": "EXACT",
+                "value": 16
+              },
+              {
+                "collection": "quotations",
+                "change": "UPDATED",
+                "path": "originalText",
+                "assert": "EXACT",
+                "value": "王总上次那个报价单价改成16元"
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "quotations",
+                "fromPath": "customerId",
+                "toCollection": "customers",
+                "toId": "cus-syn-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "customers",
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "quotations": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              },
+              "operationLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    },
+    {
+      "schemaVersion": "record-e2e-case-v1.1",
+      "caseId": "REC-E2E-QSEL-002",
+      "title": "安全与危险报价并存时只选择安全报价",
+      "status": "ACTIVE",
+      "riskLevel": "P0",
+      "category": "CUSTOMER_HISTORY_RELATIONS",
+      "tags": [
+        "QUOTATION_UPDATE",
+        "SAFE_SELECTION",
+        "DANGEROUS_QUOTES_EXCLUDED"
+      ],
+      "provenance": {
+        "sources": [
+          "NEW_COVERAGE"
+        ],
+        "sourceCaseIds": [],
+        "adaptation": "NEW_SYNTHETIC",
+        "expectedBasis": [
+          "PRODUCT_CONTRACT",
+          "PREFLIGHT_POLICY",
+          "BUSINESS_STATE_CONTRACT",
+          "HUMAN_REVIEW"
+        ]
+      },
+      "executionProfiles": [
+        "HEADLESS_DETERMINISTIC",
+        "PAGE_E2E"
+      ],
+      "execution": {
+        "schemaVersion": "record-e2e-execution-boundary-v1",
+        "lanes": [
+          "PAGE_PRODUCTION_OBSERVATION",
+          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+        ],
+        "observationSurface": "FULL_PAGE",
+        "missingCapabilityDisposition": "CASE_FAIL",
+        "missingCapabilityFailureStage": "SURFACE_ERROR",
+        "draftSourceSurface": "FULL_PAGE"
+      },
+      "input": {
+        "channel": "TYPED_TEXT",
+        "entrySurface": "FULL_PAGE",
+        "originalText": "周姐帆布袋100个那张报价单价改成14元"
+      },
+      "clock": {
+        "businessDate": "2026-07-15",
+        "timezone": "Asia/Shanghai",
+        "nowInstant": "2026-07-15T02:00:00.000Z"
+      },
+      "initialState": {
+        "fixtureRef": "state-safe-and-dangerous-quotations-v1",
+        "overrides": {}
+      },
+      "ai": {
+        "profile": "FAKE_DEEP",
+        "expectedRoute": "AI_DEEP",
+        "fixtureRef": "ai-case-rec-e2e-qsel-002-v1"
+      },
+      "interaction": {
+        "userEdits": [
+          {
+            "scope": "ITEM",
+            "itemIndex": 0,
+            "field": "unitPrice",
+            "value": 14
+          }
+        ],
+        "userSelections": [
+          {
+            "kind": "quotationId",
+            "selectedId": "quo-safe-a"
+          }
+        ],
+        "requestedSaveAction": "SAVE_FORMAL",
+        "restartAfterSave": false,
+        "requiredCapabilities": [
+          "SELECT_QUOTATION",
+          "EDIT_PRIMARY_ITEM"
+        ]
+      },
+      "expected": {
+        "result": {
+          "businessType": "quotation",
+          "operation": "update_quotation",
+          "originalText": "周姐帆布袋100个那张报价单价改成14元",
+          "fields": {
+            "customerName": "周姐",
+            "customerId": "cus-qsel-a",
+            "quotationId": "quo-safe-a",
+            "productName": "帆布袋",
+            "quantity": 100,
+            "unit": "个",
+            "unitPrice": 14,
+            "amount": 1400
+          },
+          "items": [
+            {
+              "productName": "帆布袋",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 14,
+              "totalAmount": 1400
+            }
+          ],
+          "allowedValues": {},
+          "absentFields": [],
+          "conflictValues": {}
+        },
+        "route": "AI_DEEP",
+        "routing": {
+          "productionRoute": "AI_DEEP",
+          "executionPath": "PRODUCTION_DEEP",
+          "localSafetyStatus": "NEEDS_DEEP_REVIEW",
+          "expectedAiCall": "MUST_CALL"
+        },
+        "preflight": {
+          "domainCanSaveFormal": true,
+          "domainCanSavePending": true,
+          "blockingCodes": [],
+          "requiredSelections": []
+        },
+        "confirmation": {
+          "requiredFields": [
+            "quotationId"
+          ],
+          "missingFields": [],
+          "conflictFields": []
+        },
+        "surface": {
+          "home": {
+            "status": "REQUIRES_FULL_PAGE",
+            "surfaceCanCompleteFormal": false,
+            "effectiveCanSaveFormal": false,
+            "missingCapabilities": [
+              "SELECT_QUOTATION"
+            ]
+          },
+          "fullPage": {
+            "status": "CAN_COMPLETE",
+            "surfaceCanCompleteFormal": true,
+            "effectiveCanSaveFormal": true,
+            "missingCapabilities": []
+          }
+        },
+        "save": {
+          "action": "SAVE_FORMAL",
+          "status": "FORMAL_COMMITTED"
+        },
+        "stateDiff": {
+          "business": {
+            "collections": {
+              "quotations": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [
+              {
+                "collection": "quotations",
+                "change": "UPDATED",
+                "path": "id",
+                "assert": "EXACT",
+                "value": "quo-safe-a"
+              },
+              {
+                "collection": "quotations",
+                "change": "UPDATED",
+                "path": "unitPrice",
+                "assert": "EXACT",
+                "value": 14
+              }
+            ],
+            "relationAssertions": [
+              {
+                "fromCollection": "quotations",
+                "fromPath": "customerId",
+                "toCollection": "customers",
+                "toId": "cus-qsel-a"
+              }
+            ],
+            "mustRemainUnchanged": [
+              "customers",
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          },
+          "full": {
+            "collections": {
+              "quotations": {
+                "createdCount": 0,
+                "updatedCount": 1,
+                "deletedCount": 0
+              },
+              "operationLogs": {
+                "createdCount": 1,
+                "updatedCount": 0,
+                "deletedCount": 0
+              }
+            },
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes"
+            ]
+          }
+        },
+        "restart": {
+          "required": false,
+          "stateFingerprint": "NOT_APPLICABLE",
+          "recordCountStable": false,
+          "mustPersist": [],
+          "additionalBusinessDiff": "NOT_APPLICABLE",
+          "attempts": 0
+        },
+        "idempotency": {
+          "scenario": "NOT_APPLICABLE",
+          "attempts": 0,
+          "expectedCommitStatuses": [],
+          "expectedRevisionDelta": 0,
+          "expectedAdditionalBusinessDiff": "NOT_APPLICABLE",
+          "journalFinal": "NOT_APPLICABLE",
+          "backupFinal": "NOT_APPLICABLE"
+        },
+        "productionObservation": {
+          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
+          "pageFormalSaveAllowed": false,
+          "blockingCodes": [
+            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
+          ],
+          "providerClassification": "NON_REAL_FAKE",
+          "requiredCapabilitiesSatisfied": true
+        },
+        "isolatedExecution": {
+          "enabled": true,
+          "action": "SAVE_FORMAL",
+          "status": "TEST_ONLY_ISOLATED_COMMITTED",
+          "marker": "TEST_ONLY_ISOLATED_COMMIT",
+          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
+          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
+          "target": "ISOLATED_LEGACY_STORE",
+          "stateDiff": "EXPECTED_STATE_DIFF"
+        }
+      },
+      "allowances": [],
+      "knownRisk": null
+    }
+  ]
+}

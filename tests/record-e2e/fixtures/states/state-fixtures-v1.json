@@ -771,6 +771,150 @@
           }
         ]
       }
+    },
+    {
+      "fixtureId": "state-safe-and-dangerous-quotations-v1",
+      "description": "报价选择专项：同客户安全报价与已转、跨客户、删除报价并存",
+      "extends": "state-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "cus-qsel-a",
+            "userId": "e2e-user",
+            "name": "周姐",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-06-01T02:00:00.000Z",
+            "updatedAt": "2026-06-01T02:00:00.000Z"
+          },
+          {
+            "id": "cus-qsel-b",
+            "userId": "e2e-user",
+            "name": "钱总",
+            "phoneMasked": "",
+            "phoneFingerprint": "",
+            "isTemporary": false,
+            "createdAt": "2026-06-02T02:00:00.000Z",
+            "updatedAt": "2026-06-02T02:00:00.000Z"
+          }
+        ],
+        "quotations": [
+          {
+            "id": "quo-safe-a",
+            "userId": "e2e-user",
+            "customerId": "cus-qsel-a",
+            "productName": "帆布袋",
+            "quantity": 100,
+            "unit": "个",
+            "unitPrice": 12,
+            "totalAmount": 1200,
+            "items": [
+              {
+                "productName": "帆布袋",
+                "quantity": 100,
+                "unit": "个",
+                "unitPrice": 12,
+                "totalAmount": 1200
+              }
+            ],
+            "quoteDate": "2026-07-10",
+            "status": "待确认",
+            "originalText": "给周姐报帆布袋100个，12元一个",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-10T02:00:00.000Z"
+          },
+          {
+            "id": "quo-converted-a",
+            "userId": "e2e-user",
+            "customerId": "cus-qsel-a",
+            "productName": "礼品袋",
+            "quantity": 80,
+            "unit": "个",
+            "unitPrice": 10,
+            "totalAmount": 800,
+            "items": [
+              {
+                "productName": "礼品袋",
+                "quantity": 80,
+                "unit": "个",
+                "unitPrice": 10,
+                "totalAmount": 800
+              }
+            ],
+            "quoteDate": "2026-07-09",
+            "status": "已转订单",
+            "convertedOrderId": "ord-from-qsel-a",
+            "originalText": "给周姐报礼品袋80个，10元一个",
+            "createdAt": "2026-07-09T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          },
+          {
+            "id": "quo-cross-b",
+            "userId": "e2e-user",
+            "customerId": "cus-qsel-b",
+            "productName": "钥匙扣",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 3,
+            "totalAmount": 900,
+            "items": [
+              {
+                "productName": "钥匙扣",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 3,
+                "totalAmount": 900
+              }
+            ],
+            "quoteDate": "2026-07-08",
+            "status": "待确认",
+            "originalText": "给钱总报钥匙扣300个，3元一个",
+            "createdAt": "2026-07-08T02:00:00.000Z",
+            "updatedAt": "2026-07-08T02:00:00.000Z"
+          },
+          {
+            "id": "quo-deleted-a",
+            "userId": "e2e-user",
+            "customerId": "cus-qsel-a",
+            "productName": "旧款袋",
+            "quantity": 50,
+            "unit": "个",
+            "unitPrice": 8,
+            "totalAmount": 400,
+            "quoteDate": "2026-07-01",
+            "status": "待确认",
+            "originalText": "给周姐报旧款袋50个，8元一个",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z"
+          }
+        ],
+        "orders": [
+          {
+            "id": "ord-from-qsel-a",
+            "userId": "e2e-user",
+            "customerId": "cus-qsel-a",
+            "quotationId": "quo-converted-a",
+            "productName": "礼品袋",
+            "quantity": 80,
+            "unit": "个",
+            "unitPrice": 10,
+            "totalAmount": 800,
+            "requiredDeliveryDate": "2026-07-30",
+            "status": "待生产",
+            "createdAt": "2026-07-11T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          }
+        ],
+        "deletedRecords": [
+          {
+            "id": "del-quo-qsel-a",
+            "recordType": "quotation",
+            "recordId": "quo-deleted-a",
+            "deletedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ]
+      }
     }
   ]
 }

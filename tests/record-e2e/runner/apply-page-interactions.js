@@ -45,6 +45,16 @@ async function applySelection(driver, selection, evidence) {
       options = page.data.orderOptions;
     }
   } else if (kind === 'quotationId') {
+    if (page.data.showGenericQuotationSelection !== true
+      || page.data.showGenericQuotationPicker !== true) {
+      return {
+        applied: false,
+        reason: 'PAGE_INTERACTION_NOT_VISIBLE',
+        surface,
+        kind,
+        selectedId: selection.selectedId
+      };
+    }
     method = 'changeQuotation';
     options = page.data.quotationOptions;
   }
@@ -85,6 +95,24 @@ async function applySelection(driver, selection, evidence) {
         method,
         selectedId: selection.selectedId,
         actualSelectedId: actualOrderId
+      };
+    }
+  }
+  if (kind === 'quotationId') {
+    const actualQuotationId = String(
+      (page.data.fields && page.data.fields.quotationId)
+      || page.data.selectedQuotationId
+      || ''
+    );
+    if (accepted === false || actualQuotationId !== String(selection.selectedId)) {
+      return {
+        applied: false,
+        reason: 'PAGE_SELECTION_REJECTED',
+        surface,
+        kind,
+        method,
+        selectedId: selection.selectedId,
+        actualSelectedId: actualQuotationId
       };
     }
   }

@@ -147,7 +147,87 @@ function loadCorpus() {
   };
 }
 
+function loadSupplementalCorpus(clusterId) {
+  const safeClusterId = String(clusterId || '');
+  if (!/^[a-z0-9-]+$/.test(safeClusterId)) {
+    throw Object.assign(new Error(`Invalid supplemental clusterId: ${safeClusterId}`), {
+      code: 'TEST_DATA_ERROR'
+    });
+  }
+  const core = loadCorpus();
+  const clusterRoot = path.join(CORPUS_ROOT, 'cluster-cases');
+  const manifest = readJson(path.join(clusterRoot, `${safeClusterId}.manifest.json`));
+  if (manifest.schemaVersion !== 'record-e2e-supplemental-manifest-v1'
+    || manifest.clusterId !== safeClusterId
+    || manifest.includeInCoreCount !== false
+    || !Array.isArray(manifest.caseFiles)
+    || !Array.isArray(manifest.caseIds)) {
+    throw Object.assign(new Error(`Invalid supplemental manifest: ${safeClusterId}`), {
+      code: 'TEST_DATA_ERROR'
+    });
+  }
+  const laneSet = new Set(core.enums.executionLanes || []);
+  const allCases = [];
+  manifest.caseFiles.forEach((relativePath) => {
+    if (!/^[A-Za-z0-9._-]+\.json$/.test(relativePath)) {
+      throw Object.assign(new Error(`Invalid supplemental case path: ${relativePath}`), {
+        code: 'TEST_DATA_ERROR'
+      });
+    }
+    const document = readJson(path.join(clusterRoot, relativePath));
+    if (!document || !Array.isArray(document.cases)) {
+      throw Object.assign(new Error(`${relativePath} has no cases array`), {
+        code: 'TEST_DATA_ERROR'
+      });
+    }
+    document.cases.forEach((testCase) => {
+      validateCaseEnvelope(testCase, laneSet);
+      allCases.push(safeClone(testCase));
+    });
+  });
+  const activeCases = allCases.filter((item) => item.status === 'ACTIVE');
+  const ids = activeCases.map((item) => item.caseId);
+  if (activeCases.length !== manifest.exactActiveCaseCount
+    || new Set(ids).size !== ids.length
+    || JSON.stringify(ids) !== JSON.stringify(manifest.caseIds)) {
+    throw Object.assign(new Error(`Supplemental Case set mismatch: ${safeClusterId}`), {
+      code: 'TEST_DATA_ERROR'
+    });
+  }
+  const coreIds = new Set(core.allCases.map((item) => item.caseId));
+  if (ids.some((id) => coreIds.has(id))) {
+    throw Object.assign(new Error('Supplemental Case ID collides with core corpus'), {
+      code: 'TEST_DATA_ERROR'
+    });
+  }
+  activeCases.forEach((testCase) => {
+    core.fixtureResolver.resolveInitialState(testCase.initialState);
+    core.fixtureResolver.resolveAiFixture(testCase.ai);
+    if (!testCase.expected || !testCase.expected.productionObservation
+      || !testCase.expected.isolatedExecution) {
+      throw Object.assign(new Error(`${testCase.caseId} has incomplete expected layers`), {
+        code: 'TEST_DATA_ERROR'
+      });
+    }
+  });
+  return {
+    activeCases,
+    allCases,
+    byId: new Map(activeCases.map((item) => [item.caseId, item])),
+    clusterId: safeClusterId,
+    corpusFingerprint: stableHash(
+      activeCases,
+      `record-e2e-supplemental:${safeClusterId}`
+    ),
+    enums: core.enums,
+    fixtureResolver: core.fixtureResolver,
+    index: manifest,
+    schema: core.schema
+  };
+}
+
 module.exports = {
   ensureCorpusValidatorPasses,
-  loadCorpus
+  loadCorpus,
+  loadSupplementalCorpus
 };

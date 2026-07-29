@@ -17,6 +17,7 @@ const {
 const ROOT = path.resolve(__dirname, '..');
 const E2E_ROOT = path.join(ROOT, 'tests', 'record-e2e');
 const CASE_ROOT = path.join(E2E_ROOT, 'cases', 'core-v1');
+const SUPPLEMENTAL_CASE_ROOT = path.join(E2E_ROOT, 'cluster-cases');
 const ENUM_PATH = path.join(E2E_ROOT, 'contracts', 'record-e2e-enums-v1.json');
 const SCHEMA_PATH = path.join(E2E_ROOT, 'schema', 'record-e2e-case-v1.schema.json');
 const STATE_FIXTURE_PATH = path.join(E2E_ROOT, 'fixtures', 'states', 'state-fixtures-v1.json');
@@ -519,7 +520,8 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
             }
           }
         });
-        if (testCase.interaction.userEdits.some((edit) => edit.scope === 'ITEM')) {
+        if (responseItems.length
+          && testCase.interaction.userEdits.some((edit) => edit.scope === 'ITEM')) {
           responseFields.amount = responseItems.reduce((sum, item) => (
             sum + (typeof item.totalAmount === 'number' ? item.totalAmount : 0)
           ), 0);
@@ -534,6 +536,25 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
             || fixture.response.operation !== relationTamper.baseDraft.operation) {
             fail(`${label} AI fixture生产观察语义与危险关系测试底稿不兼容`);
           }
+        } else if (testCase.interaction.userSelections.some(
+          (selection) => selection.kind === 'quotationId'
+        )) {
+          const expectedFields = testCase.expected.result.fields || {};
+          Object.keys(responseComparableFields).forEach((field) => {
+            if (canonicalJson(responseComparableFields[field])
+              !== canonicalJson(expectedFields[field])) {
+              fail(`${label} AI fixture与报价选择后的expected.result.fields.${field}不一致`);
+            }
+          });
+          testCase.interaction.userEdits
+            .filter((edit) => edit.scope === 'ITEM')
+            .forEach((edit) => {
+              const expectedItem = asArray(testCase.expected.result.items)[edit.itemIndex];
+              if (!expectedItem
+                || canonicalJson(expectedItem[edit.field]) !== canonicalJson(edit.value)) {
+                fail(`${label} 报价选择后的items没有保留用户编辑：${edit.field}`);
+              }
+            });
         } else {
           if (canonicalJson(responseComparableFields) !== canonicalJson(testCase.expected.result.fields)) {
             fail(`${label} AI fixture应用选择/编辑后的fields与expected.result.fields不一致`);
@@ -1800,6 +1821,52 @@ function loadCases() {
   return { files, cases };
 }
 
+function loadSupplementalCases() {
+  if (!fs.existsSync(SUPPLEMENTAL_CASE_ROOT)) return { files: [], cases: [] };
+  const manifestFiles = fs.readdirSync(SUPPLEMENTAL_CASE_ROOT)
+    .filter((name) => name.endsWith('.manifest.json'))
+    .sort();
+  const files = [];
+  const cases = [];
+  manifestFiles.forEach((manifestFile) => {
+    const manifest = readJson(path.join(SUPPLEMENTAL_CASE_ROOT, manifestFile));
+    if (!manifest) return;
+    if (manifest.schemaVersion !== 'record-e2e-supplemental-manifest-v1'
+      || manifest.includeInCoreCount !== false
+      || !Array.isArray(manifest.caseFiles)
+      || !Array.isArray(manifest.caseIds)) {
+      fail(`${manifestFile} 补充Case manifest错误`);
+      return;
+    }
+    const manifestCases = [];
+    manifest.caseFiles.forEach((fileName) => {
+      if (!/^[A-Za-z0-9._-]+\.json$/.test(fileName)) {
+        fail(`${manifestFile} 包含非法Case路径：${fileName}`);
+        return;
+      }
+      files.push(fileName);
+      const document = readJson(path.join(SUPPLEMENTAL_CASE_ROOT, fileName));
+      if (!document || !Array.isArray(document.cases)) {
+        fail(`${fileName}.cases必须是数组`);
+        return;
+      }
+      document.cases.forEach((testCase) => {
+        Object.defineProperty(testCase, '__file', { value: fileName, enumerable: false });
+        manifestCases.push(testCase);
+        cases.push(testCase);
+      });
+    });
+    const ids = manifestCases
+      .filter((item) => item.status === 'ACTIVE')
+      .map((item) => item.caseId);
+    if (ids.length !== manifest.exactActiveCaseCount
+      || canonicalJson(ids) !== canonicalJson(manifest.caseIds)) {
+      fail(`${manifestFile} 补充Case集合与manifest不一致`);
+    }
+  });
+  return { files, cases };
+}
+
 function countBy(cases, selector) {
   return cases.reduce((result, testCase) => {
     const values = asArray(selector(testCase));
@@ -2248,15 +2315,19 @@ function main() {
   }
   const fixtureContext = validateFixtureCollections(stateFixtures, aiFixtures);
   const loaded = loadCases();
-  loaded.cases.forEach((testCase) => validateCase(testCase, {
+  const supplemental = loadSupplementalCases();
+  const caseValidationContext = {
     enums,
     schema,
     stateFixtureIds: fixtureContext.stateFixtureIds,
     resolvedStateFixtureMap: fixtureContext.resolvedStateFixtureMap,
     aiFixtureIds: fixtureContext.aiFixtureIds,
     aiFixtureMap: fixtureContext.aiFixtureMap
-  }));
-  duplicateValues(loaded.cases.map((item) => item.caseId)).forEach((caseId) => fail(`caseId重复：${caseId}`));
+  };
+  loaded.cases.forEach((testCase) => validateCase(testCase, caseValidationContext));
+  supplemental.cases.forEach((testCase) => validateCase(testCase, caseValidationContext));
+  duplicateValues(loaded.cases.concat(supplemental.cases).map((item) => item.caseId))
+    .forEach((caseId) => fail(`caseId重复：${caseId}`));
   const duplicateStats = validateDuplicates(loaded.cases);
   const coverage = validateCoverage(loaded.cases, decisions, indexDocument);
   const selfTestResults = process.argv.includes('--contract-self-test')
@@ -2289,6 +2360,7 @@ function main() {
 
   console.log('Record E2E Corpus V1 校验与覆盖统计');
   console.log(`  JSON case files: ${loaded.files.length}`);
+  console.log(`  Supplemental ACTIVE题数: ${supplemental.cases.filter((item) => item.status === 'ACTIVE').length}`);
   console.log(`  总ACTIVE题数: ${active.length}`);
   console.log(`  State fixtures: ${fixtureContext.stateFixtureIds.size}`);
   console.log(`  AI fixtures: ${fixtureContext.aiFixtureIds.size}`);

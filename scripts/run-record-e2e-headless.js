@@ -3,7 +3,10 @@ const { buildPlanOnly, runSuite } = require('../tests/record-e2e/runner/run-suit
 const {
   runFullCorpusBaseline
 } = require('../tests/record-e2e/runner/full-corpus-baseline');
-const { loadCorpus } = require('../tests/record-e2e/runner/load-corpus');
+const {
+  loadCorpus,
+  loadSupplementalCorpus
+} = require('../tests/record-e2e/runner/load-corpus');
 const { sanitizeEvidence } = require('../tests/record-e2e/runner/sanitize-evidence');
 const { writeFullReport } = require('../tests/record-e2e/runner/write-full-report');
 
@@ -12,6 +15,7 @@ function parseArgs(argv) {
     all: false,
     category: '',
     caseId: '',
+    cluster: '',
     failureStage: '',
     json: false,
     list: false,
@@ -30,6 +34,7 @@ function parseArgs(argv) {
     else if (arg === '--list') options.list = true;
     else if (arg === '--plan-only') options.planOnly = true;
     else if (arg === '--case-id') options.caseId = argv[++index] || '';
+    else if (arg === '--cluster') options.cluster = argv[++index] || '';
     else if (arg === '--category') options.category = argv[++index] || '';
     else if (arg === '--failure-stage') options.failureStage = argv[++index] || '';
     else if (arg === '--output') options.output = argv[++index] || '';
@@ -47,7 +52,10 @@ function parseArgs(argv) {
     else if (arg === '--help' || arg === '-h') options.help = true;
     else throw Object.assign(new Error(`Unknown argument: ${arg}`), { code: 'TEST_DATA_ERROR' });
   }
-  const modes = [options.all, options.caseId, options.smoke, options.planOnly, options.list]
+  const modes = [
+    options.all, options.caseId, options.cluster, options.smoke,
+    options.planOnly, options.list
+  ]
     .filter(Boolean);
   if (modes.length > 1) {
     throw Object.assign(new Error('Choose exactly one execution mode'), {
@@ -71,6 +79,7 @@ function usage() {
     '  node scripts/run-record-e2e-headless.js --all --repeat 2 [--json] [--output /private/tmp/report.json]',
     '  node scripts/run-record-e2e-headless.js --smoke [--repeat N] [--json]',
     '  node scripts/run-record-e2e-headless.js --case-id CASE_ID [--repeat N] [--json]',
+    '  node scripts/run-record-e2e-headless.js --cluster CLUSTER_ID [--repeat N] [--json]',
     '  node scripts/run-record-e2e-headless.js --plan-only [--json]',
     '  node scripts/run-record-e2e-headless.js --list [--json]',
     '  Result view filters: --risk P0 --category NAME --failure-stage STAGE --ownership NAME'
@@ -124,11 +133,13 @@ function printFullSummary(report) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.help || (!options.all && !options.smoke
-    && !options.caseId && !options.planOnly && !options.list)) {
+    && !options.caseId && !options.cluster && !options.planOnly && !options.list)) {
     console.log(usage());
     return;
   }
-  const corpus = loadCorpus();
+  const corpus = options.cluster
+    ? loadSupplementalCorpus(options.cluster)
+    : loadCorpus();
   if (options.list) {
     const value = corpus.activeCases.map((item) => ({
       caseId: item.caseId,

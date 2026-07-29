@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "record-e2e-supplemental-manifest-v1",
+  "clusterId": "select-quotation-v1",
+  "includeInCoreCount": false,
+  "exactActiveCaseCount": 2,
+  "caseFiles": [
+    "select-quotation-v1.json"
+  ],
+  "caseIds": [
+    "REC-E2E-QSEL-001",
+    "REC-E2E-QSEL-002"
+  ]
+}

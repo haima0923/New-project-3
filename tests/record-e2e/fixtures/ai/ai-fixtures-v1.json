@@ -3153,6 +3153,76 @@
         "low_confidence_fields": [],
         "field_conflicts": []
       }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-qsel-001-v1",
+      "caseId": "REC-E2E-QSEL-001",
+      "sourceTemplateRef": "ai-case-rec-e2e-rel-010-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "quotation",
+        "operation": "update_quotation",
+        "fields": {
+          "customerName": "王总",
+          "customerId": "cus-syn-a",
+          "productName": "饭盒",
+          "quantity": 200,
+          "unit": "套",
+          "unitPrice": 16,
+          "amount": 3200,
+          "items": [
+            {
+              "productName": "饭盒",
+              "quantity": 200,
+              "unit": "套",
+              "unitPrice": 16,
+              "totalAmount": 3200
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
+    },
+    {
+      "fixtureId": "ai-case-rec-e2e-qsel-002-v1",
+      "caseId": "REC-E2E-QSEL-002",
+      "sourceTemplateRef": "ai-case-rec-e2e-rel-010-v1",
+      "kind": "FAKE_RESPONSE",
+      "reviewMode": "deep",
+      "providerKind": "FAKE",
+      "delayMs": 10,
+      "response": {
+        "provider": "e2e-fake-deep",
+        "intent": "quotation",
+        "operation": "update_quotation",
+        "fields": {
+          "customerName": "周姐",
+          "customerId": "cus-qsel-a",
+          "productName": "帆布袋",
+          "quantity": 100,
+          "unit": "个",
+          "unitPrice": 14,
+          "amount": 1400,
+          "items": [
+            {
+              "productName": "帆布袋",
+              "quantity": 100,
+              "unit": "个",
+              "unitPrice": 14,
+              "totalAmount": 1400
+            }
+          ]
+        },
+        "missing_fields": [],
+        "low_confidence_fields": [],
+        "field_conflicts": []
+      }
     }
   ]
 }
