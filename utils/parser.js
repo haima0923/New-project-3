@@ -116,6 +116,42 @@ function hasExplicitCompletedPaymentSignal(text) {
   });
 }
 
+function extractReceivableAmount(text) {
+  const source = String(text || '');
+  if (DEPOSIT_PATTERN.test(source) || hasExplicitCompletedPaymentSignal(source)) {
+    return { value: '', source: '' };
+  }
+  const amount = numberPattern();
+  const moneyUnit = '(万元|元|块钱|块)?';
+  const nonMoneyUnit = `(?:${UNIT_PATTERN}|次|笔|份|月|日|号)`;
+  const amountBeforeStatus = source.match(new RegExp(
+    `(${amount})\\s*${moneyUnit}\\s*(?:待收(?:款)?|未收|没收|尚未收|还没收|未付|没付|尚未付|还没付|欠付)(?=$|[，,。；;\\s]|，)`
+  ));
+  const outstandingBeforeAmount = source.match(new RegExp(
+    `(?:还欠|尚欠)(?:货款|款项|款)?\\s*(${amount})\\s*${moneyUnit}(?!\\s*${nonMoneyUnit})`
+  )) || source.match(new RegExp(
+    `(?:待收(?:款|金额)|应收款?|欠款|余款|尾款|剩余款|货款)(?:还有|尚有|剩余|还剩|为|是|未收|没收|未付|没付|待收)?\\s*(${amount})\\s*${moneyUnit}(?!\\s*${nonMoneyUnit})`
+  ));
+  const match = amountBeforeStatus || outstandingBeforeAmount;
+  if (!match) return { value: '', source: '' };
+  return {
+    value: toCleanNumber(parseChineseNumber(
+      `${match[1]}${match[2] && match[2].includes('万') && !String(match[1]).includes('万') ? '万' : ''}`
+    )),
+    source: 'rule:explicit_receivable_amount'
+  };
+}
+
+function hasExplicitReceivableSignal(text) {
+  const source = String(text || '');
+  if (DEPOSIT_PATTERN.test(source)) return false;
+  if (hasExplicitCompletedPaymentSignal(source)) return false;
+  if (/(?:提醒我|提醒|别忘了|记得|催|要款)/.test(source)) return false;
+  if (extractReceivableAmount(source).value) return true;
+  return /(?:待收款|应收款|欠款|还欠|尚欠|欠付|余款|尾款|货款)[^，,。；;\n]{0,10}(?:待收|未收|没收|未付|没付|尚未|还没|还有|尚有|剩余|还剩)/.test(source)
+    || /(?:还有|尚有|剩余|还剩)[^，,。；;\n]{0,10}(?:待收款|应收款|欠款|余款|尾款|货款)/.test(source);
+}
+
 function buildRemarkText(originalText) {
   const normalized = normalizeOriginalText(normalizeBusinessText(originalText))
     .replace(/[,，]{2,}/g, '，')
@@ -1238,6 +1274,7 @@ function scoreIntent(text, context, businessDate) {
   const hasStrongQuotationSignal = /报价|报架|报个价|问价|多少钱|问.*(?:价格|价|多少钱)/.test(text);
   const hasExplicitQuotePlan = /(?:问[^，,。；;]{0,12}(?:价|报)|(?:先)?给(?:他|她)?报|先看看价|看(?:看)?价)/.test(text);
   const hasExplicitCompletedPayment = hasExplicitCompletedPaymentSignal(text);
+  const hasExplicitReceivable = hasExplicitReceivableSignal(text);
 
   if (hasTodoSignal) scores.todo += 7;
   if (/问/.test(text) && /(回|回复|答复)/.test(text) && parseChineseDate(text, businessDate)) scores.todo += 3;
@@ -1250,6 +1287,7 @@ function scoreIntent(text, context, businessDate) {
   if (/收款.*写错|(?:金额|款).*写错.*不是/.test(text)) scores.payment += 5;
   if (/(?:价格|单价|报价|价).*写错|写错了.*(?:价格|单价|报价|价)/.test(text)) scores.quotation += 7;
   if (/催|提醒.*款|要款/.test(text)) scores.dunning += 5;
+  if (hasExplicitReceivable) scores.receivable += 9;
   if (/欠|欠款|应收|还差|先记账|记账|月底结|月结|尾款|货款/.test(text)) scores.receivable += 4;
   if (/(?:今天|明天|后天|下周|月底|月末).*付款/.test(text)) scores.receivable += 5;
   if (/没结|未结|挂账/.test(text)) scores.receivable += 6;
@@ -1509,6 +1547,7 @@ function parseInput({
   const priceUnit = extractPriceUnit(normalized);
   const explicitAmount = extractAmount(normalized);
   const explicitPaymentAmount = extractPaymentAmount(normalized);
+  const explicitReceivableAmount = extractReceivableAmount(normalized);
   const depositAmount = extractDepositAmount(normalized);
   const remainingAmount = extractRemainingAmount(normalized);
   const product = extractProduct(normalized);
@@ -1531,14 +1570,19 @@ function parseInput({
   const paymentAmount = (intent === 'payment' || /先收|收了|已收|先付|已付|先转|已转|定金|订金|预付|预付款/.test(normalized))
     ? (depositAmount.value || explicitPaymentAmount.value || explicitAmount.value)
     : '';
-  const receivableAmount = explicitAmount.value || (intent === 'receivable' ? remainingAmount.value : '');
+  const receivableAmount = intent === 'receivable'
+    ? (explicitReceivableAmount.value || explicitAmount.value || remainingAmount.value)
+    : explicitAmount.value;
+  const receivableAmountSource = intent === 'receivable' && explicitReceivableAmount.value
+    ? explicitReceivableAmount.source
+    : explicitAmount.source;
   const explicitAmountIsDeposit = hasDepositSignal && depositAmount.value && explicitAmount.value === depositAmount.value;
   const calculatedAmount = itemTotalAmount || computedAmount;
   const statedAmount = intent === 'payment' || explicitAmountIsDeposit ? '' : receivableAmount;
   // 老板明确说出的整单总价优先保留。数量×单价只是核对值，两个数不同时
   // 必须展示冲突，不能先把原话金额覆盖掉。
   const amount = statedAmount || calculatedAmount;
-  const productName = ['quotation', 'order', 'todo', 'dunning', 'unknown'].includes(intent)
+  const productName = ['quotation', 'order', 'receivable', 'todo', 'dunning', 'unknown'].includes(intent)
     ? ((singleItemDraft && singleItemDraft.productName) || (hasMultiProductDraft ? multiProductNames.join('、') : ((structuredDraft && structuredDraft.productName) || product.value)))
     : '';
   const dateDetail = parseChineseDateDetail(
@@ -1716,8 +1760,8 @@ function parseInput({
       paymentAmount: paymentAmount ? (depositAmount.source || explicitPaymentAmount.source || explicitAmount.source) : '',
       depositAmount: hasDepositSignal && (depositAmount.value || paymentAmount) ? (depositAmount.source || explicitAmount.source) : '',
       paymentKind: hasDepositSignal ? 'rule:deposit_keyword' : '',
-      amount: statedAmount ? explicitAmount.source : (calculatedAmount ? 'rule:quantity_times_unit_price' : ''),
-      statedAmount: statedAmount ? explicitAmount.source : '',
+      amount: statedAmount ? receivableAmountSource : (calculatedAmount ? 'rule:quantity_times_unit_price' : ''),
+      statedAmount: statedAmount ? receivableAmountSource : '',
       calculatedAmount: calculatedAmount ? 'rule:quantity_times_unit_price' : '',
       remainingAmount: remainingAmount.source,
       dueDate: getDraftFieldSource(structuredDraft, 'dueText', date ? 'rule:date_phrase' : '')

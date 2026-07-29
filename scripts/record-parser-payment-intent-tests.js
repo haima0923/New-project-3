@@ -151,7 +151,8 @@ assert.strictEqual(restartPayment.fields.paymentAmount, '1000');
 ].forEach(assertNotPayment);
 
 const basic010 = parse('王总收纳盒这单还有8000元待收，7月25日收');
-assert.strictEqual(basic010.intent, 'unknown', 'BASIC-010 must remain visible for its own receivable parser fix');
+assert.strictEqual(basic010.intent, 'receivable', 'BASIC-010 must remain distinct from completed payment');
+assert.strictEqual(basic010.fields.amount, '8000');
 
 [
   '王总收纳盒这单收到2000元定金',
@@ -245,6 +246,8 @@ assert.strictEqual(
 ].forEach((text) => {
   assert.strictEqual(parse(text).mixed_business, true, `${text}: two real business actions must remain mixed`);
 });
+
+require('./record-parser-receivable-intent-tests').run();
 
 console.log([
   'Payment parser intent tests passed:',
