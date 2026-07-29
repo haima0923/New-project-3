@@ -71,7 +71,13 @@ const completedPayments = [
   ['周姐打了两千，哪笔我也说不准', '2000'],
   ['王总微信打了5000元', '5000'],
   ['王总给了5000元', '5000'],
-  ['王总还了5000元', '5000']
+  ['王总还了5000元', '5000'],
+  ['王总已付5000元', '5000'],
+  ['王总转账5000元', '5000'],
+  ['王总微信转账5000元', '5000'],
+  ['王总刚转5000元', '5000'],
+  ['收到一笔5000元货款', '5000'],
+  ['收到订单款5000元', '5000']
 ];
 
 completedPayments.forEach(([text, amount]) => {
@@ -87,6 +93,7 @@ assert.strictEqual(parse('客户刚打款8000元').fields.customerName, '');
   ['王总7月15日到账了5000元', '5000'],
   ['王总5000元已到账', '5000'],
   ['昨天没到账，今天到账5000元', '5000'],
+  ['昨天没到账今天到账5000元', '5000'],
   ['收到货了，今天又收到500元', '500']
 ].forEach(([text, amount]) => {
   const result = assertIntent(text, 'payment');
@@ -222,6 +229,13 @@ assert.strictEqual(chatOrder.mixed_business, false, 'chat acknowledgement must n
 
 const actualMixedBusiness = parse('王总那单交期改到8月2日，另外付了500元');
 assert.strictEqual(actualMixedBusiness.mixed_business, true, 'two real business actions must remain mixed');
+const paymentConfirmationOnly = parse('王总付了500元，收款确认了');
+assert.strictEqual(paymentConfirmationOnly.intent, 'payment');
+assert.strictEqual(
+  paymentConfirmationOnly.mixed_business,
+  false,
+  'payment confirmation wording must not invent an order action'
+);
 [
   '王总付了500元，订单生产了',
   '王总付了500元，另外订单生产100个',

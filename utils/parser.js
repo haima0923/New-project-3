@@ -77,7 +77,7 @@ function normalizeOriginalText(text) {
 
 function getPaymentClauses(text) {
   return String(text || '')
-    .split(/[，,。；;\n]/)
+    .split(/[，,。；;\n]|(?=(?:今天|现在|刚刚)(?:已(?:经)?)?(?:到账|收到|付款|付了|打款|转账))/)
     .map((clause) => clause.trim())
     .filter(Boolean);
 }
@@ -85,8 +85,8 @@ function getPaymentClauses(text) {
 function hasNonFinancialReceiveSignal(text) {
   const amount = numberPattern();
   return getPaymentClauses(text).some((clause) => (
-    /收到[^，,。；;\n]{0,10}(?:货(?!款)|报价|消息|样品|文件|通知|快递|订单)/.test(clause)
-    || new RegExp(`收到[^，,。；;\\n]{0,4}(?:${amount})\\s*(?:${UNIT_PATTERN}|批|次|笔|份)(?!\\s*(?:元|块|块钱))`).test(clause)
+    /收到[^，,。；;\n]{0,10}(?:货(?!款)|报价|消息|样品|文件|通知|快递|订单(?!款|的钱))/.test(clause)
+    || new RegExp(`收到[^，,。；;\\n]{0,4}(?:${amount})\\s*(?:${UNIT_PATTERN}|批|次|笔|份)(?!\\s*(?:(?:${amount})\\s*)?(?:元|块|块钱|万元))`).test(clause)
   ));
 }
 
@@ -94,7 +94,7 @@ function hasNonFinancialPaymentActionSignal(text) {
   const amount = numberPattern();
   return getPaymentClauses(text).some((clause) => (
     /(?:打了|刚打)[^，,。；;\n]{0,8}(?:电话|样品|打样)|(?:还了|给了)[^，,。；;\n]{0,8}(?:货(?!款)|样品|文件)|(?:文件|报价|订单)[^，,。；;\n]{0,8}转(?:了|过来)?|转(?:了|过来)?[^，,。；;\n]{0,8}(?:文件|报价|订单)/.test(clause)
-    || new RegExp(`(?:打款|打了|刚打|转了|刚转|收了|收到)[^，,。；;\\n]{0,4}(?:${amount})\\s*(?:${UNIT_PATTERN}|次|笔|份)(?!\\s*(?:元|块|块钱))`).test(clause)
+    || new RegExp(`(?:打款|打了|刚打|转了|刚转|收了|收到)[^，,。；;\\n]{0,4}(?:${amount})\\s*(?:${UNIT_PATTERN}|次|笔|份)(?!\\s*(?:(?:${amount})\\s*)?(?:元|块|块钱|万元))`).test(clause)
   ));
 }
 
@@ -623,8 +623,10 @@ function extractPaymentAmount(text) {
   for (const clause of getPaymentClauses(text)) {
     if (hasNegativeOrFuturePaymentSignal(clause)) continue;
     if (hasNonFinancialReceiveSignal(clause) || hasNonFinancialPaymentActionSignal(clause)) continue;
-    const afterAction = clause.match(new RegExp(`(?:付了|已(?:经)?付款|付款了|刚(?:刚)?打款|打款了?|(?:刚(?:刚)?)?(?:微信)?打了|给了|还了|刚(?:刚)?转(?:账|了|过来)|转(?:了|过来)|强行收|收了|已收|收到|已(?:经)?到账|到账了?)[^，,。；;\\n\\d零〇一二两三四五六七八九十百千万俩]{0,8}(${amount})\\s*${moneyUnit}`));
-    const afterActionWithoutUnit = clause.match(new RegExp(`(?:付了|(?:刚(?:刚)?)?(?:微信)?打了|给了|还了|刚(?:刚)?转(?:了|过来)|转(?:了|过来)|收了)[^，,。；;\\n\\d零〇一二两三四五六七八九十百千万俩]{0,8}(${amount})(?!\\s*${nonMoneyUnit})${bareAmountBoundary}`));
+    const paymentAction = '(?:付了|已付|已(?:经)?付款|付款了|刚(?:刚)?打款|打款了?|(?:刚(?:刚)?)?(?:微信)?打了|给了|还了|(?:刚(?:刚)?)?(?:微信)?转(?:账|了|过来)?|强行收|收了|已收|收到|已(?:经)?到账|到账了?)';
+    const actionToAmount = '[^，,。；;\\n\\d零〇一二两三四五六七八九十百千万俩]{0,8}(?:一笔|一共|合计)?\\s*';
+    const afterAction = clause.match(new RegExp(`${paymentAction}${actionToAmount}(${amount})\\s*${moneyUnit}`));
+    const afterActionWithoutUnit = clause.match(new RegExp(`${paymentAction}${actionToAmount}(${amount})(?!\\s*${nonMoneyUnit})${bareAmountBoundary}`));
     const beforeCompletion = clause.match(new RegExp(`(${amount})\\s*${moneyUnit}[^，,。；;\\n]{0,6}(?:已(?:经)?到账|到账了?|付了|已付|收了|已收)`));
     const match = afterAction || afterActionWithoutUnit || beforeCompletion;
     if (!match) continue;
@@ -1443,7 +1445,9 @@ function detectMixedBusiness(text) {
   if (hasQuotationSignal) kinds.push('quotation');
   const hasExplicitNoOrder = /(?:还没|没有|没|未)(?:正式)?下单/.test(source);
   const hasCompletedPayment = hasExplicitCompletedPaymentSignal(source);
-  const hasOrderAction = /下单|先下|订货|定了|先做|做货|要货|交货|发货|要发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|返单/.test(source)
+  const hasOrderAction = /下单|先下|订货|定了|先做|做货|要货|交货|发货|要发|追加|先整|生产|开工|排产|返单/.test(source)
+    || (hasItemQuantity && /确认了|再来|先来|做好/.test(source))
+    || /(?:订单|这单|那单|货|商品|产品)[^，,。；;\n]{0,8}(?:确认了|做好)|(?:确认了|做好)[^，,。；;\n]{0,8}(?:订单|这单|那单|货|商品|产品)/.test(source)
     || new RegExp(`补\\s*(?:${numberPattern()})`).test(source)
     || new RegExp(`订(?!单)[^，,。；;\\n]{0,6}(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})`).test(source)
     || /(?:那单|这单|订单|交期|数量)[^，,。；;\n]{0,12}(?:改|提前|延期|取消|备注|追加)|(?:改|提前|延期|取消|备注|追加)[^，,。；;\n]{0,12}(?:那单|这单|订单|交期|数量)/.test(source);
