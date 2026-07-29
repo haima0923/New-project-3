@@ -571,6 +571,11 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
         }
         const responseComparableFields = cloneJson(responseFields);
         delete responseComparableFields.items;
+        if (testCase.expected.observationSemantics) {
+          // The V1.2 contract promotes this legacy fixture annotation to
+          // proposal.businessType; it is not an actual page-draft field.
+          delete responseComparableFields.proposedBusinessType;
+        }
         if (relationTamper) {
           if (Object.prototype.hasOwnProperty.call(responseComparableFields, 'quotationId')) {
             fail(`${label} 危险quotationId不得由AI fixture直接建立`);
@@ -766,10 +771,10 @@ function validateObservationSemantics(testCase, enums) {
       enumSet(enums, 'rawParserAssertionScopes'),
       `${label}.expected.rawParser.assertionScope`
     );
-    if (raw.assertionScope === 'RAW_PARSER') {
+    if (raw.assertionScope === 'REQUIRED') {
       ['intent', 'businessType', 'operation'].forEach((field) => {
         if (!Object.prototype.hasOwnProperty.call(raw, field)) {
-          fail(`${label} RAW_PARSER强断言必须声明${field}`);
+          fail(`${label} REQUIRED raw parser强断言必须声明${field}`);
         }
       });
     }
@@ -800,6 +805,10 @@ function validateObservationSemantics(testCase, enums) {
     fail(`${label} semantic businessType与effectiveOperation不兼容`);
   }
   const proposal = proposalOf(testCase);
+  if (proposal.fields
+    && Object.prototype.hasOwnProperty.call(proposal.fields, 'proposedBusinessType')) {
+    fail(`${label} proposedBusinessType必须由proposal.businessType表达，不能保留在fields`);
+  }
   if (proposal.businessType === 'pending') {
     fail(`${label} pending不得作为canonical proposal businessType`);
   }
@@ -2293,7 +2302,7 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
     semanticFormal,
     (item) => {
       item.expected.observationSemantics.rawParser = {
-        assertionScope: 'RAW_PARSER',
+        assertionScope: 'REQUIRED',
         businessType: 'order',
         intent: 'order'
       };
@@ -2349,7 +2358,7 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
   );
   const parserProtectionPreserved = !observationOf(protectedParser)
     && protectedParser.expected.rawParser
-    && protectedParser.expected.rawParser.assertionScope === 'RAW_PARSER';
+    && protectedParser.expected.rawParser.assertionScope === 'REQUIRED';
   if (!parserProtectionPreserved) {
     fail('BASIC-006不得迁入观测语义假差异清单且必须保留raw合同');
   }

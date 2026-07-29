@@ -5,11 +5,13 @@ const {
 } = require('../../../utils/record-state-diff');
 const { baseLane, finalizeLane, missingExecutionEvidence } = require('./lane-state');
 const {
+  RAW_PARSER_STATUSES,
   expectedOutcome,
   expectedProposal,
   expectedRawParser,
   expectedSemanticResult,
-  observationContract
+  observationContract,
+  rawParserObservationErrors
 } = require('./observation-semantics');
 
 function enforceLaneResultCompleteness(testCase, evidence) {
@@ -93,10 +95,10 @@ function requireObservationEvidence(evidence) {
     !== 'record-e2e-observation-semantics-v1') {
     missing.push('OBSERVATION_CONTRACT');
   }
-  if (!observation || !observation.rawParser
-    || observation.rawParser.source !== 'PRODUCTION_LOCAL_PARSER'
-    || observation.rawParser.sameHybridInvocation !== true) {
+  if (!observation || !observation.rawParser) {
     missing.push('RAW_PARSER');
+  } else {
+    missing.push(...rawParserObservationErrors(observation.rawParser));
   }
   if (!observation || !observation.semanticResult
     || !observation.semanticResult.source) {
@@ -189,19 +191,50 @@ function assertExpectedResult(testCase, evidence, collector) {
 function assertObservationSemantics(testCase, evidence, collector) {
   const actual = evidence.observationSemantics || {};
   const raw = actual.rawParser || {};
+  const initialCanonicalResults = raw.summary
+    && raw.summary.canonicalLocalResults
+    && raw.summary.canonicalLocalResults.filter((item) => item.phase === 'INITIAL_PARSE')
+    || [];
+  const directRawResults = raw.summary && raw.summary.directRawResults || [];
+  const rawResult = initialCanonicalResults.length === 1
+    ? initialCanonicalResults[0].resultSummary || {}
+    : (directRawResults.length === 1
+      ? directRawResults[0].resultSummary || {}
+      : {});
   const semantic = actual.semanticResult || {};
   const outcome = actual.outcome || {};
-  collector.check('RAW_PARSER', 'evidencePresent', Boolean(
-    raw
-      && raw.source === 'PRODUCTION_LOCAL_PARSER'
-      && raw.sameHybridInvocation === true
-  ), true);
+  collector.check(
+    'RAW_PARSER',
+    'evidencePresent',
+    rawParserObservationErrors(raw).length === 0,
+    true
+  );
   const rawExpected = expectedRawParser(testCase);
-  if (rawExpected && rawExpected.assertionScope === 'RAW_PARSER') {
+  if (rawExpected && rawExpected.assertionScope === 'REQUIRED') {
+    collector.check(
+      'RAW_PARSER',
+      'requiredInvocation',
+      raw.status,
+      RAW_PARSER_STATUSES.INVOKED
+    );
+    collector.check(
+      'RAW_PARSER',
+      'requiredCanonicalResult',
+      Boolean(Object.keys(rawResult).length),
+      true
+    );
     ['intent', 'businessType', 'operation'].forEach((field) => {
       if (!Object.prototype.hasOwnProperty.call(rawExpected, field)) return;
-      collector.check('RAW_PARSER', field, raw[field], rawExpected[field]);
+      collector.check('RAW_PARSER', field, rawResult[field], rawExpected[field]);
     });
+  } else if (rawExpected
+    && rawExpected.assertionScope === 'NOT_APPLICABLE_BY_PRODUCTION_PATH') {
+    collector.check(
+      'RAW_PARSER',
+      'notApplicableByProductionPath',
+      raw.status,
+      RAW_PARSER_STATUSES.NOT_INVOKED
+    );
   }
   const expectedSemantic = expectedSemanticResult(testCase);
   collector.check(

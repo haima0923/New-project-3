@@ -748,7 +748,8 @@
         "assertionScope": {
           "enum": [
             "EVIDENCE_ONLY",
-            "RAW_PARSER"
+            "NOT_APPLICABLE_BY_PRODUCTION_PATH",
+            "REQUIRED"
           ]
         },
         "intent": {

@@ -798,7 +798,7 @@
           "stateDiff": "ZERO_SIDE_EFFECTS"
         },
         "rawParser": {
-          "assertionScope": "RAW_PARSER",
+          "assertionScope": "REQUIRED",
           "intent": "payment",
           "businessType": "payment",
           "operation": null

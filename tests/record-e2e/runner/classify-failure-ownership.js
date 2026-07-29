@@ -193,6 +193,15 @@ function aiRequestWasExecuted(result) {
   )));
 }
 
+function initialCanonicalRawResult(result) {
+  const raw = result && result.observationSemantics
+    && result.observationSemantics.rawParser || {};
+  const matches = raw.summary && raw.summary.canonicalLocalResults
+    && raw.summary.canonicalLocalResults.filter((item) => item.phase === 'INITIAL_PARSE')
+    || [];
+  return matches.length === 1 ? matches[0].resultSummary || {} : {};
+}
+
 function classifyFailureOwnership(testCase, result) {
   if (!result || result.caseStatus === 'PASS') {
     return {
@@ -215,7 +224,7 @@ function classifyFailureOwnership(testCase, result) {
     || testCase.expected.observationSemantics
       && testCase.expected.observationSemantics.rawParser
     || null;
-  if (rawParserContract && rawParserContract.assertionScope === 'RAW_PARSER') {
+  if (rawParserContract && rawParserContract.assertionScope === 'REQUIRED') {
     const rawFailures = failedAssertions(result).filter((assertion) => (
       assertion.layer === 'RAW_PARSER' && assertion.name !== 'evidencePresent'
     ));
@@ -273,14 +282,16 @@ function classifyFailureOwnership(testCase, result) {
 
   if (testCase.caseId === 'REC-E2E-PAGE-008') {
     const raw = result.observationSemantics && result.observationSemantics.rawParser || {};
+    const rawResult = initialCanonicalRawResult(result);
     const semantic = result.observationSemantics
       && result.observationSemantics.semanticResult || {};
     const preflightCodes = result.preflightEvidence
       && result.preflightEvidence.blockingCodes || [];
     const editConsistency = result.pageEvidence
       && result.pageEvidence.pageEditConsistency || {};
-    if (raw.businessType === 'order'
-      && raw.operation === null
+    if (raw.status === 'RAW_PARSER_INVOKED'
+      && rawResult.businessType === 'order'
+      && rawResult.operation === null
       && semantic.businessType === 'order'
       && semantic.effectiveOperation === 'create_order'
       && preflightCodes.includes('MISSING_REQUIRED_FIELD')

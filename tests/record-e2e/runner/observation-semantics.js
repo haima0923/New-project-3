@@ -1,4 +1,8 @@
 const { safeClone } = require('../../../utils/record-state-diff');
+const {
+  RAW_PARSER_STATUSES,
+  graphErrors
+} = require('./validate-parser-invocation-graph');
 
 const OBSERVATION_CONTRACT_VERSION = 'record-e2e-observation-semantics-v1';
 const FORMAL_COLLECTION_TYPES = Object.freeze({
@@ -23,6 +27,12 @@ function compactRawParser(result = {}) {
     safety: safeClone(result.local_parse_safety || result.final_parse_safety || {}),
     source: 'PRODUCTION_LOCAL_PARSER'
   };
+}
+
+function rawParserObservationErrors(observation) {
+  return Array.from(new Set(
+    graphErrors(observation).map((error) => error.code)
+  ));
 }
 
 function canonicalSemanticResult(preflight = {}, context = {}) {
@@ -219,6 +229,7 @@ function expectedOutcome(testCase) {
 
 module.exports = {
   OBSERVATION_CONTRACT_VERSION,
+  RAW_PARSER_STATUSES,
   actualOutcome,
   canonicalSemanticResult,
   compactRawParser,
@@ -229,5 +240,6 @@ module.exports = {
   normalizeRawOperation,
   observationContract,
   persistedRecordsFromDiff,
-  proposalFromDraft
+  proposalFromDraft,
+  rawParserObservationErrors
 };

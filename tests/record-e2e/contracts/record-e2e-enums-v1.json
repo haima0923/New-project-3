@@ -189,7 +189,14 @@
   ],
   "rawParserAssertionScopes": [
     "EVIDENCE_ONLY",
-    "RAW_PARSER"
+    "NOT_APPLICABLE_BY_PRODUCTION_PATH",
+    "REQUIRED"
+  ],
+  "rawParserObservationStatuses": [
+    "RAW_PARSER_INVOKED",
+    "RAW_PARSER_NOT_INVOKED_BY_PRODUCTION_PATH",
+    "RAW_PARSER_INVOCATION_FAILED",
+    "RAW_PARSER_EVIDENCE_MISSING"
   ],
   "semanticResultSources": [
     "DOMAIN_PREFLIGHT",

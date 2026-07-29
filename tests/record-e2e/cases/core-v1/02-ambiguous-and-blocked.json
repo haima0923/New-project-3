@@ -224,7 +224,6 @@
               "operation": "create_order",
               "originalText": "记一单帆布袋500个，6元一个，7月20日交",
               "fields": {
-                "proposedBusinessType": "order",
                 "productName": "帆布袋",
                 "quantity": 500,
                 "unit": "个",
@@ -481,7 +480,6 @@
               "operation": "create_order",
               "originalText": "王总要500个，7月20日交，单价6元",
               "fields": {
-                "proposedBusinessType": "order",
                 "customerName": "王总",
                 "customerId": "cus-syn-a",
                 "quantity": 500,
@@ -490,7 +488,14 @@
                 "amount": 3000,
                 "orderDeliveryDate": "2026-07-20"
               },
-              "items": [],
+              "items": [
+                {
+                  "quantity": 500,
+                  "unit": "个",
+                  "unitPrice": 6,
+                  "totalAmount": 3000
+                }
+              ],
               "allowedValues": {},
               "absentFields": [
                 "productName"
@@ -1146,7 +1151,7 @@
           "stateDiff": "ZERO_SIDE_EFFECTS"
         },
         "rawParser": {
-          "assertionScope": "RAW_PARSER",
+          "assertionScope": "REQUIRED",
           "intent": "unknown",
           "businessType": "unknown",
           "operation": null
@@ -1816,7 +1821,6 @@
               "operation": "create_order",
               "originalText": "周老板订雨伞200把，最近几天交",
               "fields": {
-                "proposedBusinessType": "order",
                 "customerName": "周老板",
                 "productName": "雨伞",
                 "quantity": 200,
@@ -3114,7 +3118,11 @@
                 "productName": "礼盒",
                 "reason": "规格待补"
               },
-              "items": [],
+              "items": [
+                {
+                  "productName": "礼盒"
+                }
+              ],
               "allowedValues": {},
               "absentFields": [
                 "quantity",
@@ -3356,7 +3364,6 @@
               "operation": "create_order",
               "originalText": "要做300个徽章，2元一个，下周交",
               "fields": {
-                "proposedBusinessType": "order",
                 "productName": "徽章",
                 "quantity": 300,
                 "unit": "个",

@@ -1589,7 +1589,7 @@
           "stateDiff": "EXPECTED_STATE_DIFF"
         },
         "rawParser": {
-          "assertionScope": "RAW_PARSER",
+          "assertionScope": "REQUIRED",
           "intent": "quotation",
           "businessType": "quotation",
           "operation": null
@@ -2624,7 +2624,7 @@
           "stateDiff": "EXPECTED_STATE_DIFF"
         },
         "rawParser": {
-          "assertionScope": "RAW_PARSER",
+          "assertionScope": "REQUIRED",
           "intent": "receivable",
           "businessType": "receivable",
           "operation": null
@@ -3120,7 +3120,7 @@
           "stateDiff": "EXPECTED_STATE_DIFF"
         },
         "rawParser": {
-          "assertionScope": "RAW_PARSER",
+          "assertionScope": "REQUIRED",
           "intent": "payment",
           "businessType": "payment",
           "operation": null
@@ -4883,7 +4883,12 @@
                 "productName": "水杯",
                 "unitPrice": 5
               },
-              "items": [],
+              "items": [
+                {
+                  "productName": "水杯",
+                  "unitPrice": 5
+                }
+              ],
               "allowedValues": {},
               "absentFields": [
                 "quantity"
@@ -5134,7 +5139,11 @@
                 "customerName": "陈姐",
                 "productName": "礼盒"
               },
-              "items": [],
+              "items": [
+                {
+                  "productName": "礼盒"
+                }
+              ],
               "allowedValues": {},
               "absentFields": [
                 "quantity",
