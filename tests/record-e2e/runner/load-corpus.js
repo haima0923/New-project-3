@@ -57,8 +57,8 @@ function validateCaseEnvelope(testCase, laneSet) {
       });
     }
   });
-  if (testCase.schemaVersion !== 'record-e2e-case-v1.1') {
-    throw Object.assign(new Error(`${testCase.caseId} schemaVersion is not V1.1`), {
+  if (testCase.schemaVersion !== 'record-e2e-case-v1.2') {
+    throw Object.assign(new Error(`${testCase.caseId} schemaVersion is not V1.2`), {
       code: 'TEST_DATA_ERROR'
     });
   }
@@ -88,8 +88,8 @@ function loadCorpus() {
   const enums = readJson(path.join(CORPUS_ROOT, 'contracts/record-e2e-enums-v1.json'));
   const stateFixtures = readJson(path.join(CORPUS_ROOT, index.stateFixtureFile));
   const aiFixtures = readJson(path.join(CORPUS_ROOT, index.aiFixtureFile));
-  if (schema.$id !== 'record-e2e-case-v1.1.schema.json'
-    || enums.caseSchemaVersion !== 'record-e2e-case-v1.1') {
+  if (schema.$id !== 'record-e2e-case-v1.2.schema.json'
+    || enums.caseSchemaVersion !== 'record-e2e-case-v1.2') {
     throw Object.assign(new Error('Corpus schema/enums version mismatch'), {
       code: 'TEST_DATA_ERROR'
     });
@@ -139,7 +139,7 @@ function loadCorpus() {
     activeCases,
     allCases,
     byId: new Map(activeCases.map((item) => [item.caseId, item])),
-    corpusFingerprint: stableHash(activeCases, 'record-e2e-corpus-v1.1'),
+    corpusFingerprint: stableHash(activeCases, 'record-e2e-corpus-v1.2'),
     enums,
     fixtureResolver,
     index,

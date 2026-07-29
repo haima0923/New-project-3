@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "record-e2e-case-v1.1.schema.json",
+  "$id": "record-e2e-case-v1.2.schema.json",
   "title": "货小玲记一笔E2E测试题V1",
   "type": "object",
   "additionalProperties": false,
@@ -26,7 +26,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "record-e2e-case-v1.1"
+      "const": "record-e2e-case-v1.2"
     },
     "caseId": {
       "type": "string",
@@ -609,7 +609,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "result",
         "route",
         "routing",
         "preflight",
@@ -622,9 +621,34 @@
         "restart",
         "idempotency"
       ],
+      "oneOf": [
+        {
+          "required": [
+            "result"
+          ],
+          "not": {
+            "required": [
+              "observationSemantics"
+            ]
+          }
+        },
+        {
+          "required": [
+            "observationSemantics"
+          ],
+          "not": {
+            "required": [
+              "result"
+            ]
+          }
+        }
+      ],
       "properties": {
         "result": {
           "$ref": "#/$defs/result"
+        },
+        "rawParser": {
+          "$ref": "#/$defs/rawParserExpectation"
         },
         "route": {
           "type": "string"
@@ -680,6 +704,148 @@
         },
         "relationReferenceTamper": {
           "$ref": "#/$defs/relationReferenceTamperExpectation"
+        },
+        "observationSemantics": {
+          "$ref": "#/$defs/observationSemantics"
+        }
+      }
+    },
+    "observationSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contractVersion",
+        "rawParser",
+        "semanticResult",
+        "proposal",
+        "outcome"
+      ],
+      "properties": {
+        "contractVersion": {
+          "const": "record-e2e-observation-semantics-v1"
+        },
+        "rawParser": {
+          "$ref": "#/$defs/rawParserExpectation"
+        },
+        "semanticResult": {
+          "$ref": "#/$defs/semanticResultExpectation"
+        },
+        "proposal": {
+          "$ref": "#/$defs/proposalExpectation"
+        },
+        "outcome": {
+          "$ref": "#/$defs/outcomeExpectation"
+        }
+      }
+    },
+    "rawParserExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "assertionScope"
+      ],
+      "properties": {
+        "assertionScope": {
+          "enum": [
+            "EVIDENCE_ONLY",
+            "RAW_PARSER"
+          ]
+        },
+        "intent": {
+          "type": "string"
+        },
+        "businessType": {
+          "type": "string"
+        },
+        "operation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "semanticResultExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "businessType",
+        "effectiveOperation",
+        "source"
+      ],
+      "properties": {
+        "businessType": {
+          "type": "string"
+        },
+        "effectiveOperation": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "DOMAIN_PREFLIGHT",
+            "DOMAIN_PREFLIGHT_ALIAS",
+            "CONFIRMATION",
+            "NORMALIZED_RESULT"
+          ]
+        }
+      }
+    },
+    "proposalExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "operationSource",
+        "result"
+      ],
+      "properties": {
+        "source": {
+          "enum": [
+            "PAGE_CONFIRMED_DRAFT",
+            "HEADLESS_NORMALIZED_RESULT"
+          ]
+        },
+        "operationSource": {
+          "enum": [
+            "DRAFT_OPERATION",
+            "DRAFT_SUGGESTED_OPERATION",
+            "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          ]
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        }
+      }
+    },
+    "outcomeExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "disposition",
+        "persistedRecordType",
+        "formalSaveSucceeded",
+        "pendingSaveSucceeded"
+      ],
+      "properties": {
+        "disposition": {
+          "enum": [
+            "FORMAL_RECORD",
+            "PENDING_NOTE",
+            "NO_RECORD",
+            "BLOCKED"
+          ]
+        },
+        "persistedRecordType": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "formalSaveSucceeded": {
+          "type": "boolean"
+        },
+        "pendingSaveSucceeded": {
+          "type": "boolean"
         }
       }
     },

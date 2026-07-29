@@ -1,8 +1,12 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
-const aiParser = require('../../../utils/ai-parser');
 const { analyzeClipboardText, getPasteMeta } = require('../../../utils/clipboard-chat');
 const { businessDraftPayload } = require('./page-vm-driver');
 const { routeFromResult } = require('./execute-page-observation');
+const {
+  loadObservedAiParser,
+  rawParserCursor,
+  takeRawParserInvocation
+} = require('./observed-ai-parser');
 
 function adaptTransportIdentity(result, profile) {
   if (!['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(profile)) {
@@ -58,7 +62,10 @@ async function executeHeadlessObservation(spec) {
     payload.extractedText = analysis.extractedText;
     payload.pasteMeta = getPasteMeta(analysis);
   }
+  const aiParser = loadObservedAiParser();
+  const rawCursor = rawParserCursor();
   const original = await aiParser.parseHybridInput(payload);
+  const rawParserEvidence = takeRawParserInvocation(rawCursor);
   const adapted = adaptTransportIdentity(original, spec.ai.profile);
   const result = adapted.result;
   return {
@@ -87,6 +94,7 @@ async function executeHeadlessObservation(spec) {
     interaction: { evidence: { edits: [], selections: [] }, failures: [] },
     missingCapabilities: [],
     route: routeFromResult(result),
+    rawParserEvidence,
     transportIdentityAdaptation: adapted.adaptation
   };
 }

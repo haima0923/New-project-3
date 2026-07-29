@@ -961,3 +961,36 @@ Runner必须逐步记录真实首页方法每次调用前后的顶层字段、`i
 首页同步专项16/16、Runner Kernel自测50/50；核心120题双轮均为
 `PASS=4 / CASE_FAIL=116 / RUNNER_ERROR=0 / BLOCKED=0`且确定性一致。详情见
 `docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`。
+
+## 28. E2E Observation Semantics V1
+
+E2E Case V1.2 将旧 `expected.result` 的多重含义拆为：
+
+```text
+rawParser
+semanticResult
+proposal
+outcome
+```
+
+`rawParser` 原样记录本地 parser；空 operation 保持 `null`，普通用户 E2E 默认不以它
+直接判分。只有显式 `assertionScope=RAW_PARSER` 的 parser 专项题才强断言 raw。
+
+`semanticResult` 必须来自实际 Domain Preflight、页面 Confirmation 或 normalized
+production result；Runner 不得根据关键词推导 operation。`dunning` 可以集中投影为
+`todo/create_todo`；raw 空 operation 不能全局映射为 semantic `none`。
+
+`proposal` 表示页面或 Headless 确认草稿提出的业务；`pending` 不是 canonical business
+type。缺字段订单可以保持 `order/create_order` proposal，同时由 `outcome.disposition`
+记录为 `PENDING_NOTE`。
+
+`outcome` 必须由实际 Commit、Receipt、State Diff 和保存决策产生。`FORMAL_RECORD` 必须
+有正式业务增量，`PENDING_NOTE` 必须有 pending 增量且正式业务增量为零，`NO_RECORD`
+不得有持久化，`BLOCKED` 不得正式保存；`persistedRecordType` 不得由 Expected 或
+business type 猜测。
+
+25 条观测映射 Case 已机械迁移，业务 Route、Preflight、安全、State Diff 和原文
+Expected 均未降低。最终双轮为
+`PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`；5 条高置信本地 parser 缺陷、
+`REL-008` operation 映射、语音异步与超时合同问题继续暴露。详情见
+`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`。

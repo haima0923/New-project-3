@@ -4,7 +4,7 @@
   "description": "14条客户身份、历史指代和跨记录关系题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-001",
       "title": "唯一已有客户新增明确订单",
       "status": "ACTIVE",
@@ -71,33 +71,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "王总新订300个零钱包，9元一个，7月30日交",
-          "fields": {
-            "customerName": "王总",
-            "customerId": "cus-syn-a",
-            "productName": "零钱包",
-            "quantity": 300,
-            "unit": "个",
-            "unitPrice": 9,
-            "amount": 2700,
-            "orderDeliveryDate": "2026-07-30"
-          },
-          "items": [
-            {
-              "productName": "零钱包",
-              "quantity": 300,
-              "unit": "个",
-              "unitPrice": 9,
-              "totalAmount": 2700
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -237,13 +210,61 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "王总新订300个零钱包，9元一个，7月30日交",
+              "fields": {
+                "customerName": "王总",
+                "customerId": "cus-syn-a",
+                "productName": "零钱包",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 9,
+                "amount": 2700,
+                "orderDeliveryDate": "2026-07-30"
+              },
+              "items": [
+                {
+                  "productName": "零钱包",
+                  "quantity": 300,
+                  "unit": "个",
+                  "unitPrice": 9,
+                  "totalAmount": 2700
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-002",
       "title": "有历史订单但原文明说新单",
       "status": "ACTIVE",
@@ -482,7 +503,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-003",
       "title": "那单唯一候选经确认后更新",
       "status": "ACTIVE",
@@ -714,7 +735,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-004",
       "title": "那单对应多个活动订单必须选",
       "status": "ACTIVE",
@@ -921,7 +942,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-005",
       "title": "两个同名客户未选必须阻断",
       "status": "ACTIVE",
@@ -1137,7 +1158,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-006",
       "title": "近似客户名经人工选择后保存",
       "status": "ACTIVE",
@@ -1378,7 +1399,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-007",
       "title": "跨客户报价更新必须阻断",
       "status": "ACTIVE",
@@ -1611,7 +1632,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-008",
       "title": "已转订单报价不可再次转单",
       "status": "ACTIVE",
@@ -1845,7 +1866,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-009",
       "title": "跨客户订单更新必须阻断",
       "status": "ACTIVE",
@@ -2061,7 +2082,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-010",
       "title": "多个报价候选未选必须阻断",
       "status": "ACTIVE",
@@ -2266,7 +2287,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-011",
       "title": "多个待收款候选未选必须阻断",
       "status": "ACTIVE",
@@ -2475,7 +2496,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-012",
       "title": "已结清待收不得再收款",
       "status": "ACTIVE",
@@ -2688,7 +2709,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-013",
       "title": "不存在的更新目标必须阻断",
       "status": "ACTIVE",
@@ -2894,7 +2915,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-REL-014",
       "title": "已删除历史记录不得被指代恢复",
       "status": "ACTIVE",

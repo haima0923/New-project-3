@@ -4,7 +4,7 @@
   "description": "16条模糊、缺失、NO_RECORD、AI故障和必须阻断题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-001",
       "title": "订单缺客户只允许待整理",
       "status": "ACTIVE",
@@ -71,34 +71,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "记一单帆布袋500个，6元一个，7月20日交",
-          "fields": {
-            "proposedBusinessType": "order",
-            "productName": "帆布袋",
-            "quantity": 500,
-            "unit": "个",
-            "unitPrice": 6,
-            "amount": 3000,
-            "orderDeliveryDate": "2026-07-20"
-          },
-          "items": [
-            {
-              "productName": "帆布袋",
-              "quantity": 500,
-              "unit": "个",
-              "unitPrice": 6,
-              "totalAmount": 3000
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "customerName"
-          ],
-          "conflictValues": {}
-        },
         "route": "PENDING",
         "routing": {
           "productionRoute": "PENDING",
@@ -234,13 +206,62 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "记一单帆布袋500个，6元一个，7月20日交",
+              "fields": {
+                "proposedBusinessType": "order",
+                "productName": "帆布袋",
+                "quantity": 500,
+                "unit": "个",
+                "unitPrice": 6,
+                "amount": 3000,
+                "orderDeliveryDate": "2026-07-20"
+              },
+              "items": [
+                {
+                  "productName": "帆布袋",
+                  "quantity": 500,
+                  "unit": "个",
+                  "unitPrice": 6,
+                  "totalAmount": 3000
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "customerName"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-002",
       "title": "订单缺商品只允许待整理",
       "status": "ACTIVE",
@@ -307,27 +328,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "王总要500个，7月20日交，单价6元",
-          "fields": {
-            "proposedBusinessType": "order",
-            "customerName": "王总",
-            "customerId": "cus-syn-a",
-            "quantity": 500,
-            "unit": "个",
-            "unitPrice": 6,
-            "amount": 3000,
-            "orderDeliveryDate": "2026-07-20"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "productName"
-          ],
-          "conflictValues": {}
-        },
         "route": "PENDING",
         "routing": {
           "productionRoute": "PENDING",
@@ -463,13 +463,55 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "王总要500个，7月20日交，单价6元",
+              "fields": {
+                "proposedBusinessType": "order",
+                "customerName": "王总",
+                "customerId": "cus-syn-a",
+                "quantity": 500,
+                "unit": "个",
+                "unitPrice": 6,
+                "amount": 3000,
+                "orderDeliveryDate": "2026-07-20"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "productName"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-003",
       "title": "收款缺金额必须阻断",
       "status": "ACTIVE",
@@ -683,7 +725,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-004",
       "title": "今天收了一点钱不可猜金额",
       "status": "ACTIVE",
@@ -912,7 +954,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-005",
       "title": "明确纯闲聊判NO_RECORD",
       "status": "ACTIVE",
@@ -1102,13 +1144,19 @@
           "sourceLane": "NOT_APPLICABLE",
           "target": "NONE",
           "stateDiff": "ZERO_SIDE_EFFECTS"
+        },
+        "rawParser": {
+          "assertionScope": "RAW_PARSER",
+          "intent": "unknown",
+          "businessType": "unknown",
+          "operation": null
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-006",
       "title": "上次那单多候选未选必须阻断",
       "status": "ACTIVE",
@@ -1316,7 +1364,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-007",
       "title": "订单与收款混合意图进入待整理",
       "status": "ACTIVE",
@@ -1547,7 +1595,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-008",
       "title": "模糊交期不可猜具体日期",
       "status": "ACTIVE",
@@ -1615,31 +1663,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "周老板订雨伞200把，最近几天交",
-          "fields": {
-            "proposedBusinessType": "order",
-            "customerName": "周老板",
-            "productName": "雨伞",
-            "quantity": 200,
-            "unit": "把",
-            "dateText": "最近几天"
-          },
-          "items": [
-            {
-              "productName": "雨伞",
-              "quantity": 200,
-              "unit": "把"
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "orderDeliveryDate"
-          ],
-          "conflictValues": {}
-        },
         "route": "AI_STANDARD",
         "routing": {
           "productionRoute": "AI_STANDARD",
@@ -1775,13 +1798,59 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "周老板订雨伞200把，最近几天交",
+              "fields": {
+                "proposedBusinessType": "order",
+                "customerName": "周老板",
+                "productName": "雨伞",
+                "quantity": 200,
+                "unit": "把",
+                "dateText": "最近几天"
+              },
+              "items": [
+                {
+                  "productName": "雨伞",
+                  "quantity": 200,
+                  "unit": "把"
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "orderDeliveryDate"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-009",
       "title": "数量单价总额冲突必须阻断",
       "status": "ACTIVE",
@@ -1996,7 +2065,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-010",
       "title": "AI空业务结果不得正式保存",
       "status": "ACTIVE",
@@ -2192,7 +2261,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-011",
       "title": "AI超时不得生成正式记录",
       "status": "ACTIVE",
@@ -2388,7 +2457,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-012",
       "title": "纯寒暄判NO_RECORD",
       "status": "ACTIVE",
@@ -2454,20 +2523,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "unknown",
-          "operation": "none",
-          "originalText": "今天天气不错，大家辛苦了",
-          "fields": {},
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "customerName",
-            "amount",
-            "productName"
-          ],
-          "conflictValues": {}
-        },
         "route": "NO_RECORD",
         "routing": {
           "productionRoute": "PENDING",
@@ -2577,13 +2632,48 @@
           "sourceLane": "NOT_APPLICABLE",
           "target": "NONE",
           "stateDiff": "ZERO_SIDE_EFFECTS"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "unknown",
+            "effectiveOperation": "none",
+            "source": "DOMAIN_PREFLIGHT_ALIAS"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "unknown",
+              "operation": "none",
+              "originalText": "今天天气不错，大家辛苦了",
+              "fields": {},
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "customerName",
+                "amount",
+                "productName"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "NO_RECORD",
+            "persistedRecordType": null,
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-013",
       "title": "同名客户未选择不得建单",
       "status": "ACTIVE",
@@ -2800,7 +2890,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-014",
       "title": "明确暂存模糊规格",
       "status": "ACTIVE",
@@ -2866,24 +2956,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "先放待整理：钱姐说礼盒规格晚点补",
-          "fields": {
-            "customerName": "钱姐",
-            "productName": "礼盒",
-            "reason": "规格待补"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "quantity",
-            "unitPrice",
-            "orderDeliveryDate"
-          ],
-          "conflictValues": {}
-        },
         "route": "PENDING",
         "routing": {
           "productionRoute": "PENDING",
@@ -3020,13 +3092,52 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "先放待整理：钱姐说礼盒规格晚点补",
+              "fields": {
+                "customerName": "钱姐",
+                "productName": "礼盒",
+                "reason": "规格待补"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "quantity",
+                "unitPrice",
+                "orderDeliveryDate"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-015",
       "title": "缺客户名不得从历史编造",
       "status": "ACTIVE",
@@ -3092,34 +3203,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "要做300个徽章，2元一个，下周交",
-          "fields": {
-            "proposedBusinessType": "order",
-            "productName": "徽章",
-            "quantity": 300,
-            "unit": "个",
-            "unitPrice": 2,
-            "amount": 600
-          },
-          "items": [
-            {
-              "productName": "徽章",
-              "quantity": 300,
-              "unit": "个",
-              "unitPrice": 2,
-              "totalAmount": 600
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "customerName",
-            "customerId"
-          ],
-          "conflictValues": {}
-        },
         "route": "AI_STANDARD",
         "routing": {
           "productionRoute": "AI_STANDARD",
@@ -3255,13 +3338,62 @@
           "sourceLane": "PAGE_CONFIRMED_DRAFT_DERIVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "要做300个徽章，2元一个，下周交",
+              "fields": {
+                "proposedBusinessType": "order",
+                "productName": "徽章",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 2,
+                "amount": 600
+              },
+              "items": [
+                {
+                  "productName": "徽章",
+                  "quantity": 300,
+                  "unit": "个",
+                  "unitPrice": 2,
+                  "totalAmount": 600
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "customerName",
+                "customerId"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-AMB-016",
       "title": "收款不得编造订单关系",
       "status": "ACTIVE",

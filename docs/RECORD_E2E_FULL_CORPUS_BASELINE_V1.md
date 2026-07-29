@@ -3,13 +3,13 @@
 ## 1. 结论与边界
 
 E2E Phase 2B.2-R1 在 Headless Runner Kernel V1 上，从清洁的独立 Worker 环境重新执行
-120 条 ACTIVE Case 两轮。两轮结果完全一致：
+120 条 ACTIVE Case 两轮。Observation Semantics V1 完成后，最终两轮结果完全一致：
 
 ```text
 ACTIVE       120
 Executed     120
-PASS           4
-CASE_FAIL    116
+PASS          10
+CASE_FAIL    110
 RUNNER_ERROR   0
 BLOCKED        0
 ```
@@ -24,6 +24,11 @@ Shared Confirmation投影和E2E危险引用合同；随后完整页只消费该�
 选择、取消、改选和保存前复核。首页主商品同步阶段只修改首页单商品人工编辑、保存前
 一致性门禁和Runner逐步Evidence。parser、AI、Domain Preflight政策、business、Storage、
 Coordinator和120条题的业务正确Expected仍未修改。
+
+Observation Semantics V1 进一步只修改测试合同和 Runner，将 raw parser、
+semanticResult、proposal 与 outcome 分开。原始 `PASS=4/CASE_FAIL=116` 作为迁移前
+历史基线保留；当前 `PASS=10/CASE_FAIL=110` 的变化来自25条观测映射迁移，不包含
+parser或产品代码修复。
 
 ## 2. 跨页面动作注册表
 
@@ -78,7 +83,7 @@ primary failure、Ownership、Route、Preflight、Confirmation、业务 Diff、R
 revision、Restart 和 Concurrent 语义。PID、Boot ID 和绝对耗时不参与业务判分。
 
 完整脱敏 Evidence 只在显式 `--output` 时写入仓库外临时目录；本次Cluster Fix重跑
-临时文件为`/private/tmp/record-e2e-home-primary-item-sync-v1.json`，不属于源码、
+临时文件为`/private/tmp/record-e2e-observation-semantics-v1.json`，不属于源码、
 不提交Git，也不能替代由固定提交重新运行生成的证据。
 
 ## 4. 风险、阶段与 Ownership
@@ -88,46 +93,57 @@ revision、Restart 和 Concurrent 语义。PID、Boot ID 和绝对耗时不参�
 | 风险 | PASS | CASE_FAIL | RUNNER_ERROR | BLOCKED |
 | --- | ---: | ---: | ---: | ---: |
 | P0 | 0 | 65 | 0 | 0 |
-| P1 | 4 | 51 | 0 | 0 |
+| P1 | 10 | 45 | 0 | 0 |
 
-四条 PASS 均为日期题：
+当前十条 PASS 为：
 
 ```text
+REC-E2E-BASIC-001
+REC-E2E-BASIC-004
+REC-E2E-BASIC-005
 REC-E2E-DATE-001
+REC-E2E-DATE-002
 REC-E2E-DATE-003
+REC-E2E-DATE-008
 REC-E2E-DATE-011
 REC-E2E-DATE-012
+REC-E2E-PAGE-001
 ```
 
 Primary failure stage：
 
 | Stage | Case数 |
 | --- | ---: |
-| `AI_NORMALIZE_ERROR` | 46 |
-| `LOCAL_PARSE_ERROR` | 27 |
-| `PREFLIGHT_ERROR` | 18 |
+| `AI_NORMALIZE_ERROR` | 21 |
+| `LOCAL_PARSE_ERROR` | 3 |
+| `PREFLIGHT_ERROR` | 20 |
+| `CONFIRMATION_ERROR` | 1 |
 | `SURFACE_ERROR` | 9 |
-| `ROUTE_ERROR` | 12 |
-| `STATE_DIFF_ERROR` | 3 |
+| `ROUTE_ERROR` | 50 |
+| `STATE_DIFF_ERROR` | 5 |
 | `STORAGE_TRANSACTION_ERROR` | 1 |
 
 Ownership：
 
 | Ownership | Case数 | 含义 |
 | --- | ---: | --- |
+| `CONFIRMED_LOCAL_PARSER_DEFECT` | 5 | 保护的高置信 parser 缺陷 |
+| `CONFIRMED_OPERATION_MAPPING_DEFECT` | 1 | `REL-008`报价转订单 operation |
+| `CONFIRMED_ROUTE_DEFECT` | 1 | 已确认 Route 缺陷 |
+| `CONFIRMED_CONFIRMATION_DEFECT` | 1 | Confirmation 差异 |
 | `EXPECTED_MAPPING_MISMATCH_CANDIDATE` | 1 | State Diff/字段映射候选，未改合同 |
-| `OBSERVABILITY_EXPECTATION_MISMATCH` | 2 | operationLogs 可观测预期差异 |
-| `TEST_CONTRACT_MISMATCH_CANDIDATE` | 2 | 执行 Lane 正确但旧统计合同冲突 |
-| `UNCLASSIFIED_REQUIRES_REVIEW` | 111 | 证据不足以判产品或测试合同责任 |
+| `OBSERVABILITY_EXPECTATION_MISMATCH` | 5 | 可观测边界候选 |
+| `TEST_CONTRACT_MISMATCH_CANDIDATE` | 4 | 执行 Lane 正确但旧统计/超时合同冲突 |
+| `UNCLASSIFIED_REQUIRES_REVIEW` | 92 | 证据不足以判产品或测试合同责任 |
 
-Ownership 不改变 Case 状态和 Expected。尤其不得把 111 条未分类差异直接称为产品 Bug，
+Ownership 不改变 Case 状态和 Expected。尤其不得把 92 条未分类差异直接称为产品 Bug，
 也不得用“候选”标签自动修改题库。
 
 ## 5. Lane 与 Case 结果必须分开
 
 | Lane | PASS | CASE_FAIL | 说明 |
 | --- | ---: | ---: | --- |
-| `PAGE_PRODUCTION_OBSERVATION` | 4 | 106 | 110 条页面观察全部执行 |
+| `PAGE_PRODUCTION_OBSERVATION` | 12 | 98 | 110 条页面观察全部执行 |
 | `HEADLESS_PRODUCTION_OBSERVATION` | 4 | 6 | 10 条 Headless 观察全部执行 |
 | `PAGE_CONFIRMED_DRAFT_DERIVATION` | 5 | 1 | `PAGE-008`主商品一致性已通过；`AMB-015`仍有解析/确认差异 |
 | `TEST_ONLY_ISOLATED_LEGACY_COMMIT` | 23 | 66 | 89 条合同 Lane 均有明确结果 |
@@ -258,14 +274,15 @@ items.length和fields.customerId组。这表示真实订单选择入口已存在
 ## 9. 重跑与回归
 
 - 65 条 `P0 + CASE_FAIL` 全部逐条单题重跑，语义 fingerprint 与全量一致。
-- P1 按 failure stage、Ownership 和业务分类分层选择 10 条，全部一致：
-  `AMB-005`、`AMB-008`、`BASIC-001`、`CHAT-001`、`DATE-002`、`DATE-004`、
-  `PAGE-001`、`REL-001`、`REL-014`、`VOICE-001`。
-- Corpus Validator 与执行边界合同自测为 120 题通过、25/25；报价候选专项22/22，
+- P1 按 failure stage、Ownership 和业务分类分层选择 14 条，全部一致：
+  `AMB-005`、`AMB-008`、`AMB-011`、`AMB-014`、`BASIC-002`、`BASIC-019`、
+  `CHAT-001`、`CHAT-002`、`DATE-004`、`PAGE-005`、`REL-001`、`VOICE-001`、
+  `VOICE-004`、`VOICE-006`。
+- Corpus Validator 与执行边界合同自测为 120 题通过、32/32；报价候选专项22/22，
   报价选择Surface专项23/23；首页主商品同步专项16/16。
-- Runner Kernel 自测 50/50（含危险关系页面、business、Storage和事务动态零调用门禁，
+- Runner Kernel 自测 65/65（含四层观察语义、危险关系页面、business、Storage和事务动态零调用门禁，
   以及审计缺失强制`RUNNER_ERROR`）；
-  Page Action注册表自测14/14；订单选择Surface专项测试15/15；全量/报告自测14/14。
+  Page Action注册表自测14/14；订单选择Surface专项测试15/15；全量/报告自测15/15。
 - Release A RC1 16/16、Domain Preflight 20/20、Record Flow Gate 50题/99入口、
   五步用户测试 28/28、AI/P0、route/status、AI模型路由、Voice Recognition Fake
   全部通过。
@@ -276,3 +293,18 @@ items.length和fields.customerId组。这表示真实订单选择入口已存在
 继续以Preflight为唯一真值源。下一优先建议是独立处理`BASIC-010`、`PAGE-008`等本地
 解析operation/字段映射Cluster；解析/安全低置信度差异和其他未分类Case必须按各自
 Cluster判责，不能在页面任务中顺手放宽安全或修改Expected。
+
+## 11. Observation Semantics V1 重基线
+
+25 条旧合同曾把 raw operation、最终业务 operation、proposed business type 和
+pending持久化结果混为一层。V1.2 现在分别记录 `rawParser`、`semanticResult`、
+`proposal`和`outcome`，并要求 semantic/outcome 都来自Actual生产等价证据。
+
+迁移后6条变为PASS，19条移动到下一处真实差异；`LOCAL_PARSE_ERROR`由27条降至3条，
+同时Route差异不再被raw空operation遮挡。5条高置信parser缺陷仍为CASE_FAIL并得到明确
+Ownership；`PAGE-008`不再因raw operation为空失败，仍因Route/交期合同阻断且正式Diff
+为零；`BASIC-010`仍是高置信待收款识别缺陷。
+
+两轮均为`PASS=10 / CASE_FAIL=110 / RUNNER_ERROR=0 / BLOCKED=0`，65条P0失败全部单题
+重跑，P1分层抽查14条，28个Cluster覆盖110/110。详细25条逐题迁移表见
+`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`。

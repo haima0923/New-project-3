@@ -4,7 +4,7 @@
   "description": "完整页合法报价选择Cluster补充题；不计入120条核心基线。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-QSEL-001",
       "title": "同客户两张安全报价选择第二张更新",
       "status": "ACTIVE",
@@ -274,7 +274,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-QSEL-002",
       "title": "安全与危险报价并存时只选择安全报价",
       "status": "ACTIVE",

@@ -8,8 +8,12 @@ const {
   PAGE_ACTION_REGISTRY,
   detectRegisteredCapabilities
 } = require('./page-action-registry');
+const {
+  loadObservedAiParser,
+  rawParserCursor,
+  takeRawParserInvocation
+} = require('./observed-ai-parser');
 
-const AI_PARSER_PATH = require.resolve('../../../utils/ai-parser');
 const BUSINESS_PATH = require.resolve('../../../utils/business');
 const STORAGE_PATH = require.resolve('../../../utils/storage');
 
@@ -42,7 +46,13 @@ function businessDraftPayload(result = {}) {
 
 function createTransportIdentityAdapter(original, profile, evidence) {
   return async function transportIdentityAdapter(payload) {
-    const result = await original(payload);
+    const cursor = rawParserCursor();
+    let result;
+    try {
+      result = await original(payload);
+    } finally {
+      evidence.rawParserCalls.push(takeRawParserInvocation(cursor));
+    }
     if (!['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(profile)) return result;
     const fallback = result && result.ai_fallback || {};
     if (fallback.status !== 'used' || fallback.business_result_valid !== true) return result;
@@ -148,9 +158,10 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     productionStorageCalls: {
       saveState: 0
     },
-    transportIdentityAdaptations: []
+    transportIdentityAdaptations: [],
+    rawParserCalls: []
   };
-  const aiParser = require(AI_PARSER_PATH);
+  const aiParser = loadObservedAiParser();
   const business = require(BUSINESS_PATH);
   const storage = require(STORAGE_PATH);
   const originalHybrid = aiParser.parseHybridInput;

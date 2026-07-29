@@ -4,6 +4,13 @@ const {
   stableSerialize
 } = require('../../../utils/record-state-diff');
 const { baseLane, finalizeLane, missingExecutionEvidence } = require('./lane-state');
+const {
+  expectedOutcome,
+  expectedProposal,
+  expectedRawParser,
+  expectedSemanticResult,
+  observationContract
+} = require('./observation-semantics');
 
 function enforceLaneResultCompleteness(testCase, evidence) {
   const expected = testCase.execution.lanes || [];
@@ -76,8 +83,40 @@ function createCollector() {
 }
 
 function resultFromEvidence(testCase, evidence) {
-  const page = evidence.pageDerivationEvidence || evidence.pageEvidence || {};
-  return page.afterEdits && page.afterEdits.parseResult || {};
+  return evidence.observationSemantics && evidence.observationSemantics.proposal || {};
+}
+
+function requireObservationEvidence(evidence) {
+  const observation = evidence && evidence.observationSemantics;
+  const missing = [];
+  if (!observation || observation.contractVersion
+    !== 'record-e2e-observation-semantics-v1') {
+    missing.push('OBSERVATION_CONTRACT');
+  }
+  if (!observation || !observation.rawParser
+    || observation.rawParser.source !== 'PRODUCTION_LOCAL_PARSER'
+    || observation.rawParser.sameHybridInvocation !== true) {
+    missing.push('RAW_PARSER');
+  }
+  if (!observation || !observation.semanticResult
+    || !observation.semanticResult.source) {
+    missing.push('SEMANTIC_RESULT');
+  }
+  if (!observation || !observation.proposal || !observation.proposal.source) {
+    missing.push('PROPOSAL');
+  }
+  if (!observation || !observation.outcome
+    || observation.outcome.source !== 'STATE_DIFF_AND_COMMIT') {
+    missing.push('OUTCOME');
+  }
+  if (missing.length) {
+    throw Object.assign(new Error(
+      `Observation semantics evidence missing: ${missing.join(',')}`
+    ), {
+      code: 'LANE_EXECUTION_EVIDENCE_MISSING',
+      missingEvidence: missing
+    });
+  }
 }
 
 const RESULT_FIELD_ALIASES = Object.freeze({
@@ -90,46 +129,112 @@ const RESULT_FIELD_ALIASES = Object.freeze({
 });
 
 function assertExpectedResult(testCase, evidence, collector) {
-  const expected = testCase.expected.result;
+  const expected = expectedProposal(testCase);
   const actual = resultFromEvidence(testCase, evidence);
-  collector.check('RESULT', 'businessType', actual.intent, expected.businessType);
-  collector.check('RESULT', 'operation', actual.operation, expected.operation);
+  const expectedContract = observationContract(testCase);
+  if (expectedContract) {
+    collector.check(
+      'PROPOSAL',
+      'source',
+      actual.source,
+      expectedContract.proposal.source
+    );
+    collector.check(
+      'PROPOSAL',
+      'operationSource',
+      actual.operationSource,
+      expectedContract.proposal.operationSource
+    );
+  }
+  collector.check('PROPOSAL', 'businessType', actual.businessType, expected.businessType);
+  collector.check('PROPOSAL', 'operation', actual.operation, expected.operation);
   collector.check(
-    'RESULT',
+    'PROPOSAL',
     'originalText',
-    actual.original_text || actual.originalText || '',
+    actual.originalText || '',
     expected.originalText
   );
   Object.keys(expected.fields || {}).forEach((field) => {
     const actualPath = getPath(actual.fields || {}, RESULT_FIELD_ALIASES[field] || field);
-    collector.check('RESULT', `fields.${field}`, actualPath.value, expected.fields[field]);
+    collector.check('PROPOSAL', `fields.${field}`, actualPath.value, expected.fields[field]);
   });
   (expected.absentFields || []).forEach((field) => {
     const actualPath = getPath(actual.fields || {}, field);
     collector.check(
-      'RESULT',
+      'PROPOSAL',
       `absentFields.${field}`,
       actualPath.found && actualPath.value !== '' && actualPath.value !== null,
       false
     );
   });
-  const actualItems = actual.fields && actual.fields.items || [];
-  collector.check('RESULT', 'items.length', actualItems.length, (expected.items || []).length);
+  const actualItems = actual.items || actual.fields && actual.fields.items || [];
+  collector.check('PROPOSAL', 'items.length', actualItems.length, (expected.items || []).length);
   (expected.items || []).forEach((item, index) => {
     Object.keys(item).forEach((field) => {
-      collector.check('RESULT', `items[${index}].${field}`,
+      collector.check('PROPOSAL', `items[${index}].${field}`,
         actualItems[index] && actualItems[index][field], item[field]);
     });
   });
   Object.keys(expected.allowedValues || {}).forEach((path) => {
     const fieldPath = getPath(actual.fields || {}, path);
     const value = fieldPath.found ? fieldPath.value : getPath(actual, path).value;
-    collector.check('RESULT', `allowedValues.${path}`, value, expected.allowedValues[path], {
+    collector.check('PROPOSAL', `allowedValues.${path}`, value, expected.allowedValues[path], {
       compare: (actualValue, allowed) => (
         Array.isArray(allowed) && allowed.some((item) => semanticEqual(actualValue, item))
       )
     });
   });
+}
+
+function assertObservationSemantics(testCase, evidence, collector) {
+  const actual = evidence.observationSemantics || {};
+  const raw = actual.rawParser || {};
+  const semantic = actual.semanticResult || {};
+  const outcome = actual.outcome || {};
+  collector.check('RAW_PARSER', 'evidencePresent', Boolean(
+    raw
+      && raw.source === 'PRODUCTION_LOCAL_PARSER'
+      && raw.sameHybridInvocation === true
+  ), true);
+  const rawExpected = expectedRawParser(testCase);
+  if (rawExpected && rawExpected.assertionScope === 'RAW_PARSER') {
+    ['intent', 'businessType', 'operation'].forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(rawExpected, field)) return;
+      collector.check('RAW_PARSER', field, raw[field], rawExpected[field]);
+    });
+  }
+  const expectedSemantic = expectedSemanticResult(testCase);
+  collector.check(
+    'SEMANTIC_RESULT',
+    'businessType',
+    semantic.businessType,
+    expectedSemantic.businessType
+  );
+  collector.check(
+    'SEMANTIC_RESULT',
+    'effectiveOperation',
+    semantic.effectiveOperation,
+    expectedSemantic.effectiveOperation
+  );
+  if (expectedSemantic.source) {
+    collector.check(
+      'SEMANTIC_RESULT',
+      'source',
+      semantic.source,
+      expectedSemantic.source
+    );
+  }
+  const expectedFinal = expectedOutcome(testCase);
+  ['disposition', 'persistedRecordType', 'formalSaveSucceeded', 'pendingSaveSucceeded']
+    .forEach((field) => {
+      collector.check('OUTCOME', field, outcome[field], expectedFinal[field]);
+    });
+  collector.check(
+    'OUTCOME',
+    'actualSource',
+    outcome.source,
+    'STATE_DIFF_AND_COMMIT'
+  );
 }
 
 function entryCounts(entry = {}) {
@@ -364,6 +469,7 @@ function assertProductionLayers(testCase, evidence, collector) {
 
 function assertLaneSpecific(testCase, evidence, collector) {
   const expected = testCase.expected;
+  const proposalExpected = expectedProposal(testCase);
   if (testCase.execution.lanes.includes('RELATION_REFERENCE_TAMPER_GUARD')) {
     const actual = evidence.relationReferenceTamperEvidence || {};
     const contract = expected.relationReferenceTamper || {};
@@ -402,21 +508,21 @@ function assertLaneSpecific(testCase, evidence, collector) {
       'RELATION_TAMPER',
       'draft.businessType',
       injectedDraft.intent,
-      expected.result.businessType
+      proposalExpected.businessType
     );
     collector.check(
       'RELATION_TAMPER',
       'draft.operation',
       injectedDraft.operation,
-      expected.result.operation
+      proposalExpected.operation
     );
     collector.check(
       'RELATION_TAMPER',
       'draft.originalText',
       injectedDraft.original_text || injectedDraft.originalText || '',
-      expected.result.originalText
+      proposalExpected.originalText
     );
-    Object.keys(expected.result.fields || {}).forEach((field) => {
+    Object.keys(proposalExpected.fields || {}).forEach((field) => {
       const actualPath = getPath(
         injectedDraft.fields || {},
         RESULT_FIELD_ALIASES[field] || field
@@ -425,7 +531,7 @@ function assertLaneSpecific(testCase, evidence, collector) {
         'RELATION_TAMPER',
         `draft.fields.${field}`,
         actualPath.value,
-        expected.result.fields[field]
+        proposalExpected.fields[field]
       );
     });
     collector.check(
@@ -693,8 +799,11 @@ function assertLaneSpecific(testCase, evidence, collector) {
 
 const STAGE_ORDER = [
   'INPUT',
-  'RESULT',
+  'RAW_PARSER',
   'ROUTE',
+  'SEMANTIC_RESULT',
+  'PROPOSAL',
+  'PAGE_DERIVATION',
   'PREFLIGHT',
   'CONFIRMATION',
   'PRODUCTION_OBSERVATION',
@@ -705,11 +814,15 @@ const STAGE_ORDER = [
   'DUPLICATE_TRIGGER',
   'CONCURRENT',
   'STATE_DIFF',
+  'OUTCOME',
   'RESTART'
 ];
 
 function failureStageFor(assertion, testCase) {
-  if (assertion.layer === 'RESULT') {
+  if (assertion.layer === 'RAW_PARSER') {
+    return 'LOCAL_PARSE_ERROR';
+  }
+  if (assertion.layer === 'SEMANTIC_RESULT' || assertion.layer === 'PROPOSAL') {
     return testCase.ai.profile === 'LOCAL_ONLY' ? 'LOCAL_PARSE_ERROR' : 'AI_NORMALIZE_ERROR';
   }
   return {
@@ -725,12 +838,14 @@ function failureStageFor(assertion, testCase) {
     DUPLICATE_TRIGGER: 'SAVE_DECISION_ERROR',
     CONCURRENT: 'STORAGE_TRANSACTION_ERROR',
     STATE_DIFF: 'STATE_DIFF_ERROR',
+    OUTCOME: 'SAVE_DECISION_ERROR',
     RESTART: 'RESTART_PERSISTENCE_ERROR'
   }[assertion.layer] || 'STATE_DIFF_ERROR';
 }
 
 function assertCase(testCase, evidence, options = {}) {
   enforceLaneResultCompleteness(testCase, evidence);
+  requireObservationEvidence(evidence);
   const collector = createCollector();
   if (testCase.input.channel === 'TYPED_TEXT' && testCase.input.entrySurface !== 'HEADLESS') {
     collector.check(
@@ -740,6 +855,7 @@ function assertCase(testCase, evidence, options = {}) {
       testCase.input.originalText
     );
   }
+  assertObservationSemantics(testCase, evidence, collector);
   assertExpectedResult(testCase, evidence, collector);
   assertProductionLayers(testCase, evidence, collector);
   if (testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')) {
@@ -779,7 +895,9 @@ function assertCase(testCase, evidence, options = {}) {
   const layerLane = {
     INPUT: observationName,
     ROUTE: observationName,
-    RESULT: (
+    RAW_PARSER: observationName,
+    SEMANTIC_RESULT: observationName,
+    PROPOSAL: (
       testCase.execution.lanes.includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
         ? 'PAGE_CONFIRMED_DRAFT_DERIVATION'
         : observationName
@@ -796,6 +914,9 @@ function assertCase(testCase, evidence, options = {}) {
     RELATION_TAMPER: 'RELATION_REFERENCE_TAMPER_GUARD',
     ISOLATED_COMMIT: 'TEST_ONLY_ISOLATED_LEGACY_COMMIT',
     STATE_DIFF: testCase.execution.lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')
+      ? 'TEST_ONLY_ISOLATED_LEGACY_COMMIT'
+      : observationName,
+    OUTCOME: testCase.execution.lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')
       ? 'TEST_ONLY_ISOLATED_LEGACY_COMMIT'
       : observationName,
     TRANSACTION_REPLAY: 'TRANSACTION_EXACT_REPLAY',
@@ -906,6 +1027,8 @@ function assertCase(testCase, evidence, options = {}) {
 
 module.exports = {
   assertCase,
+  failureStageFor,
   getPath,
+  requireObservationEvidence,
   semanticEqual
 };

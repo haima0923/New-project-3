@@ -22,7 +22,6 @@ const SELECTION_CAPABILITIES = new Set([
   'SELECT_QUOTATION',
   'SELECT_RECEIVABLE'
 ]);
-
 function failedAssertions(result) {
   return (result.assertions || []).filter((assertion) => assertion.pass === false);
 }
@@ -212,6 +211,93 @@ function classifyFailureOwnership(testCase, result) {
   const capability = missingCapabilityOwnership(result);
   if (capability) return capability;
 
+  const rawParserContract = testCase.expected.rawParser
+    || testCase.expected.observationSemantics
+      && testCase.expected.observationSemantics.rawParser
+    || null;
+  if (rawParserContract && rawParserContract.assertionScope === 'RAW_PARSER') {
+    const rawFailures = failedAssertions(result).filter((assertion) => (
+      assertion.layer === 'RAW_PARSER' && assertion.name !== 'evidencePresent'
+    ));
+    if (rawFailures.length) {
+      return ownership('CONFIRMED_LOCAL_PARSER_DEFECT', 'HIGH', {
+        actualRawParser: result.observationSemantics
+          && result.observationSemantics.rawParser || null,
+        actualRoute: result.routeEvidence && result.routeEvidence.actualRoute || '',
+        expectedRawParser: rawParserContract,
+        failedRawAssertions: rawFailures.map((assertion) => assertion.name),
+        reason: 'EXPLICIT_RAW_PARSER_CONTRACT_MISMATCH'
+      });
+    }
+  }
+
+  if (testCase.caseId === 'REC-E2E-REL-008') {
+    return ownership('CONFIRMED_OPERATION_MAPPING_DEFECT', 'HIGH', {
+      actualRawParser: result.observationSemantics
+        && result.observationSemantics.rawParser || null,
+      actualSemanticResult: result.observationSemantics
+        && result.observationSemantics.semanticResult || null,
+      expectedBusinessType: testCase.expected.result.businessType,
+      expectedOperation: testCase.expected.result.operation,
+      reason: 'READ_ONLY_CLUSTER_4A_CONFIRMED_QUOTATION_TO_ORDER_MAPPING_DEFECT',
+      tamperGuardLaneStatus: laneResult(result, 'RELATION_REFERENCE_TAMPER_GUARD')
+        && laneResult(result, 'RELATION_REFERENCE_TAMPER_GUARD').status || ''
+    });
+  }
+
+  if (testCase.caseId === 'REC-E2E-VOICE-004') {
+    return ownership('CONFIRMED_ROUTE_DEFECT', 'HIGH', {
+      actualRoute: result.routeEvidence && result.routeEvidence.actualRoute || '',
+      expectedRoute: testCase.expected.route,
+      reason: 'READ_ONLY_CLUSTER_4A_CONFIRMED_VOICE_ROUTE_DIFFERENCE'
+    });
+  }
+
+  if (testCase.caseId === 'REC-E2E-VOICE-006') {
+    return ownership('OBSERVABILITY_EXPECTATION_MISMATCH', 'MEDIUM', {
+      actualRawParser: result.observationSemantics
+        && result.observationSemantics.rawParser || null,
+      actualSemanticResult: result.observationSemantics
+        && result.observationSemantics.semanticResult || null,
+      reason: 'READ_ONLY_CLUSTER_4A_VOICE_ASYNC_OBSERVATION_BOUNDARY'
+    });
+  }
+
+  if (testCase.caseId === 'REC-E2E-AMB-011') {
+    return ownership('TEST_CONTRACT_MISMATCH_CANDIDATE', 'MEDIUM', {
+      actualRoute: result.routeEvidence && result.routeEvidence.actualRoute || '',
+      expectedRoute: testCase.expected.route,
+      reason: 'READ_ONLY_CLUSTER_4A_TIMEOUT_CONTRACT_BOUNDARY'
+    });
+  }
+
+  if (testCase.caseId === 'REC-E2E-PAGE-008') {
+    const raw = result.observationSemantics && result.observationSemantics.rawParser || {};
+    const semantic = result.observationSemantics
+      && result.observationSemantics.semanticResult || {};
+    const preflightCodes = result.preflightEvidence
+      && result.preflightEvidence.blockingCodes || [];
+    const editConsistency = result.pageEvidence
+      && result.pageEvidence.pageEditConsistency || {};
+    if (raw.businessType === 'order'
+      && raw.operation === null
+      && semantic.businessType === 'order'
+      && semantic.effectiveOperation === 'create_order'
+      && preflightCodes.includes('MISSING_REQUIRED_FIELD')
+      && editConsistency.consistent === true
+      && formalBusinessDiffIsEmpty(result)) {
+      return ownership('TEST_CONTRACT_MISMATCH_CANDIDATE', 'HIGH', {
+        actualRawParser: raw,
+        actualSemanticResult: semantic,
+        actualRoute: result.routeEvidence && result.routeEvidence.actualRoute || '',
+        editConsistency: true,
+        formalBusinessDiffZero: true,
+        missingRequiredFieldBlocked: true,
+        reason: 'RAW_NULL_OPERATION_FIXED_AS_OBSERVATION; DUE_DATE_CONTRACT_STILL_BLOCKS'
+      });
+    }
+  }
+
   if (result.entrySurface === 'HOME_QUICK'
     && result.pageEvidence
     && result.pageEvidence.pageEditConsistency
@@ -310,8 +396,12 @@ function classifyFailureOwnership(testCase, result) {
   if (result.failureStage === 'LOCAL_PARSE_ERROR') {
     return ownership('UNCLASSIFIED_REQUIRES_REVIEW', 'LOW', {
       actualRoute: result.routeEvidence && result.routeEvidence.actualRoute || '',
-      failedResultAssertions: failedAssertions(result)
-        .filter((assertion) => assertion.layer === 'RESULT')
+      failedSemanticAssertions: failedAssertions(result)
+        .filter((assertion) => (
+          assertion.layer === 'RAW_PARSER'
+          || assertion.layer === 'SEMANTIC_RESULT'
+          || assertion.layer === 'PROPOSAL'
+        ))
         .map((assertion) => assertion.name),
       inputReachedProductionMethod: Boolean(
         result.actualInput && result.actualInput.pageText === testCase.input.originalText
@@ -326,8 +416,11 @@ function classifyFailureOwnership(testCase, result) {
       return ownership('UNCLASSIFIED_REQUIRES_REVIEW', 'LOW', {
         aiProfile: testCase.ai.profile,
         fixtureKind: result.aiEvidence && result.aiEvidence.fixtureKind || '',
-        failedResultAssertions: failedAssertions(result)
-          .filter((assertion) => assertion.layer === 'RESULT')
+        failedSemanticAssertions: failedAssertions(result)
+          .filter((assertion) => (
+            assertion.layer === 'SEMANTIC_RESULT'
+            || assertion.layer === 'PROPOSAL'
+          ))
           .map((assertion) => assertion.name),
         fakeAiRequestExecuted: true,
         reason: 'EXPECTED_ONLY_AI_DIFFERENCE_REQUIRES_FIXTURE_AND_NORMALIZER_REVIEW'

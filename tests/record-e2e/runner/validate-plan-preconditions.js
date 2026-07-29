@@ -15,6 +15,7 @@ const SELECTION_CAPABILITIES = Object.freeze({
   quotationId: 'SELECT_QUOTATION',
   receivableId: 'SELECT_RECEIVABLE'
 });
+const { expectedProposal } = require('./observation-semantics');
 
 function hasNonZeroBusinessDiff(testCase) {
   return Object.values(testCase.expected.stateDiff.business.collections || {}).some((change) => (
@@ -39,7 +40,7 @@ function explicitOrderUnits(text) {
 }
 
 function validateFormalOrderContract(testCase, errors) {
-  const result = testCase.expected.result;
+  const result = expectedProposal(testCase);
   if (result.businessType !== 'order' || testCase.expected.save.status !== 'FORMAL_COMMITTED') return;
   const fields = result.fields || {};
   if (!fields.customerName && !fields.customerId) errors.push('FORMAL_ORDER_CUSTOMER_EXPECTED_MISSING');
@@ -128,11 +129,11 @@ function validateSuccessLaneContract(testCase, errors) {
       step && step.actor === 'PAGE_B' && step.input
     ));
     if (!pageB || !pageB.input.originalText) errors.push('CONCURRENT_PAGE_B_INPUT_MISSING');
-    if (testCase.expected.result.businessType === 'order'
+    if (expectedProposal(testCase).businessType === 'order'
       && pageB && !hasExplicitChineseDate(pageB.input.originalText)) {
       errors.push('CONCURRENT_PAGE_B_DUE_DATE_INPUT_MISSING');
     }
-    if (testCase.expected.result.businessType === 'order' && pageB) {
+    if (expectedProposal(testCase).businessType === 'order' && pageB) {
       const units = explicitOrderUnits(pageB.input.originalText);
       if (units.quantityUnit && units.priceUnit && units.quantityUnit !== units.priceUnit) {
         errors.push('CONCURRENT_PAGE_B_EXPLICIT_UNIT_CONFLICT');

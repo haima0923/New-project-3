@@ -200,6 +200,7 @@ function compactCaseResult(result) {
     isolatedCommitEvidence: result.isolatedCommitEvidence,
     laneResults: result.laneResults,
     networkAudit: result.networkAudit,
+    observationSemantics: result.observationSemantics,
     ownershipConfidence: result.ownershipConfidence,
     ownershipEvidence: result.ownershipEvidence,
     pageEvidence: result.pageEvidence,

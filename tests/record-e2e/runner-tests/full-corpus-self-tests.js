@@ -190,6 +190,24 @@ const tests = [
     }
   },
   {
+    name: 'cluster-never-mixes-failure-ownership',
+    run() {
+      const routeA = failure('CASE-A', {
+        failureOwnership: 'UNCLASSIFIED_REQUIRES_REVIEW',
+        failureStage: 'ROUTE_ERROR',
+        routeEvidence: { actualRoute: 'PENDING' }
+      });
+      const routeB = failure('CASE-B', {
+        failureOwnership: 'TEST_CONTRACT_MISMATCH_CANDIDATE',
+        failureStage: 'ROUTE_ERROR',
+        routeEvidence: { actualRoute: 'PENDING' }
+      });
+      const report = clusterFailures([routeA, routeB]);
+      assert.strictEqual(report.clusters.length, 2);
+      assert(report.clusters.every((cluster) => cluster.caseCount === 1));
+    }
+  },
+  {
     name: 'candidate-observability-difference-is-not-confirmed-product-defect',
     run() {
       const testCase = {

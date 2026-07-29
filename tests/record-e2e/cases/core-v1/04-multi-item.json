@@ -4,7 +4,7 @@
   "description": "12条多商品题；每题显式断言第二件及后续商品、原文和保存投影。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-001",
       "title": "两件商品同交期订单",
       "status": "ACTIVE",
@@ -335,7 +335,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-002",
       "title": "三件商品逐项保存",
       "status": "ACTIVE",
@@ -708,7 +708,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-003",
       "title": "不同单位的两件商品",
       "status": "ACTIVE",
@@ -1031,7 +1031,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-004",
       "title": "每件商品不同单价",
       "status": "ACTIVE",
@@ -1354,7 +1354,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-005",
       "title": "原文没有顶层总额按明细求和",
       "status": "ACTIVE",
@@ -1669,7 +1669,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-006",
       "title": "多商品共享明确交期",
       "status": "ACTIVE",
@@ -2001,7 +2001,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-007",
       "title": "不同商品各有交期",
       "status": "ACTIVE",
@@ -2339,7 +2339,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-008",
       "title": "第二件商品单价未定仍可保留订单",
       "status": "ACTIVE",
@@ -2648,7 +2648,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-009",
       "title": "聊天记录中的两件商品",
       "status": "ACTIVE",
@@ -2980,7 +2980,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-010",
       "title": "语音转写中的连续多商品",
       "status": "ACTIVE",
@@ -3319,7 +3319,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-011",
       "title": "用户编辑第二件商品后保存新值",
       "status": "ACTIVE",
@@ -3660,7 +3660,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-MULTI-012",
       "title": "items与顶层兼容投影保持一致",
       "status": "ACTIVE",

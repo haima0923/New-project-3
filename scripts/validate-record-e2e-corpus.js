@@ -79,6 +79,30 @@ const REQUIRED_EXACT_REPLAY_IDENTITY_FIELDS = Object.freeze([
 ]);
 const FORBIDDEN_PRODUCTION_COMMIT_TERMS = /(?:FORMAL_PRODUCTION_COMMIT|PAGE_SAVE_SUCCESS|REAL_AI_COMMIT)/;
 const FORBIDDEN_EXACT_REPLAY_UI_TERMS = /(?:SECOND_PAGE_SAVE|SECOND_PAGE_CLICK|DOUBLE_UI_TRIGGER|第二次页面|再次点击页面)/i;
+const OBSERVATION_SEMANTICS_CASE_IDS = Object.freeze([
+  'REC-E2E-BASIC-001', 'REC-E2E-BASIC-002', 'REC-E2E-BASIC-003',
+  'REC-E2E-BASIC-004', 'REC-E2E-BASIC-005', 'REC-E2E-BASIC-007',
+  'REC-E2E-BASIC-008', 'REC-E2E-BASIC-009', 'REC-E2E-BASIC-015',
+  'REC-E2E-BASIC-016', 'REC-E2E-REL-001', 'REC-E2E-DATE-002',
+  'REC-E2E-DATE-008', 'REC-E2E-PAGE-001', 'REC-E2E-PAGE-008',
+  'REC-E2E-BASIC-017', 'REC-E2E-BASIC-018', 'REC-E2E-AMB-012',
+  'REC-E2E-BASIC-019', 'REC-E2E-BASIC-020', 'REC-E2E-AMB-001',
+  'REC-E2E-AMB-002', 'REC-E2E-AMB-008', 'REC-E2E-AMB-014',
+  'REC-E2E-AMB-015'
+]);
+const OBSERVATION_SEMANTICS_CASE_SET = new Set(OBSERVATION_SEMANTICS_CASE_IDS);
+const EXPLICIT_ORDER_PENDING_CASE_SET = new Set([
+  'REC-E2E-BASIC-019', 'REC-E2E-BASIC-020', 'REC-E2E-AMB-001',
+  'REC-E2E-AMB-002', 'REC-E2E-AMB-008', 'REC-E2E-AMB-014',
+  'REC-E2E-AMB-015'
+]);
+const PROTECTED_RAW_PARSER_CASE_SET = new Set([
+  'REC-E2E-BASIC-006',
+  'REC-E2E-BASIC-010',
+  'REC-E2E-AMB-005',
+  'REC-E2E-BASIC-012',
+  'REC-E2E-PAGE-003'
+]);
 
 const FORMAL_BUSINESS_COLLECTIONS = Object.freeze([
   'customers',
@@ -177,6 +201,25 @@ function asArray(value) {
 
 function unique(values) {
   return Array.from(new Set(values));
+}
+
+function observationOf(testCase) {
+  return testCase && testCase.expected && testCase.expected.observationSemantics || null;
+}
+
+function proposalOf(testCase) {
+  const observation = observationOf(testCase);
+  return observation ? observation.proposal.result : testCase.expected.result;
+}
+
+function semanticOf(testCase) {
+  const observation = observationOf(testCase);
+  if (observation) return observation.semanticResult;
+  const proposal = proposalOf(testCase);
+  return {
+    businessType: proposal.businessType,
+    effectiveOperation: proposal.operation
+  };
 }
 
 function cloneJson(value) {
@@ -539,7 +582,7 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
         } else if (testCase.interaction.userSelections.some(
           (selection) => selection.kind === 'quotationId'
         )) {
-          const expectedFields = testCase.expected.result.fields || {};
+          const expectedFields = proposalOf(testCase).fields || {};
           Object.keys(responseComparableFields).forEach((field) => {
             if (canonicalJson(responseComparableFields[field])
               !== canonicalJson(expectedFields[field])) {
@@ -549,17 +592,17 @@ function validateAi(testCase, enums, aiFixtureIds, aiFixtureMap) {
           testCase.interaction.userEdits
             .filter((edit) => edit.scope === 'ITEM')
             .forEach((edit) => {
-              const expectedItem = asArray(testCase.expected.result.items)[edit.itemIndex];
+              const expectedItem = asArray(proposalOf(testCase).items)[edit.itemIndex];
               if (!expectedItem
                 || canonicalJson(expectedItem[edit.field]) !== canonicalJson(edit.value)) {
                 fail(`${label} 报价选择后的items没有保留用户编辑：${edit.field}`);
               }
             });
         } else {
-          if (canonicalJson(responseComparableFields) !== canonicalJson(testCase.expected.result.fields)) {
+          if (canonicalJson(responseComparableFields) !== canonicalJson(proposalOf(testCase).fields)) {
             fail(`${label} AI fixture应用选择/编辑后的fields与expected.result.fields不一致`);
           }
-          if (canonicalJson(responseItems) !== canonicalJson(testCase.expected.result.items)) {
+          if (canonicalJson(responseItems) !== canonicalJson(proposalOf(testCase).items)) {
             fail(`${label} AI fixture应用选择/编辑后的items与expected.result.items不一致`);
           }
         }
@@ -629,7 +672,7 @@ function validateInteraction(testCase, enums) {
     checkEnum(selection && selection.kind, enumSet(enums, 'selectionKinds'), `${label}.interaction.userSelections[${index}].kind`);
     checkString(selection && selection.selectedId, `${label}.interaction.userSelections[${index}].selectedId`);
     const requiredCapability = selection && selection.kind === 'orderId'
-      ? (testCase.expected.result.operation === 'record_order_deposit'
+      ? (proposalOf(testCase).operation === 'record_order_deposit'
         ? 'SELECT_DEPOSIT_ORDER'
         : 'SELECT_ORDER')
       : REQUIRED_CAPABILITY_BY_SELECTION[selection && selection.kind];
@@ -698,18 +741,152 @@ function validateInteraction(testCase, enums) {
   });
 }
 
+function validateObservationSemantics(testCase, enums) {
+  const label = testCase.caseId;
+  const observation = observationOf(testCase);
+  const standaloneRaw = testCase.expected.rawParser || null;
+  const shouldUseNewContract = OBSERVATION_SEMANTICS_CASE_SET.has(label);
+  if (shouldUseNewContract !== Boolean(observation)) {
+    fail(`${label} observationSemantics迁移集合必须与冻结25题清单一致`);
+    return;
+  }
+  const raw = observation && observation.rawParser || standaloneRaw;
+  if (Boolean(standaloneRaw) !== PROTECTED_RAW_PARSER_CASE_SET.has(label)) {
+    fail(`${label} 独立rawParser保护合同必须与冻结5题清单一致`);
+  }
+  if (!observation && !standaloneRaw) return;
+  if (raw) {
+    checkRequiredObject(
+      raw,
+      `${label}.expected.rawParser`,
+      ['assertionScope']
+    );
+    checkEnum(
+      raw.assertionScope,
+      enumSet(enums, 'rawParserAssertionScopes'),
+      `${label}.expected.rawParser.assertionScope`
+    );
+    if (raw.assertionScope === 'RAW_PARSER') {
+      ['intent', 'businessType', 'operation'].forEach((field) => {
+        if (!Object.prototype.hasOwnProperty.call(raw, field)) {
+          fail(`${label} RAW_PARSER强断言必须声明${field}`);
+        }
+      });
+    }
+  }
+  if (!observation) return;
+  if (testCase.expected.result !== undefined) {
+    fail(`${label} 新四层合同不得与旧expected.result并存`);
+  }
+  if (observation.contractVersion !== 'record-e2e-observation-semantics-v1') {
+    fail(`${label} observationSemantics contractVersion错误`);
+  }
+  const semantic = checkRequiredObject(
+    observation.semanticResult,
+    `${label}.expected.observationSemantics.semanticResult`,
+    ['businessType', 'effectiveOperation', 'source']
+  );
+  if (semantic.businessType === 'pending') {
+    fail(`${label} pending不得作为canonical semantic businessType`);
+  }
+  checkEnum(semantic.businessType, enumSet(enums, 'businessTypes'),
+    `${label}.expected.observationSemantics.semanticResult.businessType`);
+  checkEnum(semantic.effectiveOperation, enumSet(enums, 'operations'),
+    `${label}.expected.observationSemantics.semanticResult.effectiveOperation`);
+  checkEnum(semantic.source, enumSet(enums, 'semanticResultSources'),
+    `${label}.expected.observationSemantics.semanticResult.source`);
+  if (!(OPERATION_BY_BUSINESS_TYPE[semantic.businessType] || new Set())
+    .has(semantic.effectiveOperation)) {
+    fail(`${label} semantic businessType与effectiveOperation不兼容`);
+  }
+  const proposal = proposalOf(testCase);
+  if (proposal.businessType === 'pending') {
+    fail(`${label} pending不得作为canonical proposal businessType`);
+  }
+  if (proposal.businessType !== semantic.businessType
+    || proposal.operation !== semantic.effectiveOperation) {
+    fail(`${label} semanticResult与proposal业务语义冲突`);
+  }
+  checkEnum(
+    observation.proposal.source,
+    enumSet(enums, 'proposalSources'),
+    `${label}.expected.observationSemantics.proposal.source`
+  );
+  checkEnum(
+    observation.proposal.operationSource,
+    enumSet(enums, 'proposalOperationSources'),
+    `${label}.expected.observationSemantics.proposal.operationSource`
+  );
+  const expectedProposalSource = testCase.execution.lanes
+    .includes('PAGE_CONFIRMED_DRAFT_DERIVATION')
+    ? 'PAGE_CONFIRMED_DRAFT'
+    : (testCase.input.entrySurface === 'HEADLESS'
+      ? 'HEADLESS_NORMALIZED_RESULT'
+      : 'PAGE_CONFIRMED_DRAFT');
+  if (observation.proposal.source !== expectedProposalSource) {
+    fail(`${label} proposal.source必须与实际草稿来源一致`);
+  }
+  const outcome = checkRequiredObject(
+    observation.outcome,
+    `${label}.expected.observationSemantics.outcome`,
+    ['disposition', 'persistedRecordType', 'formalSaveSucceeded', 'pendingSaveSucceeded']
+  );
+  checkEnum(outcome.disposition, enumSet(enums, 'outcomeDispositions'),
+    `${label}.expected.observationSemantics.outcome.disposition`);
+  if (outcome.persistedRecordType !== null) {
+    checkEnum(outcome.persistedRecordType, enumSet(enums, 'persistedRecordTypes'),
+      `${label}.expected.observationSemantics.outcome.persistedRecordType`);
+  }
+  const saveStatusByDisposition = {
+    BLOCKED: 'BLOCKED',
+    FORMAL_RECORD: 'FORMAL_COMMITTED',
+    NO_RECORD: 'NO_RECORD',
+    PENDING_NOTE: 'PENDING_COMMITTED'
+  };
+  if (testCase.expected.save.status !== saveStatusByDisposition[outcome.disposition]) {
+    fail(`${label} outcome.disposition必须与expected.save.status一致`);
+  }
+  if (outcome.disposition === 'FORMAL_RECORD'
+    && (!outcome.formalSaveSucceeded || outcome.pendingSaveSucceeded
+      || outcome.persistedRecordType === null
+      || !hasFormalBusinessDiff(testCase))) {
+    fail(`${label} FORMAL_RECORD必须有正式Commit和正式State Diff证据合同`);
+  }
+  if (outcome.disposition === 'PENDING_NOTE') {
+    if (outcome.formalSaveSucceeded || !outcome.pendingSaveSucceeded
+      || outcome.persistedRecordType !== 'pending_note'
+      || !hasNonZeroCollection(testCase.expected.stateDiff.business, 'pendingNotes')
+      || countDiffChanges(testCase.expected.stateDiff.business, FORMAL_BUSINESS_COLLECTIONS) > 0) {
+      fail(`${label} PENDING_NOTE必须只有pending Diff且无正式业务Diff`);
+    }
+  }
+  if (['NO_RECORD', 'BLOCKED'].includes(outcome.disposition)
+    && (outcome.formalSaveSucceeded || outcome.pendingSaveSucceeded
+      || outcome.persistedRecordType !== null
+      || hasAnyBusinessDiff(testCase))) {
+    fail(`${label} ${outcome.disposition}不得产生业务持久化`);
+  }
+  if (EXPLICIT_ORDER_PENDING_CASE_SET.has(label)
+    && (semantic.businessType !== 'order'
+      || semantic.effectiveOperation !== 'create_order'
+      || outcome.disposition !== 'PENDING_NOTE')) {
+    fail(`${label} 明确订单提案必须保持order/create_order，仅outcome为PENDING_NOTE`);
+  }
+}
+
 function validateResult(testCase, enums) {
   const label = testCase.caseId;
-  const result = checkRequiredObject(testCase.expected.result, `${label}.expected.result`, [
+  validateObservationSemantics(testCase, enums);
+  const result = checkRequiredObject(proposalOf(testCase), `${label}.expected.proposalResult`, [
     'businessType', 'operation', 'originalText', 'fields', 'items',
     'allowedValues', 'conflictValues', 'absentFields'
   ]);
-  checkEnum(result.businessType, enumSet(enums, 'businessTypes'), `${label}.expected.result.businessType`);
-  checkEnum(result.operation, enumSet(enums, 'operations'), `${label}.expected.result.operation`);
+  checkEnum(result.businessType, enumSet(enums, 'businessTypes'), `${label}.expected.proposalResult.businessType`);
+  checkEnum(result.operation, enumSet(enums, 'operations'), `${label}.expected.proposalResult.operation`);
   if (!(OPERATION_BY_BUSINESS_TYPE[result.businessType] || new Set()).has(result.operation)) {
     fail(`${label} businessType ${result.businessType}与operation ${result.operation}不兼容`);
   }
-  if (result.originalText !== testCase.input.originalText) fail(`${label} expected.result.originalText必须严格等于输入原文`);
+  if (result.originalText !== testCase.input.originalText) fail(`${label} expected proposal originalText必须严格等于输入原文`);
   if (!isObject(result.fields)) fail(`${label}.expected.result.fields必须是对象`);
   if (!Array.isArray(result.items)) fail(`${label}.expected.result.items必须是数组`);
   if (!isObject(result.allowedValues)) fail(`${label}.expected.result.allowedValues必须是对象`);
@@ -810,7 +987,7 @@ function validatePreflightAndSave(testCase, enums) {
     ...checkArray(confirmation.missingFields, `${label}.expected.confirmation.missingFields`),
     ...checkArray(confirmation.conflictFields, `${label}.expected.confirmation.conflictFields`)
   ];
-  const forbiddenAliases = CANONICAL_RESULT_FIELD_ALIASES[testCase.expected.result.operation] || new Set();
+  const forbiddenAliases = CANONICAL_RESULT_FIELD_ALIASES[proposalOf(testCase).operation] || new Set();
   confirmationPaths.forEach((entryPath) => {
     if (!FIELD_PATH_PATTERN.test(entryPath)) fail(`${label} Confirmation字段路径非法：${entryPath}`);
     const rootField = (entryPath.match(/^[A-Za-z_][A-Za-z0-9_]*/) || [''])[0];
@@ -915,11 +1092,11 @@ function validateRelationReferenceTamperContract(testCase) {
   if (Object.prototype.hasOwnProperty.call(baseDraft.fields || {}, 'quotationId')) {
     fail(`${label} 危险quotationId只能由专用Lane单字段注入`);
   }
-  if (baseDraft.intent !== testCase.expected.result.businessType
-    || baseDraft.operation !== testCase.expected.result.operation) {
+  if (baseDraft.intent !== proposalOf(testCase).businessType
+    || baseDraft.operation !== proposalOf(testCase).operation) {
     fail(`${label} 危险关系测试底稿业务类型或operation与业务Expected不一致`);
   }
-  if ((testCase.expected.result.fields || {}).quotationId !== contract.injectedId) {
+  if ((proposalOf(testCase).fields || {}).quotationId !== contract.injectedId) {
     fail(`${label} 危险关系注入ID必须等于业务Expected中的quotationId`);
   }
   const quoteSelections = asArray(testCase.interaction.userSelections)
@@ -1457,7 +1634,7 @@ function validateMultiItem(testCase) {
     && !testCase.tags.includes('MULTI_ITEM')
     && !isHomeItemZeroSync) return;
   const label = testCase.caseId;
-  const items = testCase.expected.result.items;
+  const items = proposalOf(testCase).items;
   if (isHomeItemZeroSync) {
     if (!Array.isArray(items) || items.length !== 1) fail(`${label} 首页items[0]同步题必须恰好断言一个商品`);
     const assertions = JSON.stringify(testCase.expected.stateDiff);
@@ -1481,7 +1658,7 @@ function validateMultiItem(testCase) {
           fail(`${label} 必须精确断言${entryPath}`);
         }
       } else if (field === 'unitPrice'
-        && testCase.expected.result.absentFields.includes(entryPath)) {
+        && proposalOf(testCase).absentFields.includes(entryPath)) {
         if (!assertion || assertion.assert !== 'ABSENT') fail(`${label} 必须断言${entryPath}缺失`);
       } else {
         fail(`${label} ${entryPath}缺失且未声明为允许缺失`);
@@ -1504,10 +1681,10 @@ function validateMultiItem(testCase) {
     || originalTextAssertion.value !== testCase.input.originalText) {
     fail(`${label} 多商品题必须精确断言originalText`);
   }
-  if (testCase.expected.result.fields.dueDate) {
+  if (proposalOf(testCase).fields.dueDate) {
     const dueAssertion = assertionsByPath.get('requiredDeliveryDate');
     if (!dueAssertion || dueAssertion.assert !== 'EXACT'
-      || dueAssertion.value !== testCase.expected.result.fields.dueDate) {
+      || dueAssertion.value !== proposalOf(testCase).fields.dueDate) {
       fail(`${label} 共享交期必须断言订单requiredDeliveryDate`);
     }
   }
@@ -1517,7 +1694,7 @@ function validateFinancial(testCase) {
   if (testCase.category !== 'FINANCIAL_SAFETY') return;
   const label = testCase.caseId;
   if (testCase.riskLevel !== 'P0') fail(`${label} 金融安全题必须是P0`);
-  const result = testCase.expected.result;
+  const result = proposalOf(testCase);
   const hasAmount = ['amount', 'paymentAmount', 'depositAmount'].some((key) => (
     typeof result.fields[key] === 'number' && result.fields[key] > 0
   ));
@@ -1739,7 +1916,7 @@ function validateCase(testCase, context) {
   ].forEach((key) => {
     if (!Object.prototype.hasOwnProperty.call(testCase, key)) fail(`${label}.${key} 缺失`);
   });
-  if (testCase.schemaVersion !== 'record-e2e-case-v1.1') fail(`${label} schemaVersion错误`);
+  if (testCase.schemaVersion !== 'record-e2e-case-v1.2') fail(`${label} schemaVersion错误`);
   if (!CASE_ID_PATTERN.test(String(testCase.caseId || ''))) fail(`${label} caseId格式错误`);
   checkString(testCase.title, `${label}.title`);
   checkEnum(testCase.status, enumSet(enums, 'statuses'), `${label}.status`);
@@ -1938,8 +2115,8 @@ function validateDuplicates(cases) {
     const skeletonKey = [
       testCase.category,
       testCase.input.channel,
-      testCase.expected.result.businessType,
-      testCase.expected.result.operation,
+      proposalOf(testCase).businessType,
+      proposalOf(testCase).operation,
       testCase.initialState.fixtureRef,
       testCase.expected.route,
       testCase.expected.save.status,
@@ -2010,7 +2187,7 @@ function validateCoverage(cases, decisions, indexDocument) {
     fail('corpus-index-v1.json schemaVersion错误');
   } else {
     if (indexDocument.activeCaseCount !== 120) fail('corpus index activeCaseCount必须为120');
-    if (indexDocument.caseSchemaVersion !== 'record-e2e-case-v1.1') {
+    if (indexDocument.caseSchemaVersion !== 'record-e2e-case-v1.2') {
       fail('corpus index caseSchemaVersion错误');
     }
     if (indexDocument.executionBoundaryContractVersion !== 'record-e2e-execution-boundary-v1') {
@@ -2027,8 +2204,17 @@ function validateCoverage(cases, decisions, indexDocument) {
       || indexDocument.resultToStateFieldMap.receivableAmount !== 'receivables[].amount') {
       fail('corpus index必须显式声明receivableAmount到receivables[].amount的映射');
     }
-    if (indexDocument.expectedResultLayer !== 'POST_NORMALIZER_POST_INTERACTION_CONFIRMATION_SEMANTICS') {
-      fail('corpus index必须固定expected.result的标准确认语义判分层');
+    if (indexDocument.observationSemanticsContractVersion
+      !== 'record-e2e-observation-semantics-v1') {
+      fail('corpus index observationSemanticsContractVersion错误');
+    }
+    if (indexDocument.expectedResultLayer
+      !== 'RAW_SEMANTIC_PROPOSAL_OUTCOME_SEPARATED_WITH_V1_1_LEGACY_COMPATIBILITY') {
+      fail('corpus index必须固定四层观察语义与V1.1兼容边界');
+    }
+    if (indexDocument.observationSemanticsMigratedCaseCount
+      !== OBSERVATION_SEMANTICS_CASE_IDS.length) {
+      fail('corpus index observationSemantics迁移数量必须为25');
     }
     if (JSON.stringify(indexDocument.expectedExecutionLaneCounts) !== JSON.stringify(EXPECTED_EXECUTION_LANE_COUNTS)) {
       fail('corpus index execution lane配额与Validator不一致');
@@ -2081,11 +2267,96 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
   const exactReplay = cases.find((item) => item.caseId === 'REC-E2E-PERSIST-003');
   const tamperCrossCustomer = cases.find((item) => item.caseId === 'REC-E2E-REL-007');
   const tamperConverted = cases.find((item) => item.caseId === 'REC-E2E-REL-008');
+  const semanticFormal = cases.find((item) => item.caseId === 'REC-E2E-BASIC-001');
+  const semanticPending = cases.find((item) => item.caseId === 'REC-E2E-BASIC-019');
+  const protectedParser = cases.find((item) => item.caseId === 'REC-E2E-BASIC-006');
   if (!safeFake || !blocked || !orderSelection || !exactReplay
-    || !tamperCrossCustomer || !tamperConverted) {
+    || !tamperCrossCustomer || !tamperConverted || !semanticFormal
+    || !semanticPending || !protectedParser) {
     fail('合同自测基础Case缺失');
     return results;
   }
+
+  expectMutationFailure(
+    'pending不得写成canonical businessType',
+    semanticPending,
+    (item) => {
+      item.expected.observationSemantics.semanticResult.businessType = 'pending';
+      item.expected.observationSemantics.proposal.result.businessType = 'pending';
+      item.expected.observationSemantics.semanticResult.effectiveOperation = 'pending';
+      item.expected.observationSemantics.proposal.result.operation = 'pending';
+    },
+    (item) => validateObservationSemantics(item, enums)
+  );
+  expectMutationFailure(
+    'RAW_PARSER强断言缺operation',
+    semanticFormal,
+    (item) => {
+      item.expected.observationSemantics.rawParser = {
+        assertionScope: 'RAW_PARSER',
+        businessType: 'order',
+        intent: 'order'
+      };
+    },
+    (item) => validateObservationSemantics(item, enums)
+  );
+  expectMutationFailure(
+    'FORMAL_RECORD缺正式State Diff',
+    semanticFormal,
+    (item) => {
+      Object.keys(item.expected.stateDiff.business.collections).forEach((collection) => {
+        item.expected.stateDiff.business.collections[collection] = {
+          createdCount: 0,
+          deletedCount: 0,
+          updatedCount: 0
+        };
+      });
+    },
+    (item) => validateObservationSemantics(item, enums)
+  );
+  expectMutationFailure(
+    'PENDING_NOTE缺pending Diff',
+    semanticPending,
+    (item) => {
+      item.expected.stateDiff.business.collections.pendingNotes = {
+        createdCount: 0,
+        deletedCount: 0,
+        updatedCount: 0
+      };
+    },
+    (item) => validateObservationSemantics(item, enums)
+  );
+  expectMutationFailure(
+    'PENDING_NOTE产生正式订单',
+    semanticPending,
+    (item) => {
+      item.expected.stateDiff.business.collections.orders = {
+        createdCount: 1,
+        deletedCount: 0,
+        updatedCount: 0
+      };
+    },
+    (item) => validateObservationSemantics(item, enums)
+  );
+  expectMutationFailure(
+    'raw null operation不得自动等于semantic none',
+    semanticFormal,
+    (item) => {
+      item.expected.observationSemantics.semanticResult.businessType = 'unknown';
+      item.expected.observationSemantics.semanticResult.effectiveOperation = 'none';
+    },
+    (item) => validateObservationSemantics(item, enums)
+  );
+  const parserProtectionPreserved = !observationOf(protectedParser)
+    && protectedParser.expected.rawParser
+    && protectedParser.expected.rawParser.assertionScope === 'RAW_PARSER';
+  if (!parserProtectionPreserved) {
+    fail('BASIC-006不得迁入观测语义假差异清单且必须保留raw合同');
+  }
+  results.push({
+    name: 'BASIC-006真实parser缺陷保持未迁移',
+    passed: parserProtectionPreserved
+  });
 
   expectMutationFailure(
     'Fake生产资格错误标为ELIGIBLE',
@@ -2353,7 +2624,7 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
   }
 
   const allMigrated = cases.length === 120 && cases.every((item) => (
-    item.schemaVersion === 'record-e2e-case-v1.1'
+    item.schemaVersion === 'record-e2e-case-v1.2'
     && item.execution
     && Array.isArray(item.execution.lanes)
     && item.execution.lanes.length
@@ -2375,9 +2646,10 @@ function main() {
   if (!enums || !schema || !stateFixtures || !aiFixtures) {
     throw new Error('基础合同文件无法加载');
   }
-  if (schema.$id !== 'record-e2e-case-v1.1.schema.json') fail('JSON Schema $id错误');
-  if (enums.schemaVersion !== 'record-e2e-enums-v1.1'
-    || enums.caseSchemaVersion !== 'record-e2e-case-v1.1'
+  if (schema.$id !== 'record-e2e-case-v1.2.schema.json') fail('JSON Schema $id错误');
+  if (enums.schemaVersion !== 'record-e2e-enums-v1.2'
+    || enums.caseSchemaVersion !== 'record-e2e-case-v1.2'
+    || enums.observationSemanticsVersion !== 'record-e2e-observation-semantics-v1'
     || enums.executionBoundaryVersion !== 'record-e2e-execution-boundary-v1') {
     fail('执行边界枚举版本错误');
   }
@@ -2409,7 +2681,7 @@ function main() {
   const active = coverage.active;
   const channelCounts = countBy(active, (item) => [item.input.channel]);
   const surfaceCounts = countBy(active, (item) => [item.input.entrySurface]);
-  const businessTypeCounts = countBy(active, (item) => [item.expected.result.businessType]);
+  const businessTypeCounts = countBy(active, (item) => [proposalOf(item).businessType]);
   const routeCounts = countBy(active, (item) => [item.expected.route]);
   const saveCounts = countBy(active, (item) => [item.expected.save.status]);
   const fixtureCounts = countBy(active, (item) => [item.initialState.fixtureRef]);
@@ -2476,7 +2748,7 @@ function main() {
     process.exitCode = 1;
     return;
   }
-  console.log('\n校验通过：120条ACTIVE合成题符合Record E2E Case V1.1执行边界合同。');
+  console.log('\n校验通过：120条ACTIVE合成题符合Record E2E Case V1.2四层观察语义合同。');
 }
 
 try {

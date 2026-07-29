@@ -4,7 +4,7 @@
   "description": "4条供Headless和页面Runner共用的重启、重复提交与CAS并发合同题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PERSIST-001",
       "title": "保存后重启记录仍存在",
       "status": "ACTIVE",
@@ -273,7 +273,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PERSIST-002",
       "title": "重启后记录数量不增加",
       "status": "ACTIVE",
@@ -542,7 +542,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PERSIST-003",
       "title": "同一plan重复提交不重复",
       "status": "ACTIVE",
@@ -846,7 +846,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PERSIST-004",
       "title": "相同base后提交者不得覆盖",
       "status": "ACTIVE",

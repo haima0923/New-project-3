@@ -11,6 +11,7 @@ const { assertFullAttemptIntegrity, exactUniqueSet } = require('./full-run-integ
 const { loadCorpus } = require('./load-corpus');
 const { runCaseWorker } = require('./module-isolation');
 const { findChangedPaths, normalizeRunResult } = require('./normalize-run-result');
+const { expectedProposal } = require('./observation-semantics');
 
 function loadSmokeManifest() {
   const manifestPath = path.join(CORPUS_ROOT, 'runner-smoke/smoke-manifest-v1.json');
@@ -61,9 +62,10 @@ function selectPlans(corpus, options = {}) {
 }
 
 async function executeOne(item, options = {}) {
+  const proposalExpected = expectedProposal(item.testCase);
   const metadata = {
     aiProfile: item.testCase.ai.profile,
-    businessType: item.testCase.expected.result.businessType,
+    businessType: proposalExpected.businessType,
     category: item.testCase.category,
     entrySurface: item.testCase.input.entrySurface,
     executionLanes: item.testCase.execution.lanes.slice(),

@@ -4,7 +4,7 @@
   "description": "20条标准业务题，覆盖正式业务、提醒、催款与用户明确选择待整理。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-001",
       "title": "新客户明确单商品订单",
       "status": "ACTIVE",
@@ -71,34 +71,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "李总订礼品盒500套，3块8一套，明天交",
-          "fields": {
-            "customerName": "李总",
-            "productName": "礼品盒",
-            "quantity": 500,
-            "unit": "套",
-            "unitPrice": 3.8,
-            "amount": 1900,
-            "orderDeliveryDate": "2026-07-16"
-          },
-          "items": [
-            {
-              "productName": "礼品盒",
-              "quantity": 500,
-              "unit": "套",
-              "unitPrice": 3.8,
-              "totalAmount": 1900
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -246,13 +218,62 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "李总订礼品盒500套，3块8一套，明天交",
+              "fields": {
+                "customerName": "李总",
+                "productName": "礼品盒",
+                "quantity": 500,
+                "unit": "套",
+                "unitPrice": 3.8,
+                "amount": 1900,
+                "orderDeliveryDate": "2026-07-16"
+              },
+              "items": [
+                {
+                  "productName": "礼品盒",
+                  "quantity": 500,
+                  "unit": "套",
+                  "unitPrice": 3.8,
+                  "totalAmount": 1900
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-002",
       "title": "已有客户新增订单",
       "status": "ACTIVE",
@@ -319,35 +340,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "王总要做800个钥匙扣，1块2一个，后天交",
-          "fields": {
-            "customerName": "王总",
-            "customerId": "cus-syn-a",
-            "productName": "钥匙扣",
-            "quantity": 800,
-            "unit": "个",
-            "unitPrice": 1.2,
-            "amount": 960,
-            "orderDeliveryDate": "2026-07-17"
-          },
-          "items": [
-            {
-              "productName": "钥匙扣",
-              "quantity": 800,
-              "unit": "个",
-              "unitPrice": 1.2,
-              "totalAmount": 960
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -486,13 +478,63 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "王总要做800个钥匙扣，1块2一个，后天交",
+              "fields": {
+                "customerName": "王总",
+                "customerId": "cus-syn-a",
+                "productName": "钥匙扣",
+                "quantity": 800,
+                "unit": "个",
+                "unitPrice": 1.2,
+                "amount": 960,
+                "orderDeliveryDate": "2026-07-17"
+              },
+              "items": [
+                {
+                  "productName": "钥匙扣",
+                  "quantity": 800,
+                  "unit": "个",
+                  "unitPrice": 1.2,
+                  "totalAmount": 960
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-003",
       "title": "纸袋按只计价的明确订单",
       "status": "ACTIVE",
@@ -567,34 +609,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "张总下两千只纸袋一块二一只总共两千四后天发",
-          "fields": {
-            "customerName": "张总",
-            "productName": "纸袋",
-            "quantity": 2000,
-            "unit": "只",
-            "unitPrice": 1.2,
-            "amount": 2400,
-            "orderDeliveryDate": "2026-07-17"
-          },
-          "items": [
-            {
-              "productName": "纸袋",
-              "quantity": 2000,
-              "unit": "只",
-              "unitPrice": 1.2,
-              "totalAmount": 2400
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -742,13 +756,62 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "张总下两千只纸袋一块二一只总共两千四后天发",
+              "fields": {
+                "customerName": "张总",
+                "productName": "纸袋",
+                "quantity": 2000,
+                "unit": "只",
+                "unitPrice": 1.2,
+                "amount": 2400,
+                "orderDeliveryDate": "2026-07-17"
+              },
+              "items": [
+                {
+                  "productName": "纸袋",
+                  "quantity": 2000,
+                  "unit": "只",
+                  "unitPrice": 1.2,
+                  "totalAmount": 2400
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-004",
       "title": "明确年月日交期订单",
       "status": "ACTIVE",
@@ -815,34 +878,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "陈老板订600个冰箱贴，2元一个，2026年8月6日交",
-          "fields": {
-            "customerName": "陈老板",
-            "productName": "冰箱贴",
-            "quantity": 600,
-            "unit": "个",
-            "unitPrice": 2,
-            "amount": 1200,
-            "orderDeliveryDate": "2026-08-06"
-          },
-          "items": [
-            {
-              "productName": "冰箱贴",
-              "quantity": 600,
-              "unit": "个",
-              "unitPrice": 2,
-              "totalAmount": 1200
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -990,13 +1025,62 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "陈老板订600个冰箱贴，2元一个，2026年8月6日交",
+              "fields": {
+                "customerName": "陈老板",
+                "productName": "冰箱贴",
+                "quantity": 600,
+                "unit": "个",
+                "unitPrice": 2,
+                "amount": 1200,
+                "orderDeliveryDate": "2026-08-06"
+              },
+              "items": [
+                {
+                  "productName": "冰箱贴",
+                  "quantity": 600,
+                  "unit": "个",
+                  "unitPrice": 2,
+                  "totalAmount": 1200
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-005",
       "title": "无手机号订单不得编造手机号",
       "status": "ACTIVE",
@@ -1061,34 +1145,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "赵姐要300个帆布袋，6元一个，周五交",
-          "fields": {
-            "customerName": "赵姐",
-            "productName": "帆布袋",
-            "quantity": 300,
-            "unit": "个",
-            "unitPrice": 6,
-            "amount": 1800,
-            "orderDeliveryDate": "2026-07-17"
-          },
-          "items": [
-            {
-              "productName": "帆布袋",
-              "quantity": 300,
-              "unit": "个",
-              "unitPrice": 6,
-              "totalAmount": 1800
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -1235,13 +1291,62 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "赵姐要300个帆布袋，6元一个，周五交",
+              "fields": {
+                "customerName": "赵姐",
+                "productName": "帆布袋",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 6,
+                "amount": 1800,
+                "orderDeliveryDate": "2026-07-17"
+              },
+              "items": [
+                {
+                  "productName": "帆布袋",
+                  "quantity": 300,
+                  "unit": "个",
+                  "unitPrice": 6,
+                  "totalAmount": 1800
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-006",
       "title": "新客户单商品报价",
       "status": "ACTIVE",
@@ -1482,13 +1587,19 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "rawParser": {
+          "assertionScope": "RAW_PARSER",
+          "intent": "quotation",
+          "businessType": "quotation",
+          "operation": null
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-007",
       "title": "已有客户新报价",
       "status": "ACTIVE",
@@ -1555,35 +1666,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "quotation",
-          "operation": "create_quotation",
-          "originalText": "给王总报收纳盒1000套，2块8一套",
-          "fields": {
-            "customerName": "王总",
-            "customerId": "cus-syn-a",
-            "productName": "收纳盒",
-            "quantity": 1000,
-            "unit": "套",
-            "unitPrice": 2.8,
-            "amount": 2800
-          },
-          "items": [
-            {
-              "productName": "收纳盒",
-              "quantity": 1000,
-              "unit": "套",
-              "unitPrice": 2.8,
-              "totalAmount": 2800
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone",
-            "quoteFollowupDate"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -1721,13 +1803,63 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "quotation",
+            "effectiveOperation": "create_quotation",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "quotation",
+              "operation": "create_quotation",
+              "originalText": "给王总报收纳盒1000套，2块8一套",
+              "fields": {
+                "customerName": "王总",
+                "customerId": "cus-syn-a",
+                "productName": "收纳盒",
+                "quantity": 1000,
+                "unit": "套",
+                "unitPrice": 2.8,
+                "amount": 2800
+              },
+              "items": [
+                {
+                  "productName": "收纳盒",
+                  "quantity": 1000,
+                  "unit": "套",
+                  "unitPrice": 2.8,
+                  "totalAmount": 2800
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone",
+                "quoteFollowupDate"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "quotation",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-008",
       "title": "报价含明确总价",
       "status": "ACTIVE",
@@ -1800,34 +1932,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "quotation",
-          "operation": "create_quotation",
-          "originalText": "周姐问彩盒200箱每箱30块总共6000先报价",
-          "fields": {
-            "customerName": "周姐",
-            "productName": "彩盒",
-            "quantity": 200,
-            "unit": "箱",
-            "unitPrice": 30,
-            "amount": 6000
-          },
-          "items": [
-            {
-              "productName": "彩盒",
-              "quantity": 200,
-              "unit": "箱",
-              "unitPrice": 30,
-              "totalAmount": 6000
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [
-            "phone",
-            "quoteFollowupDate"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -1974,13 +2078,62 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "quotation",
+            "effectiveOperation": "create_quotation",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "quotation",
+              "operation": "create_quotation",
+              "originalText": "周姐问彩盒200箱每箱30块总共6000先报价",
+              "fields": {
+                "customerName": "周姐",
+                "productName": "彩盒",
+                "quantity": 200,
+                "unit": "箱",
+                "unitPrice": 30,
+                "amount": 6000
+              },
+              "items": [
+                {
+                  "productName": "彩盒",
+                  "quantity": 200,
+                  "unit": "箱",
+                  "unitPrice": 30,
+                  "totalAmount": 6000
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [
+                "phone",
+                "quoteFollowupDate"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "quotation",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-009",
       "title": "新客户明确待收款",
       "status": "ACTIVE",
@@ -2047,23 +2200,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "receivable",
-          "operation": "create_receivable",
-          "originalText": "刘姐那批货还欠3200元，7月31日前收",
-          "fields": {
-            "customerName": "刘姐",
-            "receivableAmount": 3200,
-            "receivableDueDate": "2026-07-31"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "phone",
-            "orderId"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -2210,13 +2346,51 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "receivable",
+            "effectiveOperation": "create_receivable",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "receivable",
+              "operation": "create_receivable",
+              "originalText": "刘姐那批货还欠3200元，7月31日前收",
+              "fields": {
+                "customerName": "刘姐",
+                "receivableAmount": 3200,
+                "receivableDueDate": "2026-07-31"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "phone",
+                "orderId"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "receivable",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-010",
       "title": "为选定订单建立待收款",
       "status": "ACTIVE",
@@ -2448,13 +2622,19 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "rawParser": {
+          "assertionScope": "RAW_PARSER",
+          "intent": "receivable",
+          "businessType": "receivable",
+          "operation": null
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-011",
       "title": "唯一待收经用户确认后部分收款",
       "status": "ACTIVE",
@@ -2711,7 +2891,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-012",
       "title": "明确不关联历史的客户收款",
       "status": "ACTIVE",
@@ -2938,13 +3118,19 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "rawParser": {
+          "assertionScope": "RAW_PARSER",
+          "intent": "payment",
+          "businessType": "payment",
+          "operation": null
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-013",
       "title": "选定活动订单后记录定金",
       "status": "ACTIVE",
@@ -3186,7 +3372,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-014",
       "title": "新订单同时记录小额定金",
       "status": "ACTIVE",
@@ -3456,7 +3642,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-015",
       "title": "普通无客户提醒",
       "status": "ACTIVE",
@@ -3523,22 +3709,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "todo",
-          "operation": "create_todo",
-          "originalText": "明天上午提醒我盘点包装材料",
-          "fields": {
-            "todoTitle": "盘点包装材料",
-            "todoRemindDate": "2026-07-16"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "customerName",
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -3670,13 +3840,50 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "todo",
+            "effectiveOperation": "create_todo",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "todo",
+              "operation": "create_todo",
+              "originalText": "明天上午提醒我盘点包装材料",
+              "fields": {
+                "todoTitle": "盘点包装材料",
+                "todoRemindDate": "2026-07-16"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "customerName",
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "todo",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-016",
       "title": "给已有客户回报价提醒",
       "status": "ACTIVE",
@@ -3748,27 +3955,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "todo",
-          "operation": "create_todo",
-          "originalText": "报价单别忘了明天下午给王总回",
-          "fields": {
-            "customerName": "王总",
-            "customerId": "cus-syn-a",
-            "todoRemindDate": "2026-07-16"
-          },
-          "items": [],
-          "allowedValues": {
-            "todoTitle": [
-              "回复报价单",
-              "给王总回报价"
-            ]
-          },
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -3905,13 +4091,55 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "todo",
+            "effectiveOperation": "create_todo",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "todo",
+              "operation": "create_todo",
+              "originalText": "报价单别忘了明天下午给王总回",
+              "fields": {
+                "customerName": "王总",
+                "customerId": "cus-syn-a",
+                "todoRemindDate": "2026-07-16"
+              },
+              "items": [],
+              "allowedValues": {
+                "todoTitle": [
+                  "回复报价单",
+                  "给王总回报价"
+                ]
+              },
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "todo",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-017",
       "title": "关联开放待收的催款提醒",
       "status": "ACTIVE",
@@ -3985,26 +4213,6 @@
         ]
       },
       "expected": {
-        "result": {
-          "businessType": "todo",
-          "operation": "create_todo",
-          "originalText": "下周一提醒我催王总这笔4000元余款",
-          "fields": {
-            "customerName": "王总",
-            "customerId": "cus-syn-a",
-            "receivableId": "rec-open-a",
-            "todoType": "dunning",
-            "todoTitle": "催王总余款",
-            "amount": 4000,
-            "todoRemindDate": "2026-07-20"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "phone"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -4144,13 +4352,54 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "todo",
+            "effectiveOperation": "create_todo",
+            "source": "DOMAIN_PREFLIGHT_ALIAS"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "todo",
+              "operation": "create_todo",
+              "originalText": "下周一提醒我催王总这笔4000元余款",
+              "fields": {
+                "customerName": "王总",
+                "customerId": "cus-syn-a",
+                "receivableId": "rec-open-a",
+                "todoType": "dunning",
+                "todoTitle": "催王总余款",
+                "amount": 4000,
+                "todoRemindDate": "2026-07-20"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "phone"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "todo",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-018",
       "title": "新客户明确催款提醒",
       "status": "ACTIVE",
@@ -4215,25 +4464,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "todo",
-          "operation": "create_todo",
-          "originalText": "7月18日提醒我催吴老板货款2500元",
-          "fields": {
-            "customerName": "吴老板",
-            "todoType": "dunning",
-            "todoTitle": "催吴老板货款",
-            "amount": 2500,
-            "todoRemindDate": "2026-07-18"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "phone",
-            "receivableId"
-          ],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -4380,13 +4610,53 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "todo",
+            "effectiveOperation": "create_todo",
+            "source": "DOMAIN_PREFLIGHT_ALIAS"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "todo",
+              "operation": "create_todo",
+              "originalText": "7月18日提醒我催吴老板货款2500元",
+              "fields": {
+                "customerName": "吴老板",
+                "todoType": "dunning",
+                "todoTitle": "催吴老板货款",
+                "amount": 2500,
+                "todoRemindDate": "2026-07-18"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "phone",
+                "receivableId"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "todo",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-019",
       "title": "缺数量的订单由用户明确存待整理",
       "status": "ACTIVE",
@@ -4451,22 +4721,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "王总要做水杯，数量晚点补，单价5元",
-          "fields": {
-            "customerName": "王总",
-            "productName": "水杯",
-            "unitPrice": 5
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "quantity"
-          ],
-          "conflictValues": {}
-        },
         "route": "PENDING",
         "routing": {
           "productionRoute": "PENDING",
@@ -4607,13 +4861,50 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "王总要做水杯，数量晚点补，单价5元",
+              "fields": {
+                "customerName": "王总",
+                "productName": "水杯",
+                "unitPrice": 5
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "quantity"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_SUGGESTED_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-BASIC-020",
       "title": "客户规格未定由用户明确存待整理",
       "status": "ACTIVE",
@@ -4679,22 +4970,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "pending",
-          "operation": "pending",
-          "originalText": "陈姐说礼盒规格和数量晚点一起补",
-          "fields": {
-            "customerName": "陈姐",
-            "productName": "礼盒"
-          },
-          "items": [],
-          "allowedValues": {},
-          "absentFields": [
-            "quantity",
-            "unitPrice"
-          ],
-          "conflictValues": {}
-        },
         "route": "PENDING",
         "routing": {
           "productionRoute": "PENDING",
@@ -4838,6 +5113,43 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "陈姐说礼盒规格和数量晚点一起补",
+              "fields": {
+                "customerName": "陈姐",
+                "productName": "礼盒"
+              },
+              "items": [],
+              "allowedValues": {},
+              "absentFields": [
+                "quantity",
+                "unitPrice"
+              ],
+              "conflictValues": {}
+            },
+            "operationSource": "DRAFT_OPERATION"
+          },
+          "outcome": {
+            "disposition": "PENDING_NOTE",
+            "persistedRecordType": "pending_note",
+            "formalSaveSucceeded": false,
+            "pendingSaveSucceeded": true
+          }
         }
       },
       "allowances": [],

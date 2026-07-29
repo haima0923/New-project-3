@@ -4,7 +4,7 @@
   "description": "8条区分领域安全与页面完成能力、并要求编辑后重算安全和投影的题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-001",
       "title": "首页简单单商品可完成",
       "status": "ACTIVE",
@@ -70,32 +70,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "李总订礼品盒520套，3块8一套，明天交",
-          "fields": {
-            "customerName": "李总",
-            "productName": "礼品盒",
-            "quantity": 520,
-            "unit": "套",
-            "unitPrice": 3.8,
-            "amount": 1976,
-            "orderDeliveryDate": "2026-07-16"
-          },
-          "items": [
-            {
-              "productName": "礼品盒",
-              "quantity": 520,
-              "unit": "套",
-              "unitPrice": 3.8,
-              "totalAmount": 1976
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -225,13 +199,60 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "李总订礼品盒520套，3块8一套，明天交",
+              "fields": {
+                "customerName": "李总",
+                "productName": "礼品盒",
+                "quantity": 520,
+                "unit": "套",
+                "unitPrice": 3.8,
+                "amount": 1976,
+                "orderDeliveryDate": "2026-07-16"
+              },
+              "items": [
+                {
+                  "productName": "礼品盒",
+                  "quantity": 520,
+                  "unit": "套",
+                  "unitPrice": 3.8,
+                  "totalAmount": 1976
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-002",
       "title": "首页多商品必须转完整页",
       "status": "ACTIVE",
@@ -569,7 +590,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-003",
       "title": "完整页也不能绕过领域阻断",
       "status": "ACTIVE",
@@ -775,13 +796,19 @@
           "sourceLane": "NOT_APPLICABLE",
           "target": "NONE",
           "stateDiff": "ZERO_SIDE_EFFECTS"
+        },
+        "rawParser": {
+          "assertionScope": "RAW_PARSER",
+          "intent": "payment",
+          "businessType": "payment",
+          "operation": null
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-004",
       "title": "首页缺少待收候选选择能力",
       "status": "ACTIVE",
@@ -987,7 +1014,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-005",
       "title": "修改客户后必须重算Preflight",
       "status": "ACTIVE",
@@ -1226,7 +1253,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-006",
       "title": "修改数量后重算金额",
       "status": "ACTIVE",
@@ -1464,7 +1491,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-007",
       "title": "完整页修改第二件商品",
       "status": "ACTIVE",
@@ -1800,7 +1827,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-PAGE-008",
       "title": "首页顶层编辑必须同步items零号项",
       "status": "ACTIVE",
@@ -1883,31 +1910,6 @@
         ]
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "赵姐订100个帆布袋，6元一个",
-          "fields": {
-            "customerName": "赵姐",
-            "productName": "保温袋",
-            "quantity": 150,
-            "unit": "个",
-            "unitPrice": 8,
-            "amount": 1200
-          },
-          "items": [
-            {
-              "productName": "保温袋",
-              "quantity": 150,
-              "unit": "个",
-              "unitPrice": 8,
-              "totalAmount": 1200
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -2084,6 +2086,52 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "赵姐订100个帆布袋，6元一个",
+              "fields": {
+                "customerName": "赵姐",
+                "productName": "保温袋",
+                "quantity": 150,
+                "unit": "个",
+                "unitPrice": 8,
+                "amount": 1200
+              },
+              "items": [
+                {
+                  "productName": "保温袋",
+                  "quantity": 150,
+                  "unit": "个",
+                  "unitPrice": 8,
+                  "totalAmount": 1200
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],

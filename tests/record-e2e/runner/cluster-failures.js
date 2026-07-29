@@ -15,7 +15,7 @@ function failedAssertionNames(result) {
     .map((assertion) => assertion.name);
 }
 
-function clusterKey(result) {
+function rootCauseKey(result) {
   if (result.entrySurface === 'HOME_QUICK'
     && result.pageEvidence
     && result.pageEvidence.pageEditConsistency
@@ -32,7 +32,10 @@ function clusterKey(result) {
   if (result.caseId === 'REC-E2E-PERSIST-004') {
     return 'EXPECTED_MAPPING:OPERATION_LOG_CREATE';
   }
-  const firstAssertion = failedAssertionNames(result)[0] || result.failureCode || 'UNKNOWN';
+  const firstAssertion = result.primaryFailure && result.primaryFailure.name
+    || failedAssertionNames(result)[0]
+    || result.failureCode
+    || 'UNKNOWN';
   if (result.failureOwnership === 'OBSERVABILITY_EXPECTATION_MISMATCH') {
     const roots = Array.from(new Set(failedAssertionNames(result).map((name) => (
       String(name).split('.')[0]
@@ -61,7 +64,16 @@ function clusterKey(result) {
   return `${result.failureOwnership}:${result.failureStage}:${firstAssertion}`;
 }
 
+function clusterKey(result) {
+  return `${rootCauseKey(result)}::OWNERSHIP:${result.failureOwnership}`;
+}
+
+function rootKey(key) {
+  return String(key).split('::OWNERSHIP:')[0];
+}
+
 function clusterTitle(key) {
+  key = rootKey(key);
   const titles = {
     'CONFIRMATION:PRIMARY_ITEM_SYNC': '首页顶层编辑与items[0]不同步',
     'CONTRACT:EXACT_REPLAY_PAGE_SAVE_COUNTER': 'Exact replay旧页面保存计数合同冲突',
@@ -81,6 +93,7 @@ function clusterTitle(key) {
 }
 
 function suspectedRootArea(key, ownership) {
+  key = rootKey(key);
   if (key.startsWith('SURFACE_CAPABILITY:')) return 'pages/input/input.js page capability';
   if (key === 'CONFIRMATION:PRIMARY_ITEM_SYNC') return 'pages/dashboard/dashboard.js confirmation edit';
   if (key.startsWith('LOCAL_PARSE:')) return 'local parser/result mapping';

@@ -9,7 +9,7 @@ const {
 } = require('./page-action-registry');
 
 function expectedLayerNames(lanes) {
-  const names = ['productionObservation'];
+  const names = ['observationSemantics', 'productionObservation'];
   if (lanes.includes('TEST_ONLY_ISOLATED_LEGACY_COMMIT')) names.push('isolatedExecution');
   if (lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')) names.push('pageDuplicateTrigger');
   if (lanes.includes('RELATION_REFERENCE_TAMPER_GUARD')) names.push('relationReferenceTamper');

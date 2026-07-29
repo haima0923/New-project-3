@@ -4,7 +4,7 @@
   "description": "14条全部P0的收款、待收、定金、结清、重复和跨客户安全题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-001",
       "title": "唯一待收款部分收款",
       "status": "ACTIVE",
@@ -280,7 +280,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-002",
       "title": "收款正好结清待收",
       "status": "ACTIVE",
@@ -556,7 +556,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-003",
       "title": "超额收款必须阻断",
       "status": "ACTIVE",
@@ -770,7 +770,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-004",
       "title": "多笔待收未选择不得收款",
       "status": "ACTIVE",
@@ -979,7 +979,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-005",
       "title": "已结清待收再次收款必须阻断",
       "status": "ACTIVE",
@@ -1192,7 +1192,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-006",
       "title": "跨客户待收关系必须阻断",
       "status": "ACTIVE",
@@ -1411,7 +1411,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-007",
       "title": "金融输入无金额必须阻断",
       "status": "ACTIVE",
@@ -1624,7 +1624,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-008",
       "title": "收款与新增欠款方向冲突",
       "status": "ACTIVE",
@@ -1838,7 +1838,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-009",
       "title": "活动订单正常记录定金",
       "status": "ACTIVE",
@@ -2103,7 +2103,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-010",
       "title": "定金等于订单总额",
       "status": "ACTIVE",
@@ -2373,7 +2373,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-011",
       "title": "定金超过订单总额必须阻断",
       "status": "ACTIVE",
@@ -2587,7 +2587,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-012",
       "title": "疑似重复定金必须阻断",
       "status": "ACTIVE",
@@ -2801,7 +2801,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-013",
       "title": "收款保存后重启仍存在",
       "status": "ACTIVE",
@@ -3102,7 +3102,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-FIN-014",
       "title": "连续点击同一金融plan只提交一次",
       "status": "ACTIVE",

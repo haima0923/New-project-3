@@ -25,6 +25,11 @@ const {
 } = require('./page-action-registry');
 const { assertIsolationAudit } = require('./assert-isolation-audit');
 const {
+  actualOutcome,
+  canonicalSemanticResult,
+  proposalFromDraft
+} = require('./observation-semantics');
+const {
   RECORD_STORAGE_BACKUP_KEY,
   RECORD_STORAGE_JOURNAL_KEY
 } = require('../../../utils/record-storage-transaction-contract');
@@ -74,7 +79,11 @@ function deriveProductionObservation(spec, observation) {
     providerClassification: spec.ai.profile === 'LOCAL_ONLY'
       ? 'TEST_LOCAL_ONLY'
       : (spec.ai.profile === 'REPLAY' ? 'NON_REAL_REPLAY' : 'NON_REAL_FAKE'),
-    requiredCapabilitiesSatisfied: capabilitiesSatisfied
+    requiredCapabilitiesSatisfied: capabilitiesSatisfied,
+    businessType: businessPreflight.businessType,
+    operation: businessPreflight.operation,
+    preflightFingerprint: businessPreflight.preflightFingerprint,
+    requiredSelections: safeClone(businessPreflight.requiredSelections || [])
   };
 }
 
@@ -88,6 +97,11 @@ function publicObservation(observation) {
     pageEditConsistency: observation.pageEditConsistency || null,
     missingCapabilities: observation.missingCapabilities,
     pageDriverEvidence: observation.driver && observation.driver.evidence || null,
+    rawParserEvidence: observation.rawParserEvidence || (
+      observation.driver
+      && observation.driver.evidence.rawParserCalls
+      && observation.driver.evidence.rawParserCalls[0]
+    ) || null,
     route: observation.route,
     transportIdentityAdaptation: observation.transportIdentityAdaptation || null
   };
@@ -785,6 +799,31 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       runtimeBusinessDiff: runtimeStateDiff.businessDiff
     });
   }
+  const semanticResult = canonicalSemanticResult({
+    businessType: primaryProductionObservation.businessType,
+    operation: primaryProductionObservation.operation
+  }, {
+    route: observation.route
+  });
+  const proposal = proposalFromDraft(
+    sourceDraft,
+    semanticResult,
+    sourceObservation.afterEdits.surface
+  );
+  const outcome = actualOutcome({
+    businessDiff: stateDiff.businessDiff,
+    isolatedCommitEvidence: isolated,
+    requestedSaveAction: spec.interaction.requestedSaveAction,
+    route: observation.route
+  });
+  const observationSemantics = {
+    contractVersion: 'record-e2e-observation-semantics-v1',
+    outcome,
+    proposal,
+    rawParser: safeClone(observationPublic.rawParserEvidence
+      && observationPublic.rawParserEvidence.result || null),
+    semanticResult
+  };
   return {
     actualInput: observationPublic.actualInput,
     aiEvidence: {
@@ -801,13 +840,18 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     isolatedCommitEvidence: isolated,
     laneResults,
     networkAudit: audit.networkAudit,
+    observationSemantics,
     hostFilesystemAudit: audit.hostFilesystemAudit,
     pageDerivationEvidence: draftPublic,
     pageEvidence: observationPublic,
     preflightEvidence: {
       blockingCodes: primaryProductionObservation.businessBlockingCodes,
+      businessType: primaryProductionObservation.businessType,
       domainCanSaveFormal: primaryProductionObservation.domainCanSaveFormal,
-      domainCanSavePending: primaryProductionObservation.domainCanSavePending
+      domainCanSavePending: primaryProductionObservation.domainCanSavePending,
+      operation: primaryProductionObservation.operation,
+      preflightFingerprint: primaryProductionObservation.preflightFingerprint,
+      requiredSelections: primaryProductionObservation.requiredSelections
     },
     productionObservation: primaryProductionObservation,
     relationReferenceTamperEvidence: relationTamper,

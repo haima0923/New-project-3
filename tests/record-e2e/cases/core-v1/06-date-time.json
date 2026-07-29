@@ -4,7 +4,7 @@
   "description": "12条固定businessDate/timezone/nowInstant的相对日期、冲突、跨月和跨年题。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-001",
       "title": "今天解析为固定业务日期",
       "status": "ACTIVE",
@@ -232,7 +232,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-002",
       "title": "明天解析为固定次日",
       "status": "ACTIVE",
@@ -299,32 +299,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "章老板要500只纸袋，1元一只，明天交",
-          "fields": {
-            "customerName": "章老板",
-            "productName": "纸袋",
-            "quantity": 500,
-            "unit": "只",
-            "unitPrice": 1,
-            "amount": 500,
-            "orderDeliveryDate": "2026-07-16"
-          },
-          "items": [
-            {
-              "productName": "纸袋",
-              "quantity": 500,
-              "unit": "只",
-              "unitPrice": 1,
-              "totalAmount": 500
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -454,13 +428,60 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "章老板要500只纸袋，1元一只，明天交",
+              "fields": {
+                "customerName": "章老板",
+                "productName": "纸袋",
+                "quantity": 500,
+                "unit": "只",
+                "unitPrice": 1,
+                "amount": 500,
+                "orderDeliveryDate": "2026-07-16"
+              },
+              "items": [
+                {
+                  "productName": "纸袋",
+                  "quantity": 500,
+                  "unit": "只",
+                  "unitPrice": 1,
+                  "totalAmount": 500
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-003",
       "title": "后天解析为固定两日后",
       "status": "ACTIVE",
@@ -688,7 +709,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-004",
       "title": "下周五解析为下一自然周周五",
       "status": "ACTIVE",
@@ -921,7 +942,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-005",
       "title": "本月底解析为当月最后一天",
       "status": "ACTIVE",
@@ -1153,7 +1174,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-006",
       "title": "下个月初原文同时给出具体日期",
       "status": "ACTIVE",
@@ -1383,7 +1404,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-007",
       "title": "十天后按固定时钟计算",
       "status": "ACTIVE",
@@ -1614,7 +1635,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-008",
       "title": "明确年月日不依赖系统时间",
       "status": "ACTIVE",
@@ -1680,32 +1701,6 @@
         "requiredCapabilities": []
       },
       "expected": {
-        "result": {
-          "businessType": "order",
-          "operation": "create_order",
-          "originalText": "蒋姐订250个布袋，1元一个，2026年8月6日交",
-          "fields": {
-            "customerName": "蒋姐",
-            "productName": "布袋",
-            "quantity": 250,
-            "unit": "个",
-            "unitPrice": 1,
-            "amount": 250,
-            "orderDeliveryDate": "2026-08-06"
-          },
-          "items": [
-            {
-              "productName": "布袋",
-              "quantity": 250,
-              "unit": "个",
-              "unitPrice": 1,
-              "totalAmount": 250
-            }
-          ],
-          "allowedValues": {},
-          "absentFields": [],
-          "conflictValues": {}
-        },
         "route": "LOCAL",
         "routing": {
           "productionRoute": "LOCAL",
@@ -1835,13 +1830,60 @@
           "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
           "target": "ISOLATED_LEGACY_STORE",
           "stateDiff": "EXPECTED_STATE_DIFF"
+        },
+        "observationSemantics": {
+          "contractVersion": "record-e2e-observation-semantics-v1",
+          "rawParser": {
+            "assertionScope": "EVIDENCE_ONLY"
+          },
+          "semanticResult": {
+            "businessType": "order",
+            "effectiveOperation": "create_order",
+            "source": "DOMAIN_PREFLIGHT"
+          },
+          "proposal": {
+            "source": "PAGE_CONFIRMED_DRAFT",
+            "result": {
+              "businessType": "order",
+              "operation": "create_order",
+              "originalText": "蒋姐订250个布袋，1元一个，2026年8月6日交",
+              "fields": {
+                "customerName": "蒋姐",
+                "productName": "布袋",
+                "quantity": 250,
+                "unit": "个",
+                "unitPrice": 1,
+                "amount": 250,
+                "orderDeliveryDate": "2026-08-06"
+              },
+              "items": [
+                {
+                  "productName": "布袋",
+                  "quantity": 250,
+                  "unit": "个",
+                  "unitPrice": 1,
+                  "totalAmount": 250
+                }
+              ],
+              "allowedValues": {},
+              "absentFields": [],
+              "conflictValues": {}
+            },
+            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+          },
+          "outcome": {
+            "disposition": "FORMAL_RECORD",
+            "persistedRecordType": "order",
+            "formalSaveSucceeded": true,
+            "pendingSaveSucceeded": false
+          }
         }
       },
       "allowances": [],
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-009",
       "title": "两个冲突交期必须阻断",
       "status": "ACTIVE",
@@ -2060,7 +2102,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-010",
       "title": "已过期交期不得无提示保存",
       "status": "ACTIVE",
@@ -2275,7 +2317,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-011",
       "title": "后天跨月解析",
       "status": "ACTIVE",
@@ -2501,7 +2543,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-DATE-012",
       "title": "明天跨年解析",
       "status": "ACTIVE",

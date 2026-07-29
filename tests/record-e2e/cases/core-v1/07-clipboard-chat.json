@@ -4,7 +4,7 @@
   "description": "10条完全合成的微信聊天文本，逐题保留原文、抽取文本、说话人和业务事实。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-001",
       "title": "两轮聊天抽取明确订单",
       "status": "ACTIVE",
@@ -247,7 +247,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-002",
       "title": "三轮聊天补齐数量价格日期",
       "status": "ACTIVE",
@@ -492,7 +492,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-003",
       "title": "客户与本人交替不把本人当客户",
       "status": "ACTIVE",
@@ -734,7 +734,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-004",
       "title": "带时间戳聊天忽略消息时间",
       "status": "ACTIVE",
@@ -979,7 +979,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-005",
       "title": "带称呼聊天识别报价对象",
       "status": "ACTIVE",
@@ -1217,7 +1217,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-006",
       "title": "聊天中的多商品逐项保留",
       "status": "ACTIVE",
@@ -1547,7 +1547,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-007",
       "title": "价格追问仍是报价不是订单",
       "status": "ACTIVE",
@@ -1790,7 +1790,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-008",
       "title": "后续消息补充订单日期",
       "status": "ACTIVE",
@@ -2033,7 +2033,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-009",
       "title": "聊天寒暄不进入业务字段",
       "status": "ACTIVE",
@@ -2275,7 +2275,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-CHAT-010",
       "title": "无法判断说话人只允许待整理",
       "status": "ACTIVE",

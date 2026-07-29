@@ -1,6 +1,7 @@
 {
-  "schemaVersion": "record-e2e-enums-v1.1",
-  "caseSchemaVersion": "record-e2e-case-v1.1",
+  "schemaVersion": "record-e2e-enums-v1.2",
+  "caseSchemaVersion": "record-e2e-case-v1.2",
+  "observationSemanticsVersion": "record-e2e-observation-semantics-v1",
   "executionBoundaryVersion": "record-e2e-execution-boundary-v1",
   "statuses": [
     "ACTIVE",
@@ -185,6 +186,40 @@
     "create_todo",
     "pending",
     "none"
+  ],
+  "rawParserAssertionScopes": [
+    "EVIDENCE_ONLY",
+    "RAW_PARSER"
+  ],
+  "semanticResultSources": [
+    "DOMAIN_PREFLIGHT",
+    "DOMAIN_PREFLIGHT_ALIAS",
+    "CONFIRMATION",
+    "NORMALIZED_RESULT"
+  ],
+  "proposalSources": [
+    "PAGE_CONFIRMED_DRAFT",
+    "HEADLESS_NORMALIZED_RESULT"
+  ],
+  "proposalOperationSources": [
+    "DRAFT_OPERATION",
+    "DRAFT_SUGGESTED_OPERATION",
+    "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+  ],
+  "outcomeDispositions": [
+    "FORMAL_RECORD",
+    "PENDING_NOTE",
+    "NO_RECORD",
+    "BLOCKED"
+  ],
+  "persistedRecordTypes": [
+    "quotation",
+    "order",
+    "receivable",
+    "payment",
+    "todo",
+    "pending_note",
+    "multiple"
   ],
   "selectionKinds": [
     "customerId",

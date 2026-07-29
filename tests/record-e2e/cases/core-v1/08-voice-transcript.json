@@ -4,7 +4,7 @@
   "description": "10条只使用人工合成转写文本的语音分层题，不含音频和真实STT调用。",
   "cases": [
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-001",
       "title": "无标点连续口述订单",
       "status": "ACTIVE",
@@ -245,7 +245,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-002",
       "title": "中文数字数量金额转写",
       "status": "ACTIVE",
@@ -490,7 +490,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-003",
       "title": "阿拉伯数字连续转写",
       "status": "ACTIVE",
@@ -736,7 +736,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-004",
       "title": "三块八解析为小数单价",
       "status": "ACTIVE",
@@ -981,7 +981,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-005",
       "title": "五一七套按连续数字517识别",
       "status": "ACTIVE",
@@ -1223,7 +1223,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-006",
       "title": "下礼拜五解析为固定日期",
       "status": "ACTIVE",
@@ -1470,7 +1470,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-007",
       "title": "同音字噪声不改变明确商品",
       "status": "ACTIVE",
@@ -1712,7 +1712,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-008",
       "title": "断句错误仍区分数量与总额",
       "status": "ACTIVE",
@@ -1964,7 +1964,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-009",
       "title": "多商品连续口述逐项保存",
       "status": "ACTIVE",
@@ -2299,7 +2299,7 @@
       "knownRisk": null
     },
     {
-      "schemaVersion": "record-e2e-case-v1.1",
+      "schemaVersion": "record-e2e-case-v1.2",
       "caseId": "REC-E2E-VOICE-010",
       "title": "口述金融金额经用户选择后关联待收",
       "status": "ACTIVE",

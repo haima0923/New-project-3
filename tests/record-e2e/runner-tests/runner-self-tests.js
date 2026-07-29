@@ -2,7 +2,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
-const { assertCase } = require('../runner/assert-case');
+const { assertCase, failureStageFor } = require('../runner/assert-case');
 const { assertIsolationAudit } = require('../runner/assert-isolation-audit');
 const { buildExecutionPlan } = require('../runner/build-execution-plan');
 const {
@@ -18,6 +18,12 @@ const { baseLane, finalizeLane } = require('../runner/lane-state');
 const { loadCorpus } = require('../runner/load-corpus');
 const { runCaseWorker } = require('../runner/module-isolation');
 const { normalizeRunResult } = require('../runner/normalize-run-result');
+const {
+  actualOutcome,
+  canonicalSemanticResult,
+  persistedRecordsFromDiff,
+  proposalFromDraft
+} = require('../runner/observation-semantics');
 const { executeOne } = require('../runner/run-suite');
 const {
   validateExecutionPlanPreconditions
@@ -789,6 +795,286 @@ const tests = [
       assert.strictEqual(result.caseStatus, 'RUNNER_ERROR');
       assert.strictEqual(lane.status, 'RUNNER_ERROR');
       assert.strictEqual(lane.failureCode, 'ISOLATION_AUDIT_NOT_EXECUTED');
+    }
+  },
+  {
+    name: 'raw-null-operation-with-effective-create-order-can-pass',
+    async run() {
+      const item = bundle('REC-E2E-BASIC-001');
+      const evidence = await worker(item.testCase.caseId);
+      assert.strictEqual(evidence.observationSemantics.rawParser.operation, null);
+      assert.strictEqual(
+        evidence.observationSemantics.semanticResult.effectiveOperation,
+        'create_order'
+      );
+      assert.strictEqual(assertCase(item.testCase, evidence).caseStatus, 'PASS');
+    }
+  },
+  {
+    name: 'raw-null-operation-without-domain-semantic-is-not-fabricated',
+    async run() {
+      const semantic = canonicalSemanticResult({
+        businessType: 'unknown',
+        operation: 'pending'
+      });
+      const proposal = proposalFromDraft({
+        fields: {},
+        intent: 'unknown',
+        operation: '',
+        original_text: '王总下单'
+      }, semantic, 'HEADLESS');
+      assert.strictEqual(semantic.effectiveOperation, 'unresolved');
+      assert.strictEqual(proposal.businessType, 'unknown');
+      assert.strictEqual(proposal.operation, 'unresolved');
+    }
+  },
+  {
+    name: 'semantic-none-requires-no-record-route',
+    async run() {
+      const semantic = canonicalSemanticResult({
+        businessType: 'unknown',
+        operation: 'pending'
+      }, {
+        route: 'NO_RECORD'
+      });
+      assert.strictEqual(semantic.businessType, 'unknown');
+      assert.strictEqual(semantic.effectiveOperation, 'none');
+    }
+  },
+  {
+    name: 'dedicated-raw-parser-operation-mismatch-fails',
+    async run() {
+      const item = bundle('REC-E2E-BASIC-001');
+      const evidence = await worker(item.testCase.caseId);
+      const contract = safeClone(item.testCase);
+      contract.expected.observationSemantics.rawParser = {
+        assertionScope: 'RAW_PARSER',
+        businessType: 'order',
+        intent: 'order',
+        operation: 'create_order'
+      };
+      const result = assertCase(contract, evidence);
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert.strictEqual(result.failureStage, 'LOCAL_PARSE_ERROR');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'RAW_PARSER'
+        && entry.name === 'operation'
+        && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'dunning-is-canonically-projected-to-todo',
+    async run() {
+      const evidence = await worker('REC-E2E-BASIC-017');
+      assert.strictEqual(evidence.observationSemantics.rawParser.intent, 'dunning');
+      assert.strictEqual(evidence.observationSemantics.semanticResult.businessType, 'todo');
+      assert.strictEqual(
+        evidence.observationSemantics.semanticResult.effectiveOperation,
+        'create_todo'
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.semanticResult.source,
+        'DOMAIN_PREFLIGHT_ALIAS'
+      );
+    }
+  },
+  {
+    name: 'proposed-order-and-final-pending-remain-separate',
+    async run() {
+      const evidence = await worker('REC-E2E-BASIC-019');
+      assert.strictEqual(evidence.observationSemantics.proposal.businessType, 'order');
+      assert.strictEqual(evidence.observationSemantics.proposal.operation, 'create_order');
+      assert.strictEqual(evidence.observationSemantics.outcome.disposition, 'PENDING_NOTE');
+      assert.strictEqual(
+        evidence.observationSemantics.outcome.persistedRecordType,
+        'pending_note'
+      );
+    }
+  },
+  {
+    name: 'pending-outcome-does-not-skip-proposal-assertions',
+    async run() {
+      const item = bundle('REC-E2E-BASIC-019');
+      const evidence = await worker(item.testCase.caseId);
+      evidence.observationSemantics.proposal.originalText = 'wrong proposal text';
+      const result = assertCase(item.testCase, evidence);
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'PROPOSAL'
+        && entry.name === 'originalText'
+        && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'formal-outcome-needs-actual-formal-state-diff',
+    async run() {
+      const outcome = actualOutcome({
+        businessDiff: {},
+        isolatedCommitEvidence: { committed: true },
+        requestedSaveAction: 'SAVE_FORMAL',
+        route: 'LOCAL'
+      });
+      assert.strictEqual(outcome.disposition, 'BLOCKED');
+      assert.strictEqual(outcome.formalSaveSucceeded, false);
+    }
+  },
+  {
+    name: 'pending-outcome-needs-actual-pending-state-diff',
+    async run() {
+      const outcome = actualOutcome({
+        businessDiff: {},
+        isolatedCommitEvidence: { committed: true },
+        requestedSaveAction: 'SAVE_PENDING',
+        route: 'PENDING'
+      });
+      assert.strictEqual(outcome.disposition, 'BLOCKED');
+      assert.strictEqual(outcome.pendingSaveSucceeded, false);
+    }
+  },
+  {
+    name: 'pending-outcome-cannot-hide-formal-order-diff',
+    async run() {
+      const outcome = actualOutcome({
+        businessDiff: { orders: { created: [{ id: 'ord-sentinel' }] } },
+        isolatedCommitEvidence: { committed: true },
+        requestedSaveAction: 'SAVE_PENDING',
+        route: 'PENDING'
+      });
+      assert.strictEqual(outcome.disposition, 'BLOCKED');
+      assert.deepStrictEqual(outcome.persistedRecordTypes, ['order']);
+    }
+  },
+  {
+    name: 'semantic-result-is-not-generated-from-expected',
+    async run() {
+      const item = bundle('REC-E2E-BASIC-001');
+      const evidence = await worker(item.testCase.caseId);
+      const contract = safeClone(item.testCase);
+      contract.expected.observationSemantics.semanticResult.businessType = 'quotation';
+      const result = assertCase(contract, evidence);
+      assert.strictEqual(evidence.observationSemantics.semanticResult.businessType, 'order');
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert(result.assertions.some((entry) => (
+        entry.layer === 'SEMANTIC_RESULT'
+        && entry.name === 'businessType'
+        && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'persisted-record-type-comes-from-actual-state-diff',
+    async run() {
+      const records = persistedRecordsFromDiff({
+        orders: { created: [{ id: 'ord-actual' }] },
+        pendingNotes: { created: [] }
+      });
+      assert.deepStrictEqual(records, [{
+        change: 'CREATED',
+        collection: 'orders',
+        id: 'ord-actual',
+        recordType: 'order'
+      }]);
+    }
+  },
+  {
+    name: 'ai-corrected-semantic-difference-is-not-local-parse-stage',
+    async run() {
+      assert.strictEqual(
+        failureStageFor(
+          { layer: 'PROPOSAL', name: 'businessType' },
+          { ai: { profile: 'FAKE_STANDARD' } }
+        ),
+        'AI_NORMALIZE_ERROR'
+      );
+    }
+  },
+  {
+    name: 'confirmed-local-parser-defects-remain-protected',
+    async run() {
+      for (const caseId of [
+        'REC-E2E-BASIC-006',
+        'REC-E2E-BASIC-010',
+        'REC-E2E-AMB-005',
+        'REC-E2E-BASIC-012',
+        'REC-E2E-PAGE-003'
+      ]) {
+        const result = await executeOne(bundle(caseId));
+        assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+        assert.strictEqual(result.failureStage, 'LOCAL_PARSE_ERROR');
+        assert.strictEqual(result.failureOwnership, 'CONFIRMED_LOCAL_PARSER_DEFECT');
+        assert.strictEqual(result.ownershipConfidence, 'HIGH');
+        assert(result.assertions.some((entry) => (
+          entry.layer === 'RAW_PARSER'
+          && entry.name === 'businessType'
+          && entry.pass === false
+        )));
+      }
+    }
+  },
+  {
+    name: 'page-008-raw-null-no-longer-masks-next-real-difference',
+    async run() {
+      const result = await executeOne(bundle('REC-E2E-PAGE-008'));
+      assert.strictEqual(result.observationSemantics.rawParser.operation, null);
+      assert.strictEqual(
+        result.observationSemantics.semanticResult.effectiveOperation,
+        'create_order'
+      );
+      assert.strictEqual(result.failureStage, 'ROUTE_ERROR');
+      assert(!result.assertions.some((entry) => (
+        entry.layer === 'RAW_PARSER' && entry.pass === false
+      )));
+    }
+  },
+  {
+    name: 'proposal-projection-does-not-use-input-keywords',
+    async run() {
+      const semantic = canonicalSemanticResult({
+        businessType: 'unknown',
+        operation: 'pending'
+      });
+      const proposal = proposalFromDraft({
+        fields: {},
+        intent: 'unknown',
+        operation: '',
+        original_text: '下单更新报价收款'
+      }, semantic, 'HEADLESS');
+      assert.deepStrictEqual(
+        [proposal.businessType, proposal.operation],
+        ['unknown', 'unresolved']
+      );
+    }
+  },
+  {
+    name: 'observation-evidence-has-independent-source-markers',
+    async run() {
+      const evidence = await worker('REC-E2E-BASIC-001');
+      assert.strictEqual(
+        evidence.observationSemantics.rawParser.source,
+        'PRODUCTION_LOCAL_PARSER'
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.rawParser.sameHybridInvocation,
+        true
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.semanticResult.source,
+        'DOMAIN_PREFLIGHT'
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.proposal.source,
+        'PAGE_CONFIRMED_DRAFT'
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.proposal.operationSource,
+        'DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION'
+      );
+      assert.strictEqual(
+        evidence.observationSemantics.outcome.source,
+        'STATE_DIFF_AND_COMMIT'
+      );
     }
   },
   {
