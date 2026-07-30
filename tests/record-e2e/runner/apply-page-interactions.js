@@ -51,6 +51,33 @@ function captureEditProjection(page) {
   };
 }
 
+function captureSelectionPreflight(page, driverEvidence = {}) {
+  const fields = page.data.fields || {};
+  const primaryCalls = driverEvidence.pagePrimaryActionCalls || {};
+  const businessCalls = driverEvidence.productionBusinessCalls || {};
+  const storageCalls = driverEvidence.productionStorageCalls || {};
+  return {
+    blockingCodes: safeClone(page.data.preflightBlockingReasons || []),
+    businessSaveInvocationCount: Number(businessCalls.saveConfirmedDraft || 0),
+    candidateIds: safeClone({
+      orders: (page.data.orderOptions || []).map((item) => item && item.id).filter(Boolean),
+      quotations: (page.data.quotationOptions || []).map((item) => item && item.id).filter(Boolean),
+      receivables: (page.data.receivableOptions || []).map((item) => item && item.id).filter(Boolean)
+    }),
+    domainCanSaveFormal: page.data.domainCanSaveFormal === true,
+    effectiveCanSaveFormal: page.data.disableQuickSave !== true
+      && page.data.disableFormalSave !== true,
+    fingerprint: page.data.preflightFingerprint || '',
+    formalSaveInvocationCount: Number(primaryCalls.saveFormal || 0),
+    orderSelectionConfirmed: fields.orderSelectionConfirmed === true,
+    productionStorageWriteCount: Number(storageCalls.saveState || 0),
+    requiredSelections: safeClone(
+      page.data.domainPreflight && page.data.domainPreflight.requiredSelections || []
+    ),
+    selectedOrderId: String(fields.orderId || page.data.selectedOrderId || '')
+  };
+}
+
 async function applySelection(driver, selection, evidence) {
   const { page, surface } = driver;
   const kind = selection.kind;
@@ -164,8 +191,23 @@ async function applySelection(driver, selection, evidence) {
       candidateIds
     };
   }
+  const preSelectionPreflight = captureSelectionPreflight(page, driver.evidence);
+  const methodInvocationCountBefore = Number(
+    driver.evidence.pageMethodCalls[method] || 0
+  );
   const accepted = page[method](eventForValue(index));
   await flushAsync();
+  const methodInvocationCountAfter = Number(
+    driver.evidence.pageMethodCalls[method] || 0
+  );
+  const methodInvocationDelta = methodInvocationCountAfter - methodInvocationCountBefore;
+  if (methodInvocationDelta !== 1) {
+    throw Object.assign(
+      new Error(`Page selection method ${method} invoked ${methodInvocationDelta} times, expected 1`),
+      { code: 'AUTOMATION_DRIVER_ERROR' }
+    );
+  }
+  const postSelectionPreflight = captureSelectionPreflight(page, driver.evidence);
   if (kind === 'orderId' && !depositOperation) {
     const actualOrderId = String(
       (page.data.fields && page.data.fields.orderId)
@@ -206,6 +248,11 @@ async function applySelection(driver, selection, evidence) {
     applied: true,
     kind,
     method,
+    methodInvocationCountAfter,
+    methodInvocationCountBefore,
+    methodInvocationDelta,
+    postSelectionPreflight,
+    preSelectionPreflight,
     selectedId: selection.selectedId,
     candidateIds
   };

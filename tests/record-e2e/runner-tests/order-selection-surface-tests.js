@@ -57,6 +57,21 @@ function receivableDraft(fields = {}) {
     operation: 'create_receivable',
     source: 'typed',
     original_text: '王总收纳盒这单还有8000元待收，7月25日收',
+    relation_references: {
+      order: {
+        entityType: 'ORDER',
+        kind: 'EXPLICIT_ORDER_DEICTIC',
+        explicit: true,
+        requiresResolution: true,
+        sourceText: '这单',
+        sourceSpan: { start: 5, end: 7 },
+        sourceField: 'ORIGINAL_TEXT',
+        confidence: 0.96,
+        normalizedReference: 'THIS_ORDER',
+        resolvedEntityId: null,
+        evidenceSource: 'LOCAL_PARSER'
+      }
+    },
     parse_route: { decision: 'local' },
     fields: Object.assign({
       amount: '8000',
@@ -94,14 +109,24 @@ const tests = [
         );
         const fingerprintBefore = page.data.preflightFingerprint;
         const canSaveBefore = page.data.domainCanSaveFormal;
+        assert.deepStrictEqual(
+          Array.from(page.data.domainPreflight.requiredSelections),
+          ['orderId']
+        );
+        assert(page.data.preflightBlockingReasons.includes('ORDER_SELECTION_REQUIRED'));
         page.changeOrder({ detail: { value: 0 } });
         assert.strictEqual(page.data.fields.orderId, 'ord-active-a');
         assert.strictEqual(page.data.selectedOrderId, 'ord-active-a');
         assert.strictEqual(page.data.fields.orderSelectionConfirmed, true);
         assert.strictEqual(page.data.parseResult.original_text, receivableDraft().original_text);
         assert.strictEqual(page.data.domainCanSaveFormal, true);
+        assert.deepStrictEqual(Array.from(page.data.domainPreflight.requiredSelections), []);
+        assert.strictEqual(
+          page.data.preflightBlockingReasons.includes('ORDER_SELECTION_REQUIRED'),
+          false
+        );
         assert.strictEqual(page.data.preflightFingerprint === fingerprintBefore, false);
-        assert.strictEqual(canSaveBefore, true);
+        assert.strictEqual(canSaveBefore, false);
         assert.strictEqual(driver.evidence.pageMethodCalls.changeOrder, 1);
         assert.strictEqual(driver.evidence.pageMethodCalls.applyOrderSelection, 1);
       });
@@ -451,6 +476,46 @@ const tests = [
           assert.strictEqual(result.routeEvidence.safeLocalReceivableEligible, true);
           assert.strictEqual(result.routeEvidence.AIRequestCount, 0);
           assert.deepStrictEqual(result.preflightEvidence.requiredSelections, []);
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.methodName,
+            'changeOrder'
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.methodInvocationDelta,
+            1
+          );
+          assert.deepStrictEqual(
+            result.receivableOrderGateEvidence.preSelectionPreflight.requiredSelections,
+            ['orderId']
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.preSelectionPreflight.domainCanSaveFormal,
+            false
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.preSelectionPreflight.formalSaveInvocationCount,
+            0
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.preSelectionPreflight.businessSaveInvocationCount,
+            0
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.preSelectionPreflight.productionStorageWriteCount,
+            0
+          );
+          assert.deepStrictEqual(
+            result.receivableOrderGateEvidence.postSelectionPreflight.requiredSelections,
+            []
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.postSelectionPreflight.domainCanSaveFormal,
+            true
+          );
+          assert.strictEqual(
+            result.receivableOrderGateEvidence.savePreflightEvidence.stateSource,
+            'ISOLATED_GATEWAY_REREAD'
+          );
         }
       }
     }

@@ -204,6 +204,7 @@ const TESTS = Object.freeze({
   'payment-parser': testEntry('scripts/record-parser-payment-intent-tests.js'),
   'quotation-candidate': testEntry('tests/record-e2e/runner-tests/quotation-candidate-source-tests.js'),
   'quotation-selection': testEntry('tests/record-e2e/runner-tests/quotation-selection-surface-tests.js'),
+  'receivable-parser': testEntry('scripts/record-parser-receivable-intent-tests.js'),
   'release-a-rc1': testEntry('scripts/record-release-a-rc1-tests.js'),
   'route-status': testEntry('scripts/parse-route-observability-tests.js'),
   'runner-kernel': testEntry('tests/record-e2e/runner-tests/runner-self-tests.js'),

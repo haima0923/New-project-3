@@ -1075,6 +1075,75 @@ const tests = [
         })),
         [{ applied: true, method: 'changeOrder', selectedId: 'ord-active-a' }]
       );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.methodName,
+        'changeOrder'
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.methodInvocationDelta,
+        1
+      );
+      assert.deepStrictEqual(
+        relationResult.receivableOrderGateEvidence.preSelectionPreflight.requiredSelections,
+        ['orderId']
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.preSelectionPreflight.domainCanSaveFormal,
+        false
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.preSelectionPreflight.orderSelectionConfirmed,
+        false
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.preSelectionPreflight.formalSaveInvocationCount,
+        0
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.preSelectionPreflight.businessSaveInvocationCount,
+        0
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.preSelectionPreflight.productionStorageWriteCount,
+        0
+      );
+      assert.deepStrictEqual(
+        relationResult.receivableOrderGateEvidence.postSelectionPreflight.requiredSelections,
+        []
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.postSelectionPreflight.domainCanSaveFormal,
+        true
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.postSelectionPreflight.orderSelectionConfirmed,
+        true
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.postSelectionPreflight.selectedOrderId,
+        'ord-active-a'
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.savePreflightEvidence.stateSource,
+        'ISOLATED_GATEWAY_REREAD'
+      );
+      assert.strictEqual(
+        relationResult.receivableOrderGateEvidence.savePreflightEvidence
+          .productionPreflight.domainCanSaveFormal,
+        true
+      );
+      const customerLevelResult = await executeOne(bundle('REC-E2E-BASIC-009'));
+      assert.strictEqual(customerLevelResult.caseStatus, 'PASS');
+      assert.deepStrictEqual(
+        customerLevelResult.receivableOrderGateEvidence
+          .preSelectionPreflight.requiredSelections,
+        []
+      );
+      assert.strictEqual(
+        customerLevelResult.receivableOrderGateEvidence
+          .preSelectionPreflight.domainCanSaveFormal,
+        true
+      );
     }
   },
   {

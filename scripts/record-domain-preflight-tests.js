@@ -106,6 +106,36 @@ function depositResult(fields = {}, overrides = {}) {
   }, fields), overrides);
 }
 
+function explicitOrderReference(kind = 'EXPLICIT_ORDER_DEICTIC') {
+  return {
+    order: {
+      entityType: 'ORDER',
+      kind,
+      explicit: true,
+      requiresResolution: true,
+      sourceText: kind === 'EXPLICIT_ORDER_IDENTIFIER' ? '订单号A123' : '这单',
+      sourceSpan: { start: 2, end: kind === 'EXPLICIT_ORDER_IDENTIFIER' ? 9 : 4 },
+      sourceField: 'ORIGINAL_TEXT',
+      confidence: 0.96,
+      normalizedReference: kind === 'EXPLICIT_ORDER_IDENTIFIER'
+        ? 'ORDER_IDENTIFIER:A123'
+        : 'THIS_ORDER',
+      resolvedEntityId: null,
+      evidenceSource: 'LOCAL_PARSER'
+    }
+  };
+}
+
+function receivableResult(fields = {}, overrides = {}) {
+  return result('receivable', 'create_receivable', Object.assign({
+    customerName: '王总',
+    customerId: 'cus_wang',
+    productName: '礼品盒',
+    amount: '800',
+    dueDate: '2026-08-01'
+  }, fields), overrides);
+}
+
 function preflight(finalResult, initialState = stateWith(), overrides = {}) {
   return evaluateRecordDomainPreflight(Object.assign({
     mode: 'PRODUCTION_ROUTING',
@@ -219,6 +249,348 @@ test('28类决策矩阵覆盖客户、历史、关联、金额、目标和安全
   ];
   assert.strictEqual(matrix.length, 28);
   matrix.forEach(([name, draft, state, allowed, code]) => assertDecision(name, preflight(draft, state), allowed, code));
+});
+
+test('明确订单指代的待收款在唯一、多候选及三种Evidence类型下必须选择订单', () => {
+  const wang = customer('cus_wang', '王总');
+  const uniqueState = stateWith({
+    customers: [wang],
+    orders: [order('ord_1', 'cus_wang')]
+  });
+  const multipleState = stateWith({
+    customers: [wang],
+    orders: [order('ord_1', 'cus_wang'), order('ord_2', 'cus_wang')]
+  });
+  [
+    ['EXPLICIT_ORDER_DEICTIC', uniqueState, 'ORDER_SELECTION_REQUIRED', ['ord_1']],
+    ['EXPLICIT_ORDER_DEICTIC', multipleState, 'MULTIPLE_ORDER_SELECTION_REQUIRED', ['ord_1', 'ord_2']],
+    ['EXPLICIT_ORDER_IDENTIFIER', uniqueState, 'ORDER_SELECTION_REQUIRED', ['ord_1']],
+    ['EXPLICIT_ORDER_NAMED_REFERENCE', uniqueState, 'ORDER_SELECTION_REQUIRED', ['ord_1']]
+  ].forEach(([kind, state, code, candidateIds]) => {
+    const output = preflight(receivableResult({}, {
+      relation_references: explicitOrderReference(kind)
+    }), state);
+    assertDecision(`${kind} requires order selection`, output, false, code);
+    assert.deepStrictEqual(output.requiredSelections, ['orderId']);
+    assert.deepStrictEqual(output.orderReferenceGate.candidateIds, candidateIds);
+    assert.strictEqual(output.orderReferenceGate.applies, true);
+    assert.strictEqual(output.orderReferenceGate.resolved, false);
+    assert.strictEqual(output.resolvedRelations.orderId, '');
+  });
+});
+
+test('明确订单指代没有合法候选时不能降级成客户级待收款', () => {
+  const output = preflight(receivableResult({}, {
+    relation_references: explicitOrderReference()
+  }), stateWith({ customers: [customer('cus_wang', '王总')] }));
+  assertDecision('explicit reference without candidate', output, false, 'ORDER_REFERENCE_UNRESOLVED');
+  assert.deepStrictEqual(output.requiredSelections, ['orderId']);
+  assert.deepStrictEqual(output.candidates.orderCandidates, []);
+  assert.strictEqual(output.orderReferenceGate.status, 'NO_SAFE_CANDIDATE');
+  assert.strictEqual(output.resolvedRelations.orderId, '');
+});
+
+test('Preflight只消费完整可信的本地订单指代Evidence', () => {
+  const state = stateWith({
+    customers: [customer('cus_wang', '王总')],
+    orders: [order('ord_1', 'cus_wang')]
+  });
+  const malformedReferences = [
+    ['unknown kind', (reference) => { reference.kind = 'ORDER_REFERENCE'; }],
+    ['non-local source', (reference) => { reference.evidenceSource = 'AI'; }],
+    ['already resolved', (reference) => { reference.resolvedEntityId = 'ord_1'; }],
+    ['missing source field', (reference) => { delete reference.sourceField; }],
+    ['empty source text', (reference) => { reference.sourceText = ''; }],
+    ['invalid source span', (reference) => { reference.sourceSpan.end = 99; }],
+    ['missing normalized reference', (reference) => { reference.normalizedReference = ''; }],
+    ['invalid confidence', (reference) => { reference.confidence = 2; }]
+  ];
+  malformedReferences.forEach(([name, mutate]) => {
+    const relationReferences = explicitOrderReference();
+    mutate(relationReferences.order);
+    const output = preflight(receivableResult({}, {
+      relation_references: relationReferences
+    }), state);
+    assertDecision(name, output, true);
+    assert.deepStrictEqual(output.requiredSelections, []);
+    assert.strictEqual(output.orderReferenceGate.applies, false);
+    assert.strictEqual(output.orderReferenceGate.status, 'NOT_APPLICABLE');
+  });
+});
+
+test('合法用户确认支持唯一选择、多候选改选，取消后恢复阻断', () => {
+  const state = stateWith({
+    customers: [customer('cus_wang', '王总')],
+    orders: [order('ord_1', 'cus_wang'), order('ord_2', 'cus_wang')]
+  });
+  const base = {
+    relation_references: explicitOrderReference()
+  };
+  const first = preflight(receivableResult({
+    orderId: 'ord_1',
+    orderSelectionConfirmed: true
+  }, base), state);
+  const second = preflight(receivableResult({
+    orderId: 'ord_2',
+    orderSelectionConfirmed: true
+  }, base), state);
+  [first, second].forEach((output) => {
+    assertDecision('confirmed safe order', output, true);
+    assert.deepStrictEqual(output.requiredSelections, []);
+    assert.strictEqual(output.orderReferenceGate.resolved, true);
+    assert.strictEqual(output.orderReferenceGate.status, 'RESOLVED');
+  });
+  assert.strictEqual(first.resolvedRelations.orderId, 'ord_1');
+  assert.strictEqual(second.resolvedRelations.orderId, 'ord_2');
+
+  const cancelled = preflight(receivableResult({}, base), state);
+  assertDecision('cleared selection reblocks', cancelled, false, 'MULTIPLE_ORDER_SELECTION_REQUIRED');
+  assert.deepStrictEqual(cancelled.requiredSelections, ['orderId']);
+});
+
+test('orderId存在但未确认、最新State删除或失效时继续阻断', () => {
+  const wang = customer('cus_wang', '王总');
+  const base = {
+    relation_references: explicitOrderReference()
+  };
+  const activeState = stateWith({
+    customers: [wang],
+    orders: [order('ord_1', 'cus_wang')]
+  });
+  const unconfirmed = preflight(receivableResult({ orderId: 'ord_1' }, base), activeState);
+  assertDecision(
+    'selected ID without user confirmation',
+    unconfirmed,
+    false,
+    'ORDER_SELECTION_CONFIRMATION_REQUIRED'
+  );
+  assert.deepStrictEqual(unconfirmed.requiredSelections, ['orderId']);
+
+  const deletedAfterSelection = preflight(receivableResult({
+    orderId: 'ord_1',
+    orderSelectionConfirmed: true
+  }, base), stateWith({ customers: [wang] }));
+  assertDecision(
+    'selected order deleted in latest state',
+    deletedAfterSelection,
+    false,
+    'ORDER_TARGET_NOT_FOUND'
+  );
+  assert(issueCodes(deletedAfterSelection).includes('ORDER_REFERENCE_UNRESOLVED'));
+
+  const inactiveAfterSelection = preflight(receivableResult({
+    orderId: 'ord_1',
+    orderSelectionConfirmed: true
+  }, base), stateWith({
+    customers: [wang],
+    orders: [order('ord_1', 'cus_wang', { status: '已完成' })]
+  }));
+  assertDecision(
+    'selected order inactive in latest state',
+    inactiveAfterSelection,
+    false,
+    'ORDER_REFERENCE_UNRESOLVED'
+  );
+  assert.strictEqual(inactiveAfterSelection.orderReferenceGate.resolved, false);
+});
+
+test('普通客户级待收款不因历史订单、候选数量或商品匹配被强制关联', () => {
+  const wang = customer('cus_wang', '王总');
+  const states = [
+    stateWith({ customers: [wang] }),
+    stateWith({ customers: [wang], orders: [order('ord_1', 'cus_wang')] }),
+    stateWith({
+      customers: [wang],
+      orders: [
+        order('ord_1', 'cus_wang'),
+        order('ord_2', 'cus_wang', { productName: '其他商品' })
+      ]
+    })
+  ];
+  states.forEach((state, index) => {
+    const output = preflight(receivableResult({}, {
+      original_text: index === 2 ? '王总礼品盒还欠800元' : '王总还欠800元'
+    }), state);
+    assertDecision(`customer-level receivable ${index}`, output, true);
+    assert.deepStrictEqual(output.requiredSelections, []);
+    assert.strictEqual(output.orderReferenceGate.applies, false);
+    assert.strictEqual(output.resolvedRelations.orderId, '');
+  });
+  const negatedEvidenceExcluded = preflight(receivableResult({}, {
+    original_text: '王总还欠800元，不关联之前订单',
+    relation_references: undefined
+  }), states[1]);
+  assertDecision('negated order reference remains customer-level', negatedEvidenceExcluded, true);
+  assert.deepStrictEqual(negatedEvidenceExcluded.requiredSelections, []);
+});
+
+test('跨客户、不存在、删除、非法状态和伪造确认均不能解除关系门禁', () => {
+  const wang = customer('cus_wang', '王总');
+  const li = customer('cus_li', '李总');
+  const base = {
+    relation_references: explicitOrderReference()
+  };
+  const crossCustomer = preflight(receivableResult({
+    orderId: 'ord_li',
+    orderSelectionConfirmed: true
+  }, base), stateWith({
+    customers: [wang, li],
+    orders: [order('ord_li', 'cus_li')]
+  }));
+  assertDecision('cross-customer selected order', crossCustomer, false, 'ORDER_CUSTOMER_MISMATCH');
+  assert.strictEqual(crossCustomer.orderReferenceGate.resolved, false);
+
+  const missing = preflight(receivableResult({
+    orderId: 'ord_missing',
+    orderSelectionConfirmed: true
+  }, base), stateWith({ customers: [wang] }));
+  assertDecision('missing selected order', missing, false, 'ORDER_TARGET_NOT_FOUND');
+  assert.strictEqual(missing.orderReferenceGate.resolved, false);
+
+  const deleted = preflight(receivableResult({
+    orderId: 'ord_deleted',
+    orderSelectionConfirmed: true
+  }, base), stateWith({
+    customers: [wang],
+    orders: [order('ord_deleted', 'cus_wang', {
+      deletedAt: '2026-07-15T00:00:00.000Z'
+    })]
+  }));
+  assertDecision('soft-deleted selected order', deleted, false, 'ORDER_REFERENCE_UNRESOLVED');
+  assert.strictEqual(deleted.orderReferenceGate.resolved, false);
+
+  const cancelled = preflight(receivableResult({
+    orderId: 'ord_cancelled',
+    orderSelectionConfirmed: true
+  }, base), stateWith({
+    customers: [wang],
+    orders: [order('ord_cancelled', 'cus_wang', { status: '已取消' })]
+  }));
+  assertDecision(
+    'cancelled selected order',
+    cancelled,
+    false,
+    'CANCELLED_ORDER_RECEIVABLE_FORBIDDEN'
+  );
+  assert.strictEqual(cancelled.orderReferenceGate.resolved, false);
+
+  const forgedConfirmation = preflight(receivableResult({
+    orderId: 'ord_forged',
+    orderSelectionConfirmed: true
+  }, base), stateWith({
+    customers: [wang],
+    orders: [order('ord_safe', 'cus_wang')]
+  }));
+  assertDecision(
+    'forged confirmation cannot bless non-candidate ID',
+    forgedConfirmation,
+    false,
+    'ORDER_TARGET_NOT_FOUND'
+  );
+  assert(issueCodes(forgedConfirmation).includes('ORDER_REFERENCE_NOT_ELIGIBLE'));
+  assert.deepStrictEqual(forgedConfirmation.requiredSelections, ['orderId']);
+});
+
+test('显式订单Evidence不会把关系门禁扩散到其他业务操作', () => {
+  const wang = customer('cus_wang', '王总');
+  const state = stateWith({
+    customers: [wang],
+    orders: [order('ord_1', 'cus_wang')]
+  });
+  const pairs = [
+    [
+      paymentResult({
+        customerId: 'cus_wang',
+        paymentAmount: '300',
+        allowUnlinkedPayment: true,
+        unlinkedPaymentCustomerId: 'cus_wang'
+      }),
+      paymentResult({
+        customerId: 'cus_wang',
+        paymentAmount: '300',
+        allowUnlinkedPayment: true,
+        unlinkedPaymentCustomerId: 'cus_wang'
+      }, { relation_references: explicitOrderReference() })
+    ],
+    [
+      result('payment', 'create_receivable_with_payment', {
+        customerName: '王总',
+        customerId: 'cus_wang',
+        amount: '1000',
+        paymentAmount: '300',
+        dueDate: '2026-08-01'
+      }),
+      result('payment', 'create_receivable_with_payment', {
+        customerName: '王总',
+        customerId: 'cus_wang',
+        amount: '1000',
+        paymentAmount: '300',
+        dueDate: '2026-08-01'
+      }, { relation_references: explicitOrderReference() })
+    ],
+    [
+      depositResult({ customerId: 'cus_wang' }),
+      depositResult({ customerId: 'cus_wang' }, {
+        relation_references: explicitOrderReference()
+      })
+    ],
+    [
+      result('dunning', 'create_todo', {
+        customerName: '王总',
+        customerId: 'cus_wang',
+        todoTitle: '催款',
+        dueDate: '2026-08-01'
+      }),
+      result('dunning', 'create_todo', {
+        customerName: '王总',
+        customerId: 'cus_wang',
+        todoTitle: '催款',
+        dueDate: '2026-08-01'
+      }, { relation_references: explicitOrderReference() })
+    ],
+    [
+      orderResult({ customerId: 'cus_wang' }),
+      orderResult({ customerId: 'cus_wang' }, {
+        relation_references: explicitOrderReference()
+      })
+    ],
+    [
+      result('order', 'update_order', {
+        customerName: '王总',
+        customerId: 'cus_wang',
+        orderId: 'ord_1',
+        productName: '礼品盒',
+        dueDate: '2026-08-02'
+      }),
+      result('order', 'update_order', {
+        customerName: '王总',
+        customerId: 'cus_wang',
+        orderId: 'ord_1',
+        productName: '礼品盒',
+        dueDate: '2026-08-02'
+      }, { relation_references: explicitOrderReference() })
+    ]
+  ];
+  pairs.forEach(([withoutEvidence, withEvidence], index) => {
+    const baseOutput = preflight(withoutEvidence, state);
+    const evidenceOutput = preflight(withEvidence, state);
+    assert.strictEqual(evidenceOutput.orderReferenceGate.applies, false, `operation ${index}`);
+    assert.deepStrictEqual(
+      {
+        blockingIssues: evidenceOutput.blockingIssues,
+        domainCanSaveFormal: evidenceOutput.domainCanSaveFormal,
+        requiredSelections: evidenceOutput.requiredSelections,
+        preflightFingerprint: evidenceOutput.preflightFingerprint
+      },
+      {
+        blockingIssues: baseOutput.blockingIssues,
+        domainCanSaveFormal: baseOutput.domainCanSaveFormal,
+        requiredSelections: baseOutput.requiredSelections,
+        preflightFingerprint: baseOutput.preflightFingerprint
+      },
+      `order reference gate leaked into operation ${index}`
+    );
+  });
 });
 
 test('金额严格校验阻断负数、非有限值、超额与脏历史', () => {

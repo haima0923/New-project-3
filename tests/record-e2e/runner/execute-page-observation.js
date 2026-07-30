@@ -66,6 +66,17 @@ function pageSnapshot(driver) {
       : page.data.disableFormalSave !== true,
     requiresFullPage: page.data.requiresFullPage === true,
     blockingCodes: safeClone(page.data.preflightBlockingReasons || []),
+    requiredSelections: safeClone(
+      page.data.domainPreflight && page.data.domainPreflight.requiredSelections || []
+    ),
+    selectedOrderId: String(
+      page.data.selectedOrderId
+      || draft.fields && draft.fields.orderId
+      || ''
+    ),
+    orderSelectionConfirmed: Boolean(
+      draft.fields && draft.fields.orderSelectionConfirmed === true
+    ),
     preflightFingerprint: page.data.preflightFingerprint || '',
     draftBusinessHash: stableHash(businessDraftPayload(draft), 'page-draft-business-v1')
   };

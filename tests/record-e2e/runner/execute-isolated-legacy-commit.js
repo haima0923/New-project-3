@@ -53,6 +53,36 @@ function businessHash(draft) {
   return stableHash(businessDraftPayload(draft), 'isolated-legacy-business-v1');
 }
 
+function compactSavePreflight(preflight) {
+  return {
+    blockingCodes: (preflight && preflight.blockingIssues || []).map((item) => item.code),
+    domainCanSaveFormal: Boolean(preflight && preflight.domainCanSaveFormal === true),
+    preflightFingerprint: preflight && preflight.preflightFingerprint || '',
+    requiredSelections: safeClone(preflight && preflight.requiredSelections || [])
+  };
+}
+
+function buildSavePreflightEvidence(state, prepared) {
+  const draft = prepared && prepared.draft || {};
+  const fields = draft.fields || {};
+  const selectedOrderId = String(fields.orderId || '');
+  const selectedOrder = (state.orders || []).find((item) => (
+    String(item.id || '') === selectedOrderId
+  )) || null;
+  return {
+    executionPreflight: compactSavePreflight(prepared && prepared.executionPreflight),
+    orderAtLatestState: selectedOrder ? {
+      customerId: String(selectedOrder.customerId || ''),
+      id: String(selectedOrder.id || ''),
+      status: String(selectedOrder.status || '')
+    } : null,
+    productionPreflight: compactSavePreflight(prepared && prepared.productionPreflight),
+    selectedOrderId,
+    stateFingerprint: stableHash(state, 'isolated-save-preflight-state-v1'),
+    stateSource: 'ISOLATED_GATEWAY_REREAD'
+  };
+}
+
 function prepareLegacyDraft(pageDraft, initialState, profile) {
   const original = safeClone(pageDraft || {});
   const productionPreflight = evaluateDraftPreflight(original, initialState);
@@ -167,6 +197,7 @@ function executeFormalCommit(spec, pageDraft, options = {}) {
   const state = options.state || facade.getState({ writerSource: 'INPUT_FORMAL' });
   const before = safeClone(state);
   const prepared = prepareLegacyDraft(pageDraft, state, spec.ai.profile);
+  const savePreflightEvidence = buildSavePreflightEvidence(state, prepared);
   if (!prepared.allowed) {
     return {
       committed: false,
@@ -175,6 +206,7 @@ function executeFormalCommit(spec, pageDraft, options = {}) {
       marker: 'TEST_ONLY_ISOLATED_COMMIT',
       prepared,
       reason: prepared.reason,
+      savePreflightEvidence,
       stateAfter: before,
       stateBefore: before,
       storageAudit: storageAudit(gateway, null)
@@ -212,6 +244,7 @@ function executeFormalCommit(spec, pageDraft, options = {}) {
     gateway,
     marker: 'TEST_ONLY_ISOLATED_COMMIT',
     prepared,
+    savePreflightEvidence,
     stateAfter: safeClone(after),
     stateBefore: before,
     storageAudit: storageAudit(gateway, commitResult)

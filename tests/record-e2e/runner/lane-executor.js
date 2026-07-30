@@ -148,6 +148,44 @@ function buildRouteEvidence(observation, rawParser) {
   };
 }
 
+function buildReceivableOrderGateEvidence(observation, isolated) {
+  const before = observation && observation.beforeEdits || {};
+  const after = observation && observation.afterEdits || {};
+  const selection = observation && observation.interaction
+    && observation.interaction.evidence
+    && (observation.interaction.evidence.selections || [])
+      .find((item) => item && item.kind === 'orderId') || null;
+  return {
+    methodName: selection && selection.method || '',
+    methodInvocationDelta: selection && selection.methodInvocationDelta || 0,
+    postSelectionPreflight: safeClone(
+      selection && selection.postSelectionPreflight || {
+        blockingCodes: after.blockingCodes || [],
+        domainCanSaveFormal: after.domainCanSaveFormal === true,
+        effectiveCanSaveFormal: after.effectiveCanSaveFormal === true,
+        fingerprint: after.preflightFingerprint || '',
+        orderSelectionConfirmed: after.orderSelectionConfirmed === true,
+        requiredSelections: after.requiredSelections || [],
+        selectedOrderId: after.selectedOrderId || ''
+      }
+    ),
+    preSelectionPreflight: safeClone(
+      selection && selection.preSelectionPreflight || {
+        blockingCodes: before.blockingCodes || [],
+        domainCanSaveFormal: before.domainCanSaveFormal === true,
+        effectiveCanSaveFormal: before.effectiveCanSaveFormal === true,
+        fingerprint: before.preflightFingerprint || '',
+        orderSelectionConfirmed: before.orderSelectionConfirmed === true,
+        requiredSelections: before.requiredSelections || [],
+        selectedOrderId: before.selectedOrderId || ''
+      }
+    ),
+    savePreflightEvidence: safeClone(
+      isolated && isolated.savePreflightEvidence || null
+    )
+  };
+}
+
 function buildRelationEvidence(rawParser, confirmationDraft, productionObservation) {
   const hybridInvocations = rawParser && rawParser.hybridInvocations || [];
   const rawStages = hybridInvocations.flatMap((hybrid) => (
@@ -1024,6 +1062,10 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       requiredSelections: primaryProductionObservation.requiredSelections
     },
     productionObservation: primaryProductionObservation,
+    receivableOrderGateEvidence: buildReceivableOrderGateEvidence(
+      sourceObservation,
+      isolated
+    ),
     relationEvidence,
     relationReferenceTamperEvidence: relationTamper,
     restartEvidence: restart,
@@ -1047,6 +1089,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
 
 module.exports = {
   buildRelationEvidence,
+  buildReceivableOrderGateEvidence,
   deriveProductionObservation,
   executeLanes,
   productionEligibility

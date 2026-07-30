@@ -100,7 +100,11 @@ function run() {
     skipFinalSafety: true
   });
   assert.strictEqual(beforeSelection.operation, 'create_receivable');
-  assert.strictEqual(beforeSelection.domainCanSaveFormal, true);
+  assert.strictEqual(beforeSelection.domainCanSaveFormal, false);
+  assert.deepStrictEqual(beforeSelection.requiredSelections, ['orderId']);
+  assert(beforeSelection.blockingIssues.some(
+    (item) => item.code === 'ORDER_SELECTION_REQUIRED'
+  ));
   assert.deepStrictEqual(
     beforeSelection.candidates.orderCandidates.map((item) => item.id),
     ['ord-active-a']

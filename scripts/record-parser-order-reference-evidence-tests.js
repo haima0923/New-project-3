@@ -248,13 +248,20 @@ async function run() {
   );
   assert.strictEqual(
     confirmation.preflight.domainCanSaveFormal,
-    true,
-    'this phase must not add the later Preflight relation gate'
+    false,
+    'explicit receivable order evidence must block before relation selection'
   );
   assert.deepStrictEqual(
     confirmation.preflight.requiredSelections,
-    [],
-    'this phase must not change requiredSelections'
+    ['orderId'],
+    'explicit receivable order evidence must require order selection'
+  );
+  assert(
+    confirmation.preflight.blockingIssues.some((item) => (
+      item.code === 'ORDER_SELECTION_REQUIRED'
+      && item.requiredAction === 'SELECT_ORDER'
+    )),
+    'explicit receivable order evidence must expose the selection action'
   );
   const withoutEvidenceConfirmation = buildRecordConfirmation({
     finalResult: Object.assign({}, hybrid, { relation_references: undefined }),
@@ -419,7 +426,7 @@ async function run() {
     'ai-merge-guard=2',
     'runner-targets=2',
     'runner-hard-gates=2',
-    'preflight-gate-unchanged=1'
+    'preflight-relation-gate=1'
   ].join(' '));
 }
 
