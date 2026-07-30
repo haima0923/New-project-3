@@ -4,6 +4,15 @@ const PREFLIGHT_SCHEMA_VERSION = 'record-domain-preflight-v1';
 const PRODUCTION_MODE = 'PRODUCTION_ROUTING';
 const PRODUCTION_SCOPE = 'PRODUCTION_RESULT';
 const ACTIVE_ORDER_STATUSES = Object.freeze(['待生产', '生产中', '待发货', '已发货']);
+const EXPLICIT_ORDER_REFERENCE_KINDS = Object.freeze([
+  'EXPLICIT_ORDER_DEICTIC',
+  'EXPLICIT_ORDER_IDENTIFIER',
+  'EXPLICIT_ORDER_NAMED_REFERENCE'
+]);
+const ORDER_REFERENCE_SOURCE_FIELDS = Object.freeze([
+  'ORIGINAL_TEXT',
+  'EXTRACTED_TEXT'
+]);
 const ACTIVE_RECEIVABLE_STATUSES = Object.freeze(['待收', '部分收款']);
 const ACTIVE_QUOTATION_STATUS = '待确认';
 const CONVERTED_QUOTATION_STATUSES = Object.freeze(['converted', 'ordered', '已转订单', '已下单']);
@@ -149,6 +158,53 @@ function orderMatchesProduct(order = {}, productName) {
   const current = String(order.productName || '').replace(/\s+/g, '');
   if (!source || !current) return true;
   return source === current || source.includes(current) || current.includes(source);
+}
+
+function getExplicitOrderReference(result = {}) {
+  const relationReferences = result.relation_references;
+  const reference = relationReferences && relationReferences.order;
+  if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return null;
+  if (String(reference.entityType || '').toUpperCase() !== 'ORDER') return null;
+  if (reference.explicit !== true || reference.requiresResolution !== true) return null;
+  if (!EXPLICIT_ORDER_REFERENCE_KINDS.includes(String(reference.kind || ''))) return null;
+  if (reference.evidenceSource !== 'LOCAL_PARSER') return null;
+  if (reference.resolvedEntityId !== null) return null;
+  if (!ORDER_REFERENCE_SOURCE_FIELDS.includes(String(reference.sourceField || ''))) return null;
+  if (!String(reference.sourceText || '').trim()) return null;
+  if (!String(reference.normalizedReference || '').trim()) return null;
+  if (!Number.isFinite(Number(reference.confidence))
+    || Number(reference.confidence) <= 0
+    || Number(reference.confidence) > 1) return null;
+  const sourceSpan = reference.sourceSpan;
+  if (!sourceSpan || typeof sourceSpan !== 'object' || Array.isArray(sourceSpan)) return null;
+  if (!Number.isInteger(sourceSpan.start)
+    || !Number.isInteger(sourceSpan.end)
+    || sourceSpan.start < 0
+    || sourceSpan.end <= sourceSpan.start
+    || sourceSpan.end - sourceSpan.start !== String(reference.sourceText).length) return null;
+  return reference;
+}
+
+function requiresExplicitReceivableOrderResolution(operation, businessType, result = {}) {
+  return operation === 'create_receivable'
+    && businessType === 'receivable'
+    && Boolean(getExplicitOrderReference(result));
+}
+
+function getDeletedOrderIds(state = {}) {
+  return new Set((state.deletedRecords || [])
+    .filter((item) => String(item && item.recordType || '').toLowerCase() === 'order')
+    .map((item) => String(item.recordId || item.id || ''))
+    .filter(Boolean));
+}
+
+function isOrderSelectableForRelation(state, order, customerId, productName) {
+  if (!order || typeof order !== 'object') return false;
+  if (order.deletedAt || order.deleted === true || order.isDeleted === true) return false;
+  if (getDeletedOrderIds(state).has(String(order.id || ''))) return false;
+  return ACTIVE_ORDER_STATUSES.includes(order.status)
+    && (!customerId || order.customerId === customerId)
+    && orderMatchesProduct(order, productName);
 }
 
 function toMoney(value) {
@@ -612,6 +668,9 @@ function evaluateRecordDomainPreflight(input = {}) {
   const relationsEnabled = resultScope !== 'AI_ONLY_RESULT';
   const operation = resolveOperation(result, input.operation || '');
   const businessType = input.businessType || (operation === 'record_order_deposit' ? 'order_deposit' : result.intent || 'unknown');
+  const explicitOrderReference = getExplicitOrderReference(result);
+  const explicitReceivableOrderResolutionRequired = relationsEnabled
+    && requiresExplicitReceivableOrderResolution(operation, businessType, result);
   const blockingIssues = [];
   const warnings = [];
   const requiredSelections = [];
@@ -1070,10 +1129,88 @@ function evaluateRecordDomainPreflight(input = {}) {
   }
 
   const activeOrderCandidates = customerIdForCandidates
-    ? (state.orders || []).filter((item) => item.customerId === customerIdForCandidates
-      && ACTIVE_ORDER_STATUSES.includes(item.status)
-      && orderMatchesProduct(item, fields.productName))
+    ? (state.orders || []).filter((item) => isOrderSelectableForRelation(
+      state,
+      item,
+      customerIdForCandidates,
+      fields.productName
+    ))
     : [];
+  const safeOrderCandidateIds = activeOrderCandidates.map((item) => String(item.id || ''));
+  const selectedOrderEligible = Boolean(selectedOrderId)
+    && safeOrderCandidateIds.includes(String(selectedOrderId));
+  const orderSelectionConfirmed = Boolean(
+    input.selectedOrderId
+    || fields.orderSelectionConfirmed === true
+    || (input.userConfirmedRelations || []).includes('orderId')
+  );
+  const orderReferenceGate = {
+    applies: explicitReceivableOrderResolutionRequired,
+    evidenceKind: explicitReceivableOrderResolutionRequired
+      ? explicitOrderReference && explicitOrderReference.kind || ''
+      : '',
+    evidenceSource: explicitReceivableOrderResolutionRequired
+      ? explicitOrderReference && explicitOrderReference.evidenceSource || ''
+      : '',
+    requiresResolution: explicitReceivableOrderResolutionRequired && Boolean(
+      explicitOrderReference && explicitOrderReference.requiresResolution === true
+    ),
+    candidateIds: explicitReceivableOrderResolutionRequired
+      ? safeOrderCandidateIds.slice()
+      : [],
+    selectedOrderId: explicitReceivableOrderResolutionRequired
+      ? String(selectedOrderId || '')
+      : '',
+    selectionConfirmed: explicitReceivableOrderResolutionRequired
+      ? orderSelectionConfirmed
+      : false,
+    selectedOrderEligible: explicitReceivableOrderResolutionRequired
+      ? selectedOrderEligible
+      : false,
+    resolved: false,
+    status: explicitReceivableOrderResolutionRequired
+      ? 'UNRESOLVED'
+      : 'NOT_APPLICABLE'
+  };
+  if (explicitReceivableOrderResolutionRequired) {
+    if (!activeOrderCandidates.length) {
+      requiredSelections.push('orderId');
+      addIssue(blockingIssues, orderChecks, issue(
+        'ORDER_REFERENCE_UNRESOLVED', 'orderId', 'ZERO_TOLERANCE',
+        'RECEIVABLE_EXPLICIT_ORDER_REFERENCE', 'SELECT_ORDER', [selectedOrderId]
+      ));
+      orderReferenceGate.status = 'NO_SAFE_CANDIDATE';
+    } else if (!selectedOrderId) {
+      requiredSelections.push('orderId');
+      addIssue(blockingIssues, orderChecks, issue(
+        activeOrderCandidates.length > 1
+          ? 'MULTIPLE_ORDER_SELECTION_REQUIRED'
+          : 'ORDER_SELECTION_REQUIRED',
+        'orderId', 'ZERO_TOLERANCE',
+        'RECEIVABLE_EXPLICIT_ORDER_REFERENCE', 'SELECT_ORDER',
+        safeOrderCandidateIds
+      ));
+      orderReferenceGate.status = 'SELECTION_REQUIRED';
+    } else if (!selectedOrderEligible) {
+      requiredSelections.push('orderId');
+      addIssue(blockingIssues, orderChecks, issue(
+        'ORDER_REFERENCE_NOT_ELIGIBLE', 'orderId', 'ZERO_TOLERANCE',
+        'RECEIVABLE_EXPLICIT_ORDER_REFERENCE', 'SELECT_ORDER',
+        [selectedOrderId].concat(safeOrderCandidateIds)
+      ));
+      orderReferenceGate.status = 'SELECTION_NOT_ELIGIBLE';
+    } else if (!orderSelectionConfirmed) {
+      requiredSelections.push('orderId');
+      addIssue(blockingIssues, orderChecks, issue(
+        'ORDER_SELECTION_CONFIRMATION_REQUIRED', 'orderId', 'DANGEROUS',
+        'RECEIVABLE_EXPLICIT_ORDER_REFERENCE', 'SELECT_ORDER', [selectedOrderId]
+      ));
+      orderReferenceGate.status = 'SELECTION_CONFIRMATION_REQUIRED';
+    } else {
+      orderReferenceGate.resolved = true;
+      orderReferenceGate.status = 'RESOLVED';
+    }
+  }
   if (operation === 'record_order_deposit') {
     if (selectedOrderId && order && !input.selectedOrderId && fields.orderSelectionConfirmed !== true
       && !(input.userConfirmedRelations || []).includes('orderId')) {
@@ -1321,6 +1458,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     requiredSelections: uniqueStrings(requiredSelections),
     resolvedRelations,
     candidates,
+    orderReferenceGate,
     amountChecks,
     stateFacts: {
       customers: (state.customers || []).map((item) => ({ id: item.id, name: item.name, mergedInto: item.mergedInto || '' })),
@@ -1346,6 +1484,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     requiredSelections: uniqueStrings(requiredSelections),
     resolvedRelations,
     candidates,
+    orderReferenceGate,
     customerChecks,
     quotationChecks,
     orderChecks,
@@ -1364,6 +1503,8 @@ module.exports = {
   ACTIVE_ORDER_STATUSES,
   ACTIVE_QUOTATION_STATUS,
   ACTIVE_RECEIVABLE_STATUSES,
+  EXPLICIT_ORDER_REFERENCE_KINDS,
+  ORDER_REFERENCE_SOURCE_FIELDS,
   PREFLIGHT_SCHEMA_VERSION,
   calculateOrderDepositAmount,
   calculateOrderRemainingSettlement,
@@ -1372,13 +1513,16 @@ module.exports = {
   findCustomerMatches,
   getCustomerNameMatchKind,
   getCustomerById,
+  getExplicitOrderReference,
   getTrustedRecordFlowContext,
   getReceivablePaymentIssue,
   getReceivableRemainingAmount,
   getQuotationSelectionBlockingCodes,
   isQuotationConverted,
+  isOrderSelectableForRelation,
   isParseSafetyReady,
   orderMatchesProduct,
+  requiresExplicitReceivableOrderResolution,
   resolveDraftTotalAmount,
   stableFingerprint,
   stableSerialize
