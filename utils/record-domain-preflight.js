@@ -387,7 +387,34 @@ function buildQuotationSelectionCandidates(state, operation, customerId, selecti
     ));
 }
 
+function getNoRecordPersistenceFacts(result = {}) {
+  const route = result && result.parse_route && typeof result.parse_route === 'object'
+    ? result.parse_route
+    : {};
+  const decision = String(route.decision || '').toLowerCase();
+  const semanticDecision = String(route.semantic_decision || '').toLowerCase();
+  const finalDisposition = String(route.final_disposition || '').toLowerCase();
+  const canonical = decision === 'no_record';
+  const qualifiedLegacyProjection = route.no_record_eligible === true
+    && (semanticDecision === 'no_record'
+      || finalDisposition === 'no_record'
+      || result.no_record === true);
+  return {
+    canonical,
+    eligible: route.no_record_eligible === true,
+    persistenceForbidden: canonical || qualifiedLegacyProjection,
+    decision,
+    semanticDecision,
+    finalDisposition
+  };
+}
+
+function isNoRecordPersistenceForbidden(result = {}) {
+  return getNoRecordPersistenceFacts(result).persistenceForbidden;
+}
+
 function resolveOperation(result = {}, explicitOperation = '') {
+  if (isNoRecordPersistenceForbidden(result)) return 'none';
   if (explicitOperation) return explicitOperation;
   if (result.operation) return result.operation;
   if (result.intent === 'quotation') return 'create_quotation';
@@ -409,6 +436,7 @@ function operationMatchesIntent(operation, intent) {
     record_payment: ['payment'],
     record_order_deposit: ['payment'],
     create_todo: ['todo', 'dunning'],
+    none: ['unknown'],
     pending: ['unknown', 'pending']
   };
   return Boolean(accepted[operation]) && accepted[operation].includes(intent);
@@ -665,7 +693,9 @@ function evaluateRecordDomainPreflight(input = {}) {
   const provenance = getTrustedRecordFlowContext(result);
   const mode = input.mode || provenance.mode || PRODUCTION_MODE;
   const resultScope = input.resultScope || provenance.resultScope || PRODUCTION_SCOPE;
-  const relationsEnabled = resultScope !== 'AI_ONLY_RESULT';
+  const noRecordPersistenceFacts = getNoRecordPersistenceFacts(result);
+  const noRecordPersistenceForbidden = noRecordPersistenceFacts.persistenceForbidden;
+  const relationsEnabled = resultScope !== 'AI_ONLY_RESULT' && !noRecordPersistenceForbidden;
   const operation = resolveOperation(result, input.operation || '');
   const businessType = input.businessType || (operation === 'record_order_deposit' ? 'order_deposit' : result.intent || 'unknown');
   const explicitOrderReference = getExplicitOrderReference(result);
@@ -689,7 +719,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     const supportedOperations = [
       'create_quotation', 'update_quotation', 'create_order', 'update_order',
       'create_receivable', 'create_receivable_with_payment', 'record_payment',
-      'record_order_deposit', 'create_todo', 'pending'
+      'record_order_deposit', 'create_todo', 'none', 'pending'
     ];
     addIssue(blockingIssues, targetChecks, issue(
       supportedOperations.includes(operation) ? 'OPERATION_INTENT_MISMATCH' : 'OPERATION_UNSUPPORTED',
@@ -707,6 +737,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     record_payment: ['orderId', 'receivableId'],
     record_order_deposit: ['orderId'],
     create_todo: ['receivableId'],
+    none: [],
     pending: []
   };
   const supportedRelations = supportedRelationsByOperation[operation] || [];
@@ -719,43 +750,50 @@ function evaluateRecordDomainPreflight(input = {}) {
       'OPERATION_RELATION_PRESERVATION', 'CHANGE_BUSINESS_TYPE', [relationId]
     ));
   });
-  if (operation === 'pending' || result.intent === 'pending') addIssue(
-    blockingIssues, targetChecks,
-    issue('PENDING_RESULT_NOT_FORMAL', 'businessType', 'ZERO_TOLERANCE',
-      'PENDING_ONLY_CONTRACT', 'SAVE_PENDING', [], { resolvableByUser: false })
-  );
-
-  uniqueStrings(result.missing_fields || []).forEach((field) => addIssue(
-    blockingIssues, targetChecks,
-    issue('MISSING_REQUIRED_FIELD', field, 'DANGEROUS', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
-  ));
-  uniqueStrings(result.low_confidence_fields || []).forEach((field) => addIssue(
-    blockingIssues, targetChecks,
-    issue('LOW_CONFIDENCE_FIELD', field, 'DANGEROUS', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
-  ));
-  (Array.isArray(result.field_conflicts) ? result.field_conflicts : []).forEach((conflict) => addIssue(
-    blockingIssues, targetChecks,
-    issue('FIELD_CONFLICT', conflict && conflict.field, 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
-  ));
-  if (result.formal_save_blocked) addIssue(blockingIssues, targetChecks, issue(
-    'FORMAL_SAVE_BLOCKED', '', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'REVIEW_SAFETY', [], { resolvableByUser: false }
-  ));
-  if (result.mixed_business) addIssue(blockingIssues, targetChecks, issue(
-    'MIXED_BUSINESS_UNRESOLVED', 'businessType', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'CHANGE_BUSINESS_TYPE'
-  ));
-  if (result.intent === 'unknown') addIssue(blockingIssues, targetChecks, issue(
-    'NO_RECORD_OR_UNKNOWN_INTENT', 'businessType', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'CHANGE_BUSINESS_TYPE'
-  ));
-  const finalSafetyStatus = String(((result.final_parse_safety || {}).status) || '').toUpperCase();
-  if (finalSafetyStatus === 'NO_RECORD') addIssue(
-    blockingIssues, targetChecks,
-    issue('NO_RECORD_OR_UNKNOWN_INTENT', 'businessType', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY_STATUS', 'CHANGE_BUSINESS_TYPE')
-  );
-  if (result.requires_existing_record && !fields.orderId && !fields.quotationId && !fields.receivableId) {
+  if (noRecordPersistenceForbidden) {
     addIssue(blockingIssues, targetChecks, issue(
-      'EXISTING_TARGET_SELECTION_REQUIRED', 'relationId', 'ZERO_TOLERANCE',
-      'EXISTING_RECORD_REQUIRED', 'SELECT_TARGET'
+      'NO_RECORD_OR_UNKNOWN_INTENT', 'businessType', 'ZERO_TOLERANCE',
+      'CANONICAL_NO_RECORD_ROUTE', 'RETURN_OR_EDIT_INPUT', [], { resolvableByUser: false }
     ));
+  } else {
+    if (operation === 'pending' || result.intent === 'pending') addIssue(
+      blockingIssues, targetChecks,
+      issue('PENDING_RESULT_NOT_FORMAL', 'businessType', 'ZERO_TOLERANCE',
+        'PENDING_ONLY_CONTRACT', 'SAVE_PENDING', [], { resolvableByUser: false })
+    );
+
+    uniqueStrings(result.missing_fields || []).forEach((field) => addIssue(
+      blockingIssues, targetChecks,
+      issue('MISSING_REQUIRED_FIELD', field, 'DANGEROUS', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
+    ));
+    uniqueStrings(result.low_confidence_fields || []).forEach((field) => addIssue(
+      blockingIssues, targetChecks,
+      issue('LOW_CONFIDENCE_FIELD', field, 'DANGEROUS', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
+    ));
+    (Array.isArray(result.field_conflicts) ? result.field_conflicts : []).forEach((conflict) => addIssue(
+      blockingIssues, targetChecks,
+      issue('FIELD_CONFLICT', conflict && conflict.field, 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
+    ));
+    if (result.formal_save_blocked) addIssue(blockingIssues, targetChecks, issue(
+      'FORMAL_SAVE_BLOCKED', '', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'REVIEW_SAFETY', [], { resolvableByUser: false }
+    ));
+    if (result.mixed_business) addIssue(blockingIssues, targetChecks, issue(
+      'MIXED_BUSINESS_UNRESOLVED', 'businessType', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'CHANGE_BUSINESS_TYPE'
+    ));
+    if (result.intent === 'unknown') addIssue(blockingIssues, targetChecks, issue(
+      'NO_RECORD_OR_UNKNOWN_INTENT', 'businessType', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'CHANGE_BUSINESS_TYPE'
+    ));
+    const finalSafetyStatus = String(((result.final_parse_safety || {}).status) || '').toUpperCase();
+    if (finalSafetyStatus === 'NO_RECORD') addIssue(
+      blockingIssues, targetChecks,
+      issue('NO_RECORD_OR_UNKNOWN_INTENT', 'businessType', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY_STATUS', 'CHANGE_BUSINESS_TYPE')
+    );
+    if (result.requires_existing_record && !fields.orderId && !fields.quotationId && !fields.receivableId) {
+      addIssue(blockingIssues, targetChecks, issue(
+        'EXISTING_TARGET_SELECTION_REQUIRED', 'relationId', 'ZERO_TOLERANCE',
+        'EXISTING_RECORD_REQUIRED', 'SELECT_TARGET'
+      ));
+    }
   }
 
   const aiFacts = resolveAiFacts(input, result);
@@ -1406,7 +1444,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     || fields.originalText
     || fields.original_text
     || '';
-  const domainCanSavePending = Boolean(strictOriginalText);
+  const domainCanSavePending = !noRecordPersistenceForbidden && Boolean(strictOriginalText);
   const resolvedRelations = {
     customerId: customerResolution.customerId || '',
     quotationId: quotation ? quotation.id : '',
@@ -1477,6 +1515,8 @@ function evaluateRecordDomainPreflight(input = {}) {
     resultScope,
     domainCanSaveFormal,
     domainCanSavePending,
+    noRecordPersistenceForbidden,
+    noRecordPersistenceFacts,
     formalSaveBlocked: !domainCanSaveFormal,
     productionEligibilityResolved: mode === PRODUCTION_MODE && resultScope === PRODUCTION_SCOPE,
     blockingIssues,
@@ -1514,12 +1554,14 @@ module.exports = {
   getCustomerNameMatchKind,
   getCustomerById,
   getExplicitOrderReference,
+  getNoRecordPersistenceFacts,
   getTrustedRecordFlowContext,
   getReceivablePaymentIssue,
   getReceivableRemainingAmount,
   getQuotationSelectionBlockingCodes,
   isQuotationConverted,
   isOrderSelectableForRelation,
+  isNoRecordPersistenceForbidden,
   isParseSafetyReady,
   orderMatchesProduct,
   requiresExplicitReceivableOrderResolution,

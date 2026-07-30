@@ -245,7 +245,7 @@ async function main() {
     const parsed = await parseHybridInput(payload(text, 'typed'));
     assert.strictEqual(parsed.intent, 'unknown', `${text}必须保留raw unknown`);
     assert.strictEqual(
-      parsed.parse_route.semantic_decision,
+      parsed.parse_route.decision,
       ROUTE_NO_RECORD,
       `${text}必须由真实parser与Route得到NO_RECORD`
     );
@@ -261,19 +261,38 @@ async function main() {
     'typed'
   ));
   assert.strictEqual(clearNoRecord.intent, 'unknown', '明确非业务输入必须保留raw unknown');
-  assert.strictEqual(clearNoRecord.parse_route.decision, ROUTE_PENDING, '共享生产执行路径继续使用既有PENDING兼容值');
-  assert.strictEqual(clearNoRecord.parse_route.semantic_decision, ROUTE_NO_RECORD, '明确非业务必须投影为canonical NO_RECORD语义');
+  assert.strictEqual(clearNoRecord.parse_route.decision, ROUTE_NO_RECORD, '明确非业务必须由真实生产Route返回canonical NO_RECORD');
+  assert.strictEqual(clearNoRecord.parse_route.semantic_decision, ROUTE_NO_RECORD, '兼容语义字段必须与真实Route保持单一真值');
   assert.strictEqual(clearNoRecord.parse_route.no_record_eligible, true, 'NO_RECORD必须记录窄资格命中');
   assert.strictEqual(clearNoRecord.parse_route.business_evidence_count, 0, 'NO_RECORD业务Evidence计数必须为0');
+  [
+    'CLEAR_NON_BUSINESS',
+    'NO_BUSINESS_EVIDENCE',
+    'NO_STRUCTURED_FIELDS',
+    'NO_RELATION_EVIDENCE',
+    'PROCESSING_COMPLETE'
+  ].forEach((code) => {
+    assert(clearNoRecord.parse_route.reason_codes.includes(code), `NO_RECORD必须记录${code}`);
+  });
   assert.strictEqual(clearNoRecord.ai_fallback.needed, false, 'NO_RECORD不需要AI');
   assert.strictEqual(clearNoRecord.ai_fallback.attempted, false, 'NO_RECORD不得调用AI');
   assert.strictEqual(clearNoRecord.no_record, true, 'NO_RECORD终态必须由真实Route结果携带');
+
+  const incompleteVoice = await parseHybridInput(payload(
+    '今天天气不错，晚点出去走走',
+    'voice'
+  ));
+  assert.strictEqual(incompleteVoice.parse_route.decision, ROUTE_PENDING, '缺少转写完成凭证的语音不能提前NO_RECORD');
+  assert.strictEqual(incompleteVoice.parse_route.no_record_eligible, false, '语音未完成时不得取得NO_RECORD资格');
+  assert(incompleteVoice.parse_route.no_record_eligibility_exclusions.includes(
+    'ASYNC_WORK_NOT_COMPLETED'
+  ), '语音未完成必须记录ASYNC_WORK_NOT_COMPLETED');
 
   const incidentalBusinessDate = await parseHybridInput(payload(
     '今天天气不错，大家辛苦了',
     'typed'
   ));
-  assert.strictEqual(incidentalBusinessDate.parse_route.semantic_decision, undefined, '带来源的业务日期Evidence不能在Route层被静默丢弃');
+  assert.notStrictEqual(incidentalBusinessDate.parse_route.decision, ROUTE_NO_RECORD, '带来源的业务日期Evidence不能在Route层被静默丢弃');
   assert.strictEqual(incidentalBusinessDate.parse_route.no_record_eligible, false, 'AMB-012当前日期Evidence必须fail-closed');
   assert(incidentalBusinessDate.parse_route.no_record_eligibility_exclusions.includes(
     'LOCAL_SAFETY_NOT_NO_RECORD'

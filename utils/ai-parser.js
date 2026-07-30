@@ -738,7 +738,9 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     suggestedOperation: localResult.suggested_operation
   });
   const clearNoRecord = evaluateClearNonBusinessNoRecord({
-    asyncWorkCompleted: true,
+    asyncWorkCompleted: payload.source === 'voice'
+      ? payload.voiceTranscriptionCompleted === true
+      : true,
     conflicts,
     contextPolicy: policy,
     customerCandidates: localResult.customer_candidates || [],
@@ -765,12 +767,21 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     safety,
     suggestedOperation: localResult.suggested_operation
   });
+  const clearNoRecordCanonicalReasonCodes = clearNoRecord.eligible
+    ? uniqueStrings([
+      'CLEAR_NON_BUSINESS',
+      'NO_BUSINESS_EVIDENCE',
+      'NO_STRUCTURED_FIELDS',
+      'NO_RELATION_EVIDENCE',
+      'PROCESSING_COMPLETE'
+    ].concat(clearNoRecord.reasonCodes))
+    : clearNoRecord.reasonCodes;
   const withRouteAudit = (route) => Object.assign({}, route, localResult.intent === 'unknown'
     ? {
       business_evidence_count: clearNoRecord.businessEvidenceCount,
       no_record_eligible: clearNoRecord.eligible,
       no_record_eligibility_exclusions: clearNoRecord.exclusions,
-      no_record_eligibility_reason_codes: clearNoRecord.reasonCodes,
+      no_record_eligibility_reason_codes: clearNoRecordCanonicalReasonCodes,
       relation_evidence_count: clearNoRecord.relationEvidenceCount,
       structured_business_field_count: clearNoRecord.structuredBusinessFieldCount
     }
@@ -794,9 +805,11 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
 
   if (clearNoRecord.eligible) {
     return withRouteAudit({
-      decision: ROUTE_PENDING,
+      decision: ROUTE_NO_RECORD,
+      deep_review_available: false,
       final_disposition: ROUTE_NO_RECORD,
       label: ROUTE_LABELS[ROUTE_NO_RECORD],
+      reason_codes: clearNoRecordCanonicalReasonCodes,
       reasons: ['没有业务Evidence，不调用AI，也不生成正式或待整理记录。'],
       semantic_decision: ROUTE_NO_RECORD
     });
@@ -2231,7 +2244,7 @@ function applySafeLocalReceivableRouteProjection(localResult, route) {
 
 function applyClearNoRecordRouteProjection(localResult, route) {
   if (!route
-    || route.semantic_decision !== ROUTE_NO_RECORD
+    || route.decision !== ROUTE_NO_RECORD
     || route.no_record_eligible !== true) {
     return localResult;
   }
@@ -2292,14 +2305,18 @@ function prepareHybridLocalStage(payload) {
 function finishHybridWithoutAi(prepared) {
   const { localResult, route, shouldRequestAi } = prepared;
 
+  if (route.decision === ROUTE_NO_RECORD) {
+    return withAiStatus(localResult, 'not_requested', {
+      attempted: false,
+      reason: '没有可记录业务；不会调用AI，也不会保存正式或待整理记录。'
+    });
+  }
   if (route.decision === ROUTE_PENDING) {
     return withAiStatus(localResult, 'not_requested', {
       attempted: false,
-      reason: route.semantic_decision === ROUTE_NO_RECORD
-        ? '没有可记录业务；不会调用AI，也不会保存待整理。'
-        : (route.deep_review_available
+      reason: route.deep_review_available
         ? '这条内容需要深度核对；未主动点击前不会调用慢速 AI。'
-        : '这段内容还不能确定是一笔什么业务，先放待整理。')
+        : '这段内容还不能确定是一笔什么业务，先放待整理。'
     });
   }
   if (!shouldRequestAi) {
