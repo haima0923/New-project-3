@@ -127,8 +127,29 @@ function buildRouteEvidence(observation, rawParser) {
   const route = parseResult.parse_route || {};
   const aiFallback = parseResult.ai_fallback || {};
   const hybridInvocations = rawParser && rawParser.hybridInvocations || [];
+  const parserCollectionCompleted = Boolean(
+    rawParser
+    && rawParser.collectionCompleted === true
+    && rawParser.validationCompleted === true
+  );
   return {
     actualRoute: observation && observation.route || route.decision || null,
+    productionRoute: String(route.decision || '').toUpperCase() || null,
+    semanticRoute: String(route.semantic_decision || route.decision || '').toUpperCase() || null,
+    noRecordEligible: Object.prototype.hasOwnProperty.call(
+      route,
+      'no_record_eligible'
+    ) ? route.no_record_eligible === true : null,
+    noRecordEligibilityReasonCodes: safeClone(
+      route.no_record_eligibility_reason_codes || []
+    ),
+    noRecordEligibilityExclusions: safeClone(
+      route.no_record_eligibility_exclusions || []
+    ),
+    businessEvidenceCount: Number(route.business_evidence_count || 0),
+    structuredBusinessFieldCount: Number(route.structured_business_field_count || 0),
+    relationEvidenceCount: Number(route.relation_evidence_count || 0),
+    asyncWorkCompleted: parserCollectionCompleted,
     safeLocalReceivableEligible: Object.prototype.hasOwnProperty.call(
       route,
       'safe_local_receivable_eligible'
@@ -145,6 +166,45 @@ function buildRouteEvidence(observation, rawParser) {
       item && item.phase === 'DEEP_REVIEW'
     )),
     evidenceSource: 'ACTUAL_PARSE_ROUTE'
+  };
+}
+
+function buildNoRecordEvidence({
+  businessDiff,
+  isolated,
+  outcome,
+  rawParser,
+  requestedSaveAction,
+  routeEvidence
+} = {}) {
+  const pendingCreated = businessDiff && businessDiff.pendingNotes
+    && businessDiff.pendingNotes.created || [];
+  const committed = isolated && isolated.committed === true;
+  return {
+    AIRequestCount: routeEvidence.AIRequestCount,
+    actualRoute: routeEvidence.actualRoute,
+    asyncWorkCompleted: routeEvidence.asyncWorkCompleted,
+    businessEvidenceCount: routeEvidence.businessEvidenceCount,
+    businessStateDiffIsZero: isCollectionDiffEmpty(businessDiff || {}),
+    formalSaveAttemptCount: requestedSaveAction === 'SAVE_FORMAL' ? 1 : 0,
+    formalSaveSucceeded: outcome.formalSaveSucceeded === true,
+    noRecordEligible: routeEvidence.noRecordEligible,
+    noRecordEligibilityExclusions: safeClone(
+      routeEvidence.noRecordEligibilityExclusions || []
+    ),
+    noRecordEligibilityReasonCodes: safeClone(
+      routeEvidence.noRecordEligibilityReasonCodes || []
+    ),
+    outcomeDisposition: outcome.disposition,
+    pendingSaveAttemptCount: requestedSaveAction === 'SAVE_PENDING' ? 1 : 0,
+    pendingSaveSucceeded: outcome.pendingSaveSucceeded === true,
+    pendingSavedCount: pendingCreated.length,
+    persistedRecordType: outcome.persistedRecordType,
+    productionRoute: routeEvidence.productionRoute,
+    relationEvidenceCount: routeEvidence.relationEvidenceCount,
+    semanticRoute: routeEvidence.semanticRoute,
+    storageCommitOccurred: committed,
+    structuredBusinessFieldCount: routeEvidence.structuredBusinessFieldCount
   };
 }
 
@@ -1030,6 +1090,15 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     sourceDraft,
     primaryProductionObservation
   );
+  const routeEvidence = buildRouteEvidence(sourceObservation, rawParser);
+  const noRecordEvidence = buildNoRecordEvidence({
+    businessDiff: stateDiff.businessDiff,
+    isolated,
+    outcome,
+    rawParser,
+    requestedSaveAction: spec.interaction.requestedSaveAction,
+    routeEvidence
+  });
   return {
     actualInput: observationPublic.actualInput,
     aiEvidence: {
@@ -1046,6 +1115,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     isolatedCommitEvidence: isolated,
     laneResults,
     networkAudit: audit.networkAudit,
+    noRecordEvidence,
     observationSemantics,
     parserObservation: rawParser,
     rawParserInstrumentation,
@@ -1070,7 +1140,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     relationReferenceTamperEvidence: relationTamper,
     restartEvidence: restart,
     restartRequest,
-    routeEvidence: buildRouteEvidence(sourceObservation, rawParser),
+    routeEvidence,
     storageAudit: audit.storageAudit,
     finalTransactionAudit,
     surfaceEvidence: {
@@ -1088,6 +1158,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
 }
 
 module.exports = {
+  buildNoRecordEvidence,
   buildRelationEvidence,
   buildReceivableOrderGateEvidence,
   deriveProductionObservation,

@@ -14,6 +14,7 @@ const { assertFakeWxApi } = require('../runner/create-fake-wx');
 const { createHostFilesystemGuard } = require('../runner/create-host-filesystem-guard');
 const { executeRestart } = require('../runner/execute-restart');
 const { executeTransactionReplay } = require('../runner/execute-transaction-replay');
+const { routeFromResult } = require('../runner/execute-page-observation');
 const { baseLane, finalizeLane } = require('../runner/lane-state');
 const { loadCorpus } = require('../runner/load-corpus');
 const { runCaseWorker } = require('../runner/module-isolation');
@@ -876,6 +877,26 @@ const tests = [
     }
   },
   {
+    name: 'no-record-route-requires-positive-production-eligibility-evidence',
+    run() {
+      assert.strictEqual(routeFromResult({}), 'UNKNOWN');
+      assert.strictEqual(routeFromResult({
+        parse_route: {
+          decision: 'pending',
+          semantic_decision: 'no_record',
+          no_record_eligible: false
+        }
+      }), 'PENDING');
+      assert.strictEqual(routeFromResult({
+        parse_route: {
+          decision: 'pending',
+          semantic_decision: 'no_record',
+          no_record_eligible: true
+        }
+      }), 'NO_RECORD');
+    }
+  },
+  {
     name: 'dedicated-raw-parser-operation-mismatch-fails',
     async run() {
       const item = bundle('REC-E2E-BASIC-001');
@@ -1043,12 +1064,12 @@ const tests = [
     }
   },
   {
-    name: 'order-signal-boundary-fix-advances-amb-005-to-route-contract',
+    name: 'clear-non-business-route-advances-amb-005-past-route-contract',
     async run() {
       const result = await executeOne(bundle('REC-E2E-AMB-005'));
       const raw = initialCanonicalRawResult(result);
       assert.strictEqual(result.caseStatus, 'CASE_FAIL');
-      assert.strictEqual(result.failureStage, 'ROUTE_ERROR');
+      assert.strictEqual(result.failureStage, 'PREFLIGHT_ERROR');
       assert.notStrictEqual(result.failureOwnership, 'CONFIRMED_LOCAL_PARSER_DEFECT');
       assert.strictEqual(raw.intent, 'unknown');
       assert.strictEqual(raw.businessType, 'unknown');
@@ -1060,14 +1081,82 @@ const tests = [
       assert(!result.assertions.some((entry) => (
         entry.layer === 'RAW_PARSER' && entry.pass === false
       )));
-      assert.strictEqual(result.routeEvidence.actualRoute, 'PENDING');
+      assert.strictEqual(result.routeEvidence.actualRoute, 'NO_RECORD');
+      assert.strictEqual(result.routeEvidence.productionRoute, 'PENDING');
+      assert.strictEqual(result.routeEvidence.semanticRoute, 'NO_RECORD');
+      assert.strictEqual(result.routeEvidence.noRecordEligible, true);
+      assert.deepStrictEqual(result.routeEvidence.noRecordEligibilityExclusions, []);
+      assert.strictEqual(result.routeEvidence.businessEvidenceCount, 0);
+      assert.strictEqual(result.routeEvidence.structuredBusinessFieldCount, 0);
+      assert.strictEqual(result.routeEvidence.relationEvidenceCount, 0);
+      assert.strictEqual(result.routeEvidence.asyncWorkCompleted, true);
       assert.strictEqual(result.routeEvidence.AIRequestCount, 0);
+      assert.strictEqual(result.noRecordEvidence.pendingSaveAttemptCount, 0);
+      assert.strictEqual(result.noRecordEvidence.pendingSavedCount, 0);
+      assert.strictEqual(result.noRecordEvidence.businessStateDiffIsZero, true);
+      assert.strictEqual(result.noRecordEvidence.outcomeDisposition, 'NO_RECORD');
       assert.notStrictEqual(
         result.observationSemantics.semanticResult.effectiveOperation,
         'create_order'
       );
+      assert.strictEqual(
+        result.observationSemantics.semanticResult.effectiveOperation,
+        'none'
+      );
+      assert.strictEqual(
+        result.observationSemantics.outcome.disposition,
+        'NO_RECORD'
+      );
       assert.strictEqual(result.observationSemantics.outcome.formalSaveSucceeded, false);
       assert.strictEqual(result.observationSemantics.outcome.pendingSaveSucceeded, false);
+    }
+  },
+  {
+    name: 'business-like-incomplete-cases-are-not-dropped-as-no-record',
+    async run() {
+      for (const caseId of [
+        'REC-E2E-BASIC-019',
+        'REC-E2E-BASIC-020',
+        'REC-E2E-AMB-001',
+        'REC-E2E-AMB-002',
+        'REC-E2E-AMB-014'
+      ]) {
+        const result = await executeOne(bundle(caseId));
+        assert.notStrictEqual(result.routeEvidence.actualRoute, 'NO_RECORD', `${caseId}不得被丢弃`);
+        assert.notStrictEqual(result.routeEvidence.noRecordEligible, true, `${caseId}不得取得NO_RECORD资格`);
+        assert(
+          result.routeEvidence.businessEvidenceCount > 0
+            || result.routeEvidence.noRecordEligible === null
+            || result.routeEvidence.noRecordEligibilityExclusions.some((code) => (
+              [
+                'AI_POLICY_REQUIRES_REVIEW',
+                'BUSINESS_FIELDS_MISSING',
+                'BUSINESS_INTENT_CANDIDATE_PRESENT',
+                'BUSINESS_INTENT_EVIDENCE_PRESENT',
+                'LOCAL_SAFETY_NOT_NO_RECORD',
+                'MULTI_MESSAGE_INPUT'
+              ].includes(code)
+            )),
+          `${caseId}必须保留业务Evidence或明确的fail-closed排除原因`
+        );
+      }
+    }
+  },
+  {
+    name: 'voice-async-and-multi-message-paths-do-not-terminate-as-no-record',
+    async run() {
+      for (const caseId of [
+        'REC-E2E-VOICE-004',
+        'REC-E2E-VOICE-006',
+        'REC-E2E-MULTI-009'
+      ]) {
+        const result = await executeOne(bundle(caseId));
+        assert.notStrictEqual(result.routeEvidence.actualRoute, 'NO_RECORD', `${caseId}不得提前NO_RECORD`);
+        assert.notStrictEqual(result.routeEvidence.noRecordEligible, true, `${caseId}不得取得NO_RECORD资格`);
+        assert.strictEqual(result.routeEvidence.asyncWorkCompleted, true, `${caseId}必须在完整采集后判断Route`);
+        assert.strictEqual(result.parserObservation.collectionCompleted, true, `${caseId}采集必须完成`);
+        assert.strictEqual(result.parserObservation.validationCompleted, true, `${caseId}调用图验证必须完成`);
+      }
     }
   },
   {

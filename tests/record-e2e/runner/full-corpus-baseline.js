@@ -185,6 +185,44 @@ async function rerunCases(baselineResults, plans, options = {}) {
   return reruns;
 }
 
+function compactParserObservation(observation) {
+  if (!observation) return null;
+  const summarizeParent = (item) => ({
+    actualPageMethod: item.actualPageMethod || null,
+    completed: item.completed === true,
+    failure: item.failure || null,
+    phase: item.phase || null,
+    rawInvocationCount: Array.isArray(item.rawInvocations)
+      ? item.rawInvocations.length
+      : (Array.isArray(item.rawInvocationIds) ? item.rawInvocationIds.length : 0),
+    sequence: item.sequence
+  });
+  return {
+    collectionCompleted: observation.collectionCompleted === true,
+    directRawInvocationCount: (observation.directRawInvocations || []).length,
+    directRawInvocations: (observation.directRawInvocations || []).map(summarizeParent),
+    hybridInvocationCount: (observation.hybridInvocations || []).length,
+    hybridInvocations: (observation.hybridInvocations || []).map(summarizeParent),
+    instrumentationInstalled: observation.instrumentationInstalled === true,
+    instrumentationInstalledBeforeAiParserLoad:
+      observation.instrumentationInstalledBeforeAiParserLoad === true,
+    orphanRawInvocationCount: (observation.orphanRawInvocations || []).length,
+    rawInvocationCount: Number(observation.rawInvocationCount || 0),
+    shadowParserInvocationCount: (observation.shadowParserInvocations || []).length,
+    status: observation.status || null,
+    uncorrelatedInvocationCount: Number(observation.uncorrelatedInvocationCount || 0),
+    validationCompleted: observation.validationCompleted === true
+  };
+}
+
+function compactVoiceAudit(audit) {
+  if (!audit) return null;
+  return {
+    eventTypes: (audit.events || []).map((item) => item && item.type).filter(Boolean),
+    transcriptDelivered: audit.transcriptDelivered === true
+  };
+}
+
 function compactCaseResult(result) {
   return {
     actualInput: result.actualInput,
@@ -209,10 +247,12 @@ function compactCaseResult(result) {
     isolatedCommitEvidence: result.isolatedCommitEvidence,
     laneResults: result.laneResults,
     networkAudit: result.networkAudit,
+    noRecordEvidence: result.noRecordEvidence,
     observationSemantics: result.observationSemantics,
     ownershipConfidence: result.ownershipConfidence,
     ownershipEvidence: result.ownershipEvidence,
     pageEvidence: result.pageEvidence,
+    parserObservation: compactParserObservation(result.parserObservation),
     preflightEvidence: result.preflightEvidence,
     primaryFailure: result.primaryFailure,
     productionObservation: result.productionObservation,
@@ -225,7 +265,8 @@ function compactCaseResult(result) {
     secondaryFindings: result.secondaryFindings,
     storageAudit: result.storageAudit,
     surfaceEvidence: result.surfaceEvidence,
-    transactionReplayEvidence: result.transactionReplayEvidence
+    transactionReplayEvidence: result.transactionReplayEvidence,
+    voiceAudit: compactVoiceAudit(result.voiceAudit)
   };
 }
 

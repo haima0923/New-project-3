@@ -375,6 +375,21 @@ function assertProductionLayers(testCase, evidence, collector) {
         || allowed.some((item) => semanticEqual(actual, item));
     }
   });
+  if (expected.route === 'NO_RECORD') {
+    const noRecord = evidence.noRecordEvidence || {};
+    collector.check('ROUTE', 'noRecordEligible', noRecord.noRecordEligible, true);
+    collector.check('ROUTE', 'noRecordAsyncWorkCompleted', noRecord.asyncWorkCompleted, true);
+    collector.check('ROUTE', 'noRecordBusinessEvidenceCount', noRecord.businessEvidenceCount, 0);
+    collector.check('ROUTE', 'noRecordStructuredBusinessFieldCount', noRecord.structuredBusinessFieldCount, 0);
+    collector.check('ROUTE', 'noRecordRelationEvidenceCount', noRecord.relationEvidenceCount, 0);
+    collector.check('ROUTE', 'noRecordAIRequestCount', noRecord.AIRequestCount, 0);
+    collector.check('OUTCOME', 'noRecordPendingSaveAttemptCount', noRecord.pendingSaveAttemptCount, 0);
+    collector.check('OUTCOME', 'noRecordPendingSavedCount', noRecord.pendingSavedCount, 0);
+    collector.check('OUTCOME', 'noRecordFormalSaveAttemptCount', noRecord.formalSaveAttemptCount, 0);
+    collector.check('OUTCOME', 'noRecordBusinessStateDiffIsZero', noRecord.businessStateDiffIsZero, true);
+    collector.check('OUTCOME', 'noRecordOutcomeDisposition', noRecord.outcomeDisposition, 'NO_RECORD');
+    collector.check('OUTCOME', 'noRecordPersistedRecordType', noRecord.persistedRecordType, null);
+  }
   collector.check(
     'PREFLIGHT',
     'domainCanSaveFormal',

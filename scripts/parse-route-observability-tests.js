@@ -3,11 +3,13 @@ const { parseInput } = require('../utils/parser');
 const { saveConfirmedDraft } = require('../utils/business');
 const {
   parseHybridInput,
+  evaluateClearNonBusinessNoRecord,
   evaluateSafeLocalReceivableRoute,
   requestWithDeadline,
   ROUTE_AI_STANDARD,
   ROUTE_AI_DEEP,
   ROUTE_LOCAL,
+  ROUTE_NO_RECORD,
   ROUTE_PENDING
 } = require('../utils/ai-parser');
 const { buildParseEvidence } = require('../utils/parse-evidence');
@@ -134,6 +136,80 @@ function safeReceivableFacts(overrides = {}) {
   });
 }
 
+function clearNoRecordFacts(overrides = {}) {
+  const base = {
+    asyncWorkCompleted: true,
+    conflicts: [],
+    contextPolicy: 'none',
+    customerCandidates: [],
+    deepReviewRequested: false,
+    fieldSources: {},
+    fieldSuggestions: {},
+    fields: {},
+    forceAiRequired: false,
+    formalSaveBlocked: false,
+    hasConversationRisk: false,
+    hasHistoryReference: false,
+    hasSemanticDeepRisk: false,
+    intent: 'unknown',
+    intentCandidates: ['unknown'],
+    intentEvidence: {
+      orderDeliverySignals: [],
+      orderEntitySignals: [],
+      orderPositiveSignals: [],
+      quotationPositiveSignals: [],
+      reaffirmedOrderSignals: [],
+      scores: {
+        dunning: 0,
+        order: 0,
+        payment: 0,
+        quotation: 0,
+        receivable: 0,
+        todo: 0
+      }
+    },
+    items: [],
+    lowConfidenceFields: [],
+    missingFields: ['intent'],
+    mixedBusiness: false,
+    operation: '',
+    parserCompleted: true,
+    relationReferences: {},
+    requiresExistingRecord: false,
+    safety: {
+      evidence_sufficient: true,
+      field_validations: {
+        conflict_fields: [],
+        invalid_fields: [],
+        semantic_low_fields: []
+      },
+      low_confidence_fields: [],
+      missing_fields: ['intent'],
+      status: 'NO_RECORD',
+      unsafe_fields: []
+    },
+    suggestedOperation: ''
+  };
+  return Object.assign({}, base, overrides, {
+    fieldSources: Object.assign({}, base.fieldSources, overrides.fieldSources || {}),
+    fields: Object.assign({}, base.fields, overrides.fields || {}),
+    intentEvidence: Object.assign({}, base.intentEvidence, overrides.intentEvidence || {}, {
+      scores: Object.assign(
+        {},
+        base.intentEvidence.scores,
+        overrides.intentEvidence && overrides.intentEvidence.scores || {}
+      )
+    }),
+    safety: Object.assign({}, base.safety, overrides.safety || {}, {
+      field_validations: Object.assign(
+        {},
+        base.safety.field_validations,
+        overrides.safety && overrides.safety.field_validations || {}
+      )
+    })
+  });
+}
+
 async function main() {
   const screenshotLocal = parseInput({
     text: '老板今天要订5个椅子，20块钱一个。这周日交货',
@@ -154,6 +230,104 @@ async function main() {
   const localEvidence = buildParseEvidence(local);
   assert.strictEqual(localEvidence.routeLabel, '本地快速整理', '凭证应显示本地快速整理');
   assert(localEvidence.totalDurationText, '凭证应显示总耗时');
+
+  const clearNonBusinessPhrases = [
+    '哈哈哈',
+    '你好呀',
+    '辛苦啦',
+    '天气真好',
+    '我去散步了',
+    '随便聊聊',
+    '晚安',
+    '祝你开心'
+  ];
+  for (const text of clearNonBusinessPhrases) {
+    const parsed = await parseHybridInput(payload(text, 'typed'));
+    assert.strictEqual(parsed.intent, 'unknown', `${text}必须保留raw unknown`);
+    assert.strictEqual(
+      parsed.parse_route.semantic_decision,
+      ROUTE_NO_RECORD,
+      `${text}必须由真实parser与Route得到NO_RECORD`
+    );
+    assert.strictEqual(parsed.parse_route.no_record_eligible, true, `${text}必须取得窄NO_RECORD资格`);
+    assert.strictEqual(parsed.parse_route.business_evidence_count, 0, `${text}不得出现业务Evidence`);
+    assert.strictEqual(parsed.parse_route.structured_business_field_count, 0, `${text}不得出现结构化业务字段`);
+    assert.strictEqual(parsed.parse_route.relation_evidence_count, 0, `${text}不得出现关系Evidence`);
+    assert.strictEqual(parsed.ai_fallback.attempted, false, `${text}不得调用AI`);
+  }
+
+  const clearNoRecord = await parseHybridInput(payload(
+    '今天天气不错，晚点出去走走',
+    'typed'
+  ));
+  assert.strictEqual(clearNoRecord.intent, 'unknown', '明确非业务输入必须保留raw unknown');
+  assert.strictEqual(clearNoRecord.parse_route.decision, ROUTE_PENDING, '共享生产执行路径继续使用既有PENDING兼容值');
+  assert.strictEqual(clearNoRecord.parse_route.semantic_decision, ROUTE_NO_RECORD, '明确非业务必须投影为canonical NO_RECORD语义');
+  assert.strictEqual(clearNoRecord.parse_route.no_record_eligible, true, 'NO_RECORD必须记录窄资格命中');
+  assert.strictEqual(clearNoRecord.parse_route.business_evidence_count, 0, 'NO_RECORD业务Evidence计数必须为0');
+  assert.strictEqual(clearNoRecord.ai_fallback.needed, false, 'NO_RECORD不需要AI');
+  assert.strictEqual(clearNoRecord.ai_fallback.attempted, false, 'NO_RECORD不得调用AI');
+  assert.strictEqual(clearNoRecord.no_record, true, 'NO_RECORD终态必须由真实Route结果携带');
+
+  const incidentalBusinessDate = await parseHybridInput(payload(
+    '今天天气不错，大家辛苦了',
+    'typed'
+  ));
+  assert.strictEqual(incidentalBusinessDate.parse_route.semantic_decision, undefined, '带来源的业务日期Evidence不能在Route层被静默丢弃');
+  assert.strictEqual(incidentalBusinessDate.parse_route.no_record_eligible, false, 'AMB-012当前日期Evidence必须fail-closed');
+  assert(incidentalBusinessDate.parse_route.no_record_eligibility_exclusions.includes(
+    'LOCAL_SAFETY_NOT_NO_RECORD'
+  ), 'AMB-012必须记录Safety尚未确认NO_RECORD');
+  assert(incidentalBusinessDate.parse_route.no_record_eligibility_exclusions.includes(
+    'STRUCTURED_BUSINESS_FIELDS_PRESENT'
+  ), 'AMB-012必须记录dueDate结构化Evidence');
+
+  const noRecordExclusions = [
+    ['unknown但有客户', { fields: { customerName: '王总' } }, 'STRUCTURED_BUSINESS_FIELDS_PRESENT'],
+    ['unknown但有商品', { fields: { productName: '礼盒' } }, 'STRUCTURED_BUSINESS_FIELDS_PRESENT'],
+    ['unknown但有数量', { fields: { quantity: '300' } }, 'STRUCTURED_BUSINESS_FIELDS_PRESENT'],
+    ['unknown但有金额', { fields: { amount: '3000' } }, 'STRUCTURED_BUSINESS_FIELDS_PRESENT'],
+    ['unknown但有日期', { fields: { dueDate: '2026-07-31' } }, 'STRUCTURED_BUSINESS_FIELDS_PRESENT'],
+    ['unknown但有关系', {
+      relationReferences: { order: { explicit: true, requiresResolution: true } }
+    }, 'RELATION_EVIDENCE_PRESENT'],
+    ['有订单候选评分', {
+      intentEvidence: { scores: { order: 0.4 } }
+    }, 'BUSINESS_INTENT_EVIDENCE_PRESENT'],
+    ['有报价候选', {
+      intentCandidates: ['unknown', 'quotation']
+    }, 'BUSINESS_INTENT_CANDIDATE_PRESENT'],
+    ['有订单信号', {
+      intentEvidence: { orderPositiveSignals: [{ sourceText: '下单' }] }
+    }, 'BUSINESS_INTENT_EVIDENCE_PRESENT'],
+    ['Parser失败或未完成', { parserCompleted: false }, 'PARSER_NOT_COMPLETED'],
+    ['Hybrid Evidence未完成', { asyncWorkCompleted: false }, 'ASYNC_WORK_NOT_COMPLETED'],
+    ['语音异步未完成', { asyncWorkCompleted: false }, 'ASYNC_WORK_NOT_COMPLETED'],
+    ['多轮局部空结果', { hasConversationRisk: true }, 'MULTI_MESSAGE_INPUT'],
+    ['AI unresolved', { forceAiRequired: true }, 'AI_POLICY_REQUIRES_REVIEW'],
+    ['业务字段缺失', {
+      missingFields: ['amount'],
+      safety: { missing_fields: ['amount'] }
+    }, 'BUSINESS_FIELDS_MISSING'],
+    ['低置信业务字段', {
+      lowConfidenceFields: ['customerName']
+    }, 'LOW_CONFIDENCE_BUSINESS_FIELDS'],
+    ['业务冲突', {
+      conflicts: [{ field: 'amount' }]
+    }, 'BUSINESS_FIELD_CONFLICTS'],
+    ['关系历史策略', {
+      contextPolicy: 'order_history'
+    }, 'CONTEXT_POLICY_REQUIRES_REVIEW'],
+    ['多业务混合', { mixedBusiness: true }, 'MIXED_BUSINESS'],
+    ['需要既有记录', { requiresExistingRecord: true }, 'REQUIRES_EXISTING_RECORD'],
+    ['明确operation', { operation: 'create_order' }, 'CANONICAL_OPERATION_PRESENT'],
+    ['明确businessType', { intent: 'order' }, 'BUSINESS_INTENT_PRESENT']
+  ];
+  noRecordExclusions.forEach(([name, overrides, code]) => {
+    const qualification = evaluateClearNonBusinessNoRecord(clearNoRecordFacts(overrides));
+    assert.strictEqual(qualification.eligible, false, `${name}不得取得NO_RECORD资格`);
+    assert(qualification.exclusions.includes(code), `${name}必须记录排除原因${code}`);
+  });
 
   const clearVoice = await parseHybridInput(payload('王总订水杯100个，5块5一个，明天交', 'voice'));
   assert.strictEqual(clearVoice.parse_route.decision, ROUTE_LOCAL, '清楚的语音转写文字应与手打文字同路由');

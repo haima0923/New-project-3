@@ -18,14 +18,18 @@ const {
 } = require('./validate-parser-invocation-graph');
 
 function routeFromResult(result = {}) {
-  const decision = result.parse_route && result.parse_route.decision;
+  const route = result.parse_route || {};
+  const decision = route.semantic_decision === 'no_record'
+    && route.no_record_eligible === true
+    ? route.semantic_decision
+    : route.decision;
   return {
     local: 'LOCAL',
     pending: 'PENDING',
     ai_standard: 'AI_STANDARD',
     ai_deep: 'AI_DEEP',
     no_record: 'NO_RECORD'
-  }[decision] || String(decision || 'NO_RECORD').toUpperCase();
+  }[decision] || String(decision || 'UNKNOWN').toUpperCase();
 }
 
 function pageDraft(driver) {

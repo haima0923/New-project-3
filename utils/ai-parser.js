@@ -19,11 +19,13 @@ const ROUTE_LOCAL = 'local';
 const ROUTE_AI_STANDARD = 'ai_standard';
 const ROUTE_AI_DEEP = 'ai_deep';
 const ROUTE_PENDING = 'pending';
+const ROUTE_NO_RECORD = 'no_record';
 const ROUTE_LABELS = {
   [ROUTE_LOCAL]: '本地快速整理',
   [ROUTE_AI_STANDARD]: '请 AI 再核对',
   [ROUTE_AI_DEEP]: '请 AI 深度整理',
-  [ROUTE_PENDING]: '待整理，不能强行记录'
+  [ROUTE_PENDING]: '待整理，不能强行记录',
+  [ROUTE_NO_RECORD]: '没有可记录业务'
 };
 const DEEP_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|按原来|价格不变|还是|最终|最后|确认价|改成|改为|改价|改数量|延期|提前|那单|那笔|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回|定金|订金|预付|尾款|欠款|还了|还剩|结清|到账|转了|付了|收了)/i;
 
@@ -531,6 +533,148 @@ function evaluateSafeLocalReceivableRoute(facts = {}) {
   };
 }
 
+const NO_RECORD_INTENT_SCORE_KEYS = Object.freeze([
+  'dunning',
+  'order',
+  'payment',
+  'quotation',
+  'receivable',
+  'todo'
+]);
+const NO_RECORD_BUSINESS_FIELD_KEYS = Object.freeze([
+  'amount',
+  'calculatedAmount',
+  'customerId',
+  'customerName',
+  'depositAmount',
+  'dueDate',
+  'orderId',
+  'paymentAmount',
+  'paymentKind',
+  'paymentMethod',
+  'phone',
+  'priceUnit',
+  'productName',
+  'quantity',
+  'quotationId',
+  'receivableId',
+  'remainingAmount',
+  'spec',
+  'statedAmount',
+  'todoTitle',
+  'totalAmount',
+  'unit',
+  'unitPrice'
+]);
+
+function countRelationEvidence(relationReferences) {
+  if (!relationReferences || typeof relationReferences !== 'object') return 0;
+  return Object.values(relationReferences).filter((reference) => (
+    reference
+    && typeof reference === 'object'
+    && (
+      reference.explicit === true
+      || reference.requiresResolution === true
+      || hasMeaningfulValue(reference.kind)
+      || hasMeaningfulValue(reference.resolvedEntityId)
+    )
+  )).length;
+}
+
+function evaluateClearNonBusinessNoRecord(facts = {}) {
+  const fields = facts.fields || {};
+  const fieldSources = facts.fieldSources || {};
+  const safety = facts.safety || {};
+  const validations = safety.field_validations || {};
+  const intentEvidence = facts.intentEvidence || {};
+  const scores = intentEvidence.scores || {};
+  const exclusions = [];
+  const reasonCodes = [];
+  const structuredBusinessFields = NO_RECORD_BUSINESS_FIELD_KEYS.filter((key) => (
+    hasMeaningfulValue(fields[key])
+    || hasMeaningfulValue(fieldSources[key])
+  ));
+  const items = toArray(facts.items || fields.items || []).filter(hasMeaningfulItem);
+  const intentSignalKeys = Object.keys(intentEvidence).filter((key) => (
+    /Signals$/.test(key) && toArray(intentEvidence[key]).length > 0
+  ));
+  const scoresComplete = NO_RECORD_INTENT_SCORE_KEYS.every((key) => (
+    Object.prototype.hasOwnProperty.call(scores, key)
+    && Number.isFinite(Number(scores[key]))
+  ));
+  const positiveScoreKeys = NO_RECORD_INTENT_SCORE_KEYS.filter((key) => (
+    Number(scores[key]) > 0
+  ));
+  const intentCandidates = uniqueStrings(facts.intentCandidates || []);
+  const missingFields = uniqueStrings([]
+    .concat(facts.missingFields || [], safety.missing_fields || []));
+  const unresolvedMissingFields = missingFields.filter((field) => field !== 'intent');
+  const lowConfidenceFields = uniqueStrings([]
+    .concat(facts.lowConfidenceFields || [], safety.low_confidence_fields || []));
+  const conflicts = toArray(facts.conflicts || []);
+  const invalidFields = uniqueStrings(validations.invalid_fields || []);
+  const semanticLowFields = uniqueStrings(validations.semantic_low_fields || []);
+  const safetyConflictFields = uniqueStrings(validations.conflict_fields || []);
+  const unsafeFields = uniqueStrings(safety.unsafe_fields || []);
+  const relationEvidenceCount = countRelationEvidence(facts.relationReferences);
+  const businessEvidenceCount = structuredBusinessFields.length
+    + items.length
+    + intentSignalKeys.length
+    + positiveScoreKeys.length
+    + relationEvidenceCount
+    + toArray(facts.customerCandidates || []).length
+    + (hasMeaningfulValue(facts.fieldSuggestions) ? 1 : 0);
+
+  if (facts.parserCompleted !== true) exclusions.push('PARSER_NOT_COMPLETED');
+  else reasonCodes.push('PARSER_COMPLETED');
+  if (facts.asyncWorkCompleted !== true) exclusions.push('ASYNC_WORK_NOT_COMPLETED');
+  else reasonCodes.push('ASYNC_WORK_COMPLETED');
+  if (safety.status !== 'NO_RECORD') exclusions.push('LOCAL_SAFETY_NOT_NO_RECORD');
+  else reasonCodes.push('LOCAL_SAFETY_NO_RECORD');
+  if (facts.intent !== 'unknown') exclusions.push('BUSINESS_INTENT_PRESENT');
+  else reasonCodes.push('UNKNOWN_INTENT');
+  if (hasMeaningfulValue(facts.operation) || hasMeaningfulValue(facts.suggestedOperation)) {
+    exclusions.push('CANONICAL_OPERATION_PRESENT');
+  } else {
+    reasonCodes.push('NO_CANONICAL_OPERATION');
+  }
+  if (!scoresComplete) exclusions.push('INTENT_SCORE_EVIDENCE_INCOMPLETE');
+  if (positiveScoreKeys.length || intentSignalKeys.length) exclusions.push('BUSINESS_INTENT_EVIDENCE_PRESENT');
+  else if (scoresComplete) reasonCodes.push('ZERO_BUSINESS_INTENT_EVIDENCE');
+  if (intentCandidates.some((intent) => intent !== 'unknown')) {
+    exclusions.push('BUSINESS_INTENT_CANDIDATE_PRESENT');
+  }
+  if (structuredBusinessFields.length || items.length) exclusions.push('STRUCTURED_BUSINESS_FIELDS_PRESENT');
+  else reasonCodes.push('NO_STRUCTURED_BUSINESS_FIELDS');
+  if (relationEvidenceCount) exclusions.push('RELATION_EVIDENCE_PRESENT');
+  else reasonCodes.push('NO_RELATION_EVIDENCE');
+  if (toArray(facts.customerCandidates || []).length) exclusions.push('CUSTOMER_CANDIDATES_PRESENT');
+  if (hasMeaningfulValue(facts.fieldSuggestions)) exclusions.push('FIELD_SUGGESTIONS_PRESENT');
+  if (unresolvedMissingFields.length) exclusions.push('BUSINESS_FIELDS_MISSING');
+  if (lowConfidenceFields.length || semanticLowFields.length) exclusions.push('LOW_CONFIDENCE_BUSINESS_FIELDS');
+  if (conflicts.length || safetyConflictFields.length) exclusions.push('BUSINESS_FIELD_CONFLICTS');
+  if (invalidFields.length || unsafeFields.length) exclusions.push('UNSAFE_OR_INVALID_BUSINESS_FIELDS');
+  if (safety.evidence_sufficient !== true) exclusions.push('SOURCE_EVIDENCE_INSUFFICIENT');
+  if (facts.formalSaveBlocked) exclusions.push('FORMAL_SAVE_BLOCKED');
+  if (facts.mixedBusiness) exclusions.push('MIXED_BUSINESS');
+  if (facts.requiresExistingRecord) exclusions.push('REQUIRES_EXISTING_RECORD');
+  if (facts.contextPolicy && facts.contextPolicy !== 'none') exclusions.push('CONTEXT_POLICY_REQUIRES_REVIEW');
+  if (facts.hasConversationRisk) exclusions.push('MULTI_MESSAGE_INPUT');
+  if (facts.hasHistoryReference) exclusions.push('HISTORY_REFERENCE_REQUIRES_REVIEW');
+  if (facts.hasSemanticDeepRisk) exclusions.push('SEMANTIC_DEEP_RISK');
+  if (facts.forceAiRequired) exclusions.push('AI_POLICY_REQUIRES_REVIEW');
+  if (facts.deepReviewRequested) exclusions.push('DEEP_REVIEW_REQUESTED');
+
+  return {
+    businessEvidenceCount,
+    eligible: exclusions.length === 0,
+    exclusions: uniqueStrings(exclusions),
+    reasonCodes: uniqueStrings(reasonCodes),
+    relationEvidenceCount,
+    structuredBusinessFieldCount: structuredBusinessFields.length
+  };
+}
+
 function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') {
   const source = payload.source || localResult.source || 'typed';
   const text = normalizeBusinessText(String(payload.rawText || payload.text || localResult.original_text || ''));
@@ -593,13 +737,50 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     safety,
     suggestedOperation: localResult.suggested_operation
   });
-  const withRouteAudit = (route) => localResult.intent === 'receivable'
-    ? Object.assign({}, route, {
+  const clearNoRecord = evaluateClearNonBusinessNoRecord({
+    asyncWorkCompleted: true,
+    conflicts,
+    contextPolicy: policy,
+    customerCandidates: localResult.customer_candidates || [],
+    deepReviewRequested,
+    fieldSources: localResult.field_sources || {},
+    fieldSuggestions: localResult.field_suggestions || {},
+    fields,
+    forceAiRequired: shouldForceAi(payload, localResult),
+    formalSaveBlocked: localResult.formal_save_blocked === true,
+    hasConversationRisk,
+    hasHistoryReference,
+    hasSemanticDeepRisk,
+    intent: localResult.intent,
+    intentCandidates: localResult.intent_candidates || [],
+    intentEvidence: localResult.intent_evidence || {},
+    items,
+    lowConfidenceFields: localResult.low_confidence_fields || [],
+    missingFields: localResult.missing_fields || [],
+    mixedBusiness: localResult.mixed_business === true,
+    operation: localResult.operation,
+    parserCompleted: true,
+    relationReferences: localResult.relation_references || {},
+    requiresExistingRecord: localResult.requires_existing_record === true,
+    safety,
+    suggestedOperation: localResult.suggested_operation
+  });
+  const withRouteAudit = (route) => Object.assign({}, route, localResult.intent === 'unknown'
+    ? {
+      business_evidence_count: clearNoRecord.businessEvidenceCount,
+      no_record_eligible: clearNoRecord.eligible,
+      no_record_eligibility_exclusions: clearNoRecord.exclusions,
+      no_record_eligibility_reason_codes: clearNoRecord.reasonCodes,
+      relation_evidence_count: clearNoRecord.relationEvidenceCount,
+      structured_business_field_count: clearNoRecord.structuredBusinessFieldCount
+    }
+    : {}, localResult.intent === 'receivable'
+    ? {
       receivable_risk_exclusions: safeLocalReceivable.exclusions,
       safe_local_receivable_eligible: safeLocalReceivable.eligible,
       safe_local_receivable_reason_codes: safeLocalReceivable.reasonCodes
-    })
-    : route;
+    }
+    : {});
 
   if (localResult.formal_save_blocked) {
     return withRouteAudit({
@@ -611,11 +792,24 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     });
   }
 
+  if (clearNoRecord.eligible) {
+    return withRouteAudit({
+      decision: ROUTE_PENDING,
+      final_disposition: ROUTE_NO_RECORD,
+      label: ROUTE_LABELS[ROUTE_NO_RECORD],
+      reasons: ['没有业务Evidence，不调用AI，也不生成正式或待整理记录。'],
+      semantic_decision: ROUTE_NO_RECORD
+    });
+  }
+
   if (safety.status === 'NO_RECORD') {
     return withRouteAudit({
       decision: ROUTE_PENDING,
       label: ROUTE_LABELS[ROUTE_PENDING],
-      reasons: ['没有识别到一笔明确业务，先不替老板猜。']
+      reasons: uniqueReasonTexts(
+        ['存在未完成或未归零的业务Evidence，不能直接丢弃。']
+          .concat(clearNoRecord.exclusions, localReasons)
+      )
     });
   }
 
@@ -2035,6 +2229,21 @@ function applySafeLocalReceivableRouteProjection(localResult, route) {
   });
 }
 
+function applyClearNoRecordRouteProjection(localResult, route) {
+  if (!route
+    || route.semantic_decision !== ROUTE_NO_RECORD
+    || route.no_record_eligible !== true) {
+    return localResult;
+  }
+  return Object.assign({}, localResult, {
+    ai_fallback: Object.assign({}, localResult.ai_fallback || {}, {
+      needed: false
+    }),
+    confirm_message: '这段内容没有可记录的业务，不会保存为正式记录或待整理。',
+    no_record: true
+  });
+}
+
 function prepareHybridLocalStage(payload) {
   const totalStartedAt = Date.now();
   const localParsedResult = parseInput(payload);
@@ -2052,7 +2261,10 @@ function prepareHybridLocalStage(payload) {
   ));
   const localDurationMs = Date.now() - totalStartedAt;
   const route = getParseRouteDecision(payload, localSafetyResult, policy);
-  const localReviewedResult = applySafeLocalReceivableRouteProjection(localSafetyResult, route);
+  const localReviewedResult = applyClearNoRecordRouteProjection(
+    applySafeLocalReceivableRouteProjection(localSafetyResult, route),
+    route
+  );
   const shouldRequestAi = [ROUTE_AI_STANDARD, ROUTE_AI_DEEP].includes(route.decision);
   const localResult = attachParseTrace(
     shouldRequestAi ? markAiNeeded(localReviewedResult, route) : Object.assign({}, localReviewedResult, { parse_route: route }),
@@ -2083,9 +2295,11 @@ function finishHybridWithoutAi(prepared) {
   if (route.decision === ROUTE_PENDING) {
     return withAiStatus(localResult, 'not_requested', {
       attempted: false,
-      reason: route.deep_review_available
+      reason: route.semantic_decision === ROUTE_NO_RECORD
+        ? '没有可记录业务；不会调用AI，也不会保存待整理。'
+        : (route.deep_review_available
         ? '这条内容需要深度核对；未主动点击前不会调用慢速 AI。'
-        : '这段内容还不能确定是一笔什么业务，先放待整理。'
+        : '这段内容还不能确定是一笔什么业务，先放待整理。')
     });
   }
   if (!shouldRequestAi) {
@@ -2230,7 +2444,9 @@ module.exports = {
   getAiFailureStatus,
   getAiBusinessResultValidity,
   getParseRouteDecision,
+  evaluateClearNonBusinessNoRecord,
   evaluateSafeLocalReceivableRoute,
+  applyClearNoRecordRouteProjection,
   applySafeLocalReceivableRouteProjection,
   getBusinessDraftSummary,
   getAiWaitLimitMs,
@@ -2246,5 +2462,6 @@ module.exports = {
   ROUTE_AI_DEEP,
   ROUTE_AI_STANDARD,
   ROUTE_LOCAL,
+  ROUTE_NO_RECORD,
   ROUTE_PENDING
 };
