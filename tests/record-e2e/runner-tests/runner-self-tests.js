@@ -877,7 +877,7 @@ const tests = [
     }
   },
   {
-    name: 'no-record-route-requires-positive-production-eligibility-evidence',
+    name: 'no-record-route-uses-the-physical-production-decision',
     run() {
       assert.strictEqual(routeFromResult({}), 'UNKNOWN');
       assert.strictEqual(routeFromResult({
@@ -890,6 +890,13 @@ const tests = [
       assert.strictEqual(routeFromResult({
         parse_route: {
           decision: 'pending',
+          semantic_decision: 'no_record',
+          no_record_eligible: true
+        }
+      }), 'PENDING');
+      assert.strictEqual(routeFromResult({
+        parse_route: {
+          decision: 'no_record',
           semantic_decision: 'no_record',
           no_record_eligible: true
         }
@@ -1068,8 +1075,8 @@ const tests = [
     async run() {
       const result = await executeOne(bundle('REC-E2E-AMB-005'));
       const raw = initialCanonicalRawResult(result);
-      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
-      assert.strictEqual(result.failureStage, 'PREFLIGHT_ERROR');
+      assert.strictEqual(result.caseStatus, 'PASS');
+      assert.strictEqual(result.failureStage, '');
       assert.notStrictEqual(result.failureOwnership, 'CONFIRMED_LOCAL_PARSER_DEFECT');
       assert.strictEqual(raw.intent, 'unknown');
       assert.strictEqual(raw.businessType, 'unknown');
@@ -1082,7 +1089,7 @@ const tests = [
         entry.layer === 'RAW_PARSER' && entry.pass === false
       )));
       assert.strictEqual(result.routeEvidence.actualRoute, 'NO_RECORD');
-      assert.strictEqual(result.routeEvidence.productionRoute, 'PENDING');
+      assert.strictEqual(result.routeEvidence.productionRoute, 'NO_RECORD');
       assert.strictEqual(result.routeEvidence.semanticRoute, 'NO_RECORD');
       assert.strictEqual(result.routeEvidence.noRecordEligible, true);
       assert.deepStrictEqual(result.routeEvidence.noRecordEligibilityExclusions, []);
@@ -1091,6 +1098,13 @@ const tests = [
       assert.strictEqual(result.routeEvidence.relationEvidenceCount, 0);
       assert.strictEqual(result.routeEvidence.asyncWorkCompleted, true);
       assert.strictEqual(result.routeEvidence.AIRequestCount, 0);
+      assert.strictEqual(result.noRecordEvidence.domainCanSaveFormal, false);
+      assert.strictEqual(result.noRecordEvidence.domainCanSavePending, false);
+      assert.strictEqual(result.noRecordEvidence.effectiveCanSaveFormal, false);
+      assert.strictEqual(result.noRecordEvidence.effectiveCanSavePending, false);
+      assert.strictEqual(result.noRecordEvidence.formalSaveVisible, false);
+      assert.strictEqual(result.noRecordEvidence.pendingSaveVisible, false);
+      assert.strictEqual(result.noRecordEvidence.deepReviewVisible, false);
       assert.strictEqual(result.noRecordEvidence.pendingSaveAttemptCount, 0);
       assert.strictEqual(result.noRecordEvidence.pendingSavedCount, 0);
       assert.strictEqual(result.noRecordEvidence.businessStateDiffIsZero, true);

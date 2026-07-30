@@ -245,6 +245,46 @@ function assertFullAttemptIntegrity(attempt, plans) {
     }
     assertLaneSet(byId.get(result.caseId), result);
     assertRuntimeIsolation(result);
+    const noRecord = result.noRecordEvidence || {};
+    if (noRecord.actualProductionRoute === 'NO_RECORD'
+      || noRecord.outcomeDisposition === 'NO_RECORD') {
+      [
+        ['domainCanSaveFormal', noRecord.domainCanSaveFormal],
+        ['domainCanSavePending', noRecord.domainCanSavePending],
+        ['effectiveCanSaveFormal', noRecord.effectiveCanSaveFormal],
+        ['effectiveCanSavePending', noRecord.effectiveCanSavePending],
+        ['formalSaveVisible', noRecord.formalSaveVisible],
+        ['pendingSaveVisible', noRecord.pendingSaveVisible],
+        ['deepReviewVisible', noRecord.deepReviewVisible],
+        ['formalSaveSucceeded', noRecord.formalSaveSucceeded],
+        ['pendingSaveSucceeded', noRecord.pendingSaveSucceeded]
+      ].forEach(([field, value]) => {
+        if (value !== false) {
+          throw integrityError(
+            'NO_RECORD_PERSISTENCE_GATE_ERROR',
+            `${result.caseId}.${field} must be false`,
+            { noRecord }
+          );
+        }
+      });
+      [
+        'businessFormalAttemptCount',
+        'businessPendingAttemptCount',
+        'storageSaveAttemptCount',
+        'transactionBeginCount',
+        'receiptCount',
+        'pendingSavedCount'
+      ].forEach((field) => assertAuditZero(
+        Number(noRecord[field] || 0),
+        `${result.caseId}.${field}`,
+        'NO_RECORD_PERSISTENCE_GATE_ERROR'
+      ));
+    }
+  });
+  const noRecordResults = attempt.results.filter((result) => {
+    const evidence = result.noRecordEvidence || {};
+    return evidence.actualProductionRoute === 'NO_RECORD'
+      || evidence.outcomeDisposition === 'NO_RECORD';
   });
   return {
     attempt: attempt.attempt,
@@ -259,6 +299,15 @@ function assertFullAttemptIntegrity(attempt, plans) {
     hostFilesystemStorageCalls: 0,
     isolationAuditNotExecutedCount: 0,
     journalCount: 0,
+    networkGuardAttempts: 0,
+    noRecordCaseCount: noRecordResults.length,
+    noRecordFormalWriteCount: noRecordResults.reduce((sum, result) => (
+      sum + ((result.noRecordEvidence || {}).formalSaveSucceeded === true ? 1 : 0)
+    ), 0),
+    noRecordPendingWriteCount: noRecordResults.reduce((sum, result) => (
+      sum + ((result.noRecordEvidence || {}).pendingSaveSucceeded === true ? 1 : 0)
+      + Number((result.noRecordEvidence || {}).pendingSavedCount || 0)
+    ), 0),
     orphanRawInvocationCount: 0,
     parserEvidenceMissingCount: 0,
     realNetworkRequests: 0,

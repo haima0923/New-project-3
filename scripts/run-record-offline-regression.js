@@ -237,6 +237,7 @@ const TESTS = Object.freeze({
   'flow-gate': testEntry('scripts/record-flow-gate.js'),
   'full-corpus-report-self-tests': testEntry('tests/record-e2e/runner-tests/full-corpus-self-tests.js'),
   'home-primary-item': testEntry('scripts/record-home-primary-item-sync-tests.js'),
+  'no-record-persistence': testEntry('scripts/record-no-record-persistence-tests.js'),
   'observation-semantics': testEntry('tests/record-e2e/runner-tests/runner-self-tests.js'),
   'offline-guard-self-tests': testEntry('scripts/record-offline-regression-tests.js'),
   'order-signal-boundary-parser': testEntry('scripts/record-parser-order-signal-boundary-tests.js'),

@@ -134,8 +134,9 @@ function buildRouteEvidence(observation, rawParser) {
   );
   return {
     actualRoute: observation && observation.route || route.decision || null,
+    actualProductionRoute: String(route.decision || '').toUpperCase() || null,
     productionRoute: String(route.decision || '').toUpperCase() || null,
-    semanticRoute: String(route.semantic_decision || route.decision || '').toUpperCase() || null,
+    semanticRoute: String(route.decision || '').toUpperCase() || null,
     noRecordEligible: Object.prototype.hasOwnProperty.call(
       route,
       'no_record_eligible'
@@ -171,8 +172,10 @@ function buildRouteEvidence(observation, rawParser) {
 
 function buildNoRecordEvidence({
   businessDiff,
+  driverEvidence,
   isolated,
   outcome,
+  page,
   rawParser,
   requestedSaveAction,
   routeEvidence
@@ -180,14 +183,30 @@ function buildNoRecordEvidence({
   const pendingCreated = businessDiff && businessDiff.pendingNotes
     && businessDiff.pendingNotes.created || [];
   const committed = isolated && isolated.committed === true;
+  const pageMethodCalls = driverEvidence && driverEvidence.pageMethodCalls || {};
+  const productionBusinessCalls = driverEvidence && driverEvidence.productionBusinessCalls || {};
+  const productionStorageCalls = driverEvidence && driverEvidence.productionStorageCalls || {};
   return {
     AIRequestCount: routeEvidence.AIRequestCount,
     actualRoute: routeEvidence.actualRoute,
+    actualProductionRoute: routeEvidence.actualProductionRoute,
     asyncWorkCompleted: routeEvidence.asyncWorkCompleted,
     businessEvidenceCount: routeEvidence.businessEvidenceCount,
     businessStateDiffIsZero: isCollectionDiffEmpty(businessDiff || {}),
     formalSaveAttemptCount: requestedSaveAction === 'SAVE_FORMAL' ? 1 : 0,
     formalSaveSucceeded: outcome.formalSaveSucceeded === true,
+    pageFormalHandlerInvocationCount: Number(
+      pageMethodCalls.saveFormal || pageMethodCalls.confirmQuickSave || 0
+    ),
+    pagePendingHandlerInvocationCount: Number(
+      pageMethodCalls.savePending || pageMethodCalls.savePendingFromConfirm || 0
+    ),
+    pageDeepReviewHandlerInvocationCount: Number(pageMethodCalls.requestDeepReview || 0),
+    businessFormalAttemptCount: Number(productionBusinessCalls.saveConfirmedDraft || 0),
+    businessPendingAttemptCount: Number(productionBusinessCalls.savePendingNote || 0),
+    storageSaveAttemptCount: Number(productionStorageCalls.saveState || 0),
+    transactionBeginCount: isolated && isolated.prepared ? 1 : 0,
+    receiptCount: isolated && isolated.commitResult && isolated.commitResult.receipt ? 1 : 0,
     noRecordEligible: routeEvidence.noRecordEligible,
     noRecordEligibilityExclusions: safeClone(
       routeEvidence.noRecordEligibilityExclusions || []
@@ -195,6 +214,14 @@ function buildNoRecordEvidence({
     noRecordEligibilityReasonCodes: safeClone(
       routeEvidence.noRecordEligibilityReasonCodes || []
     ),
+    domainCanSaveFormal: page && page.domainCanSaveFormal === true,
+    domainCanSavePending: page && page.domainCanSavePending === true,
+    effectiveCanSaveFormal: page && page.effectiveCanSaveFormal === true,
+    effectiveCanSavePending: page && page.effectiveCanSavePending === true,
+    formalSaveVisible: page && page.formalSaveVisible === true,
+    pendingSaveVisible: page && page.pendingSaveVisible === true,
+    deepReviewVisible: page && page.deepReviewVisible === true,
+    pageNoRecord: page && page.isNoRecord === true,
     outcomeDisposition: outcome.disposition,
     pendingSaveAttemptCount: requestedSaveAction === 'SAVE_PENDING' ? 1 : 0,
     pendingSaveSucceeded: outcome.pendingSaveSucceeded === true,
@@ -1093,8 +1120,11 @@ async function executeLanes(runtime, spec, plan, options = {}) {
   const routeEvidence = buildRouteEvidence(sourceObservation, rawParser);
   const noRecordEvidence = buildNoRecordEvidence({
     businessDiff: stateDiff.businessDiff,
+    driverEvidence: sourceObservation && sourceObservation.driver
+      && sourceObservation.driver.evidence,
     isolated,
     outcome,
+    page: sourceObservation && sourceObservation.afterEdits,
     rawParser,
     requestedSaveAction: spec.interaction.requestedSaveAction,
     routeEvidence

@@ -19,10 +19,7 @@ const {
 
 function routeFromResult(result = {}) {
   const route = result.parse_route || {};
-  const decision = route.semantic_decision === 'no_record'
-    && route.no_record_eligible === true
-    ? route.semantic_decision
-    : route.decision;
+  const decision = route.decision;
   return {
     local: 'LOCAL',
     pending: 'PENDING',
@@ -65,9 +62,13 @@ function pageSnapshot(driver) {
     domainCanSaveFormal: page.data.domainCanSaveFormal === true,
     domainCanSavePending: page.data.domainCanSavePending === true,
     surfaceCanCompleteFormal: page.data.surfaceCanCompleteFormal !== false,
-    effectiveCanSaveFormal: surface === 'HOME_QUICK'
-      ? page.data.disableQuickSave !== true
-      : page.data.disableFormalSave !== true,
+    effectiveCanSaveFormal: page.data.effectiveCanSaveFormal === true,
+    effectiveCanSavePending: page.data.effectiveCanSavePending === true,
+    formalSaveVisible: page.data.showFormalSaveButton === true,
+    pendingSaveVisible: page.data.showPendingButton === true,
+    deepReviewVisible: page.data.showDeepReviewButton === true,
+    isNoRecord: page.data.isNoRecord === true,
+    lastNoRecordActionRejection: safeClone(page.data.lastNoRecordActionRejection || null),
     requiresFullPage: page.data.requiresFullPage === true,
     blockingCodes: safeClone(page.data.preflightBlockingReasons || []),
     requiredSelections: safeClone(
