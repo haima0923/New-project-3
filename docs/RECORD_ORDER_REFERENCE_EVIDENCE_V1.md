@@ -14,9 +14,10 @@
 - AI prompt、AI请求或AI normalizer业务映射；
 - 120题核心业务Expected。
 
-因此，BASIC-010在本阶段仍可能保持选择前
-`requiredSelections=[] / domainCanSaveFormal=true`。下一阶段才由Domain Preflight消费
-本Evidence建立关系必选门禁。
+该阶段冻结时，BASIC-010选择前仍为
+`requiredSelections=[] / domainCanSaveFormal=true`。后续
+`candidate-record-safe-local-receivable-v1`由Domain Preflight消费本Evidence建立了关系
+必选门禁；语言Evidence本身的生成和透传合同没有改变。
 
 ## 2. 数据合同
 
@@ -151,7 +152,7 @@ Confirmation和Runner都不重新解析原文，也不读取State补造Evidence�
   - raw/Hybrid/Confirmation/Preflight输入四阶段传播；
   - AI覆盖与AI凭空创建防护2组；
   - 四阶段Evidence缺失/改写Runner硬门禁2组；
-  - Preflight门禁保持不变；
+  - Evidence阶段冻结点的Preflight门禁保持不变；
   - BASIC-009/010真实Runner目标2组。
 - Parser Invocation Graph：21/21。
 - Runner Kernel：70/70。
@@ -183,8 +184,9 @@ parser Evidence缺失、orphan、uncorrelated、shadow和隔离审计缺失均�
 `shared-core-phase1a`当前为22/26；4个差异在本阶段起始HEAD只读归档中完全相同，属于此前
 WIP已有的共享核心金样本/等价性差异，不是本轮Evidence回归，也未在本阶段修改或隐藏。
 
-## 8. 下一阶段
+## 8. 后续消费合同
 
-下一阶段只应让Domain Preflight消费结构化订单指代Evidence：明确指代的
-`create_receivable`未确认合法`orderId`时要求`SELECT_ORDER`并阻断正式保存；普通客户级
-待收款仍不得全局强制订单关系，且唯一候选也不得自动选择。
+Domain Preflight现已直接消费本结构：明确指代的`create_receivable`未确认合法
+`orderId`时要求`SELECT_ORDER`并阻断正式保存；普通客户级待收款不全局强制订单关系，
+且唯一候选也不自动选择。实现与选择前后Evidence见
+`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`。

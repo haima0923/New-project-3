@@ -1116,3 +1116,34 @@ Hybrid、Confirmation草稿和Preflight输入四阶段传播；任一阶段丢�
 本阶段只建立Evidence，不改变Domain Preflight保存资格、`requiredSelections`、Route或
 页面选择行为。详细边界和BASIC-009/010实际证据见
 `docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`。
+
+## 32. 明确订单指代待收款关系门禁合同
+
+Domain Preflight只可消费既有`relation_references.order`，不得重新扫描原文或根据
+State、候选数量、商品匹配、Case ID和Expected推导语言关系。
+
+只有满足Structured Order Reference Evidence V1全部完整性条件的本地Evidence才可信：
+kind必须在冻结枚举中，`evidenceSource=LOCAL_PARSER`、`resolvedEntityId=null`，且
+sourceField/sourceText/sourceSpan、normalizedReference和confidence必须有效。非本地、
+畸形或已解析伪结构不得触发门禁。
+
+门禁只适用于：
+
+```text
+businessType = receivable
+effectiveOperation = create_receivable
+entityType = ORDER
+explicit = true
+requiresResolution = true
+```
+
+有安全候选但未选择时必须返回`requiredSelections=[orderId]`并阻断正式保存；无安全候选、
+危险orderId或未确认的orderId同样阻断。唯一候选不得自动选择。只有真实页面选择、用户
+确认和最新State复核全部通过后才能清除关系阻断。
+
+没有明确订单Evidence的客户级待收款不得因为历史中存在订单而被强制关联。Route继续与
+保存资格分离：Safe Local仍可为LOCAL且AI调用0，但LOCAL不等于可正式保存。
+
+普通回归必须同时记录`preSelectionPreflight`、`postSelectionPreflight`和保存前最新
+State Evidence，并证明真实页面方法为`changeOrder`。详细合同见
+`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`。

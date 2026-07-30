@@ -379,3 +379,32 @@ BLOCKED         0
 相对10/110可信发布基线的两条PASS来自起始WIP中的Safe Local BASIC-009/010；本阶段只新增
 Evidence和报告观测，没有改变Case状态。详细合同见
 `docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`。
+
+## 14. Safe Local Receivable Order Gate V1 重基线
+
+Domain Preflight现在只消费既有`relation_references.order`结构。仅当业务为
+`receivable/create_receivable`且Evidence同时满足`ORDER / explicit=true /
+requiresResolution=true`时，才要求用户确认合法`orderId`。它不扫描原文，不根据历史
+候选、商品匹配、Case ID或Expected推导明确关系。
+
+`BASIC-010`选择前保持`LOCAL / AIRequestCount=0`，候选为`ord-active-a`，但
+`requiredSelections=[orderId] / ORDER_SELECTION_REQUIRED /
+domainCanSaveFormal=false`。Runner真实调用一次`changeOrder()`后，选择确认为
+`ord-active-a`，重新Preflight清除关系阻断；保存前基于最新State再次验证，最终待收款
+金额8000、日期2026-07-25、客户王总、orderId为`ord-active-a`，原文不变。
+
+`BASIC-009`没有明确订单Evidence，保持`LOCAL / AIRequestCount=0`且不要求选择订单。
+唯一或多个候选都不会自动关联；跨客户、不存在、删除、失效或未确认orderId继续阻断。
+
+120题双轮结果相对Structured Evidence冻结基线不变：
+
+```text
+PASS           12
+CASE_FAIL     108
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+两轮确定性一致；63条P0失败全部单题重跑，P1分层抽查13条，30个Cluster覆盖108/108。
+所有网络、Storage、fixture、事务清理和Parser Graph硬门禁均为0。详细政策见
+`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`。
