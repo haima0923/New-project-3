@@ -12,6 +12,7 @@ const {
   getReceivablePaymentIssue,
   getReceivableRemainingAmount,
   getTrustedRecordFlowContext,
+  isNoRecordPersistenceForbidden,
   orderMatchesProduct
 } = require('./record-domain-preflight');
 const { generateId, getCustomerDisplay, normalizeCustomer } = require('./storage');
@@ -26,6 +27,8 @@ const recordCollections = {
   todo: 'todos',
   pending: 'pendingNotes'
 };
+const NO_RECORD_FORMAL_SAVE_FORBIDDEN = 'NO_RECORD_FORMAL_SAVE_FORBIDDEN';
+const NO_RECORD_PENDING_SAVE_FORBIDDEN = 'NO_RECORD_PENDING_SAVE_FORBIDDEN';
 
 function cloneRecord(value) {
   if (!value || typeof value !== 'object') return value;
@@ -629,7 +632,16 @@ function getUnresolvedAiReason(parseResult = {}) {
   return '这条内容本应由智能整理复核，结果尚未返回，先存到待整理。';
 }
 
+function assertPendingPersistenceAllowed(parseResult = {}) {
+  if (!isNoRecordPersistenceForbidden(parseResult)) return true;
+  const error = new Error('没有可记录的生意事项，不能保存到待整理。');
+  error.code = NO_RECORD_PENDING_SAVE_FORBIDDEN;
+  error.safe = true;
+  throw error;
+}
+
 function savePendingNote(state, parseResult, reason = '信息不完整，需要稍后整理') {
+  assertPendingPersistenceAllowed(parseResult);
   const originalText = getOriginalTextFromDraft(parseResult);
   const note = {
     id: generateId('pending'),
@@ -1062,6 +1074,14 @@ function saveTodo(state, parseResult) {
 }
 
 function saveConfirmedDraft(state, parseResult) {
+  if (isNoRecordPersistenceForbidden(parseResult || {})) {
+    return {
+      type: 'error',
+      code: NO_RECORD_FORMAL_SAVE_FORBIDDEN,
+      error: '没有可记录的生意事项，不会创建正式记录或待整理。',
+      noMutation: true
+    };
+  }
   parseResult = applyFinalParseSafety(parseResult || {});
   const flowContext = getTrustedRecordFlowContext(parseResult);
   const preflight = evaluateRecordDomainPreflight({
@@ -1526,8 +1546,11 @@ function decorateRecords(state, records) {
 }
 
 module.exports = {
+  NO_RECORD_FORMAL_SAVE_FORBIDDEN,
+  NO_RECORD_PENDING_SAVE_FORBIDDEN,
   activeOrderStatuses,
   activeReceivableStatuses,
+  assertPendingPersistenceAllowed,
   appendOperationLog,
   buildOrderEditDraft,
   completeTodo,

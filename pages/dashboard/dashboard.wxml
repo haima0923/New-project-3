@@ -131,11 +131,12 @@
       </view>
       <view wx:if="{{warningText}}" class="confirm-warning">{{warningText}}</view>
       </scroll-view>
+      <view wx:if="{{isNoRecord}}" class="confirm-warning">{{noRecordMessage}}</view>
       <view class="button-row confirm-action-row">
         <button wx:if="{{showDeepReviewButton}}" class="secondary-button" bindtap="requestDeepReview">深度核对</button>
         <button wx:if="{{showContinueInput}}" class="secondary-button" bindtap="continueInput">打开完整记一笔</button>
         <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePendingFromConfirm">先放待整理</button>
-        <button class="primary-button" disabled="{{disableQuickSave}}" bindtap="confirmQuickSave">{{quickSaveText}}</button>
+        <button wx:if="{{showFormalSaveButton}}" class="primary-button" disabled="{{disableQuickSave}}" bindtap="confirmQuickSave">{{quickSaveText}}</button>
       </view>
     </view>
   </view>

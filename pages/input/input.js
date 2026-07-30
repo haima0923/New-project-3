@@ -7,7 +7,12 @@ const { addDays, diffDays, today } = require('../../utils/date');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
-const { evaluateRecordDomainPreflight, getCustomerNameMatchKind, getTrustedRecordFlowContext } = require('../../utils/record-domain-preflight');
+const {
+  evaluateRecordDomainPreflight,
+  getCustomerNameMatchKind,
+  getTrustedRecordFlowContext,
+  isNoRecordPersistenceForbidden
+} = require('../../utils/record-domain-preflight');
 const { getCatalogCheck, getProductSuggestions, getSpecSuggestions } = require('../../utils/product-catalog');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
@@ -138,6 +143,19 @@ const sourceButtonConfig = {
     showVoice: true
   }
 };
+
+function rejectNoRecordPageAction(page, parseResult, code) {
+  if (!isNoRecordPersistenceForbidden(parseResult || {})) return null;
+  const rejection = {
+    blocked: true,
+    code,
+    noBusinessCall: true,
+    noStorageCall: true
+  };
+  page.setData({ lastNoRecordActionRejection: rejection });
+  wx.showToast({ title: '没有识别到需要记录的生意事项', icon: 'none' });
+  return rejection;
+}
 
 function hasFieldValue(fields, field) {
   return fields[field] !== undefined && fields[field] !== null && fields[field] !== '';
@@ -1470,6 +1488,9 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     })
     : Object.assign({}, orderDepositState, genericOrderSelectionState);
   const canFormalSave = domainPreflight.domainCanSaveFormal === true;
+  const noRecordPersistenceForbidden = domainPreflight.noRecordPersistenceForbidden === true;
+  const canPendingSave = domainPreflight.domainCanSavePending === true
+    && !noRecordPersistenceForbidden;
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
 
   return Object.assign({
@@ -1496,6 +1517,11 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showHistoryDefaultWarning: Boolean(normalizedParseResult.history_default_warning_text),
     domainCanSaveFormal: domainPreflight.domainCanSaveFormal,
     domainCanSavePending: domainPreflight.domainCanSavePending,
+    effectiveCanSaveFormal: canFormalSave && !noRecordPersistenceForbidden,
+    effectiveCanSavePending: canPendingSave,
+    surfaceCanCompleteFormal: !noRecordPersistenceForbidden,
+    isNoRecord: noRecordPersistenceForbidden,
+    noRecordMessage: noRecordPersistenceForbidden ? '没有识别到需要记录的生意事项' : '',
     domainPreflight,
     preflightFingerprint: domainPreflight.preflightFingerprint,
     preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
@@ -1516,13 +1542,16 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     formalButtonText: canFormalSave
       ? (operation === 'update_order' ? '确认更新订单' : '确认保存')
       : (operation === 'update_order' ? '补齐后更新' : '补齐后保存'),
-    disableFormalSave: !canFormalSave,
+    disableFormalSave: !canFormalSave || noRecordPersistenceForbidden,
+    showFormalSaveButton: !noRecordPersistenceForbidden,
+    showPendingButton: canPendingSave,
     showPaymentConfirm: operation === 'record_payment',
     showNewReceivableWithPayment: operation === 'create_receivable_with_payment',
     showReceivablePicker: operation === 'record_payment' && paymentState.receivableOptions.length > 1,
     showOrderDepositConfirm: operation === 'record_order_deposit',
     showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1,
-    showDeepReviewButton: Boolean((normalizedParseResult.parse_route || {}).deep_review_available)
+    showDeepReviewButton: !noRecordPersistenceForbidden
+      && Boolean((normalizedParseResult.parse_route || {}).deep_review_available)
   }, visibility, finalWarningState, paymentState, orderSelectionState,
   genericQuotationSelectionState, customerMatchState);
 }
@@ -1545,6 +1574,13 @@ function getEmptyConfirmationData() {
     parseEvidence: null,
     showParseEvidence: false,
     showDeepReviewButton: false,
+    showFormalSaveButton: false,
+    showPendingButton: false,
+    isNoRecord: false,
+    noRecordMessage: '',
+    effectiveCanSaveFormal: false,
+    effectiveCanSavePending: false,
+    lastNoRecordActionRejection: null,
     fields: {},
     confirmItems: [],
     intent: 'unknown',
@@ -2188,7 +2224,14 @@ Page({
   },
 
   requestDeepReview() {
-    if (!this.data.parseResult || !((this.data.parseResult.parse_route || {}).deep_review_available)) return;
+    if (!this.data.parseResult) return;
+    const rejection = rejectNoRecordPageAction(
+      this,
+      this.data.parseResult,
+      'NO_RECORD_DEEP_REVIEW_FORBIDDEN'
+    );
+    if (rejection) return rejection;
+    if (!((this.data.parseResult.parse_route || {}).deep_review_available)) return;
     this.runParse('deep');
   },
 
@@ -2932,6 +2975,17 @@ Page({
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const confirmationState = buildConfirmationState(state, baseResult, this.data.intent, this.data.fields);
+    const rejection = rejectNoRecordPageAction(
+      this,
+      confirmationState.parseResult,
+      'NO_RECORD_FORMAL_SAVE_FORBIDDEN'
+    );
+    if (rejection) {
+      this.setData(Object.assign({}, confirmationState, {
+        lastNoRecordActionRejection: rejection
+      }));
+      return rejection;
+    }
     if (confirmationState.disableFormalSave) {
       const missingText = confirmationState.customerMatchWarningText
         || (confirmationState.showFieldConflicts ? '先确认聊天里的冲突信息' : '')
@@ -2977,6 +3031,25 @@ Page({
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const confirmationState = buildConfirmationState(state, baseResult, this.data.intent, this.data.fields);
+    const rejection = rejectNoRecordPageAction(
+      this,
+      confirmationState.parseResult,
+      'NO_RECORD_PENDING_SAVE_FORBIDDEN'
+    );
+    if (rejection) {
+      this.setData(Object.assign({}, confirmationState, {
+        lastNoRecordActionRejection: rejection
+      }));
+      return rejection;
+    }
+    if (confirmationState.domainCanSavePending !== true) {
+      this.setData(confirmationState);
+      wx.showToast({ title: '当前内容不能存到待整理', icon: 'none' });
+      return {
+        blocked: true,
+        code: 'PENDING_SAVE_NOT_ELIGIBLE'
+      };
+    }
     const reason = confirmationState.parseResult.history_warning_text || '用户选择稍后整理';
     const existingPending = updatePendingNote(state, this.data.editingPendingId, confirmationState.parseResult, reason);
     if (!existingPending) savePendingNote(state, confirmationState.parseResult, reason);

@@ -7,7 +7,11 @@ const { buildRecentRecords, buildTodayTasks } = require('../../utils/home-workbe
 const { requestOrderFilterReset, setNextOrderFilter, setNextRecordFilter } = require('../../utils/navigation-state');
 const { getRecordDetailUrl } = require('../../utils/record-detail');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
-const { evaluateRecordDomainPreflight, getTrustedRecordFlowContext } = require('../../utils/record-domain-preflight');
+const {
+  evaluateRecordDomainPreflight,
+  getTrustedRecordFlowContext,
+  isNoRecordPersistenceForbidden
+} = require('../../utils/record-domain-preflight');
 const { getState, saveState } = require('../../utils/storage');
 const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
 const { getFieldLabel, isVisibleField } = require('../../utils/display');
@@ -79,6 +83,19 @@ function hasResolvedAiFallback(parseResult = {}) {
 }
 const activeReceivableStatuses = ['待收', '部分收款'];
 const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
+
+function rejectNoRecordPageAction(page, parseResult, code) {
+  if (!isNoRecordPersistenceForbidden(parseResult || {})) return null;
+  const rejection = {
+    blocked: true,
+    code,
+    noBusinessCall: true,
+    noStorageCall: true
+  };
+  page.setData({ lastNoRecordActionRejection: rejection });
+  wx.showToast({ title: '没有识别到需要记录的生意事项', icon: 'none' });
+  return rejection;
+}
 
 function uniqueFields(fields) {
   return (fields || []).filter((field, index, array) => field && array.indexOf(field) === index);
@@ -464,12 +481,13 @@ function buildHomeConfirmState(parseResult, state = getState()) {
     providerKind: flowContext.providerKind || (normalized.ai_fallback || {}).provider_kind || 'NONE',
     skipFinalSafety: true
   });
+  const noRecordPersistenceForbidden = domainPreflight.noRecordPersistenceForbidden === true;
   const relationSelectionRequired = domainPreflight.blockingIssues.some((item) => (
     ['SELECT_CUSTOMER', 'SELECT_ORDER', 'SELECT_QUOTATION', 'SELECT_RECEIVABLE', 'SELECT_TARGET']
       .includes(item.requiredAction)
   ));
   const needsFullInput = Boolean(fullInputReason) || relationSelectionRequired;
-  const surfaceCanCompleteFormal = !needsFullInput;
+  const surfaceCanCompleteFormal = !needsFullInput && !noRecordPersistenceForbidden;
   const quickReady = domainPreflight.domainCanSaveFormal === true
     && surfaceCanCompleteFormal
     && primaryItemConsistency.consistent;
@@ -477,12 +495,17 @@ function buildHomeConfirmState(parseResult, state = getState()) {
   const fieldConflictLines = formatFieldConflicts(normalized.field_conflicts || []);
   const supersededFactLines = formatSupersededFacts(normalized.superseded_facts || []);
   const remarkItemLines = formatRemarkItems(normalized.remark_items || []);
+  const effectiveCanSavePending = domainPreflight.domainCanSavePending === true
+    && !noRecordPersistenceForbidden;
   return {
     parseResult: normalized,
     domainCanSaveFormal: domainPreflight.domainCanSaveFormal,
     domainCanSavePending: domainPreflight.domainCanSavePending,
+    effectiveCanSavePending,
+    isNoRecord: noRecordPersistenceForbidden,
+    noRecordMessage: noRecordPersistenceForbidden ? '没有识别到需要记录的生意事项' : '',
     surfaceCanCompleteFormal,
-    effectiveCanSaveFormal: quickReady,
+    effectiveCanSaveFormal: quickReady && !noRecordPersistenceForbidden,
     requiresFullPage: needsFullInput,
     preflightFingerprint: domainPreflight.preflightFingerprint,
     preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
@@ -504,8 +527,9 @@ function buildHomeConfirmState(parseResult, state = getState()) {
     remarkItemLines,
     showRemarkItems: Boolean(remarkItemLines.length),
     quickSaveText: quickReady ? '确认保存' : '补齐后保存',
-    disableQuickSave: !quickReady,
-    showPendingButton: Boolean(domainPreflight.domainCanSavePending && (
+    disableQuickSave: !quickReady || noRecordPersistenceForbidden,
+    showFormalSaveButton: !noRecordPersistenceForbidden,
+    showPendingButton: Boolean(effectiveCanSavePending && (
       !domainPreflight.domainCanSaveFormal
       || needsFullInput
       || safetyBlockText
@@ -516,7 +540,8 @@ function buildHomeConfirmState(parseResult, state = getState()) {
     showContinueInput: needsFullInput,
     // 多商品、聊天记录等内容先进入完整确认页，避免首页确认卡堆叠过多操作。
     // 在完整页里仍可由用户主动选择“深度核对”。
-    showDeepReviewButton: Boolean((normalized.parse_route || {}).deep_review_available) && !needsFullInput
+    showDeepReviewButton: !noRecordPersistenceForbidden
+      && Boolean((normalized.parse_route || {}).deep_review_available) && !needsFullInput
   };
 }
 
@@ -618,9 +643,15 @@ Page({
     showRemarkItems: false,
     quickSaveText: '确认保存',
     disableQuickSave: false,
+    showFormalSaveButton: false,
     showPendingButton: false,
     showContinueInput: false,
-    showDeepReviewButton: false
+    showDeepReviewButton: false,
+    isNoRecord: false,
+    noRecordMessage: '',
+    effectiveCanSaveFormal: false,
+    effectiveCanSavePending: false,
+    lastNoRecordActionRejection: null
   },
 
   onShow() {
@@ -1003,7 +1034,14 @@ Page({
 
   requestDeepReview() {
     const parseResult = this.data.parseResult;
-    if (!parseResult || !(parseResult.parse_route || {}).deep_review_available) return;
+    if (!parseResult) return;
+    const rejection = rejectNoRecordPageAction(
+      this,
+      parseResult,
+      'NO_RECORD_DEEP_REVIEW_FORBIDDEN'
+    );
+    if (rejection) return rejection;
+    if (!(parseResult.parse_route || {}).deep_review_available) return;
     const text = parseResult.extracted_text || parseResult.original_text || this.data.composerText;
     this.runQuickParse(text, parseResult.source || 'typed', null, 'deep');
   },
@@ -1038,6 +1076,7 @@ Page({
       showRemarkItems: false,
       quickSaveText: '确认保存',
       disableQuickSave: false,
+      showFormalSaveButton: false,
       showPendingButton: false,
       showContinueInput: false,
       showDeepReviewButton: false,
@@ -1049,6 +1088,17 @@ Page({
     if (!this.data.parseResult) return;
     const state = getState();
     const confirmState = buildHomeConfirmState(this.data.parseResult, state);
+    const rejection = rejectNoRecordPageAction(
+      this,
+      confirmState.parseResult,
+      'NO_RECORD_FORMAL_SAVE_FORBIDDEN'
+    );
+    if (rejection) {
+      this.setData(Object.assign({}, confirmState, {
+        lastNoRecordActionRejection: rejection
+      }));
+      return rejection;
+    }
     if (confirmState.disableQuickSave) {
       this.setData(confirmState);
       wx.showToast({
@@ -1084,6 +1134,7 @@ Page({
       showRemarkItems: false,
       quickSaveText: '确认保存',
       disableQuickSave: false,
+      showFormalSaveButton: false,
       showPendingButton: false,
       showContinueInput: false,
       showDeepReviewButton: false
@@ -1093,8 +1144,27 @@ Page({
 
   savePendingFromConfirm() {
     if (!this.data.parseResult) return;
-    const confirmState = buildHomeConfirmState(this.data.parseResult);
     const state = getState();
+    const confirmState = buildHomeConfirmState(this.data.parseResult, state);
+    const rejection = rejectNoRecordPageAction(
+      this,
+      confirmState.parseResult,
+      'NO_RECORD_PENDING_SAVE_FORBIDDEN'
+    );
+    if (rejection) {
+      this.setData(Object.assign({}, confirmState, {
+        lastNoRecordActionRejection: rejection
+      }));
+      return rejection;
+    }
+    if (confirmState.domainCanSavePending !== true) {
+      this.setData(confirmState);
+      wx.showToast({ title: '当前内容不能存到待整理', icon: 'none' });
+      return {
+        blocked: true,
+        code: 'PENDING_SAVE_NOT_ELIGIBLE'
+      };
+    }
     savePendingNote(state, confirmState.parseResult, '用户选择稍后整理');
     saveState(state, { writerSource: 'DASHBOARD_PENDING' });
     wx.showToast({ title: '已存到待整理', icon: 'success' });
@@ -1113,6 +1183,7 @@ Page({
       showRemarkItems: false,
       quickSaveText: '确认保存',
       disableQuickSave: false,
+      showFormalSaveButton: false,
       showPendingButton: false,
       showContinueInput: false,
       showDeepReviewButton: false

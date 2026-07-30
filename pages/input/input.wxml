@@ -401,13 +401,17 @@
       <view wx:if="{{warningMissingText}}" class="warning-line">缺少：{{warningMissingText}}</view>
       <view wx:if="{{warningLowText}}" class="warning-line">不确定：{{warningLowText}}</view>
     </view>
+    <view wx:if="{{isNoRecord}}" class="warning-box">
+      <view class="card-title">无需记录</view>
+      <view class="muted">{{noRecordMessage}}</view>
+    </view>
     </scroll-view>
 
     <view class="button-row confirm-action-row">
       <button class="secondary-button" bindtap="returnToInput">继续修改</button>
-      <button class="secondary-button" bindtap="savePending">先放待整理</button>
+      <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePending">先放待整理</button>
       <button wx:if="{{showDeepReviewButton}}" class="secondary-button" bindtap="requestDeepReview">深度核对</button>
-      <button class="primary-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
+      <button wx:if="{{showFormalSaveButton}}" class="primary-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
     </view>
   </view>
   </view>
