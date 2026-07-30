@@ -1355,6 +1355,33 @@ function normalizeObject(value, fallback = {}) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
 }
 
+function cloneLocalRelationReferences(value) {
+  const references = normalizeObject(value, null);
+  if (!references) return null;
+  const order = normalizeObject(references.order, null);
+  if (!order) return null;
+  return {
+    order: {
+      entityType: String(order.entityType || ''),
+      kind: String(order.kind || ''),
+      explicit: order.explicit === true,
+      requiresResolution: order.requiresResolution === true,
+      sourceText: String(order.sourceText || ''),
+      sourceSpan: {
+        start: Number(order.sourceSpan && order.sourceSpan.start),
+        end: Number(order.sourceSpan && order.sourceSpan.end)
+      },
+      confidence: Number(order.confidence),
+      normalizedReference: String(order.normalizedReference || ''),
+      resolvedEntityId: order.resolvedEntityId === null
+        ? null
+        : String(order.resolvedEntityId || ''),
+      evidenceSource: String(order.evidenceSource || ''),
+      sourceField: String(order.sourceField || '')
+    }
+  };
+}
+
 function mergeRemarkItems(localItems, aiItems) {
   const source = [].concat(toArray(aiItems), toArray(localItems));
   const seen = {};
@@ -1869,6 +1896,16 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
     merged.record_flow_context = localResult.record_flow_context;
   } else {
     delete merged.record_flow_context;
+  }
+  const localRelationReferences = cloneLocalRelationReferences(
+    localResult.relation_references
+  );
+  if (localRelationReferences) {
+    // Structured local language evidence is a production parser fact. AI
+    // payloads may neither create nor overwrite it.
+    merged.relation_references = localRelationReferences;
+  } else {
+    delete merged.relation_references;
   }
   merged.id = normalized.id || localResult.id;
   merged.source = localResult.source;

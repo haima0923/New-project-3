@@ -172,6 +172,114 @@ function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isNegatedOrderReference(text, start, length) {
+  const source = String(text || '');
+  const prefix = source.slice(Math.max(0, start - 16), start);
+  const suffix = source.slice(start + length, start + length + 16);
+  const negativePrefix = /(?:不是|并非|不算|不属于|不关联|无需关联|不用关联|不要关联|排除)(?:之前|上次|上回|旧|原来|刚才)?(?:的)?\s*$/;
+  const negativeSuffix = /^\s*(?:不是|并非|不算|不属于|不关联|无需关联|不用关联|不要关联)/;
+  return negativePrefix.test(prefix) || negativeSuffix.test(suffix);
+}
+
+function buildMatchedOrderRelationReference(text, match, details, options = {}) {
+  const sourceText = String(match && match[0] || '');
+  if (!match
+    || match.index === undefined
+    || isNegatedOrderReference(text, match.index, sourceText.length)) {
+    return null;
+  }
+  return {
+    entityType: 'ORDER',
+    kind: details.kind,
+    explicit: true,
+    requiresResolution: true,
+    sourceText,
+    sourceSpan: {
+      start: match.index,
+      end: match.index + sourceText.length
+    },
+    confidence: details.confidence,
+    normalizedReference: details.normalizedReference,
+    resolvedEntityId: null,
+    evidenceSource: 'LOCAL_PARSER',
+    sourceField: options.sourceField || 'ORIGINAL_TEXT'
+  };
+}
+
+function extractOrderRelationReference(text, options = {}) {
+  if (options.intent !== 'receivable') return null;
+  const source = String(text || '');
+  const sourceField = options.sourceField || 'ORIGINAL_TEXT';
+
+  const identifier = /(?:订单号|订单编号|单号)\s*[:：#-]?\s*([A-Za-z0-9][A-Za-z0-9_-]{1,31})/g;
+  let match;
+  while ((match = identifier.exec(source))) {
+    const reference = buildMatchedOrderRelationReference(source, match, {
+      kind: 'EXPLICIT_ORDER_IDENTIFIER',
+      confidence: 0.99,
+      normalizedReference: `ORDER_IDENTIFIER:${String(match[1]).toUpperCase()}`
+    }, { sourceField });
+    if (reference) return reference;
+  }
+
+  const customerName = String(options.customerName || '');
+  const productName = String(options.productName || '');
+  if (customerName && productName) {
+    const namedPattern = new RegExp(
+      `${escapeRegExp(customerName)}(?:的)?${escapeRegExp(productName)}订单`
+    );
+    match = namedPattern.exec(source);
+    if (match) {
+      const reference = buildMatchedOrderRelationReference(source, match, {
+        kind: 'EXPLICIT_ORDER_NAMED_REFERENCE',
+        confidence: 0.97,
+        normalizedReference: `${customerName}:${productName}:ORDER`
+      }, { sourceField });
+      if (reference) return reference;
+    }
+  }
+  if (productName) {
+    const historicalNamedPattern = new RegExp(
+      `(?:上次|之前)(?:的)?${escapeRegExp(productName)}(?:那张|那笔|的)?订单`
+    );
+    match = historicalNamedPattern.exec(source);
+    if (match) {
+      const reference = buildMatchedOrderRelationReference(source, match, {
+        kind: 'EXPLICIT_ORDER_NAMED_REFERENCE',
+        confidence: 0.97,
+        normalizedReference: `PREVIOUS:${productName}:ORDER`
+      }, { sourceField });
+      if (reference) return reference;
+    }
+  }
+
+  const deicticPatterns = [
+    {
+      pattern: /之前(?:的)?那张订单|上次(?:的)?那张订单|之前(?:的)?那单|上次(?:的)?那单|上一次订单|上一单|刚才那单/,
+      normalizedReference: 'PREVIOUS_ORDER'
+    },
+    {
+      pattern: /这张订单|这单/,
+      normalizedReference: 'THIS_ORDER'
+    },
+    {
+      pattern: /那张订单|那单/,
+      normalizedReference: 'THAT_ORDER'
+    }
+  ];
+  for (const item of deicticPatterns) {
+    match = item.pattern.exec(source);
+    if (!match) continue;
+    const reference = buildMatchedOrderRelationReference(source, match, {
+      kind: 'EXPLICIT_ORDER_DEICTIC',
+      confidence: 0.99,
+      normalizedReference: item.normalizedReference
+    }, { sourceField });
+    if (reference) return reference;
+  }
+  return null;
+}
+
 function extractPhone(text) {
   const match = text.match(/1[3-9]\d{9}/);
   return match ? match[0] : '';
@@ -1725,6 +1833,14 @@ function parseInput({
   const intentCandidates = structuredDraft && structuredDraft.intent
     ? [structuredDraft.intent].concat(scoredIntent.candidates.filter((item) => item !== structuredDraft.intent))
     : scoredIntent.candidates;
+  const orderRelationReference = extractOrderRelationReference(extractedOriginalText, {
+    intent,
+    customerName,
+    productName,
+    sourceField: source === 'paste' && rawText && originalText !== extractedOriginalText
+      ? 'EXTRACTED_TEXT'
+      : 'ORIGINAL_TEXT'
+  });
 
   const result = {
     id: `parse_${Date.now()}`,
@@ -1779,6 +1895,11 @@ function parseInput({
     },
     createdAt: new Date().toISOString()
   };
+  if (orderRelationReference) {
+    result.relation_references = {
+      order: orderRelationReference
+    };
+  }
   if (source === 'paste' && rawText && originalText !== extractedOriginalText) {
     result.raw_text = originalText;
     result.extracted_text = extractedOriginalText;
@@ -1795,6 +1916,7 @@ function parseInput({
 }
 
 module.exports = {
+  extractOrderRelationReference,
   parseInput,
   shouldSuggestAiFallback
 };

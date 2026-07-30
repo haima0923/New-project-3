@@ -517,6 +517,7 @@ function buildContentFingerprintPayload(input) {
     formalSaveBlocked: Boolean(result.formal_save_blocked),
     mixedBusiness: Boolean(result.mixed_business),
     requiresExistingRecord: Boolean(result.requires_existing_record),
+    relationReferences: safeClone(result.relation_references || {}),
     aiState: {
       status: (result.ai_fallback || {}).status || 'not_requested',
       businessResultValid: (result.ai_fallback || {}).business_result_valid === true
@@ -602,6 +603,7 @@ function buildRecordConfirmation(input = {}) {
       originalText,
       normalizedText: input.normalizedText || '',
       inputSource: input.inputSource || 'typed',
+      relationReferences: {},
       fields: [],
       items: [],
       itemConfirmations: [],
@@ -800,6 +802,7 @@ function buildRecordConfirmation(input = {}) {
     inputSource: input.inputSource || result.source || 'typed',
     businessDate: input.businessDate || '',
     businessTimezone: input.businessTimezone || '',
+    relationReferences: safeClone(result.relation_references || {}),
     fields,
     items: itemsState.items,
     itemConfirmations: buildItemConfirmations(itemsState.items, blockingIssues, capabilities),
