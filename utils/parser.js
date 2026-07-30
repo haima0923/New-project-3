@@ -1431,8 +1431,22 @@ function analyzeQuotationOrderIntent(text) {
     /来一单|下单|下订单|先下|订货|要货|确认了|追加|再来|先来|先整|先做|做货|生产|做好|开工|排产|返单/g,
     'ORDER_ACTION_POSITIVE'
   );
+  const orderEntitySignals = collectIntentSignalMatches(
+    orderSignalText,
+    /订单/g,
+    'ORDER_ENTITY_EXPLICIT'
+  );
+  const orderDeliverySignals = collectIntentSignalMatches(
+    orderSignalText,
+    /(?:今天|明天|后天|大后天|月底|月末|本周|这周|下周|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\d{1,2}月\d{1,2}日?|\d{1,2}号)(?:(?:\s|上午|中午|下午|晚上|今晚|早上|早晨|前|左右|能|可以|安排|计划|准备|统一|一起|分批|先|要|会|就)){0,3}(?:出货|出)(?=$|[，,。；;\n])/g,
+    'ORDER_DELIVERY_CONTEXTUAL_PHRASE'
+  ).filter((signal) => !/(?:还没|尚未|并未|没有|没|未|暂时不|先不|不|别|不要|不能|不会|拒绝|禁止|取消)(?:再|先|能|会|要|准备)?(?:出货|出)(?=$|[，,。；;\n])/.test(
+    signal.sourceText
+  ));
 
   return {
+    orderDeliverySignals,
+    orderEntitySignals,
     orderNegationSignals,
     orderPositiveSignals,
     orderSignalText,
@@ -1471,9 +1485,11 @@ function scoreIntent(text, context, businessDate) {
   if (/(?:不要做了?|别做|取消|先别发|暂时别发|等通知|客户取消)/.test(text) && !/(?:改这次|改成|改为|换成)/.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
   }
+  const quotationOrderIntent = analyzeQuotationOrderIntent(text);
+  const hasPhraseLevelOutboundDeliverySignal = quotationOrderIntent.orderDeliverySignals.length > 0;
   const hasClearOrderFacts = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)
     && /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)/.test(text)
-    && /交|发|拿|出/.test(text);
+    && (/交|发|拿/.test(text) || hasPhraseLevelOutboundDeliverySignal);
   if (/库存|有没有库存|还有库存|打样|样品|不是大货/.test(text) && !/先下|下单|确认了|定了|订了|先做|做货|要货/.test(text) && !hasClearOrderFacts && extractProduct(text).value) {
     return { intent: 'quotation', candidates: ['quotation', 'todo', 'unknown'] };
   }
@@ -1493,14 +1509,15 @@ function scoreIntent(text, context, businessDate) {
   };
   const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text);
   const hasTodoSignal = new RegExp(`提醒我|提醒|别忘了|待会|等下|记得|发.*?对账单|回一下|(?:今天|明天|明日|后天|大后天|上午|中午|下午|晚上|今晚|月底|月末|下周|周[一二三四五六日天]|星期[一二三四五六日天]|礼拜[一二三四五六日天]|\\d{1,2}号|\\d{1,2}日).*?(?:${TODO_ACTION_WORDS})|给(?:他|她|客户|[\\u4e00-\\u9fa5]{1,4}(?:总|姐|哥|老板|经理))?(?:回|回复)|(?:回|回复)(?:他|她|客户)`).test(text);
-  const hasDeliverySignal = /交货|发货|要发|要货|月底交|月末交|给我发|今天.*发|明天.*发|后天.*发|下午发|交|拿|出/.test(text) || /给(?:他|她)(?!回|回复)/.test(text);
+  const hasDeliverySignal = /交货|发货|要发|要货|月底交|月末交|给我发|今天.*发|明天.*发|后天.*发|下午发|交|拿/.test(text)
+    || hasPhraseLevelOutboundDeliverySignal
+    || /给(?:他|她)(?!回|回复)/.test(text);
   const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(text);
   const hasPriceSignal = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(text)
     || hasBareUnitPrice;
   const hasExplicitQuotePlan = /(?:问[^，,。；;]{0,12}(?:价|报)|(?:先)?给(?:他|她)?报|先看看价|看(?:看)?价)/.test(text);
   const hasExplicitCompletedPayment = hasExplicitCompletedPaymentSignal(text);
   const hasExplicitReceivable = hasExplicitReceivableSignal(text);
-  const quotationOrderIntent = analyzeQuotationOrderIntent(text);
   const orderSignalText = quotationOrderIntent.orderSignalText;
   const hasUnnegatedQuotationSignal = quotationOrderIntent.quotationPositiveSignals.length > 0;
   const hasExplicitQuotationSignal = quotationOrderIntent.quotationPositiveSignals.some(
@@ -1533,7 +1550,13 @@ function scoreIntent(text, context, businessDate) {
   if (/还有一笔没结|没结.*(?:\d|[零一二两三四五六七八九十百千万俩])/.test(text)) scores.receivable += 4;
   if (/来一单/.test(orderSignalText)) scores.order += 4;
   if (hasQuantity && extractProduct(text).value && /(?:下(?!周)|先整|先来|要货)/.test(orderSignalText)) scores.order += 4;
-  if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|整|周[一二三四五六日天].*(?:拿|出)/.test(orderSignalText)) scores.order += 4;
+  if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|整|周[一二三四五六日天].*拿/.test(orderSignalText)) scores.order += 4;
+  if (hasPhraseLevelOutboundDeliverySignal
+    && hasQuantity
+    && extractProduct(text).value
+    && (hasPriceSignal || countQuantityUnitPairs(text) >= 2)) {
+    scores.order += 4;
+  }
   if (/(?:按上次价格|按上回|照旧价|价格照旧).*?(?:做|补|再来|返单)/.test(orderSignalText) && hasQuantity) scores.order += 6;
   if (DEPOSIT_PAYMENT_PATTERN.test(orderSignalText) && (hasQuantity || hasDeliverySignal)) scores.order += 4;
   if (DEPOSIT_PAYMENT_PATTERN.test(orderSignalText) && hasQuantity && extractProduct(text).value) {
@@ -1542,7 +1565,7 @@ function scoreIntent(text, context, businessDate) {
   }
   if (/追加|再来|返单|补/.test(orderSignalText) && (hasQuantity || parseChineseDate(text, businessDate))) scores.order += 3;
   if (/改|改成|提前|延期|取消|别做|备注/.test(orderSignalText) && /那单|这单|订单|交期|数量|杯垫|杯子|玩具|包装袋|礼品盒|钥匙扣|水杯|扣子|收纳盒|小夜灯|饰品盒|五金挂件|贴纸|头绳|箱规/.test(orderSignalText)) scores.order += 6;
-  if ((/交|拿|出/.test(orderSignalText) || /给(?:他|她)(?!回|回复)/.test(orderSignalText)) && new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)) scores.order += 4;
+  if ((/交|拿/.test(orderSignalText) || /给(?:他|她)(?!回|回复)/.test(orderSignalText)) && new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)) scores.order += 4;
   if (hasQuantity && hasDeliverySignal && hasPriceSignal && !hasExplicitQuotationSignal) scores.order += 4;
   if (hasExplicitQuotationSignal || hasQuotationPriceFieldSignal) scores.quotation += 4;
   if (hasExplicitQuotePlan) {
@@ -1557,7 +1580,7 @@ function scoreIntent(text, context, businessDate) {
   if ((hasExplicitQuotationSignal || hasContextualQuotationSignal) && !hasQuantity) {
     scores.quotation += 1;
   }
-  if (/要|订|定|买|拿|补|先下|先整|做|整|出/.test(orderSignalText)) scores.order += 1;
+  if (/要|订|定|买|补|先下|先整|做|整/.test(orderSignalText)) scores.order += 1;
   if (/带走/.test(orderSignalText)) scores.order += 4;
   if (/刚转|到账|已到账|付了|已付|收了|收到/.test(text) && /剩|还剩|剩余|还差|补/.test(text) && !extractProduct(text).value) {
     scores.payment += 5;
@@ -1595,6 +1618,8 @@ function scoreIntent(text, context, businessDate) {
     evidence: {
       orderNegationApplied: quotationOrderIntent.orderNegationSignals.length > 0
         && !hasSurvivingOrderAction,
+      orderDeliverySignals: quotationOrderIntent.orderDeliverySignals,
+      orderEntitySignals: quotationOrderIntent.orderEntitySignals,
       orderNegationSignals: quotationOrderIntent.orderNegationSignals,
       orderPositiveSignals: quotationOrderIntent.orderPositiveSignals,
       quotationNegationSignals: quotationOrderIntent.quotationNegationSignals,
@@ -1871,6 +1896,9 @@ function parseInput({
     businessDate || undefined
   );
   const date = dateDetail.date;
+  const suppressNonBusinessOutboundDate = intent === 'unknown'
+    && /(?:出去|出门|出差|走走)/.test(normalized);
+  const effectiveDueDate = suppressNonBusinessOutboundDate ? '' : date;
   const todoTitle = ['todo', 'dunning'].includes(intent) ? extractTodoTitle(normalized, {
     customerName,
     productName
@@ -1894,7 +1922,7 @@ function parseInput({
     amount,
     remainingAmount: remainingAmount.value,
     paymentMethod: /月结/.test(normalized) ? '月结' : (DEPOSIT_PATTERN.test(normalized) ? '预付' : ''),
-    dueDate: date,
+    dueDate: effectiveDueDate,
     quoteDate: businessDate || today(),
     remark: buildRemarkText(originalText)
   };
@@ -1984,7 +2012,11 @@ function parseInput({
   if (hasUnclearMultiItem) lowConfidenceFields.push('productName', 'quantity', 'unitPrice');
   if (unitPriceMismatches.length) lowConfidenceFields.push('priceUnit');
   if ((dateDetail.ambiguous || dateDetail.invalid) && dateDetail.matchedText) lowConfidenceFields.push('dueDate');
-  if (!fields.dueDate && /月底|明天|今天|后|下周|下个月|号|日|交|结|到期/.test(normalized)) lowConfidenceFields.push('dueDate');
+  if (!suppressNonBusinessOutboundDate
+    && !fields.dueDate
+    && /月底|明天|今天|后|下周|下个月|号|日|交|结|到期/.test(normalized)) {
+    lowConfidenceFields.push('dueDate');
+  }
   if (mixedBusiness) lowConfidenceFields.push('intent');
   if (!fields.unitPrice && /上次|上图|原价|老价|老款报价|旧价|照旧|价格不变|按上回|还是|按上次/.test(normalized)) lowConfidenceFields.push('unitPrice');
 
@@ -2053,12 +2085,16 @@ function parseInput({
       statedAmount: statedAmount ? receivableAmountSource : '',
       calculatedAmount: calculatedAmount ? 'rule:quantity_times_unit_price' : '',
       remainingAmount: remainingAmount.source,
-      dueDate: getDraftFieldSource(structuredDraft, 'dueText', date ? 'rule:date_phrase' : '')
+      dueDate: suppressNonBusinessOutboundDate
+        ? ''
+        : getDraftFieldSource(structuredDraft, 'dueText', date ? 'rule:date_phrase' : '')
     },
     multi_products: hasMultiProductDraft ? multiProductNames : [],
     intent_candidates: intentCandidates,
     intent_evidence: scoredIntent.evidence || {
       orderNegationApplied: false,
+      orderDeliverySignals: [],
+      orderEntitySignals: [],
       orderNegationSignals: [],
       orderPositiveSignals: [],
       quotationNegationSignals: [],
