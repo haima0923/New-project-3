@@ -1324,6 +1324,124 @@ function extractTodoTitle(text, fields = {}) {
   return { value: customerName ? `跟进${customerName}` : '待办提醒', source: 'rule:todo_default' };
 }
 
+function collectIntentSignalMatches(text, pattern, kind) {
+  const source = String(text || '');
+  const signals = [];
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    signals.push({
+      kind,
+      sourceSpan: {
+        start: match.index,
+        end: match.index + match[0].length
+      },
+      sourceText: match[0]
+    });
+    if (match[0] === '') pattern.lastIndex += 1;
+  }
+  return signals;
+}
+
+function intentSignalSpansOverlap(left, right) {
+  return left.sourceSpan.start < right.sourceSpan.end
+    && right.sourceSpan.start < left.sourceSpan.end;
+}
+
+function analyzeQuotationOrderIntent(text) {
+  const source = String(text || '');
+  const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(source);
+  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(source);
+  const hasPrice = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(source)
+    || hasBareUnitPrice;
+  const quotationNegationSignals = collectIntentSignalMatches(
+    source,
+    /(?:(?:没有|还没|尚未|先不|不|没|未)(?:再)?(?:报价|报个价|问价|询价|报(?!告|废|销|名|警|表|税|关|到))|(?:不是|并非)(?:要)?(?:报价|报个价|问价|询价))/g,
+    'QUOTATION_ACTION_NEGATED'
+  );
+  const quotationPositiveSignals = collectIntentSignalMatches(
+    source,
+    /报价|报架|报个价|问价|询价|多少钱|价格多少|给个价格|要个价格|先算价格|先出报价单|先报|一起报|报给客户/g,
+    'QUOTATION_EXPLICIT'
+  ).filter((signal) => !quotationNegationSignals.some((negative) => (
+    intentSignalSpansOverlap(signal, negative)
+  )));
+  if (!quotationPositiveSignals.length && hasQuantity && hasPrice) {
+    quotationPositiveSignals.push(...collectIntentSignalMatches(
+      source,
+      /报(?!告|废|销|名|警|表|税|关|到)/g,
+      'QUOTATION_CONTEXTUAL_REPORT_WITH_QUANTITY_AND_PRICE'
+    ).filter((signal) => !quotationNegationSignals.some((negative) => (
+      intentSignalSpansOverlap(signal, negative)
+    ))));
+  }
+  quotationPositiveSignals.push(...collectIntentSignalMatches(
+    source,
+    /单价/g,
+    'QUOTATION_PRICE_FIELD'
+  ));
+
+  const orderDoubleNegationSignals = collectIntentSignalMatches(
+    source,
+    /(?:不是|并非)(?:没有|还没|尚未|不|没|未)(?:正式|确认)?(?:下单|下订单|订货|要货)/g,
+    'ORDER_ACTION_DOUBLE_NEGATION'
+  );
+  const orderNegationSignals = collectIntentSignalMatches(
+    source,
+    /(?:还没有|还没|尚未|并未|没有|暂时不|先不|不是|不要|拒绝|没|未|别|不)(?:再)?(?:正式|确认)?(?:下单|下订单|订货|要货)|不一定做|不要记订单/g,
+    'ORDER_ACTION_NEGATED'
+  ).filter((signal) => !orderDoubleNegationSignals.some((doubleNegative) => (
+    intentSignalSpansOverlap(signal, doubleNegative)
+  )));
+
+  const reaffirmedOrderSignals = []
+    .concat(collectIntentSignalMatches(
+      source,
+      /(?:现在|这次|今天)(?:已经|就|正式)?(?:确认)?(?:下单|下订单|订货|要货)/g,
+      'ORDER_ACTION_REAFFIRMED'
+    ))
+    .concat(collectIntentSignalMatches(
+      source,
+      /(?:已经|正式|确认)(?:下单|下订单|订货)/g,
+      'ORDER_ACTION_REAFFIRMED'
+    ))
+    .concat(collectIntentSignalMatches(
+      source,
+      /(?:不是|并非)报价[^，,。；;\n]{0,12}(?:是)?(?:正式)?(?:订单|下单)/g,
+      'ORDER_ACTION_REAFFIRMED'
+    ))
+    .concat(collectIntentSignalMatches(
+      source,
+      /(?:(?:后来|之后|随后|后面|接着|然后)[^，,。；;\n]{0,8}(?:下单|下订单|订货|要货)(?:了|啦|完成|确认)|又(?:下单|下订单|订货|要货))/g,
+      'ORDER_ACTION_REAFFIRMED'
+    ))
+    .filter((signal) => !orderNegationSignals.some((negative) => (
+      intentSignalSpansOverlap(signal, negative)
+    )))
+    .concat(orderDoubleNegationSignals);
+
+  const masked = source.split('');
+  orderNegationSignals.forEach((signal) => {
+    for (let index = signal.sourceSpan.start; index < signal.sourceSpan.end; index += 1) {
+      masked[index] = ' ';
+    }
+  });
+  const orderSignalText = masked.join('');
+  const orderPositiveSignals = collectIntentSignalMatches(
+    orderSignalText,
+    /来一单|下单|下订单|先下|订货|要货|确认了|追加|再来|先来|先整|先做|做货|生产|做好|开工|排产|返单/g,
+    'ORDER_ACTION_POSITIVE'
+  );
+
+  return {
+    orderNegationSignals,
+    orderPositiveSignals,
+    orderSignalText,
+    quotationNegationSignals,
+    quotationPositiveSignals,
+    reaffirmedOrderSignals
+  };
+}
+
 function scoreIntent(text, context, businessDate) {
   if (context === 'query') return { intent: 'query', candidates: ['query'] };
   if (EXPLICIT_NON_RECORD_PATTERN.test(text)) {
@@ -1379,10 +1497,23 @@ function scoreIntent(text, context, businessDate) {
   const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(text);
   const hasPriceSignal = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(text)
     || hasBareUnitPrice;
-  const hasStrongQuotationSignal = /报价|报架|报个价|问价|多少钱|问.*(?:价格|价|多少钱)/.test(text);
   const hasExplicitQuotePlan = /(?:问[^，,。；;]{0,12}(?:价|报)|(?:先)?给(?:他|她)?报|先看看价|看(?:看)?价)/.test(text);
   const hasExplicitCompletedPayment = hasExplicitCompletedPaymentSignal(text);
   const hasExplicitReceivable = hasExplicitReceivableSignal(text);
+  const quotationOrderIntent = analyzeQuotationOrderIntent(text);
+  const orderSignalText = quotationOrderIntent.orderSignalText;
+  const hasUnnegatedQuotationSignal = quotationOrderIntent.quotationPositiveSignals.length > 0;
+  const hasExplicitQuotationSignal = quotationOrderIntent.quotationPositiveSignals.some(
+    (signal) => signal.kind === 'QUOTATION_EXPLICIT'
+  );
+  const hasQuotationPriceFieldSignal = quotationOrderIntent.quotationPositiveSignals.some(
+    (signal) => signal.kind === 'QUOTATION_PRICE_FIELD'
+  );
+  const hasContextualQuotationSignal = quotationOrderIntent.quotationPositiveSignals.some(
+    (signal) => signal.kind === 'QUOTATION_CONTEXTUAL_REPORT_WITH_QUANTITY_AND_PRICE'
+  );
+  const hasSurvivingOrderAction = quotationOrderIntent.orderPositiveSignals.length > 0
+    || quotationOrderIntent.reaffirmedOrderSignals.length > 0;
 
   if (hasTodoSignal) scores.todo += 7;
   if (/问/.test(text) && /(回|回复|答复)/.test(text) && parseChineseDate(text, businessDate)) scores.todo += 3;
@@ -1400,39 +1531,55 @@ function scoreIntent(text, context, businessDate) {
   if (/(?:今天|明天|后天|下周|月底|月末).*付款/.test(text)) scores.receivable += 5;
   if (/没结|未结|挂账/.test(text)) scores.receivable += 6;
   if (/还有一笔没结|没结.*(?:\d|[零一二两三四五六七八九十百千万俩])/.test(text)) scores.receivable += 4;
-  if (/来一单/.test(text)) scores.order += 4;
-  if (hasQuantity && extractProduct(text).value && /(?:下(?!周)|先整|先来|要货)/.test(text)) scores.order += 4;
-  if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|整|周[一二三四五六日天].*(?:拿|出)/.test(text)) scores.order += 4;
-  if (/(?:按上次价格|按上回|照旧价|价格照旧).*?(?:做|补|再来|返单)/.test(text) && hasQuantity) scores.order += 6;
-  if (DEPOSIT_PAYMENT_PATTERN.test(text) && (hasQuantity || hasDeliverySignal)) scores.order += 4;
-  if (DEPOSIT_PAYMENT_PATTERN.test(text) && hasQuantity && extractProduct(text).value) {
+  if (/来一单/.test(orderSignalText)) scores.order += 4;
+  if (hasQuantity && extractProduct(text).value && /(?:下(?!周)|先整|先来|要货)/.test(orderSignalText)) scores.order += 4;
+  if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|整|周[一二三四五六日天].*(?:拿|出)/.test(orderSignalText)) scores.order += 4;
+  if (/(?:按上次价格|按上回|照旧价|价格照旧).*?(?:做|补|再来|返单)/.test(orderSignalText) && hasQuantity) scores.order += 6;
+  if (DEPOSIT_PAYMENT_PATTERN.test(orderSignalText) && (hasQuantity || hasDeliverySignal)) scores.order += 4;
+  if (DEPOSIT_PAYMENT_PATTERN.test(orderSignalText) && hasQuantity && extractProduct(text).value) {
     scores.order += 8;
     scores.payment = Math.max(0, scores.payment - 4);
   }
-  if (/追加|再来|返单|补/.test(text) && (hasQuantity || parseChineseDate(text, businessDate))) scores.order += 3;
-  if (/改|改成|提前|延期|取消|别做|备注/.test(text) && /那单|这单|订单|交期|数量|杯垫|杯子|玩具|包装袋|礼品盒|钥匙扣|水杯|扣子|收纳盒|小夜灯|饰品盒|五金挂件|贴纸|头绳|箱规/.test(text)) scores.order += 6;
-  if ((/交|拿|出/.test(text) || /给(?:他|她)(?!回|回复)/.test(text)) && new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)) scores.order += 4;
-  if (hasQuantity && hasDeliverySignal && hasPriceSignal && !hasStrongQuotationSignal) scores.order += 4;
-  if (hasStrongQuotationSignal || /单价|要个价格/.test(text)) scores.quotation += 4;
+  if (/追加|再来|返单|补/.test(orderSignalText) && (hasQuantity || parseChineseDate(text, businessDate))) scores.order += 3;
+  if (/改|改成|提前|延期|取消|别做|备注/.test(orderSignalText) && /那单|这单|订单|交期|数量|杯垫|杯子|玩具|包装袋|礼品盒|钥匙扣|水杯|扣子|收纳盒|小夜灯|饰品盒|五金挂件|贴纸|头绳|箱规/.test(orderSignalText)) scores.order += 6;
+  if ((/交|拿|出/.test(orderSignalText) || /给(?:他|她)(?!回|回复)/.test(orderSignalText)) && new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)) scores.order += 4;
+  if (hasQuantity && hasDeliverySignal && hasPriceSignal && !hasExplicitQuotationSignal) scores.order += 4;
+  if (hasExplicitQuotationSignal || hasQuotationPriceFieldSignal) scores.quotation += 4;
   if (hasExplicitQuotePlan) {
     scores.quotation += 10;
     scores.order = Math.max(0, scores.order - 6);
   }
-  if (/报/.test(text) && hasQuantity && hasPriceSignal) {
-    scores.quotation += /报价|报架|报个价|问价|多少钱|跟进|单价|价格/.test(text) ? 9 : 4;
+  if (hasUnnegatedQuotationSignal && hasQuantity && hasPriceSignal) {
+    scores.quotation += hasExplicitQuotationSignal ? 9 : (hasContextualQuotationSignal ? 4 : 0);
   }
   if (/问/.test(text) && hasQuantity && hasPriceSignal && !hasDeliverySignal) scores.quotation += 4;
-  if (/报价|价格|单价/.test(text) && /改|补一下/.test(text)) scores.quotation += 6;
-  if (/报/.test(text) && !hasQuantity) scores.quotation += 1;
-  if (/要|订|定|买|拿|补|先下|先整|做|整|出/.test(text)) scores.order += 1;
-  if (/带走/.test(text)) scores.order += 4;
+  if (hasUnnegatedQuotationSignal && /报价|价格|单价/.test(text) && /改|补一下/.test(text)) scores.quotation += 6;
+  if ((hasExplicitQuotationSignal || hasContextualQuotationSignal) && !hasQuantity) {
+    scores.quotation += 1;
+  }
+  if (/要|订|定|买|拿|补|先下|先整|做|整|出/.test(orderSignalText)) scores.order += 1;
+  if (/带走/.test(orderSignalText)) scores.order += 4;
   if (/刚转|到账|已到账|付了|已付|收了|收到/.test(text) && /剩|还剩|剩余|还差|补/.test(text) && !extractProduct(text).value) {
     scores.payment += 5;
     scores.order = 0;
   }
-  if (/不下单|先不下单|不是要货|先问价|只问|问价|不一定做|先报|先都报|一起报|报给客户|先了解|不要记订单|库存/.test(text)) {
+  if (/先问价|只问|问价|先报|先都报|一起报|报给客户|先了解|库存/.test(text)
+    && hasUnnegatedQuotationSignal) {
     scores.quotation += 4;
     scores.order = Math.max(0, scores.order - 8);
+  }
+  if (quotationOrderIntent.reaffirmedOrderSignals.length) {
+    scores.order += 20;
+  } else if (quotationOrderIntent.orderNegationSignals.length && hasSurvivingOrderAction) {
+    scores.order += 6;
+  }
+  if (quotationOrderIntent.orderNegationSignals.length
+    && !hasSurvivingOrderAction) {
+    scores.order = 0;
+  }
+  if (quotationOrderIntent.quotationNegationSignals.length
+    && !hasUnnegatedQuotationSignal) {
+    scores.quotation = 0;
   }
   if (/老客户/.test(text) && !hasQuantity && !extractProduct(text).value) scores.order = 0;
 
@@ -1444,7 +1591,27 @@ function scoreIntent(text, context, businessDate) {
 
   return {
     intent: isDunning ? 'dunning' : (candidates[0] || 'unknown'),
-    candidates: candidates.length ? candidates : ['unknown']
+    candidates: candidates.length ? candidates : ['unknown'],
+    evidence: {
+      orderNegationApplied: quotationOrderIntent.orderNegationSignals.length > 0
+        && !hasSurvivingOrderAction,
+      orderNegationSignals: quotationOrderIntent.orderNegationSignals,
+      orderPositiveSignals: quotationOrderIntent.orderPositiveSignals,
+      quotationNegationSignals: quotationOrderIntent.quotationNegationSignals,
+      quotationPositiveSignals: quotationOrderIntent.quotationPositiveSignals,
+      reaffirmedOrderSignals: quotationOrderIntent.reaffirmedOrderSignals,
+      scores: { ...scores },
+      winningIntent: isDunning ? 'dunning' : (candidates[0] || 'unknown'),
+      winningReason: (quotationOrderIntent.reaffirmedOrderSignals.length
+        || (quotationOrderIntent.orderNegationSignals.length && hasSurvivingOrderAction))
+        && candidates[0] === 'order'
+        ? 'REAFFIRMED_ORDER_ACTION'
+        : (quotationOrderIntent.orderNegationSignals.length
+          && quotationOrderIntent.quotationPositiveSignals.length
+          && candidates[0] === 'quotation'
+          ? 'EXPLICIT_QUOTATION_WITH_NEGATED_ORDER_ACTION'
+          : 'HIGHEST_INTENT_SCORE')
+    }
   };
 }
 
@@ -1572,34 +1739,40 @@ function getDraftFieldSource(draft, field, fallback) {
 }
 
 function hasExplicitQuotationSignal(text) {
-  const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text);
-  const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(text);
-  const hasPrice = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(text)
-    || hasBareUnitPrice;
-  return /报价|报架|报个价|问价|多少钱|要个价格|先报|一起报|报给客户/.test(text)
-    || (/报/.test(text) && hasQuantity && hasPrice);
+  return analyzeQuotationOrderIntent(text).quotationPositiveSignals.some(
+    (signal) => signal.kind !== 'QUOTATION_PRICE_FIELD'
+  );
 }
 
 function detectMixedBusiness(text) {
   const source = String(text || '');
+  const quotationOrderIntent = analyzeQuotationOrderIntent(source);
+  const orderSignalText = quotationOrderIntent.orderSignalText;
   const hasSeparator = /(?:另外|还有一笔|同时|再说一笔|另一边|除此之外)/.test(source);
   const kinds = [];
   const hasItemQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(source);
   const hasTodoSignal = /提醒我|别忘了|记得/.test(source);
-  const hasQuotationSignal = /报价|报个价|问价|多少钱|先报/.test(source)
+  const hasQuotationSignal = quotationOrderIntent.quotationPositiveSignals.some(
+    (signal) => signal.kind !== 'QUOTATION_PRICE_FIELD'
+  )
     && !(hasTodoSignal && /报价单/.test(source) && !hasItemQuantity);
   if (hasQuotationSignal) kinds.push('quotation');
-  const hasExplicitNoOrder = /(?:还没|没有|没|未)(?:正式)?下单/.test(source);
   const hasCompletedPayment = hasExplicitCompletedPaymentSignal(source);
-  const hasOrderAction = /下单|先下|订货|定了|先做|做货|要货|交货|发货|要发|追加|先整|生产|开工|排产|返单/.test(source)
-    || (hasItemQuantity && /确认了|再来|先来|做好/.test(source))
-    || /(?:订单|这单|那单|货|商品|产品)[^，,。；;\n]{0,8}(?:确认了|做好)|(?:确认了|做好)[^，,。；;\n]{0,8}(?:订单|这单|那单|货|商品|产品)/.test(source)
-    || new RegExp(`补\\s*(?:${numberPattern()})`).test(source)
-    || new RegExp(`订(?!单)[^，,。；;\\n]{0,6}(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})`).test(source)
-    || /(?:那单|这单|订单|交期|数量)[^，,。；;\n]{0,12}(?:改|提前|延期|取消|备注|追加)|(?:改|提前|延期|取消|备注|追加)[^，,。；;\n]{0,12}(?:那单|这单|订单|交期|数量)/.test(source);
-  const hasOrderReference = /订单/.test(source);
-  if ((!hasExplicitNoOrder && (hasOrderAction || (!hasCompletedPayment && hasOrderReference)))
-    || (hasItemQuantity && /(?:明天|后天|本周|这周|下周|周[一二三四五六日天]|交|拿|发)/.test(source))) kinds.push('order');
+  const hasOrderAction = /下单|先下|订货|定了|先做|做货|要货|交货|发货|要发|追加|先整|生产|开工|排产|返单/.test(orderSignalText)
+    || (hasItemQuantity && /确认了|再来|先来|做好/.test(orderSignalText))
+    || /(?:订单|这单|那单|货|商品|产品)[^，,。；;\n]{0,8}(?:确认了|做好)|(?:确认了|做好)[^，,。；;\n]{0,8}(?:订单|这单|那单|货|商品|产品)/.test(orderSignalText)
+    || new RegExp(`补\\s*(?:${numberPattern()})`).test(orderSignalText)
+    || new RegExp(`订(?!单)[^，,。；;\\n]{0,6}(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})`).test(orderSignalText)
+    || /(?:那单|这单|订单|交期|数量)[^，,。；;\n]{0,12}(?:改|提前|延期|取消|备注|追加)|(?:改|提前|延期|取消|备注|追加)[^，,。；;\n]{0,12}(?:那单|这单|订单|交期|数量)/.test(orderSignalText);
+  const hasOrderReference = /订单/.test(orderSignalText);
+  const suppressNegatedOrder = quotationOrderIntent.orderNegationSignals.length > 0
+    && !hasOrderAction
+    && !quotationOrderIntent.reaffirmedOrderSignals.length;
+  if (!suppressNegatedOrder && (
+    hasOrderAction
+      || (!hasCompletedPayment && hasOrderReference)
+      || (hasItemQuantity && /(?:明天|后天|本周|这周|下周|周[一二三四五六日天]|交|拿|发)/.test(source))
+  )) kinds.push('order');
   if (hasCompletedPayment && !/(?:定金|订金|预付)/.test(source)) kinds.push('payment');
   if (/欠款|还差|未结|没结|尾款|待收/.test(source)) kinds.push('receivable');
   if (hasTodoSignal) kinds.push('todo');
@@ -1884,6 +2057,17 @@ function parseInput({
     },
     multi_products: hasMultiProductDraft ? multiProductNames : [],
     intent_candidates: intentCandidates,
+    intent_evidence: scoredIntent.evidence || {
+      orderNegationApplied: false,
+      orderNegationSignals: [],
+      orderPositiveSignals: [],
+      quotationNegationSignals: [],
+      quotationPositiveSignals: [],
+      reaffirmedOrderSignals: [],
+      scores: {},
+      winningIntent: intent,
+      winningReason: 'EARLY_INTENT_RULE'
+    },
     ai_fallback: {
       needed: !explicitNoRecord && shouldSuggestAiFallback({
         text: normalized,
