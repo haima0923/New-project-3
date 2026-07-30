@@ -473,3 +473,39 @@ BLOCKED         0
 network guard attempt均为0。新增raw Evidence字段使39条已提交Case的aiParseLogs及
 plan/receipt指纹机械变化，但全部业务Diff、revision和提交语义不变。详细边界见
 `docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`。
+
+## 17. Clear Non-Business NO_RECORD Route V1 重基线
+
+`AMB-005`原文“今天天气不错，晚点出去走走”的raw继续为`unknown/null`，业务信号、
+结构化业务字段和关系Evidence均为0。Parser、Hybrid及异步采集完整结束后，真实生产
+Route现在返回canonical `NO_RECORD`，而不是由Runner事后把PENDING投影成NO_RECORD。
+Route reasonCodes包含`CLEAR_NON_BUSINESS / NO_BUSINESS_EVIDENCE /
+NO_STRUCTURED_FIELDS / NO_RELATION_EVIDENCE / PROCESSING_COMPLETE`，AI请求0且
+Deep Review不可用。
+
+Domain Preflight对canonical NO_RECORD同时关闭正式和pending保存资格。FULL_PAGE和
+HOME_QUICK隐藏正式保存、“先放待整理”和Deep Review；即使直接调用隐藏handler或绕过
+页面调用business，`saveConfirmedDraft()`和`savePendingNote()`也会在任何mutation、
+Storage或事务开始前分别以`NO_RECORD_FORMAL_SAVE_FORBIDDEN`和
+`NO_RECORD_PENDING_SAVE_FORBIDDEN`拒绝。
+
+本门禁不等于`unknown => NO_RECORD`。含客户、商品、金额、日期、关系Evidence、缺字段、
+低置信、冲突、AI未决或未完成异步工作的输入仍保持PENDING。BASIC-019/020和
+AMB-001/002/014继续可以保存pending；AMB-012因日期Evidence保持PENDING；
+VOICE-004/006和MULTI-009没有提前终止，MULTI-009调用图仍为2个Hybrid、26个Raw。
+
+120题最终离线双轮均为：
+
+```text
+PASS           14
+CASE_FAIL     106
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+相对13/107冻结基线只新增`AMB-005`一条PASS。两轮确定性一致；63条P0失败全部单题重跑，
+P1分层抽查13条，28个Cluster覆盖106/106。每轮`noRecordCaseCount=1`，
+`noRecordFormalWriteCount=0`，`noRecordPendingWriteCount=0`；网络、真实Storage、
+fixture、跨Case泄漏、Journal/Backup、Parser Evidence、orphan/uncorrelated/shadow
+调用和隔离审计缺失硬门禁全部为0。详细政策见
+`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`。

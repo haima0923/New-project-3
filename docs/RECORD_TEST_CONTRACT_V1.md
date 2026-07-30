@@ -1229,3 +1229,41 @@ NO_RECORD映射层暴露独立差异，但不得再归为本地parser缺陷。
 quotation/receivable/payment保护。不能通过统一降低confidence或修改Route、AI、
 Preflight和Expected实现。详细规则见
 `docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`。
+
+## 35. Clear Non-Business NO_RECORD持久化合同
+
+NO_RECORD必须是真实生产Route决定，不能仅由Runner事后投影。只有业务信号、结构化业务
+字段和关系Evidence均为0，missing/low-confidence/conflict和AI未决均为空，而且Parser、
+Hybrid、异步与Evidence采集全部完成时才可成立。
+
+canonical NO_RECORD必须同时满足：
+
+```text
+AIRequestCount = 0
+deepReviewAvailable = false
+domainCanSaveFormal = false
+domainCanSavePending = false
+effectiveCanSaveFormal = false
+effectiveCanSavePending = false
+formalSaveSucceeded = false
+pendingSaveSucceeded = false
+persistedRecordType = null
+```
+
+FULL_PAGE与HOME_QUICK必须同时隐藏正式、pending和Deep Review入口，并在handler中再次
+fail closed。business的正式与pending入口必须消费canonical Route，在任何mutation、
+Storage、事务、Receipt、Journal或Backup前拒绝NO_RECORD。不得扫描闲聊关键词，不得把
+所有unknown输入变成NO_RECORD。
+
+合法PENDING仍可保留严格原文并保存pending note。含客户、商品、金额、日期、关系
+Evidence、缺字段、低置信、冲突、AI未决、语音或多轮未完成的输入不得被提前丢弃。
+
+全量每轮新增硬门禁：
+
+```text
+noRecordPendingWriteCount = 0
+noRecordFormalWriteCount = 0
+```
+
+专项必须直接调用页面handler和business方法，证明UI隐藏不能被绕过，并同时证明合法
+PENDING保存不受影响。详细合同见`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`。
