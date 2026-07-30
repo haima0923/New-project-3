@@ -1,6 +1,9 @@
 const { AsyncLocalStorage } = require('async_hooks');
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
-const { compactRawParser } = require('./observation-semantics');
+const {
+  compactRawParser,
+  compactRelationReferences
+} = require('./observation-semantics');
 
 const PARSER_PATH = require.resolve('../../../utils/parser');
 const AI_PARSER_PATH = require.resolve('../../../utils/ai-parser');
@@ -53,6 +56,7 @@ function summarizeRawResult(result) {
     intent: compact.intent,
     missingFields: compact.missingFields,
     operation: compact.operation,
+    relationReferences: compact.relationReferences,
     safetyStatus: compact.safety && compact.safety.status || ''
   };
 }
@@ -61,6 +65,9 @@ function summarizeHybridResult(result) {
   return {
     businessType: String(result && result.intent || 'unknown'),
     operation: result && result.operation || null,
+    relationReferences: compactRelationReferences(
+      result && result.relation_references
+    ),
     route: result && result.parse_route && result.parse_route.decision || '',
     source: result && result.source || ''
   };

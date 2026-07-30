@@ -216,6 +216,7 @@ function compactCaseResult(result) {
     preflightEvidence: result.preflightEvidence,
     primaryFailure: result.primaryFailure,
     productionObservation: result.productionObservation,
+    relationEvidence: result.relationEvidence,
     requiredCapabilities: result.requiredCapabilities,
     restartEvidence: result.restartEvidence,
     riskLevel: result.riskLevel,

@@ -27,6 +27,7 @@ const { assertIsolationAudit } = require('./assert-isolation-audit');
 const {
   actualOutcome,
   canonicalSemanticResult,
+  compactRelationReferences,
   proposalFromDraft
 } = require('./observation-semantics');
 const {
@@ -86,6 +87,9 @@ function deriveProductionObservation(spec, observation) {
     businessType: businessPreflight.businessType,
     operation: businessPreflight.operation,
     preflightFingerprint: businessPreflight.preflightFingerprint,
+    preflightInputRelationReferences: compactRelationReferences(
+      draft.relation_references
+    ),
     requiredSelections: safeClone(businessPreflight.requiredSelections || [])
   };
 }
@@ -141,6 +145,87 @@ function buildRouteEvidence(observation, rawParser) {
       item && item.phase === 'DEEP_REVIEW'
     )),
     evidenceSource: 'ACTUAL_PARSE_ROUTE'
+  };
+}
+
+function buildRelationEvidence(rawParser, confirmationDraft, productionObservation) {
+  const hybridInvocations = rawParser && rawParser.hybridInvocations || [];
+  const rawStages = hybridInvocations.flatMap((hybrid) => (
+    (hybrid.rawInvocations || []).map((raw) => ({
+      hybridInvocationId: hybrid.hybridInvocationId,
+      rawInvocationId: raw.rawInvocationId,
+      relationReferences: compactRelationReferences(
+        raw.resultSummary && raw.resultSummary.relationReferences
+      )
+    }))
+  )).filter((stage) => stage.relationReferences.order);
+  const hybridStages = hybridInvocations.map((hybrid) => ({
+    hybridInvocationId: hybrid.hybridInvocationId,
+    phase: hybrid.phase,
+    relationReferences: compactRelationReferences(
+      hybrid.resultSummary && hybrid.resultSummary.relationReferences
+    )
+  })).filter((stage) => stage.relationReferences.order);
+  const confirmationReferences = compactRelationReferences(
+    confirmationDraft && confirmationDraft.relation_references
+  );
+  const preflightInputReferences = compactRelationReferences(
+    productionObservation && productionObservation.preflightInputRelationReferences
+  );
+  const order = preflightInputReferences.order
+    || confirmationReferences.order
+    || hybridStages[0] && hybridStages[0].relationReferences.order
+    || rawStages[0] && rawStages[0].relationReferences.order
+    || null;
+  const allReferences = []
+    .concat(rawStages.map((stage) => stage.relationReferences.order))
+    .concat(hybridStages.map((stage) => stage.relationReferences.order))
+    .concat(confirmationReferences.order || [])
+    .concat(preflightInputReferences.order || []);
+  if (order) {
+    const stageMissing = rawStages.length === 0
+      || hybridStages.length !== hybridInvocations.length
+      || !confirmationReferences.order
+      || !preflightInputReferences.order;
+    if (stageMissing) {
+      throw Object.assign(new Error(
+        'Structured order relation evidence did not reach every production stage'
+      ), {
+        code: 'RELATION_EVIDENCE_PROPAGATION_MISSING'
+      });
+    }
+    const expectedFingerprint = stableHash(order, 'relation-evidence-propagation-v1');
+    const mismatch = allReferences.some((reference) => (
+      stableHash(reference, 'relation-evidence-propagation-v1') !== expectedFingerprint
+    ));
+    if (mismatch) {
+      throw Object.assign(new Error(
+        'Structured order relation evidence changed between production stages'
+      ), {
+        code: 'RELATION_EVIDENCE_PROPAGATION_MISMATCH'
+      });
+    }
+  }
+  const propagationStages = [];
+  if (rawStages.length) propagationStages.push('RAW_PARSER');
+  if (hybridStages.length) propagationStages.push('HYBRID_RESULT');
+  if (confirmationReferences.order) propagationStages.push('CONFIRMATION_DRAFT');
+  if (preflightInputReferences.order) propagationStages.push('PREFLIGHT_INPUT');
+  return {
+    relationEvidenceSource: order && order.evidenceSource || null,
+    relationEvidenceKind: order && order.kind || null,
+    relationEvidenceSourceSpan: order ? safeClone(order.sourceSpan) : null,
+    relationEvidenceRequiresResolution: order
+      ? order.requiresResolution === true
+      : null,
+    relationEvidenceResolvedId: order ? order.resolvedEntityId : null,
+    relationEvidencePropagationStages: propagationStages,
+    stages: {
+      rawParser: rawStages,
+      hybridResult: hybridStages,
+      confirmationDraft: confirmationReferences,
+      preflightInput: preflightInputReferences
+    }
   };
 }
 
@@ -902,6 +987,11 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     rawParser,
     semanticResult
   };
+  const relationEvidence = buildRelationEvidence(
+    rawParser,
+    sourceDraft,
+    primaryProductionObservation
+  );
   return {
     actualInput: observationPublic.actualInput,
     aiEvidence: {
@@ -934,6 +1024,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       requiredSelections: primaryProductionObservation.requiredSelections
     },
     productionObservation: primaryProductionObservation,
+    relationEvidence,
     relationReferenceTamperEvidence: relationTamper,
     restartEvidence: restart,
     restartRequest,
@@ -955,6 +1046,7 @@ async function executeLanes(runtime, spec, plan, options = {}) {
 }
 
 module.exports = {
+  buildRelationEvidence,
   deriveProductionObservation,
   executeLanes,
   productionEligibility

@@ -197,6 +197,7 @@ const TESTS = Object.freeze({
   'home-primary-item': testEntry('scripts/record-home-primary-item-sync-tests.js'),
   'observation-semantics': testEntry('tests/record-e2e/runner-tests/runner-self-tests.js'),
   'offline-guard-self-tests': testEntry('scripts/record-offline-regression-tests.js'),
+  'order-reference-evidence': testEntry('scripts/record-parser-order-reference-evidence-tests.js'),
   'order-selection': testEntry('tests/record-e2e/runner-tests/order-selection-surface-tests.js'),
   'page-action-registry': testEntry('tests/record-e2e/runner-tests/page-action-registry-tests.js'),
   'parser-invocation-graph': testEntry('tests/record-e2e/runner-tests/parser-invocation-graph-tests.js'),

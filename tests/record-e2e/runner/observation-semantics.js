@@ -17,6 +17,43 @@ function normalizeRawOperation(value) {
   return value === undefined || value === null || value === '' ? null : String(value);
 }
 
+function compactRelationReferences(value) {
+  const references = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
+  const order = references.order && typeof references.order === 'object'
+    && !Array.isArray(references.order)
+    ? references.order
+    : null;
+  if (!order) return {};
+  return {
+    order: {
+      confidence: Number.isFinite(Number(order.confidence))
+        ? Number(order.confidence)
+        : null,
+      entityType: String(order.entityType || ''),
+      evidenceSource: String(order.evidenceSource || ''),
+      explicit: order.explicit === true,
+      kind: String(order.kind || ''),
+      normalizedReference: String(order.normalizedReference || ''),
+      requiresResolution: order.requiresResolution === true,
+      resolvedEntityId: order.resolvedEntityId === null
+        ? null
+        : String(order.resolvedEntityId || ''),
+      sourceSpan: {
+        start: Number.isFinite(Number(order.sourceSpan && order.sourceSpan.start))
+          ? Number(order.sourceSpan.start)
+          : null,
+        end: Number.isFinite(Number(order.sourceSpan && order.sourceSpan.end))
+          ? Number(order.sourceSpan.end)
+          : null
+      },
+      sourceText: String(order.sourceText || ''),
+      sourceField: String(order.sourceField || '')
+    }
+  };
+}
+
 function compactRawParser(result = {}) {
   return {
     businessType: String(result.intent || 'unknown'),
@@ -24,6 +61,7 @@ function compactRawParser(result = {}) {
     intent: String(result.intent || 'unknown'),
     missingFields: safeClone(result.missing_fields || []),
     operation: normalizeRawOperation(result.operation),
+    relationReferences: compactRelationReferences(result.relation_references),
     safety: safeClone(result.local_parse_safety || result.final_parse_safety || {}),
     source: 'PRODUCTION_LOCAL_PARSER'
   };
@@ -232,6 +270,7 @@ module.exports = {
   RAW_PARSER_STATUSES,
   actualOutcome,
   canonicalSemanticResult,
+  compactRelationReferences,
   compactRawParser,
   expectedOutcome,
   expectedProposal,
