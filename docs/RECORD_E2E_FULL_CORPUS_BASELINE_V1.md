@@ -442,3 +442,34 @@ BLOCKED         0
 
 `AMB-005`继续为唯一已确认本地parser缺陷；详细边界见
 `docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`。
+
+## 16. Order Signal Boundary Parser V1 重基线
+
+`AMB-005`原文“今天天气不错，晚点出去走走”没有任何业务字段。旧parser的动态Evidence
+只有`order=1`，其他intent全部为0且`orderPositiveSignals=[]`；静态审计确认唯一分数来自
+通用订单评分中的裸`/出/`。
+
+本阶段移除单字“出/拿”的独立order分数，并把“日期+出”限制为完整交付短语及商品、数量
+加价格或多商品结构组合。“周五出”交付简写与明确下单、订单实体、多商品订单继续有效；
+“出去、出门、出差、出错、报价出了吗、货款打出去了、给王总出500个”不再凭单字生成
+order。
+
+`AMB-005`现在raw为`unknown/null`、order分数0、AI调用0、正式及待整理保存均为false，
+全部业务Diff为0。它不再属于确认本地parser缺陷；当前最早差异推进为`ROUTE_ERROR`，
+因为生产Route仍为PENDING而Case规范语义为NO_RECORD，本阶段没有修改Route或Preflight。
+
+120题双轮均为：
+
+```text
+PASS           13
+CASE_FAIL     107
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+相对13/107冻结基线总数不变。`LOCAL_PARSE_ERROR`从7降为6，`ROUTE_ERROR`从42升为43，
+`CONFIRMED_LOCAL_PARSER_DEFECT`从1降为0，`UNCLASSIFIED_REQUIRES_REVIEW`从95升为96。
+63条P0失败全部单题重跑，P1分层抽查13条，28个Cluster覆盖107/107。所有隔离硬门禁及
+network guard attempt均为0。新增raw Evidence字段使39条已提交Case的aiParseLogs及
+plan/receipt指纹机械变化，但全部业务Diff、revision和提交语义不变。详细边界见
+`docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`。

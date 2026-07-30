@@ -1196,3 +1196,36 @@ orders diff = 0
 修复不能通过降低置信度把Case交给AI，也不能修改Route、Preflight、业务Expected或保存
 安全。详细规则、专项矩阵和全量证据见
 `docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`。
+
+## 34. 订单单字信号边界合同
+
+单字“出”或“拿”不得作为order充分Evidence。Parser必须区分短语级订单动作、明确订单
+实体、受约束交付短语与普通词语组成部分。
+
+以下内容不得仅因“出”创建订单：
+
+```text
+出去 / 出门 / 出差 / 出现 / 出错
+发出去 / 拿出去 / 说出去
+报价出了吗 / 货款打出去了 / 出库 / 准备出货 / 出口报价
+```
+
+明确`下单、订货、要货、订单、先做、做货、生产、排产、返单`继续按现有合同产生
+短语级Evidence。`出口订单`只能因“订单”成立，不能因“出”成立。
+
+项目既有“周五出”交付简写必须保存最小`sourceText/sourceSpan`，并且只有在同时存在
+商品、数量及明确价格或多商品数量结构时才能参与order评分。“周五出去走走”“明天出一批”
+和“给王总出500个”不得借此进入order。
+
+交付短语本身存在否定时也不得成为正向Evidence；日期和“出”之间不能开放任意字符，
+只接受既有的交付修饰词。至少覆盖“周五不出、先不出、不能出、还没出、没法出、无法出、
+来不及出”，即使同句存在完整商品、数量和价格也不能凭该否定交付动作创建订单。
+
+`REC-E2E-AMB-005`继续保留`RAW_PARSER/REQUIRED`合同。修复后的raw必须是
+`unknown/null`，order分数为0且不得存在孤立“出”的order Evidence。Case仍可在Route或
+NO_RECORD映射层暴露独立差异，但不得再归为本地parser缺陷。
+
+专项必须覆盖普通非业务、商业非订单、明确订单、多商品交付、混合语境、模糊口语及
+quotation/receivable/payment保护。不能通过统一降低confidence或修改Route、AI、
+Preflight和Expected实现。详细规则见
+`docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`。
