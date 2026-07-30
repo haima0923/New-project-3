@@ -1043,20 +1043,31 @@ const tests = [
     }
   },
   {
-    name: 'remaining-confirmed-local-parser-defect-stays-protected',
+    name: 'order-signal-boundary-fix-advances-amb-005-to-route-contract',
     async run() {
-      for (const caseId of ['REC-E2E-AMB-005']) {
-        const result = await executeOne(bundle(caseId));
-        assert.strictEqual(result.caseStatus, 'CASE_FAIL');
-        assert.strictEqual(result.failureStage, 'LOCAL_PARSE_ERROR');
-        assert.strictEqual(result.failureOwnership, 'CONFIRMED_LOCAL_PARSER_DEFECT');
-        assert.strictEqual(result.ownershipConfidence, 'HIGH');
-        assert(result.assertions.some((entry) => (
-          entry.layer === 'RAW_PARSER'
-          && entry.name === 'businessType'
-          && entry.pass === false
-        )));
-      }
+      const result = await executeOne(bundle('REC-E2E-AMB-005'));
+      const raw = initialCanonicalRawResult(result);
+      assert.strictEqual(result.caseStatus, 'CASE_FAIL');
+      assert.strictEqual(result.failureStage, 'ROUTE_ERROR');
+      assert.notStrictEqual(result.failureOwnership, 'CONFIRMED_LOCAL_PARSER_DEFECT');
+      assert.strictEqual(raw.intent, 'unknown');
+      assert.strictEqual(raw.businessType, 'unknown');
+      assert.strictEqual(raw.operation, null);
+      assert.strictEqual(raw.intentEvidence.scores.order, 0);
+      assert.deepStrictEqual(raw.intentEvidence.orderPositiveSignals, []);
+      assert.deepStrictEqual(raw.intentEvidence.orderEntitySignals, []);
+      assert.deepStrictEqual(raw.intentEvidence.orderDeliverySignals, []);
+      assert(!result.assertions.some((entry) => (
+        entry.layer === 'RAW_PARSER' && entry.pass === false
+      )));
+      assert.strictEqual(result.routeEvidence.actualRoute, 'PENDING');
+      assert.strictEqual(result.routeEvidence.AIRequestCount, 0);
+      assert.notStrictEqual(
+        result.observationSemantics.semanticResult.effectiveOperation,
+        'create_order'
+      );
+      assert.strictEqual(result.observationSemantics.outcome.formalSaveSucceeded, false);
+      assert.strictEqual(result.observationSemantics.outcome.pendingSaveSucceeded, false);
     }
   },
   {
