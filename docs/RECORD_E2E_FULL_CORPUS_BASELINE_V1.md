@@ -408,3 +408,37 @@ BLOCKED         0
 两轮确定性一致；63条P0失败全部单题重跑，P1分层抽查13条，30个Cluster覆盖108/108。
 所有网络、Storage、fixture、事务清理和Parser Graph硬门禁均为0。详细政策见
 `docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`。
+
+## 15. Quotation Negation Parser V1 重基线
+
+`BASIC-006`原文“给郑老板报挂件3000个，1块5一个，还没下单”同时包含独立报价证据和
+被否定订单动作。旧parser让“下单”累计order分数，却未识别“还没下单”的否定范围，
+因此raw为`order/null`并最终停在`LOCAL_PARSE_ERROR`。
+
+本阶段只在本地parser中记录quotation正向、order正向、order否定和后续重新肯定Evidence。
+被否定order片段不再参与order评分；没有quotation正向Evidence的“还没下单”不会被新造为
+quotation，后续“现在/这次/今天已经或正式下单”以及独立“先做/做货”动作也不会被前一段
+否定吞掉。否定报价、报废/报告、双重否定以及“还没正式下单/尚未确认下单”内部子串均有
+专项门禁。
+
+`BASIC-006`现在raw为`quotation/null`、semantic为
+`quotation/create_quotation`、Route为LOCAL、AI请求0、Preflight无阻断；隔离提交创建
+1条报价和1个客户，订单Diff为0，原文和3000个、1.5元、4500元字段全部保留。Case变为
+PASS。
+
+120题双轮均为：
+
+```text
+PASS           13
+CASE_FAIL     107
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+相对12/108冻结基线只新增`BASIC-006`一条PASS。`LOCAL_PARSE_ERROR`从8降为7，
+`CONFIRMED_LOCAL_PARSER_DEFECT`从2降为1；其余Failure Stage和Ownership计数不变。
+63条P0失败全部单题重跑，P1分层抽查13条，29个Cluster覆盖107/107。两轮确定性一致，
+网络、Storage、fixture、Parser Graph、Worker及Journal/Backup硬门禁全部为0。
+
+`AMB-005`继续为唯一已确认本地parser缺陷；详细边界见
+`docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`。

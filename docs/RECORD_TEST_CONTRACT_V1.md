@@ -1147,3 +1147,52 @@ requiresResolution = true
 普通回归必须同时记录`preSelectionPreflight`、`postSelectionPreflight`和保存前最新
 State Evidence，并证明真实页面方法为`changeOrder`。详细合同见
 `docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`。
+
+## 33. 报价请求中的订单否定合同
+
+本地parser必须把“报价正向Evidence”和“订单动作否定Evidence”分开。订单否定只能抑制
+对应order候选，不得独立创建quotation。
+
+只有存在独立报价、问价、询价或项目既有“报 + 商品数量 + 明确价格”证据时，
+“还没下单、尚未下单、没有下单、先不下单、不是下单”等邻近订单否定才允许quotation
+压过被否定order。Evidence必须保留最小sourceText和sourceSpan，不得从Expected、
+Case ID、State或AI fixture生成。
+
+以下没有报价请求的输入不得自动成为quotation：
+
+```text
+客户还没下单
+暂时不下单
+不下单了
+还没有下单记录
+```
+
+完整商品、数量、价格和交期也不能使“没有下单/没订货/没有要货”获得正式order保存资格。
+专项必须同时断言raw不是order以及Domain Preflight不能正式保存，不能只看展示类型。
+
+后续独立重新肯定订单动作必须保留，例如“之前没下单，这次正式下单”“虽然还没下单，
+但现在确认下单”“报价已确认，现在下单”。“不是”不能成为全局否定词；订单否定只作用于
+明确下单、下订单、订货、要货谓词的邻近范围。
+
+否定和重新肯定Evidence不得重叠；“还没正式下单、尚未确认下单”中的“正式下单/
+确认下单”只是被否定谓词的一部分，不能反向解锁order。相反，分句后的独立“后来已经
+下单、现在正式下单、先做100个”必须保留为后续order动作。
+
+quotation正向Evidence本身也必须排除否定和词内误触：“不报价、先不报价、不是报价”
+不得提供quotation分数；“报废、报告”等非报价词不能依靠单字“报”进入quotation。
+
+`REC-E2E-BASIC-006`继续保留`RAW_PARSER/REQUIRED`强合同。修复后的准确结果是：
+
+```text
+rawParser.businessType = quotation
+rawParser.operation = null
+semanticResult.effectiveOperation = create_quotation
+route = LOCAL
+outcome.disposition = FORMAL_RECORD
+outcome.persistedRecordType = quotation
+orders diff = 0
+```
+
+修复不能通过降低置信度把Case交给AI，也不能修改Route、Preflight、业务Expected或保存
+安全。详细规则、专项矩阵和全量证据见
+`docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`。
