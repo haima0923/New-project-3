@@ -1086,3 +1086,33 @@ Body、query、URL凭据或环境变量值。
 本合同只能防止当前Node测试链误联网，不替代OS级网络隔离，也不把Offline Replay称为
 真实AI质量。事故审计、响应证据边界和15项安全哨兵见
 `docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`。
+
+## 31. 明确订单指代Evidence合同
+
+明确指向订单实体的语言必须由本地parser一次性产生结构化
+`relation_references.order`。Runner、Hybrid、Confirmation和Preflight不得根据Expected、
+Case ID、State、候选数量或商品匹配重新推导。
+
+强Evidence至少区分：
+
+```text
+EXPLICIT_ORDER_DEICTIC
+EXPLICIT_ORDER_IDENTIFIER
+EXPLICIT_ORDER_NAMED_REFERENCE
+```
+
+每条Evidence必须包含最小`sourceText`、准确`sourceSpan`、`explicit=true`、
+`requiresResolution`、`normalizedReference`、`resolvedEntityId`和
+`evidenceSource=LOCAL_PARSER`。`sourceField`必须明确span对应`ORIGINAL_TEXT`还是
+`EXTRACTED_TEXT`。未解析的自然语言指代必须保持
+`resolvedEntityId=null`，不得自动写入业务`orderId`。
+
+普通批次或货物回指不等于订单关系。“那批货”、历史中存在订单、唯一候选、商品匹配和
+金额接近都不能单独生成明确订单指代Evidence。否定关系也不能被投影成正向引用。
+
+AI payload不可信，不能创建、覆盖或解析本地Evidence。普通E2E报告必须记录raw parser、
+Hybrid、Confirmation草稿和Preflight输入四阶段传播；任一阶段丢失不得静默补造。
+
+本阶段只建立Evidence，不改变Domain Preflight保存资格、`requiredSelections`、Route或
+页面选择行为。详细边界和BASIC-009/010实际证据见
+`docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`。

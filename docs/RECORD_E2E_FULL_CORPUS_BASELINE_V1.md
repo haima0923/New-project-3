@@ -352,3 +352,30 @@ AI/P0、Route和Voice Fake回归全部通过。两轮全部隔离与parser调用
 网络误触审计和门禁合同见`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`。
 
 详细规则、负例和目标证据见`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`。
+
+## 13. Structured Order Reference Evidence V1 重基线
+
+本地parser现在可以为明确订单实体指代输出`relation_references.order`，区分
+`EXPLICIT_ORDER_DEICTIC`、`EXPLICIT_ORDER_IDENTIFIER`和
+`EXPLICIT_ORDER_NAMED_REFERENCE`。Evidence包含最小`sourceText`、准确`sourceSpan`、
+`requiresResolution`和`resolvedEntityId=null`，不读取State、不按候选数量或商品匹配
+推导，也不自动生成`orderId`。
+
+`BASIC-010`的“这单”在raw parser、Hybrid、Confirmation草稿和Preflight输入四阶段保持
+同一结构，Route仍为LOCAL且AI调用0。`BASIC-009`的“那批货”不产生同等级订单指代Evidence。
+本阶段没有修改Preflight保存门禁，因此`requiredSelections`与
+`domainCanSaveFormal`保持既有行为。
+
+起始HEAD与当前代码的120题双轮均为：
+
+```text
+PASS           12
+CASE_FAIL     108
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+两轮确定性一致，63条P0失败全部单题重跑，P1分层抽查13条，30个Cluster覆盖108/108。
+相对10/110可信发布基线的两条PASS来自起始WIP中的Safe Local BASIC-009/010；本阶段只新增
+Evidence和报告观测，没有改变Case状态。详细合同见
+`docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`。
