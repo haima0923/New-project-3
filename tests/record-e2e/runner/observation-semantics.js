@@ -59,6 +59,7 @@ function compactRawParser(result = {}) {
     businessType: String(result.intent || 'unknown'),
     confidence: result.confidence === undefined ? null : Number(result.confidence),
     intent: String(result.intent || 'unknown'),
+    intentEvidence: safeClone(result.intent_evidence || {}),
     missingFields: safeClone(result.missing_fields || []),
     operation: normalizeRawOperation(result.operation),
     relationReferences: compactRelationReferences(result.relation_references),

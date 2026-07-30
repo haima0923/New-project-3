@@ -1025,12 +1025,27 @@ const tests = [
     }
   },
   {
-    name: 'confirmed-local-parser-defects-remain-protected',
+    name: 'quotation-negation-parser-fix-remains-observable',
     async run() {
-      for (const caseId of [
-        'REC-E2E-BASIC-006',
-        'REC-E2E-AMB-005'
-      ]) {
+      const result = await executeOne(bundle('REC-E2E-BASIC-006'));
+      const raw = initialCanonicalRawResult(result);
+      assert.strictEqual(result.caseStatus, 'PASS');
+      assert.strictEqual(raw.intent, 'quotation');
+      assert.strictEqual(raw.operation, null);
+      assert.strictEqual(
+        raw.intentEvidence.winningReason,
+        'EXPLICIT_QUOTATION_WITH_NEGATED_ORDER_ACTION'
+      );
+      assert(raw.intentEvidence.quotationPositiveSignals.length > 0);
+      assert(raw.intentEvidence.orderNegationSignals.some((signal) => (
+        signal.sourceText === '还没下单'
+      )));
+    }
+  },
+  {
+    name: 'remaining-confirmed-local-parser-defect-stays-protected',
+    async run() {
+      for (const caseId of ['REC-E2E-AMB-005']) {
         const result = await executeOne(bundle(caseId));
         assert.strictEqual(result.caseStatus, 'CASE_FAIL');
         assert.strictEqual(result.failureStage, 'LOCAL_PARSE_ERROR');

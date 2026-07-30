@@ -54,6 +54,7 @@ function summarizeRawResult(result) {
     businessType: compact.businessType,
     confidence: compact.confidence,
     intent: compact.intent,
+    intentEvidence: compact.intentEvidence,
     missingFields: compact.missingFields,
     operation: compact.operation,
     relationReferences: compact.relationReferences,

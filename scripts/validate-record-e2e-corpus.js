@@ -2363,7 +2363,7 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
     fail('BASIC-006不得迁入观测语义假差异清单且必须保留raw合同');
   }
   results.push({
-    name: 'BASIC-006真实parser缺陷保持未迁移',
+    name: 'BASIC-006修复后仍保留RAW_PARSER强合同',
     passed: parserProtectionPreserved
   });
 
