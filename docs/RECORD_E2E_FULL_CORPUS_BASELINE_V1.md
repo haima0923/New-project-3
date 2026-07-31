@@ -542,3 +542,41 @@ P1分层抽查13条，28个Cluster覆盖106/106。每轮`voiceEvidenceMissingCou
 `voiceFingerprintMismatchCount=0`、`voiceStaleSessionAcceptedCount=0`；网络、真实
 Storage、fixture、跨Case泄漏、Journal/Backup、Parser Evidence和调用图隔离门禁也均为0。
 详细合同见`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`。
+
+## 19. Verified Voice Standard Route V1 重基线
+
+`VOICE-004`继续使用准确转写“赵姐礼品盒五百套三块八一套”。Route在执行前读取6B.1
+已经建立的可信终稿Evidence：状态COMPLETED、session匹配、转写指纹匹配、Fake final
+callback来源可信。raw仍为`unknown/null`，结构化字段继续为客户赵姐、商品礼品盒、
+数量500套、单价3.8和金额1900，只有intent未决。
+
+新Route窄资格要求可信final、Parser/Evidence完整、客户+商品+正数量+正单价/金额强组合、
+无业务缺字段、低置信、冲突、金融/混合/关系/Deep风险，且当前Safety确实需要Standard
+核对。它不扫描原文，不读取Case ID、Expected或Fake结果。命中后真实生产Route返回
+`AI_STANDARD`，并通过既有Fake Standard adapter恰好请求一次；Runner物理计数为
+`standardAIRequestCount=1 / duplicateVoiceStandardAIRequestCount=0`。
+
+VOICE-004使用既有`ai-case-rec-e2e-voice-004-v1`，规范化和合并结果为
+`order/create_order`，但转写及Fake结果均无交期。既有Domain Preflight继续以
+`MISSING_REQUIRED_FIELD`阻断，正式业务Diff为0。因此它从`ROUTE_ERROR`推进到
+`PREFLIGHT_ERROR`，没有通过补造dueDate、修改Expected或放宽正式保存实现。
+
+可信final闲聊仍为`NO_RECORD / AIRequestCount=0`，final且本地已解决订单仍为
+`LOCAL / AIRequestCount=0`；Safe Local receivable、payment、deposit和Deep政策不变。
+`VOICE-006`继续为`AI_STANDARD / AIRequestCount=1 / SURFACE_ERROR`，原独立问题保持
+可见。
+
+120题最终离线双轮均为：
+
+```text
+PASS           14
+CASE_FAIL     106
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+相对14/106冻结基线总数不变；`ROUTE_ERROR`从42降为41，`PREFLIGHT_ERROR`从20升为21。
+两轮确定性一致；63条P0失败全部单题重跑，P1分层抽查12条，27个Cluster覆盖106/106。
+每轮新增`duplicateVoiceStandardAIRequestCount=0`，并且网络、真实Storage、fixture、
+跨Case泄漏、Journal/Backup、Parser Graph及三项Voice Evidence门禁全部为0。详细政策见
+`docs/RECORD_VOICE_STANDARD_ROUTE_V1.md`。

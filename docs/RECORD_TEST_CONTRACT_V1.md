@@ -1307,3 +1307,46 @@ voiceStaleSessionAcceptedCount = 0
 
 `VOICE-004`本阶段继续保持`PENDING / AIRequestCount=0`；`VOICE-006`的独立异步/Surface
 问题必须继续可见。详细合同见`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`。
+
+## 37. 可信语音终稿Standard Route合同
+
+Voice Standard资格必须消费第36节产生并验证的结构化Completion Evidence，不得扫描
+原始转写、Case ID、Expected或Fake输出。只有以下事实全部成立才可自动AI_STANDARD：
+
+```text
+inputChannel = VOICE / VOICE_TRANSCRIPT
+completion status = COMPLETED
+isFinal = true
+trusted final callback source
+session matched = true
+transcript fingerprint matched = true
+parser/evidence collection completed
+raw intent = unknown
+canonical operation absent
+customer + product + positive quantity + positive unitPrice/amount
+only intent unresolved
+no low-confidence/conflict/unsafe/financial/mixed/relation/deep risk
+```
+
+只有客户、日期、商品、数字或金额中的单项证据不够。非语音、PARTIAL、CANCELLED、
+FAILED、TIMED_OUT、旧session、指纹不匹配、手工编辑、NO_RECORD、本地已解决业务、
+金融或Deep风险和已发起AI的处理链均不得进入本资格。
+
+每个合格处理链只能通过真实Route请求一次Standard AI。Runner必须使用Fake network
+事件统计实际Standard/Deep请求数，并将以下字段纳入每轮硬门禁：
+
+```text
+duplicateVoiceStandardAIRequestCount = 0
+```
+
+命中资格时还必须严格验证`Route=AI_STANDARD / Standard=1 / Deep=0 / Total=1`；所有
+语音物理Standard事件都参与重复计数，不能因最终Route或资格投影变化而归零。第36节的
+敏感Evidence持久化限制继续有效：session ID、指纹值和Provider对象不得进入业务Trace；
+本节只允许`parse_route`增加final/session/fingerprint校验布尔值、Evidence来源、结构
+计数和reason/exclusion codes等非敏感资格诊断。
+
+`VOICE-004`的目标层合同是Route=`AI_STANDARD`、AI请求恰好1次；既有Fake结果缺交期时，
+Domain Preflight仍必须阻断正式订单，不能补造dueDate或产生正式业务Diff。`VOICE-006`
+必须继续暴露既有Surface差异。Clear Non-Business final语音继续NO_RECORD且零AI，
+本地已解决语音继续LOCAL且零AI，金融Deep政策不能降级。详细合同见
+`docs/RECORD_VOICE_STANDARD_ROUTE_V1.md`。
