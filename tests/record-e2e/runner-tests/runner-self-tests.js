@@ -1397,7 +1397,60 @@ const tests = [
         voice006.routeEvidence.duplicateVoiceStandardAIRequestCount,
         0
       );
-      assert.strictEqual(voice006.primaryFailure.stage, 'SURFACE_ERROR');
+      assert.strictEqual(voice006.caseStatus, 'PASS');
+      assert.strictEqual(voice006.primaryFailure, null);
+      assert.strictEqual(voice006.voiceCompletionEvidence.voiceCompletionEvidenceValid, true);
+      assert.strictEqual(voice006.voiceCompletionEvidence.voiceSessionMatched, true);
+      assert.strictEqual(voice006.voiceCompletionEvidence.voiceFingerprintMatched, true);
+      assert.strictEqual(voice006.preflightEvidence.domainCanSaveFormal, true);
+      assert.strictEqual(voice006.preflightEvidence.domainCanSavePending, true);
+      assert.deepStrictEqual(voice006.preflightEvidence.blockingCodes, []);
+      assert.strictEqual(
+        voice006.productionObservation.productionEligibility,
+        'BLOCKED_NON_REAL_PROVIDER'
+      );
+      assert.strictEqual(voice006.productionObservation.pageFormalSaveAllowed, false);
+      assert.deepStrictEqual(voice006.productionObservation.blockingCodes, [
+        'UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION'
+      ]);
+      assert.strictEqual(voice006.pageEvidence.afterEdits.surfaceCanCompleteFormal, true);
+      assert.strictEqual(voice006.pageEvidence.afterEdits.effectiveCanSaveFormal, false);
+      const voice006SurfaceStatus = voice006.assertions.find((entry) => (
+        entry.layer === 'SURFACE' && entry.name === 'status'
+      ));
+      assert(voice006SurfaceStatus);
+      assert.strictEqual(voice006SurfaceStatus.actual, 'BLOCKED');
+      assert.strictEqual(voice006SurfaceStatus.pass, true);
+      const voice006Driver = voice006.pageEvidence.pageDriverEvidence;
+      assert.strictEqual(voice006Driver.pagePrimaryActionCalls.saveFormal, 0);
+      assert.strictEqual(voice006Driver.pagePrimaryActionCalls.savePending, 0);
+      assert.strictEqual(voice006Driver.productionBusinessCalls.saveConfirmedDraft, 0);
+      assert.strictEqual(voice006Driver.productionBusinessCalls.savePendingNote, 0);
+      assert.strictEqual(voice006Driver.productionStorageCalls.saveState, 0);
+      assert.strictEqual(voice006.isolatedCommitEvidence.committed, true);
+      assert.strictEqual(
+        voice006.isolatedCommitEvidence.marker,
+        'TEST_ONLY_ISOLATED_COMMIT'
+      );
+      assert.strictEqual(
+        voice006.isolatedCommitEvidence.prepared.businessHashBefore,
+        voice006.isolatedCommitEvidence.prepared.businessHashAfter
+      );
+      assert.strictEqual(
+        voice006.isolatedCommitEvidence.prepared.identityBypass.marker,
+        'TEST_ONLY_PROVIDER_IDENTITY_REMOVAL'
+      );
+      assert.strictEqual(
+        voice006.isolatedCommitEvidence.prepared.identityBypass.providerWasNeverSetToReal,
+        true
+      );
+      assert.strictEqual(voice006.isolatedCommitEvidence.commitResult.status, 'COMMITTED');
+      assert.strictEqual(voice006.isolatedCommitEvidence.storageAudit.revision, 1);
+      assert.strictEqual(voice006.isolatedCommitEvidence.storageAudit.receiptCount, 1);
+      assert.strictEqual(voice006.businessDiff.customers.created.length, 1);
+      assert.strictEqual(voice006.businessDiff.orders.created.length, 1);
+      assert.strictEqual(voice006.finalTransactionAudit.journalCount, 0);
+      assert.strictEqual(voice006.finalTransactionAudit.backupCount, 0);
     }
   },
   {
