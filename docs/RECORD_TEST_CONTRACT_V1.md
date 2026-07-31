@@ -1376,3 +1376,33 @@ Receipt、Journal和Backup差异为0。正确安全阻断构成Case PASS，不�
 `PASS=15 / CASE_FAIL=105 / RUNNER_ERROR=0 / BLOCKED=0`；只有VOICE-004状态变化，
 其他119题的状态、最早失败层、Ownership、Route、Preflight、AI请求次数和业务Diff
 与冻结报告一致。
+
+## 39. Surface能力与生产Provider资格分层
+
+Corpus Validator不再以Surface的展示状态直接推导`BLOCKED_SURFACE`。它先确认
+Domain Preflight，再读取当前入口的`surfaceCanCompleteFormal`，最后判断LOCAL或
+Fake/Replay Provider资格：
+
+```text
+NO_RECORD
+BLOCKED_BUSINESS_SAFETY
+BLOCKED_SURFACE
+ELIGIBLE_LOCAL
+BLOCKED_NON_REAL_PROVIDER
+```
+
+`BLOCKED_SURFACE`只允许用于当前入口业务能力缺失；Surface能力完整但Fake/Replay不具备
+生产资格时，必须使用`BLOCKED_NON_REAL_PROVIDER`并包含
+`UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION`。新的分层状态允许
+`surfaceCanCompleteFormal=true`与`effectiveCanSaveFormal=false`同时成立；此时页面正式
+保存资格必须为`false`。
+
+VOICE-006继续要求可信Voice Evidence、`AI_STANDARD`和Standard Fake AI恰好1次。
+其Domain Preflight为可正式保存，FULL_PAGE业务能力完整，但生产Provider不合格，因此
+Surface Expected改为`BLOCKED / true / false`；生产页面不调用business或Storage，
+`TEST_ONLY_ISOLATED_LEGACY_COMMIT`仍在隔离事务中验证客户和订单各增加1。Validator
+合同自测为57/57，隔离提交Lane总数保持88。
+
+120题离线双轮均为`PASS=16 / CASE_FAIL=104 / RUNNER_ERROR=0 / BLOCKED=0`。
+只有VOICE-006由`CASE_FAIL / SURFACE_ERROR`变为PASS；其他119题的顶层状态、最早失败层、
+Ownership、Route、AI请求、Preflight、生产观察和业务Diff与冻结报告逐题一致。

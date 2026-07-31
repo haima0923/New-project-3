@@ -171,3 +171,25 @@ Domain Preflight的`MISSING_REQUIRED_FIELD`正确阻止正式保存，Case使用
 全量双轮从14/106更新为15/105，只有VOICE-004状态变化；提交Lane因该Case移除隔离
 提交从89变为88。其他119题以及VOICE-006的`SURFACE_ERROR`保持冻结责任。此补充没有
 修改Voice glue、Route、AI fixture/Normalizer、Preflight、页面、business或Storage。
+
+## 9. VOICE-006 Surface与Provider资格分层补充
+
+VOICE-006继续满足可信final Voice Evidence、session与指纹匹配、`AI_STANDARD`、
+Standard Fake AI请求恰好1次、重复请求0，以及`order/create_order`语义和完整交期字段。
+Domain Preflight仍为`domainCanSaveFormal=true`且无业务阻断。
+
+先前`SURFACE_ERROR`来自测试合同把“FULL_PAGE业务能力完整”和“Fake Provider生产资格”
+混成同一个`CAN_COMPLETE`状态。精确分层后，VOICE-006为：
+
+```text
+FULL_PAGE surfaceCanCompleteFormal = true
+effectiveCanSaveFormal = false
+surface.status = BLOCKED
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+```
+
+生产页面没有调用正式或pending保存，business与Storage写入为0；隔离Legacy提交Lane仍
+验证客户和订单各增加1、revision和receipt各1，且Journal/Backup为0。VOICE-006因此
+成为Case PASS，不表示Fake AI取得生产保存资格。VOICE-010保持原有`SURFACE_ERROR`，
+其他119题不变。本补充未修改Voice glue、Route、AI、Normalizer、Preflight、页面或Runner等待。

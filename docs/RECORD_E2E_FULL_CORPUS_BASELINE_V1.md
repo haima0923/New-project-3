@@ -621,3 +621,40 @@ BLOCKED          0
 失败。每轮网络、真实Storage、fixture mutation、跨Case泄漏、Journal/Backup、Parser
 Evidence、orphan/uncorrelated/shadow、隔离审计、三项Voice Evidence和重复Voice
 Standard AI请求硬门禁全部为0。
+
+## 21. VOICE-006 Surface与生产资格分层重基线
+
+本轮只修正Corpus Validator的分层资格合同和VOICE-006 Expected，没有修改生产代码、
+AI fixture、Runner等待、页面投影或业务保存路径。VOICE-006的FULL_PAGE具备完整业务能力，
+但Fake Standard Provider不具备生产正式保存资格，因此精确状态为：
+
+```text
+surface.status = BLOCKED
+surfaceCanCompleteFormal = true
+effectiveCanSaveFormal = false
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+blockingCodes = [UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION]
+```
+
+真实Route仍为`AI_STANDARD`，Standard AI请求恰好1次且重复计数为0；Semantic、
+Confirmation和Domain Preflight均正确。生产页面、business和Storage写入均为0；隔离
+Legacy事务仍提交客户和订单各1条，并产生1个revision和1个receipt，Journal/Backup为0。
+
+120题离线双轮结果一致：
+
+```text
+ACTIVE         120
+PASS            16
+CASE_FAIL      104
+RUNNER_ERROR     0
+BLOCKED          0
+```
+
+Failure Stage为`AI_NORMALIZE=23 / LOCAL_PARSE=6 / PREFLIGHT=20 / ROUTE=41 /
+STATE_DIFF=4 / STORAGE_TRANSACTION=1 / SURFACE=9`。63条P0失败全部单题重跑，P1分层
+抽查11条，26个Cluster覆盖104/104失败。隔离提交Lane总数为88。与15/105冻结报告相比，
+仅VOICE-006从`CASE_FAIL / SURFACE_ERROR / OBSERVABILITY_EXPECTATION_MISMATCH`转为PASS；
+其他119题的状态、最早失败层、Ownership、Route、AI、Preflight、生产观察和业务Diff
+逐题一致。两轮全部网络、真实Storage、fixture、跨Case泄漏、Journal/Backup、Parser Graph、
+Voice Evidence和重复Voice Standard AI硬门禁为0。

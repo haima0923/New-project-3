@@ -2,12 +2,12 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前VOICE-004分层缺交期安全合同候选分支：
-> `fix/record-voice-004-layered-contract-v1`。E2E V1.2 已把
+> 当前VOICE-006 Surface/Provider分层合同候选分支：
+> `fix/record-voice-006-surface-contract-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。当前120题双轮为：
-> `PASS=15 / CASE_FAIL=105 / RUNNER_ERROR=0 / BLOCKED=0`；63条P0失败全部单题重跑，
-> P1分层抽查12条，27个Cluster覆盖105条失败；Hybrid/Raw parser调用图两轮一致，
+> `PASS=16 / CASE_FAIL=104 / RUNNER_ERROR=0 / BLOCKED=0`；63条P0失败全部单题重跑，
+> P1分层抽查11条，26个Cluster覆盖104条失败；Hybrid/Raw parser调用图两轮一致，
 > evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
 > 事务清理门禁均通过。`BASIC-010`的“这单”现在产生可信、未解析且不含orderId的结构化
 > 订单指代Evidence，并沿raw parser、Hybrid、Confirmation和Preflight输入完整透传；
@@ -28,15 +28,18 @@
 > AI_STANDARD。VOICE-004已从PENDING/AI0推进到AI_STANDARD/AI1；其原文没有交期，
 > 测试合同现明确期待`MISSING_REQUIRED_FIELD`安全阻断、DO_NOT_SAVE、零持久化及零业务
 > Diff，因此完整分层结果为PASS。`orderDeliveryDate` Expected与运行时`dueDate`由
-> 测试基础设施精确别名合同比较；VOICE-006仍暴露原有Surface问题。
+> 测试基础设施精确别名合同比较。VOICE-006现在按Surface业务能力与生产Provider资格
+> 分层：FULL_PAGE能力完整，但Fake Provider生产资格被阻断；生产写入为0，隔离提交仍
+> 验证客户和订单各增加1，因此Case为PASS。VOICE-010原有Surface问题保持可见。
 > 当前已确认本地Parser缺陷数量为0。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
 > Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
 > 该计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
 > HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
 > 认证头被请求携带的证据。本阶段未修改parser、AI Normalizer、Storage/Coordinator核心
-> 或生产业务安全政策；本阶段只修改测试字段别名断言、VOICE-004分层Expected及机械Lane
-> 基线，没有改动Voice glue、Route、AI fixture/Normalizer、Preflight、页面、business、
-> Storage或Completion Evidence Schema。
+> 或生产业务安全政策；本阶段只修改Corpus Validator的Surface/Provider分层校验、
+> VOICE-006两项Surface Expected、Runner机械哨兵和相关文档，没有改动Voice glue、
+> Route、AI fixture/Normalizer、Preflight、页面、business、Storage、Runner等待或
+> Completion Evidence Schema。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 

@@ -390,3 +390,32 @@ REL-007/008分别注入跨客户和已转订单报价；原P0阻断Expected保�
 `quotation_candidates`不能建立用户可选身份，Shared Confirmation只能投影Preflight，
 不能自行筛选或因候选数量自动要求选择。当前120题中合法`SELECT_QUOTATION`用户选择题
 为0，后续页面阶段必须另建合法选择Case。
+
+## 21. Surface业务能力与生产资格分层
+
+Surface合同必须分别表达页面能否承载业务流程，以及当前生产执行是否具备正式保存资格：
+
+- `surfaceCanCompleteFormal`只描述当前入口是否具备字段展示、编辑、选择和正式保存动作等业务能力。
+- `effectiveCanSaveFormal`描述叠加Domain Preflight、Surface能力和生产Provider资格后的当前有效正式保存资格。
+- `pageFormalSaveAllowed`是生产观察结果；Fake或Replay即使Surface能力完整也必须为`false`。
+- `productionEligibility`记录最终生产资格归属，不能用Surface状态掩盖Provider阻断。
+
+当业务Preflight通过、Surface能力完整，但AI结果来自Fake或Replay时，新的精确合同为：
+
+```text
+surface.status = BLOCKED
+surfaceCanCompleteFormal = true
+effectiveCanSaveFormal = false
+pageFormalSaveAllowed = false
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+blockingCodes包含UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION
+```
+
+只有`surfaceCanCompleteFormal=false`时才能使用`BLOCKED_SURFACE`；`REQUIRES_FULL_PAGE`
+也必须表达当前入口能力不足。业务Preflight阻断优先归类为
+`BLOCKED_BUSINESS_SAFETY`，`NO_RECORD`保持独立，安全`LOCAL_ONLY`才可为
+`ELIGIBLE_LOCAL`。Validator按这一优先级校验，不读取Case ID或Expected外的推导信息。
+
+为避免在本Cluster内迁移其他119题，46条历史Fake/Replay Case仍保留旧版
+`CAN_COMPLETE / effectiveCanSaveFormal=true`兼容合同；它们不代表新建Case可继续混用
+Surface能力与生产资格。VOICE-006是本轮采用精确分层合同的Case。
