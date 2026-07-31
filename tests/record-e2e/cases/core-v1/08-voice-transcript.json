@@ -2408,9 +2408,9 @@
             ]
           },
           "fullPage": {
-            "status": "CAN_COMPLETE",
+            "status": "BLOCKED",
             "surfaceCanCompleteFormal": true,
-            "effectiveCanSaveFormal": true,
+            "effectiveCanSaveFormal": false,
             "missingCapabilities": []
           }
         },
