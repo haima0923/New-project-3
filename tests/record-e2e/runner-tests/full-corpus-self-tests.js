@@ -14,6 +14,7 @@ const {
   summarizeDimensions
 } = require('../runner/full-corpus-baseline');
 const {
+  auditPaymentCommits,
   assertFullAttemptIntegrity,
   exactUniqueSet
 } = require('../runner/full-run-integrity');
@@ -112,6 +113,45 @@ function failure(caseId, overrides = {}) {
     requiredCapabilities: [],
     riskLevel: 'P1'
   }, overrides);
+}
+
+function linkedPaymentResult(overrides = {}) {
+  const result = cleanResult('PAYMENT-CASE');
+  const amount = overrides.amount === undefined ? 20 : overrides.amount;
+  const beforePaid = overrides.beforePaid === undefined ? 10 : overrides.beforePaid;
+  const total = overrides.total === undefined ? 100 : overrides.total;
+  const afterPaid = overrides.afterPaid === undefined
+    ? Number(beforePaid) + Number(amount)
+    : overrides.afterPaid;
+  const kind = overrides.kind || 'partial_payment';
+  const paymentCount = overrides.paymentCount || 1;
+  result.routeEvidence = { effectiveOperation: 'record_payment' };
+  result.businessDiff = {
+    payments: {
+      created: Array.from({ length: paymentCount }, (_, index) => ({
+        amount,
+        id: `payment-${index + 1}`,
+        kind,
+        receivableId: 'receivable-1'
+      }))
+    },
+    receivables: {
+      updated: [{
+        after: {
+          amount: total,
+          paidAmount: afterPaid,
+          status: Number(afterPaid) === Number(total) ? '已结清' : '部分收款'
+        },
+        before: {
+          amount: total,
+          paidAmount: beforePaid,
+          status: beforePaid > 0 ? '部分收款' : '待收款'
+        },
+        id: 'receivable-1'
+      }]
+    }
+  };
+  return result;
 }
 
 function expectThrow(fn, failureCode) {
@@ -246,6 +286,84 @@ const tests = [
       expectThrow(
         () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
         'DUPLICATE_VOICE_STANDARD_AI_REQUEST'
+      );
+    }
+  },
+  {
+    name: 'full-attempt-reports-zero-payment-balance-integrity-counts',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'PAYMENT-CASE',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = linkedPaymentResult();
+      assert.deepStrictEqual(auditPaymentCommits(result), {
+        duplicatePaymentCommitCount: 0,
+        overpaymentCommitCount: 0,
+        paymentKindBalanceMismatchCount: 0
+      });
+      assert.deepStrictEqual(auditPaymentCommits(linkedPaymentResult({
+        afterPaid: 100,
+        amount: 90,
+        kind: 'final_payment'
+      })), {
+        duplicatePaymentCommitCount: 0,
+        overpaymentCommitCount: 0,
+        paymentKindBalanceMismatchCount: 0
+      });
+      const audit = assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans);
+      assert.strictEqual(audit.duplicatePaymentCommitCount, 0);
+      assert.strictEqual(audit.paymentKindBalanceMismatchCount, 0);
+      assert.strictEqual(audit.overpaymentCommitCount, 0);
+    }
+  },
+  {
+    name: 'full-attempt-rejects-payment-kind-balance-mismatch',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'PAYMENT-CASE',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = linkedPaymentResult({ kind: 'final_payment' });
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'PAYMENT_KIND_BALANCE_MISMATCH'
+      );
+    }
+  },
+  {
+    name: 'full-attempt-rejects-duplicate-linked-payment-commit',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'PAYMENT-CASE',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = linkedPaymentResult({ paymentCount: 2 });
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'DUPLICATE_PAYMENT_COMMIT_DETECTED'
+      );
+    }
+  },
+  {
+    name: 'full-attempt-rejects-overpayment-commit',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'PAYMENT-CASE',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = linkedPaymentResult({ amount: 91, afterPaid: 101 });
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'OVERPAYMENT_COMMIT_DETECTED'
       );
     }
   },

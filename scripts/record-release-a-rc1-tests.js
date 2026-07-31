@@ -254,7 +254,7 @@ test('已有Bundle纯启动零写入且不存在Bundle时只初始化一次并�
   assert.strictEqual(readRecordStorageControl(currentBundle(emptyHarness.gateway)).storageRevision, 1);
 });
 
-test('22个代表业务的事务Legacy终态与旧Legacy和Shared Memory业务语义三路一致', async () => {
+test('23个代表业务的事务Legacy终态与旧Legacy和Shared Memory业务语义三路一致', async () => {
   let count = 0;
   await runLegacyEquivalenceWithVisitor(({ name, initialState, legacyState, sharedState }) => {
     count += 1;
@@ -277,7 +277,7 @@ test('22个代表业务的事务Legacy终态与旧Legacy和Shared Memory业务�
     );
     assert.strictEqual(readRecordStorageControl(persisted).storageRevision, 1, name);
   });
-  assert.strictEqual(count, 22);
+  assert.strictEqual(count, 23);
 });
 
 test('CAS阻止两个页面基于相同base覆盖且失败同步抛出避免继续成功反馈', () => {

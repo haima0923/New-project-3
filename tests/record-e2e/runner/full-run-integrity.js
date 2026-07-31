@@ -1,4 +1,9 @@
 const { stableHash } = require('../../../utils/record-state-diff');
+const {
+  deriveReceivablePaymentKind,
+  getReceivableRemainingBalance,
+  normalizeMoneyToCents
+} = require('../../../utils/payment-kind');
 const { CASE_STATUSES, LANE_STATUSES } = require('./constants');
 
 function integrityError(failureCode, message, detail = {}) {
@@ -44,6 +49,62 @@ function assertWorkerAudit(audit, label) {
       audit
     });
   }
+}
+
+function auditPaymentCommits(result) {
+  const audit = {
+    duplicatePaymentCommitCount: 0,
+    overpaymentCommitCount: 0,
+    paymentKindBalanceMismatchCount: 0
+  };
+  const effectiveOperation = String(
+    result.routeEvidence && result.routeEvidence.effectiveOperation || ''
+  );
+  if (effectiveOperation !== 'record_payment') return audit;
+
+  const diff = result.businessDiff || {};
+  const payments = diff.payments && Array.isArray(diff.payments.created)
+    ? diff.payments.created.filter((payment) => payment && payment.receivableId)
+    : [];
+  const receivableUpdates = diff.receivables && Array.isArray(diff.receivables.updated)
+    ? diff.receivables.updated
+    : [];
+  audit.duplicatePaymentCommitCount = Math.max(0, payments.length - 1);
+
+  payments.forEach((payment) => {
+    const update = receivableUpdates.find((item) => (
+      item && String(item.id || '') === String(payment.receivableId || '')
+    ));
+    if (!update || !update.before || !update.after) {
+      audit.paymentKindBalanceMismatchCount += 1;
+      return;
+    }
+    const balance = getReceivableRemainingBalance(
+      update.before.amount,
+      update.before.paidAmount || 0
+    );
+    const classification = deriveReceivablePaymentKind({
+      isLinkedReceivable: true,
+      paymentAmount: payment.amount,
+      remainingBefore: balance.remainingAmount
+    });
+    if (classification.errorCode === 'PAYMENT_EXCEEDS_REMAINING') {
+      audit.overpaymentCommitCount += 1;
+      return;
+    }
+    const afterPaid = normalizeMoneyToCents(update.after.paidAmount || 0);
+    const expectedPaidCents = balance.paidCents + classification.paymentAmountCents;
+    const expectedStatus = classification.kind === 'final_payment' ? '已结清' : '部分收款';
+    if (!balance.valid
+      || !classification.ok
+      || payment.kind !== classification.kind
+      || !afterPaid.valid
+      || afterPaid.cents !== expectedPaidCents
+      || update.after.status !== expectedStatus) {
+      audit.paymentKindBalanceMismatchCount += 1;
+    }
+  });
+  return audit;
 }
 
 function assertRuntimeIsolation(result) {
@@ -180,6 +241,23 @@ function assertRuntimeIsolation(result) {
     Number(result.voiceAudit && result.voiceAudit.staleSessionAcceptedCount || 0),
     `${result.caseId}.voiceStaleSessionAcceptedCount`,
     'VOICE_STALE_SESSION_ACCEPTED'
+  );
+
+  const paymentAudit = auditPaymentCommits(result);
+  assertAuditZero(
+    paymentAudit.duplicatePaymentCommitCount,
+    `${result.caseId}.duplicatePaymentCommitCount`,
+    'DUPLICATE_PAYMENT_COMMIT_DETECTED'
+  );
+  assertAuditZero(
+    paymentAudit.paymentKindBalanceMismatchCount,
+    `${result.caseId}.paymentKindBalanceMismatchCount`,
+    'PAYMENT_KIND_BALANCE_MISMATCH'
+  );
+  assertAuditZero(
+    paymentAudit.overpaymentCommitCount,
+    `${result.caseId}.overpaymentCommitCount`,
+    'OVERPAYMENT_COMMIT_DETECTED'
   );
   const expectsVoiceFinal = result.inputChannel === 'VOICE_TRANSCRIPT';
   if (expectsVoiceFinal) {
@@ -340,6 +418,7 @@ function assertFullAttemptIntegrity(attempt, plans) {
     return evidence.actualProductionRoute === 'NO_RECORD'
       || evidence.outcomeDisposition === 'NO_RECORD';
   });
+  const paymentAudits = attempt.results.map(auditPaymentCommits);
   return {
     attempt: attempt.attempt,
     backupCount: 0,
@@ -349,6 +428,9 @@ function assertFullAttemptIntegrity(attempt, plans) {
       'record-e2e-full-case-set-v1'
     ),
     crossCaseLeakCount: 0,
+    duplicatePaymentCommitCount: paymentAudits.reduce((sum, audit) => (
+      sum + audit.duplicatePaymentCommitCount
+    ), 0),
     duplicateVoiceStandardAIRequestCount: attempt.results.reduce((sum, result) => (
       sum + Number(
         result.voiceCompletionEvidence
@@ -370,7 +452,13 @@ function assertFullAttemptIntegrity(attempt, plans) {
       + Number((result.noRecordEvidence || {}).pendingSavedCount || 0)
     ), 0),
     orphanRawInvocationCount: 0,
+    overpaymentCommitCount: paymentAudits.reduce((sum, audit) => (
+      sum + audit.overpaymentCommitCount
+    ), 0),
     parserEvidenceMissingCount: 0,
+    paymentKindBalanceMismatchCount: paymentAudits.reduce((sum, audit) => (
+      sum + audit.paymentKindBalanceMismatchCount
+    ), 0),
     realNetworkRequests: 0,
     realWxStorageCalls: 0,
     shadowParserInvocationCount: 0,
@@ -385,6 +473,7 @@ function assertFullAttemptIntegrity(attempt, plans) {
 }
 
 module.exports = {
+  auditPaymentCommits,
   assertFullAttemptIntegrity,
   assertLaneSet,
   assertRuntimeIsolation,

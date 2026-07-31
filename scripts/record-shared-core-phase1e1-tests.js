@@ -615,6 +615,9 @@ test('代表业务与现有business隔离保存结果等价', () => {
     ['正好结清', stateWith({ customers: [wang], orders: [ord], receivables: [rec] }), result('payment', 'record_payment', {
       customerName: '王总', customerId: 'cus-wang', receivableId: 'rec-1', receivableSelectionConfirmed: true, paymentAmount: '800'
     }, '王总今天付清剩余800元')],
+    ['未关联普通收款', stateWith({ customers: [wang] }), result('payment', 'record_payment', {
+      customerName: '王总', customerId: 'cus-wang', paymentAmount: '300'
+    }, '王总今天付了300元，不关联待收')],
     ['订单定金', stateWith({ customers: [wang], orders: [ord] }), result('payment', 'record_order_deposit', {
       customerName: '王总', customerId: 'cus-wang', orderId: 'ord-1', orderSelectionConfirmed: true,
       productName: '礼品盒', paymentAmount: '300', depositAmount: '300', paymentKind: 'deposit'
@@ -630,7 +633,7 @@ test('代表业务与现有business隔离保存结果等价', () => {
     }, '明天提醒我给王总打电话')],
     ['待整理', stateWith(), result('unknown', 'pending', {}, '这段内容先留着', { formal_save_blocked: true })]
   ];
-  assert.strictEqual(cases.length, 22);
+  assert.strictEqual(cases.length, 23);
   cases.forEach(([name, initial, raw]) => {
     const action = name === '待整理' ? SAVE_ACTIONS.SAVE_PENDING : SAVE_ACTIONS.SAVE_FORMAL;
     const prepared = prepare(raw, initial, action, { pendingReason: '用户选择稍后整理' });
@@ -707,6 +710,10 @@ test('代表业务与现有business隔离保存结果等价', () => {
     }
     if (name === '报价') assert.strictEqual(modern.quotations[0].originalText, raw.original_text);
     if (name === '部分收款') assert.strictEqual(modern.paymentRecords[0].originalText, raw.original_text);
+    if (name === '未关联普通收款') {
+      assert.strictEqual(modern.paymentRecords[0].kind, 'unlinked_payment');
+      assert.strictEqual(modern.paymentRecords[0].receivableId, '');
+    }
   });
 });
 
@@ -744,7 +751,7 @@ test('部分收款、结清与定金同步金额及双向关联', () => {
   const ord = order('ord-1', 'cus-wang');
   const rec = receivable('rec-1', 'cus-wang', { orderId: 'ord-1' });
   const cases = [
-    ['partial', '300', '500', '部分收款', 'final_payment'],
+    ['partial', '300', '500', '部分收款', 'partial_payment'],
     ['settled', '800', '1000', '已结清', 'final_payment'],
     ['deposit', '300', '500', '部分收款', 'deposit']
   ];
@@ -767,6 +774,77 @@ test('部分收款、结清与定金同步金额及双向关联', () => {
     assert.strictEqual(saved.paymentRecords[0].orderId, 'ord-1', name);
     assert.strictEqual(saved.paymentRecords[0].kind, expectedKind, name);
   });
+});
+
+test('收款SavePlan按绑定余额分类，并发、精确重放和失败回滚均保持单次原子提交', () => {
+  const wang = customer('cus-wang', '王总');
+  const ord = order('ord-1', 'cus-wang');
+  const rec = receivable('rec-1', 'cus-wang', { orderId: 'ord-1' });
+  const initial = stateWith({ customers: [wang], orders: [ord], receivables: [rec] });
+  const raw = result('payment', 'record_payment', {
+    customerName: '王总', customerId: 'cus-wang', receivableId: 'rec-1',
+    receivableSelectionConfirmed: true, paymentAmount: '300'
+  }, '王总收款300元');
+  const firstPrepared = prepare(raw, initial, SAVE_ACTIONS.SAVE_FORMAL, {
+    confirmationId: 'payment-confirmation-a',
+    planIdGenerator: scopedIdGenerator('payment-plan-a')
+  });
+  const secondPrepared = prepare(raw, initial, SAVE_ACTIONS.SAVE_FORMAL, {
+    confirmationId: 'payment-confirmation-b',
+    planIdGenerator: scopedIdGenerator('payment-plan-b')
+  });
+  const operationTypes = firstPrepared.savePlan.operations.map((operation) => operation.entityType);
+  ['RECEIVABLE', 'PAYMENT', 'AI_PARSE_LOG'].forEach((entityType) => {
+    assert(operationTypes.includes(entityType), `payment plan missing ${entityType}`);
+  });
+
+  const store = createRecordMemoryStore(initial);
+  const first = commit(firstPrepared.savePlan, store);
+  assert.strictEqual(first.status, COMMIT_STATUSES.COMMITTED);
+  assert.strictEqual(store.getState().paymentRecords.length, 1);
+  assert.strictEqual(store.getState().paymentRecords[0].kind, 'partial_payment');
+  assert.strictEqual(store.getState().receivables[0].paidAmount, '500');
+  assert.strictEqual(store.getState().receivables[0].status, '部分收款');
+  assert.strictEqual(store.getState().aiParseLogs.length, 1);
+  assert.strictEqual(store.getState().operationLogs.length, 0);
+  assert.strictEqual(store.getVersion(), 2);
+
+  const replay = commit(firstPrepared.savePlan, store);
+  assert.strictEqual(replay.status, COMMIT_STATUSES.ALREADY_COMMITTED);
+  assert.strictEqual(replay.idempotentReplay, true);
+  assert.strictEqual(store.getState().paymentRecords.length, 1);
+  assert.strictEqual(store.getState().receivables[0].paidAmount, '500');
+  assert.strictEqual(store.getVersion(), 2);
+
+  const stale = commit(secondPrepared.savePlan, store);
+  assert.strictEqual(stale.status, COMMIT_STATUSES.STALE_PLAN);
+  assert.strictEqual(store.getState().paymentRecords.length, 1);
+  assert.strictEqual(store.getState().receivables[0].paidAmount, '500');
+  assert.strictEqual(store.getVersion(), 2);
+
+  const failurePoints = firstPrepared.savePlan.operations
+    .map((operation, operationIndex) => ({ entityType: operation.entityType, operationIndex }))
+    .filter((item) => ['RECEIVABLE', 'PAYMENT', 'AI_PARSE_LOG'].includes(item.entityType))
+    .map((item) => ({ phase: 'AFTER_APPLY', operationIndex: item.operationIndex }))
+    .concat([{ phase: 'BEFORE_ATOMIC_SWAP' }]);
+  failurePoints.forEach((failureInjection) => {
+    const rollbackStore = createRecordMemoryStore(initial, { failureInjection });
+    const before = rollbackStore.getState();
+    const fingerprint = rollbackStore.getFingerprint();
+    const receipt = commit(firstPrepared.savePlan, rollbackStore);
+    assert.strictEqual(receipt.status, COMMIT_STATUSES.ROLLED_BACK, JSON.stringify(failureInjection));
+    assert.deepStrictEqual(rollbackStore.getState(), before);
+    assert.strictEqual(rollbackStore.getFingerprint(), fingerprint);
+    assert.strictEqual(rollbackStore.getVersion(), 1);
+    assert.strictEqual(rollbackStore.getCommitReceipt(firstPrepared.savePlan.planId), null);
+  });
+
+  const over = prepare(result('payment', 'record_payment', {
+    customerName: '王总', customerId: 'cus-wang', receivableId: 'rec-1',
+    receivableSelectionConfirmed: true, paymentAmount: '800.01'
+  }, '王总收款800.01元'), initial);
+  assert.strictEqual(over.savePlan.blocked, true);
+  assert.strictEqual(over.savePlan.operations.length, 0);
 });
 
 test('无关历史脏记录不阻断新业务，但新增跨客户金融关系会被拒绝', () => {
