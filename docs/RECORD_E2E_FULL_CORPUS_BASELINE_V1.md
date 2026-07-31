@@ -746,3 +746,44 @@ STATE_DIFF=4 / STORAGE_TRANSACTION=1 / SURFACE=7`。61条P0失败全部单题重
 最早失败层、Ownership、Route、AI请求、Preflight、Eligibility、Surface Actual和业务
 Diff完全一致。两轮网络、真实Storage、fixture、跨Case泄漏、Journal/Backup、Parser
 Graph、Voice Evidence、陈旧Session和重复Voice Standard AI硬门禁全部为0。
+
+## 24. Composite Order + Deposit解析日志去重重基线
+
+BASIC-014原文“孙老板订1000个卡套，5元一个，已付定金1000元，7月28日交”继续走
+`AI_DEEP`，Fake Deep请求恰好1次，Semantic为`order / create_order`。隔离事务继续创建
+客户1、订单1和定金付款1，定金金额1000且关联新订单；revision和receipt各1，
+`operationLogs=0`。
+
+解析日志现在按顶层确认保存拥有Envelope。Legacy订单保存通过内部嵌套上下文关闭定金子
+保存日志，Shared SavePlan移除同一订单分支中的第二个parse-log operation；两者均只保留
+一条`action=save_order`日志，且完整保存原文、parseResult、订单和定金信息。Standalone
+Deposit仍各自写一条`action=save_order_deposit`日志。重放、重复触发、readback及提交失败
+不会留下额外或部分日志，首页最近记录只显示该原文一次。
+
+BASIC-014的FULL_PAGE Surface Expected同步冻结Provider分层事实：
+
+```text
+surface.status = BLOCKED
+surfaceCanCompleteFormal = true
+effectiveCanSaveFormal = false
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+```
+
+120题离线双轮结果一致：
+
+```text
+ACTIVE         120
+PASS            19
+CASE_FAIL      101
+RUNNER_ERROR     0
+BLOCKED          0
+SURFACE_ERROR    6
+```
+
+与18/102冻结报告逐题比较，仅BASIC-014由`CASE_FAIL / SURFACE_ERROR`变为PASS；其他119题
+的状态、最早失败层、Route和业务Diff一致。60条P0失败全部单题重跑，P1分层抽查11条，
+26个Cluster覆盖101/101失败；隔离提交Lane总数保持88。两轮网络、真实Storage、fixture、
+跨Case泄漏、Journal/Backup、Parser Graph、Voice Evidence、陈旧Session和重复Voice
+Standard AI门禁均为0；专项`duplicateCompositeParseLogCount=0`且
+`standaloneDepositParseLogMissingCount=0`。

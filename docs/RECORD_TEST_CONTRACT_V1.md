@@ -1459,3 +1459,30 @@ Fake Provider获得生产资格。
 
 120题离线双轮为`PASS=18 / CASE_FAIL=102 / RUNNER_ERROR=0 / BLOCKED=0`；仅BASIC-011
 状态变化，`SURFACE_ERROR`从8降至7，隔离提交Lane总数保持88。其他119题逐题比较无变化。
+
+## 42. Composite Order + Deposit解析日志Envelope合同
+
+`aiParseLogs`按顶层原始输入与确认保存计划计数，不按内部生成的客户、订单、定金付款等
+子实体计数。订单加定金一次确认必须是：
+
+```text
+customers +1
+orders +1
+payments +1
+aiParseLogs +1 (action=save_order)
+operationLogs +0
+```
+
+Legacy仅在`saveOrder → saveOrderDeposit`嵌套调用中关闭子日志；Standalone Deposit仍必须
+创建一条`save_order_deposit`日志。Shared SavePlan同样只生成一个顶层parse-log operation，
+且与业务操作原子提交。测试必须覆盖日志前后、后置readback和atomic swap失败的完整回滚，
+以及同一plan、idempotency key和receipt重放零增量。
+
+BASIC-014继续断言`AI_DEEP`、Fake Deep请求1次、订单和定金业务字段、定金关联、revision和
+receipt；生产Surface因Fake Provider为`BLOCKED / true / false`且生产写入为0，隔离提交
+成功并只写一条`save_order`日志。首页最近记录必须只展示该原文一次。完整政策见
+`docs/RECORD_PARSE_LOG_ENVELOPE_POLICY_V1.md`。
+
+120题离线双轮为`PASS=19 / CASE_FAIL=101 / RUNNER_ERROR=0 / BLOCKED=0`，
+`SURFACE_ERROR=6`。仅BASIC-014变化，其他119题保持冻结状态、最早失败层、Route和业务Diff；
+隔离提交Lane总数仍为88。
