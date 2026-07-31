@@ -509,3 +509,36 @@ P1分层抽查13条，28个Cluster覆盖106/106。每轮`noRecordCaseCount=1`，
 fixture、跨Case泄漏、Journal/Backup、Parser Evidence、orphan/uncorrelated/shadow
 调用和隔离审计缺失硬门禁全部为0。详细政策见
 `docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`。
+
+## 18. Voice Transcription Completion Evidence V1 重基线
+
+`VOICE-004`准确转写“赵姐礼品盒五百套三块八一套”继续得到客户赵姐、商品礼品盒、
+数量500、单价3.8、金额1900和`raw unknown/null`。本阶段没有修改Route，
+所以它仍为`PENDING / AIRequestCount=0 / ROUTE_ERROR`。
+
+新增的可信Evidence由语音Provider最终`onStop`回调在`runParse()`之前产生，绑定当前
+单调session、final sequence和准确转写指纹。`onRecognize`只表示PARTIAL；取消、错误、
+超时、旧session延迟回调和重复final均不能伪装新的COMPLETED。用户手工修改文本会使旧
+Evidence失效。
+
+FULL_PAGE和HOME_QUICK复用同一Voice helper及Schema，并把同一Evidence机械透传到
+`parseHybridInput()`和Route输入Trace。非语音渠道不得携带该Evidence；只有
+`present/status/source/valid`四个必要脱敏状态进入既有`aiParseLogs` Route Trace，
+完整Evidence、session ID、转写指纹和Provider对象不进入订单、报价、收付款、pending
+note或业务Storage。`VOICE-006`继续为
+`AI_STANDARD / AIRequestCount=1 / SURFACE_ERROR`，独立异步/Surface问题保持可见。
+
+120题最终离线双轮均为：
+
+```text
+PASS           14
+CASE_FAIL     106
+RUNNER_ERROR    0
+BLOCKED         0
+```
+
+相对Clear NO_RECORD冻结基线业务结果完全不变。两轮确定性一致；63条P0失败全部单题重跑，
+P1分层抽查13条，28个Cluster覆盖106/106。每轮`voiceEvidenceMissingCount=0`、
+`voiceFingerprintMismatchCount=0`、`voiceStaleSessionAcceptedCount=0`；网络、真实
+Storage、fixture、跨Case泄漏、Journal/Backup、Parser Evidence和调用图隔离门禁也均为0。
+详细合同见`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`。

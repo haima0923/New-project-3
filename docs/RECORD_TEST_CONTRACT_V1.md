@@ -1267,3 +1267,43 @@ noRecordFormalWriteCount = 0
 
 专项必须直接调用页面handler和business方法，证明UI隐藏不能被绕过，并同时证明合法
 PENDING保存不受影响。详细合同见`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`。
+
+## 36. 语音最终转写Evidence合同
+
+语音输入是否完成必须来自Provider最终回调，不能由文本非空、长度、延时、防抖或Runner
+事后`asyncWorkCompleted`推断。当前Provider的`onRecognize`只表示PARTIAL，`onStop`
+只有在自身携带非空最终文本时才可生成COMPLETED Evidence。
+
+每个Evidence必须绑定当前active session、单调result sequence和准确最终文本指纹。
+取消、错误、超时、旧session回调、sequence倒退、重复不同final、空转写和指纹不匹配
+均不得形成有效final。用户在final后手工修改文本时，旧Evidence必须失效。
+
+单例语音Manager的生命周期必须串行：旧Provider尚未通过`onStop/onError`释放时，新
+Provider不得重绑并启动。timeout必须先写入不可逆终态再调用stop，防止同步final抢先
+成为COMPLETED。
+
+FULL_PAGE与HOME_QUICK必须复用同一Voice helper和Schema，在最终回调中先生成Evidence，
+再机械透传：
+
+```text
+voice final callback
+→ runParse/runQuickParse
+→ parseHybridInput
+→ parse_route input trace
+```
+
+本阶段Evidence只用于来源和完成态审计，不改变Route或AIRequestCount。既有
+`aiParseLogs` Route Trace只允许保留`present/status/source/valid`四个必要脱敏状态；
+完整Evidence、session ID、转写指纹、Provider对象和原始回调Payload不得进入业务记录、
+pending note或Storage。非语音渠道不得携带或投影Voice Evidence。
+
+全量新增硬门禁：
+
+```text
+voiceEvidenceMissingCount = 0
+voiceFingerprintMismatchCount = 0
+voiceStaleSessionAcceptedCount = 0
+```
+
+`VOICE-004`本阶段继续保持`PENDING / AIRequestCount=0`；`VOICE-006`的独立异步/Surface
+问题必须继续可见。详细合同见`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`。

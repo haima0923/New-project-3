@@ -2,7 +2,7 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前Clear Non-Business NO_RECORD候选分支：`fix/record-route-clear-no-record-v1`。E2E V1.2 已把
+> 当前Voice Completion Evidence候选分支：`fix/record-voice-completion-evidence-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。当前120题双轮为：
 > `PASS=14 / CASE_FAIL=106 / RUNNER_ERROR=0 / BLOCKED=0`；63条P0失败全部单题重跑，
@@ -20,13 +20,16 @@
 > 事实的“周五出”交付简写仍保留。AMB-005现在由真实生产Route返回canonical NO_RECORD；
 > FULL/HOME隐藏正式、pending和Deep入口，页面handler及business直接调用均fail closed，
 > NO_RECORD正式和pending写入均为0；业务不完整、语音未完成和多轮局部结果仍保持PENDING。
+> 语音最终完成现在由Provider final callback产生session绑定、sequence绑定和转写指纹绑定的
+> 结构化Evidence；FULL/HOME复用同一helper并机械透传到parseHybridInput与Route输入Trace。
+> partial、取消、失败、超时、旧session和手工编辑均不能保留有效final Evidence。本阶段不
+> 改Route：VOICE-004仍为PENDING/AI0，VOICE-006仍暴露原有Surface问题。
 > 当前已确认本地Parser缺陷数量为0。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
 > Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
 > 该计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
 > HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
 > 认证头被请求携带的证据。本阶段未修改parser、AI Normalizer、Storage/Coordinator核心
-> 或业务安全Expected；只为NO_RECORD修改Route、Preflight资格、FULL/HOME交互和business
-> 持久化兜底。
+> 或业务安全Expected；本阶段只新增语音完成Evidence及其页面Glue、Trace和Runner门禁。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 
@@ -80,6 +83,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md` | 明确报价与订单否定的组合证据、否定范围、重新肯定保护及BASIC-006重基线 |
 | `docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md` | 单字“出”订单误触发、短语级Evidence、商业非订单与多商品交付保护及AMB-005重基线 |
 | `docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md` | Clear Non-Business canonical NO_RECORD资格、页面与business持久化硬门禁、合法PENDING及异步保护 |
+| `docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md` | Provider final callback、session/转写指纹绑定、FULL/HOME机械透传及非语音渠道保护 |
 | `docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md` | 明确订单指代的结构化Evidence、语言边界、State独立性及raw→Preflight透传合同 |
 | `docs/RECORD_RECEIVABLE_ROUTE_POLICY_V1.md` | Safe Local待收款Route、复杂待收款PENDING和订单关系与Route分离政策 |
 | `docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md` | 明确订单指代待收款的选择前阻断、真实选择、最新State复核和危险关系边界 |
@@ -102,7 +106,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 - `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
 - `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
 - `docs/RECORD_E2E_CASE_CONTRACT_V1.md` 管 120 条核心题的机器结构和跨 Runner 复用边界；PAGE、HEADLESS、TEST_ONLY隔离提交和事务exact replay必须分lane判分。
-- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`管raw/semantic/proposal/outcome分层；`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`管明确已收款parser与负例边界；`docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`管报价正向Evidence、订单否定范围与重新肯定保护；`docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`管单字“出”的订单信号边界与短语级Evidence；`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`管Clear Non-Business canonical Route及零持久化门禁；`docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`管明确订单指代的parser Evidence与机械透传；`docs/RECORD_RECEIVABLE_ROUTE_POLICY_V1.md`管Safe Local待收款Route；`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`管明确订单指代待收款的Preflight门禁；`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`管默认离线、Live授权和进程级网络门禁；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择；`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`管首页单商品编辑同步与保存前一致性门禁。它们都不代表WXML/DOM页面E2E或真实千问质量。
+- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`管raw/semantic/proposal/outcome分层；`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`管明确已收款parser与负例边界；`docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`管报价正向Evidence、订单否定范围与重新肯定保护；`docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`管单字“出”的订单信号边界与短语级Evidence；`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`管Clear Non-Business canonical Route及零持久化门禁；`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`管语音Provider最终回调、session/指纹绑定及FULL/HOME透传；`docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`管明确订单指代的parser Evidence与机械透传；`docs/RECORD_RECEIVABLE_ROUTE_POLICY_V1.md`管Safe Local待收款Route；`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`管明确订单指代待收款的Preflight门禁；`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`管默认离线、Live授权和进程级网络门禁；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择；`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`管首页单商品编辑同步与保存前一致性门禁。它们都不代表WXML/DOM页面E2E或真实千问质量。
 - `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 管共享保存切换控制与发布顺序；它从属于共享核心安全合同，不能覆盖生产固定 `LEGACY_ONLY` 或自行批准 canary。
 - `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` 管 Release A 候选证据和发布前人工检查；它不构成上传、发布或开启 Shared 的授权。
 - `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；
