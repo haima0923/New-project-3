@@ -1406,3 +1406,29 @@ Surface Expected改为`BLOCKED / true / false`；生产页面不调用business�
 120题离线双轮均为`PASS=16 / CASE_FAIL=104 / RUNNER_ERROR=0 / BLOCKED=0`。
 只有VOICE-006由`CASE_FAIL / SURFACE_ERROR`变为PASS；其他119题的顶层状态、最早失败层、
 Ownership、Route、AI请求、Preflight、生产观察和业务Diff与冻结报告逐题一致。
+
+## 40. VOICE-010 Fake Deep Provider Surface分层Expected
+
+VOICE-010继续验证完整的金融语音链：final Voice Evidence有效，用户主动Deep Review，
+`AI_DEEP`及Fake Deep AI请求恰好1次，Semantic为`payment / record_payment`，并通过真实
+`changeReceivable(rec-open-a)`完成待收款关系确认。选择后的Domain Preflight为
+`domainCanSaveFormal=true / domainCanSavePending=true`，无业务blockingCode或待选择项。
+
+Surface业务能力和生产资格不得合并。FULL_PAGE具有完成正式收款所需的字段与操作，因此
+`surfaceCanCompleteFormal=true`；但Provider分类为`NON_REAL_FAKE`，生产资格必须保持：
+
+```text
+surface.status = BLOCKED
+effectiveCanSaveFormal = false
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+blockingCodes = [UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION]
+```
+
+生产页面不调用正式保存，business与生产Storage写入为0；这不取消
+`TEST_ONLY_ISOLATED_LEGACY_COMMIT`。隔离Lane仍验证payment新增1、receivable更新1、
+paidAmount=2500、revision=1和receipt=1，Journal/Backup最终为0。正确Provider阻断与
+成功隔离业务验证共同构成Case PASS，不表示Fake Provider获得生产资格。
+
+120题离线双轮为`PASS=17 / CASE_FAIL=103 / RUNNER_ERROR=0 / BLOCKED=0`；仅VOICE-010
+状态变化，`SURFACE_ERROR`从9降至8，隔离提交Lane总数保持88。其他119题逐题比较无变化。

@@ -193,3 +193,27 @@ pageFormalSaveAllowed = false
 验证客户和订单各增加1、revision和receipt各1，且Journal/Backup为0。VOICE-006因此
 成为Case PASS，不表示Fake AI取得生产保存资格。VOICE-010保持原有`SURFACE_ERROR`，
 其他119题不变。本补充未修改Voice glue、Route、AI、Normalizer、Preflight、页面或Runner等待。
+
+## 10. VOICE-010 Fake Deep Provider Surface合同补充
+
+VOICE-010继续要求可信final Voice Evidence、主动Deep Review、`AI_DEEP`、Fake Deep AI
+请求恰好1次以及`payment / record_payment`语义。客户王总、收款1500元、日期
+2026-07-15和用户真实选择`rec-open-a`均保持；选择后Domain Preflight允许正式保存，
+FULL_PAGE也具备完整业务能力。
+
+Fake Deep Provider仍不能用于生产正式保存，因此精确Surface合同为：
+
+```text
+FULL_PAGE surfaceCanCompleteFormal = true
+effectiveCanSaveFormal = false
+surface.status = BLOCKED
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+blockingCodes = [UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION]
+```
+
+生产页面、business和Storage写入均为0；隔离Legacy提交Lane继续验证payment新增1、
+receivable更新1、paidAmount=2500、revision=1、receipt=1，且Journal/Backup最终为0。
+VOICE-010因此成为Case PASS，但Fake Provider信任政策没有变化。全量双轮更新为17/103，
+仅VOICE-010状态变化，隔离提交Lane保持88；本补充未修改Voice glue、Route、AI、Fixture、
+Normalizer、Preflight、页面、Validator或Runner。
