@@ -13,6 +13,10 @@ const {
   observationContract,
   rawParserObservationErrors
 } = require('./observation-semantics');
+const {
+  normalizeFieldPaths,
+  runtimeFieldPathForCanonical
+} = require('./field-aliases');
 
 function enforceLaneResultCompleteness(testCase, evidence) {
   const expected = testCase.execution.lanes || [];
@@ -121,19 +125,15 @@ function requireObservationEvidence(evidence) {
   }
 }
 
-const RESULT_FIELD_ALIASES = Object.freeze({
-  depositAmount: 'depositAmount',
-  orderDeliveryDate: 'dueDate',
-  paymentDate: 'dueDate',
-  receivableAmount: 'amount',
-  receivableDueDate: 'dueDate',
-  todoRemindDate: 'dueDate'
-});
-
 function assertExpectedResult(testCase, evidence, collector) {
   const expected = expectedProposal(testCase);
   const actual = resultFromEvidence(testCase, evidence);
   const expectedContract = observationContract(testCase);
+  const expectedConfirmationMissing = new Set(normalizeFieldPaths(
+    testCase.expected && testCase.expected.confirmation
+      && testCase.expected.confirmation.missingFields,
+    expected.operation
+  ));
   if (expectedContract) {
     collector.check(
       'PROPOSAL',
@@ -157,11 +157,17 @@ function assertExpectedResult(testCase, evidence, collector) {
     expected.originalText
   );
   Object.keys(expected.fields || {}).forEach((field) => {
-    const actualPath = getPath(actual.fields || {}, RESULT_FIELD_ALIASES[field] || field);
+    const actualPath = getPath(actual.fields || {}, runtimeFieldPathForCanonical(field));
     collector.check('PROPOSAL', `fields.${field}`, actualPath.value, expected.fields[field]);
   });
   (expected.absentFields || []).forEach((field) => {
-    const actualPath = getPath(actual.fields || {}, field);
+    const canonicalField = normalizeFieldPaths([field], expected.operation)[0];
+    const actualPath = getPath(
+      actual.fields || {},
+      expectedConfirmationMissing.has(canonicalField)
+        ? runtimeFieldPathForCanonical(field)
+        : field
+    );
     collector.check(
       'PROPOSAL',
       `absentFields.${field}`,
@@ -364,6 +370,8 @@ function assertDiffContract(contract, diff, collector, layerName) {
 
 function assertProductionLayers(testCase, evidence, collector) {
   const expected = testCase.expected;
+  const proposalExpected = expectedProposal(testCase);
+  const operation = proposalExpected.operation;
   const page = evidence.pageDerivationEvidence || evidence.pageEvidence || {};
   const snapshot = page.afterEdits || {};
   const actualPreflight = evidence.preflightEvidence;
@@ -431,11 +439,13 @@ function assertProductionLayers(testCase, evidence, collector) {
             )
           )
         }
-        : getPath(snapshot.fields || {}, RESULT_FIELD_ALIASES[path] || path));
+        : getPath(snapshot.fields || {}, runtimeFieldPathForCanonical(path)));
     collector.check(
       'CONFIRMATION',
       `requiredFields.${path}.modeled`,
-      actualPath.found || (snapshot.missingFields || []).includes(RESULT_FIELD_ALIASES[path] || path),
+      actualPath.found || (snapshot.missingFields || []).includes(
+        runtimeFieldPathForCanonical(path)
+      ),
       true
     );
   });
@@ -457,14 +467,14 @@ function assertProductionLayers(testCase, evidence, collector) {
   collector.check(
     'CONFIRMATION',
     'missingFields',
-    normalizeCodes(snapshot.missingFields),
-    normalizeCodes(expected.confirmation.missingFields)
+    normalizeFieldPaths(snapshot.missingFields, operation),
+    normalizeFieldPaths(expected.confirmation.missingFields, operation)
   );
   collector.check(
     'CONFIRMATION',
     'conflictFields',
-    normalizeCodes(snapshot.conflictFields),
-    normalizeCodes(expected.confirmation.conflictFields)
+    normalizeFieldPaths(snapshot.conflictFields, operation),
+    normalizeFieldPaths(expected.confirmation.conflictFields, operation)
   );
   Object.keys(expected.productionObservation || {}).forEach((key) => {
     collector.check(
@@ -589,7 +599,7 @@ function assertLaneSpecific(testCase, evidence, collector) {
     Object.keys(proposalExpected.fields || {}).forEach((field) => {
       const actualPath = getPath(
         injectedDraft.fields || {},
-        RESULT_FIELD_ALIASES[field] || field
+        runtimeFieldPathForCanonical(field)
       );
       collector.check(
         'RELATION_TAMPER',
