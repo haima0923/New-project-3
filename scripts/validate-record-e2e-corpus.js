@@ -1056,6 +1056,39 @@ function validateSurface(testCase, enums) {
   });
 }
 
+function selectedSurfaceExpectation(testCase) {
+  if (testCase.input.entrySurface === 'HOME_QUICK') {
+    return testCase.expected.surface.home;
+  }
+  if (testCase.input.entrySurface === 'FULL_PAGE') {
+    return testCase.expected.surface.fullPage;
+  }
+  return null;
+}
+
+function validateSelectedSurfaceState(testCase, surfaceExpectation) {
+  if (!surfaceExpectation) return;
+  const label = testCase.caseId;
+  if (surfaceExpectation.status === 'NOT_APPLICABLE') {
+    fail(`${label} 当前选中的页面Surface不得标记NOT_APPLICABLE`);
+    return;
+  }
+  if (surfaceExpectation.status === 'CAN_COMPLETE') {
+    if (!surfaceExpectation.surfaceCanCompleteFormal
+      || !surfaceExpectation.effectiveCanSaveFormal) {
+      fail(`${label} CAN_COMPLETE必须同时具备Surface业务能力和当前有效正式保存资格`);
+    }
+    return;
+  }
+  if (surfaceExpectation.effectiveCanSaveFormal) {
+    fail(`${label} 非CAN_COMPLETE Surface不得声明effectiveCanSaveFormal=true`);
+  }
+  if (surfaceExpectation.status === 'REQUIRES_FULL_PAGE'
+    && surfaceExpectation.surfaceCanCompleteFormal) {
+    fail(`${label} REQUIRES_FULL_PAGE必须表达当前Surface业务能力不足`);
+  }
+}
+
 function validateRelationReferenceTamperContract(testCase) {
   const label = testCase.caseId;
   const lanes = testCase.execution.lanes || [];
@@ -1224,6 +1257,8 @@ function validateExecutionBoundaries(testCase, enums) {
     && observation.productionEligibility === 'ELIGIBLE_LOCAL') {
     fail(`${label} Fake/Replay不得取得LOCAL或REAL生产资格`);
   }
+  const surfaceExpectation = selectedSurfaceExpectation(testCase);
+  validateSelectedSurfaceState(testCase, surfaceExpectation);
   if (testCase.expected.route === 'NO_RECORD') {
     if (observation.productionEligibility !== 'NO_RECORD') {
       fail(`${label} NO_RECORD生产观察必须为NO_RECORD`);
@@ -1233,13 +1268,10 @@ function validateExecutionBoundaries(testCase, enums) {
       fail(`${label} 业务Preflight阻断必须优先标记BLOCKED_BUSINESS_SAFETY`);
     }
   } else {
-    const surfaceKey = testCase.input.entrySurface === 'HOME_QUICK'
-      ? 'home'
-      : (testCase.input.entrySurface === 'FULL_PAGE' ? 'fullPage' : null);
-    const surfaceExpectation = surfaceKey && testCase.expected.surface[surfaceKey];
-    if (surfaceExpectation && surfaceExpectation.status !== 'CAN_COMPLETE') {
+    if (surfaceExpectation
+      && surfaceExpectation.surfaceCanCompleteFormal === false) {
       if (observation.productionEligibility !== 'BLOCKED_SURFACE') {
-        fail(`${label} 当前入口Surface不能完成时必须标记BLOCKED_SURFACE`);
+        fail(`${label} 当前入口Surface业务能力不足时必须标记BLOCKED_SURFACE`);
       }
     } else if (testCase.ai.profile === 'LOCAL_ONLY') {
       if (observation.productionEligibility !== 'ELIGIBLE_LOCAL') {
@@ -1247,6 +1279,38 @@ function validateExecutionBoundaries(testCase, enums) {
       }
     } else if (observation.productionEligibility !== 'BLOCKED_NON_REAL_PROVIDER') {
       fail(`${label} 安全Fake/Replay生产观察必须阻断非真实Provider资格`);
+    }
+  }
+  if (observation.productionEligibility === 'BLOCKED_SURFACE'
+    && (!surfaceExpectation
+      || surfaceExpectation.surfaceCanCompleteFormal !== false)) {
+    fail(`${label} BLOCKED_SURFACE只能用于当前Surface业务能力不足`);
+  }
+  if (observation.productionEligibility === 'BLOCKED_NON_REAL_PROVIDER') {
+    if (!NON_REAL_AI_PROFILES.has(testCase.ai.profile)) {
+      fail(`${label} BLOCKED_NON_REAL_PROVIDER必须来自Fake或Replay Provider`);
+    }
+    if (!observation.blockingCodes.includes('UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION')) {
+      fail(`${label} 非真实Provider阻断必须包含UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION`);
+    }
+    if (observation.pageFormalSaveAllowed !== (testCase.input.entrySurface === 'HEADLESS' ? null : false)) {
+      fail(`${label} 非真实Provider不得取得生产页面正式保存资格`);
+    }
+    if (surfaceExpectation
+      && surfaceExpectation.surfaceCanCompleteFormal !== true) {
+      fail(`${label} Surface业务能力不足不得归类为BLOCKED_NON_REAL_PROVIDER`);
+    }
+  }
+  if (observation.productionEligibility === 'ELIGIBLE_LOCAL') {
+    if (testCase.ai.profile !== 'LOCAL_ONLY') {
+      fail(`${label} ELIGIBLE_LOCAL必须来自LOCAL_ONLY`);
+    }
+    if (surfaceExpectation
+      && (surfaceExpectation.status !== 'CAN_COMPLETE'
+        || surfaceExpectation.surfaceCanCompleteFormal !== true
+        || surfaceExpectation.effectiveCanSaveFormal !== true
+        || observation.pageFormalSaveAllowed !== true)) {
+      fail(`${label} ELIGIBLE_LOCAL必须具备完整Surface能力和当前页面正式保存资格`);
     }
   }
   const expectedPageFormalSaveAllowed = testCase.input.entrySurface === 'HEADLESS'
@@ -2247,12 +2311,25 @@ function captureValidationFailures(callback) {
 
 function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtureMap) {
   const results = [];
+  const casesFingerprintBefore = canonicalJson(cases);
+  const inputsFingerprintBefore = canonicalJson(cases.map((item) => item.input));
+  const expectedFingerprintBefore = canonicalJson(cases.map((item) => item.expected));
   function expectMutationFailure(name, sourceCase, mutate, validator) {
     const candidate = cloneJson(sourceCase);
     mutate(candidate);
     const captured = captureValidationFailures(() => validator(candidate));
     if (!captured.length) {
       fail(`合同自测未拦截：${name}`);
+      results.push({ name, passed: false });
+    } else {
+      results.push({ name, passed: true });
+    }
+  }
+  function expectValidationPass(name, sourceCase, validator) {
+    const candidate = cloneJson(sourceCase);
+    const captured = captureValidationFailures(() => validator(candidate));
+    if (captured.length) {
+      fail(`合同自测误拒绝：${name}：${captured.join('；')}`);
       results.push({ name, passed: false });
     } else {
       results.push({ name, passed: true });
@@ -2271,12 +2348,24 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
   const semanticFormal = cases.find((item) => item.caseId === 'REC-E2E-BASIC-001');
   const semanticPending = cases.find((item) => item.caseId === 'REC-E2E-BASIC-019');
   const protectedParser = cases.find((item) => item.caseId === 'REC-E2E-BASIC-006');
+  const localSurfaceComplete = cases.find((item) => item.caseId === 'REC-E2E-BASIC-001');
+  const surfaceBlocked = cases.find((item) => item.caseId === 'REC-E2E-PAGE-002');
+  const providerBlocked = cases.find((item) => item.caseId === 'REC-E2E-VOICE-006');
+  const businessBlocked = cases.find((item) => item.caseId === 'REC-E2E-VOICE-004');
+  const noRecord = cases.find((item) => item.caseId === 'REC-E2E-AMB-005');
+  const legacyProviderSurface = cases.find((item) => item.caseId === 'REC-E2E-VOICE-010');
   if (!safeFake || !blocked || !orderSelection || !exactReplay
     || !tamperCrossCustomer || !tamperConverted || !semanticFormal
-    || !semanticPending || !protectedParser) {
+    || !semanticPending || !protectedParser || !localSurfaceComplete
+    || !surfaceBlocked || !providerBlocked || !businessBlocked || !noRecord
+    || !legacyProviderSurface) {
     fail('合同自测基础Case缺失');
     return results;
   }
+  const validateLayeredSurfaceEligibility = (item) => {
+    validateSurface(item, enums);
+    validateExecutionBoundaries(item, enums);
+  };
 
   expectMutationFailure(
     'pending不得写成canonical businessType',
@@ -2357,6 +2446,168 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
   results.push({
     name: 'BASIC-006修复后仍保留RAW_PARSER强合同',
     passed: parserProtectionPreserved
+  });
+
+  expectValidationPass(
+    '完整LOCAL Surface与生产资格组合合法',
+    localSurfaceComplete,
+    validateLayeredSurfaceEligibility
+  );
+  expectValidationPass(
+    'Surface业务能力不足与BLOCKED_SURFACE组合合法',
+    surfaceBlocked,
+    validateLayeredSurfaceEligibility
+  );
+  expectValidationPass(
+    'Surface能力完整但Fake Provider阻断组合合法',
+    providerBlocked,
+    validateLayeredSurfaceEligibility
+  );
+  expectValidationPass(
+    'Provider阻断保持页面正式保存禁用',
+    providerBlocked,
+    validateLayeredSurfaceEligibility
+  );
+  expectValidationPass(
+    '业务Preflight阻断优先于Provider资格',
+    businessBlocked,
+    validateLayeredSurfaceEligibility
+  );
+  expectValidationPass(
+    'NO_RECORD保持独立生产资格',
+    noRecord,
+    validateLayeredSurfaceEligibility
+  );
+  expectValidationPass(
+    '旧Fake Surface能力表达保持兼容且生产仍阻断',
+    legacyProviderSurface,
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Surface能力false不得effective true',
+    providerBlocked,
+    (item) => {
+      item.expected.surface.fullPage.surfaceCanCompleteFormal = false;
+      item.expected.surface.fullPage.effectiveCanSaveFormal = true;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'CAN_COMPLETE不得effective false',
+    providerBlocked,
+    (item) => {
+      item.expected.surface.fullPage.status = 'CAN_COMPLETE';
+      item.expected.surface.fullPage.effectiveCanSaveFormal = false;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Surface能力完整不得标BLOCKED_SURFACE',
+    providerBlocked,
+    (item) => {
+      item.expected.productionObservation.productionEligibility = 'BLOCKED_SURFACE';
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Surface能力不足不得标BLOCKED_NON_REAL_PROVIDER',
+    surfaceBlocked,
+    (item) => {
+      item.expected.productionObservation.productionEligibility = 'BLOCKED_NON_REAL_PROVIDER';
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Provider阻断不得缺失不可信Provider码',
+    providerBlocked,
+    (item) => {
+      item.expected.productionObservation.blockingCodes = [];
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Provider阻断不得允许页面正式保存',
+    providerBlocked,
+    (item) => {
+      item.expected.productionObservation.pageFormalSaveAllowed = true;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'BLOCKED状态不得effective true',
+    providerBlocked,
+    (item) => {
+      item.expected.surface.fullPage.effectiveCanSaveFormal = true;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'LOCAL CAN_COMPLETE不得关闭pageFormalSaveAllowed',
+    localSurfaceComplete,
+    (item) => {
+      item.expected.productionObservation.pageFormalSaveAllowed = false;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'ELIGIBLE_LOCAL不得与选中Surface阻断共存',
+    localSurfaceComplete,
+    (item) => {
+      item.expected.surface.home.status = 'BLOCKED';
+      item.expected.surface.home.effectiveCanSaveFormal = false;
+      item.expected.productionObservation.pageFormalSaveAllowed = false;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    '当前选中的页面Surface不得NOT_APPLICABLE',
+    providerBlocked,
+    (item) => {
+      item.expected.surface.fullPage.status = 'NOT_APPLICABLE';
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    '未知productionEligibility必须拒绝',
+    providerBlocked,
+    (item) => {
+      item.expected.productionObservation.productionEligibility = 'BLOCKED_UNKNOWN';
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Surface合同缺effectiveCanSaveFormal必须拒绝',
+    providerBlocked,
+    (item) => {
+      delete item.expected.surface.fullPage.effectiveCanSaveFormal;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'REQUIRES_FULL_PAGE不得声称Surface能力完整',
+    surfaceBlocked,
+    (item) => {
+      item.expected.surface.home.surfaceCanCompleteFormal = true;
+    },
+    validateLayeredSurfaceEligibility
+  );
+  expectMutationFailure(
+    'Fake Provider不得伪装LOCAL Provider分类',
+    providerBlocked,
+    (item) => {
+      item.expected.productionObservation.providerClassification = 'TEST_LOCAL_ONLY';
+    },
+    validateLayeredSurfaceEligibility
+  );
+  const layeredValidatorCaseIdIndependent = !/REC-E2E-/.test(
+    `${selectedSurfaceExpectation.toString()}${validateSelectedSurfaceState.toString()}`
+  );
+  if (!layeredValidatorCaseIdIndependent) {
+    fail('Surface/productionEligibility分层Validator不得读取Case ID');
+  }
+  results.push({
+    name: 'Surface分层Validator不按Case ID特判',
+    passed: layeredValidatorCaseIdIndependent
   });
 
   expectMutationFailure(
@@ -2634,6 +2885,15 @@ function runExecutionBoundaryContractSelfTests(cases, enums, resolvedStateFixtur
   ));
   if (!allMigrated) fail('合同自测：120条ACTIVE未全部迁移执行边界');
   results.push({ name: '120条ACTIVE迁移完整', passed: allMigrated });
+  const casesImmutable = canonicalJson(cases) === casesFingerprintBefore;
+  const inputsImmutable = canonicalJson(cases.map((item) => item.input)) === inputsFingerprintBefore;
+  const expectedImmutable = canonicalJson(cases.map((item) => item.expected)) === expectedFingerprintBefore;
+  if (!casesImmutable) fail('合同自测不得修改Case对象');
+  if (!inputsImmutable) fail('合同自测不得修改Validator输入');
+  if (!expectedImmutable) fail('合同自测不得修改Expected对象');
+  results.push({ name: 'Validator专项不修改Case对象', passed: casesImmutable });
+  results.push({ name: 'Validator专项不修改输入对象', passed: inputsImmutable });
+  results.push({ name: 'Validator专项不修改Expected对象', passed: expectedImmutable });
   return results;
 }
 
