@@ -2,12 +2,12 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前VOICE-010 Surface/Provider分层合同候选分支：
-> `fix/record-voice-010-surface-contract-v1`。E2E V1.2 已把
+> 当前BASIC-011 Surface/Provider分层合同候选分支：
+> `fix/record-basic-011-surface-contract-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。当前120题双轮为：
-> `PASS=17 / CASE_FAIL=103 / RUNNER_ERROR=0 / BLOCKED=0`；62条P0失败全部单题重跑，
-> P1分层抽查11条，26个Cluster覆盖103条失败；Hybrid/Raw parser调用图两轮一致，
+> `PASS=18 / CASE_FAIL=102 / RUNNER_ERROR=0 / BLOCKED=0`；61条P0失败全部单题重跑，
+> P1分层抽查11条，26个Cluster覆盖102条失败；Hybrid/Raw parser调用图两轮一致，
 > evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
 > 事务清理门禁均通过。`BASIC-010`的“这单”现在产生可信、未解析且不含orderId的结构化
 > 订单指代Evidence，并沿raw parser、Hybrid、Confirmation和Preflight输入完整透传；
@@ -34,12 +34,17 @@
 > 待收款选择完整、Domain和Surface业务能力为true，但Fake Deep Provider生产资格仍为
 > `BLOCKED_NON_REAL_PROVIDER`，页面为`BLOCKED`且effective为false；生产写入为0，隔离
 > 提交继续验证payment新增1、receivable更新1及paidAmount=2500，因此Case为PASS。
+> BASIC-011现在也使用同一分层合同：真实`changeReceivable(rec-open-a)`完成待收款确认，
+> Domain与FULL_PAGE业务能力均为true；Fake Deep Provider仍被生产门禁阻断，页面为
+> `BLOCKED`且effective为false，生产保存调用为0。隔离提交继续验证payment新增1、
+> receivable更新1、paidAmount=2500及revision/receipt各1，因此Case为PASS。其余7条
+> SURFACE_ERROR保持原失败层，隔离提交Lane总数保持88。
 > 当前已确认本地Parser缺陷数量为0。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
 > Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
 > 该计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
 > HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
 > 认证头被请求携带的证据。本阶段未修改parser、AI Normalizer、Storage/Coordinator核心
-> 或生产业务安全政策；本阶段只修改VOICE-010两项Surface Expected和相关文档，没有
+> 或生产业务安全政策；本阶段只修改BASIC-011两项Surface Expected和相关文档，没有
 > 改动生产代码、Corpus Validator、Runner、Voice glue、Route、AI fixture/Normalizer、
 > Preflight、页面、business、Storage、Runner等待或Completion Evidence Schema。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /

@@ -1432,3 +1432,30 @@ paidAmount=2500、revision=1和receipt=1，Journal/Backup最终为0。正确Prov
 
 120题离线双轮为`PASS=17 / CASE_FAIL=103 / RUNNER_ERROR=0 / BLOCKED=0`；仅VOICE-010
 状态变化，`SURFACE_ERROR`从9降至8，隔离提交Lane总数保持88。其他119题逐题比较无变化。
+
+## 41. BASIC-011 Fake Deep Provider Surface分层Expected
+
+BASIC-011继续验证部分收款的完整业务链：原文“王总这笔待收今天付了1500元”走
+`AI_DEEP`，Fake Deep请求恰好1次，Semantic为`payment / record_payment`。Runner必须
+真实调用`changeReceivable(rec-open-a)`一次；选择后Domain Preflight必须为
+`domainCanSaveFormal=true / domainCanSavePending=true`，且无业务blockingCode和待选择项。
+
+Surface业务能力与生产资格必须分层表达。FULL_PAGE具备关系选择及正式收款所需能力，
+因此`surfaceCanCompleteFormal=true`；但Provider分类为`NON_REAL_FAKE`，生产资格必须为：
+
+```text
+surface.status = BLOCKED
+effectiveCanSaveFormal = false
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+blockingCodes = [UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION]
+```
+
+页面按钮是否可见不代表允许保存。生产页面不得调用正式或pending保存，production business
+和Storage写入必须为0；这不取消`TEST_ONLY_ISOLATED_LEGACY_COMMIT`。隔离Lane继续验证
+payment新增1、receivable更新1、paidAmount=2500、revision=1和receipt=1，
+Journal/Backup最终为0。正确Provider阻断与成功隔离业务验证共同构成Case PASS，不表示
+Fake Provider获得生产资格。
+
+120题离线双轮为`PASS=18 / CASE_FAIL=102 / RUNNER_ERROR=0 / BLOCKED=0`；仅BASIC-011
+状态变化，`SURFACE_ERROR`从8降至7，隔离提交Lane总数保持88。其他119题逐题比较无变化。
