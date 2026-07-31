@@ -7,6 +7,7 @@ const {
   saveConfirmedDraft,
   savePendingNote
 } = require('../utils/business');
+const { buildRecentRecords } = require('../utils/home-workbench');
 const { buildSaveEligibility, createNoAiAdapter, runRecordFlow } = require('../utils/record-flow-core');
 const { buildRecordConfirmation } = require('../utils/record-confirmation-builder');
 const { HEADLESS_TEST_CAPABILITIES } = require('../utils/record-confirmation-contract');
@@ -22,6 +23,7 @@ const {
   getStateFingerprint,
   normalizeDomainState,
   safeClone,
+  stableHash,
   stableSerialize
 } = require('../utils/record-state-diff');
 const { createInitialState } = require('../utils/storage');
@@ -338,36 +340,64 @@ test('客户、主记录、金融、关联、日志阶段失败均完整回滚',
   ['CUSTOMER', 'ORDER', 'PAYMENT', 'AI_PARSE_LOG'].forEach((entityType) => {
     assert(operationIndex(entityType) >= 0, `missing failure injection operation: ${entityType}`);
   });
+  assert.strictEqual(
+    plan.operations.filter((operation) => operation.entityType === 'AI_PARSE_LOG').length,
+    1,
+    'composite order deposit plan must contain one parse-log operation'
+  );
   const failures = [
     { phase: 'AFTER_APPLY', operationIndex: operationIndex('CUSTOMER') },
     { phase: 'AFTER_APPLY', operationIndex: operationIndex('ORDER') },
     { phase: 'AFTER_APPLY', operationIndex: operationIndex('PAYMENT') },
+    { phase: 'BEFORE_APPLY', operationIndex: operationIndex('AI_PARSE_LOG') },
     { phase: 'AFTER_APPLY', operationIndex: operationIndex('AI_PARSE_LOG') },
     { phase: 'BEFORE_INVARIANTS' },
     { phase: 'BEFORE_ATOMIC_SWAP' }
   ];
-  failures.forEach((failure) => {
-    const store = createRecordMemoryStore(initial, { failureInjection: failure });
+  const assertRolledBack = (store, label) => {
     const stateBefore = store.getState();
     const fingerprintBefore = store.getFingerprint();
     const receipt = commit(plan, store);
-    assert.strictEqual(receipt.status, COMMIT_STATUSES.ROLLED_BACK, JSON.stringify(failure));
-    assert.deepStrictEqual(store.getState(), stateBefore, JSON.stringify(failure));
-    assert.strictEqual(store.getVersion(), 1, JSON.stringify(failure));
-    assert.strictEqual(store.getFingerprint(), fingerprintBefore, JSON.stringify(failure));
-    assert.strictEqual(store.getCommitReceipt(plan.planId), null, JSON.stringify(failure));
+    assert.strictEqual(receipt.status, COMMIT_STATUSES.ROLLED_BACK, label);
+    assert.deepStrictEqual(store.getState(), stateBefore, label);
+    assert.strictEqual(store.getVersion(), 1, label);
+    assert.strictEqual(store.getFingerprint(), fingerprintBefore, label);
+    assert.strictEqual(store.getCommitReceipt(plan.planId), null, label);
     assert.strictEqual(JSON.stringify(store.getState()).includes('temp:'), false);
+  };
+  failures.forEach((failure) => {
+    assertRolledBack(createRecordMemoryStore(initial, { failureInjection: failure }), JSON.stringify(failure));
   });
+
+  const readbackStore = createRecordMemoryStore(initial);
+  const readWorkingState = readbackStore.getWorkingState.bind(readbackStore);
+  let readbackCount = 0;
+  readbackStore.getWorkingState = () => {
+    readbackCount += 1;
+    if (readbackCount > plan.operations.length) throw new Error('injected post-operation readback failure');
+    return readWorkingState();
+  };
+  assertRolledBack(readbackStore, 'post-operation readback failure');
 });
 
 test('同一plan幂等重放不重复写入，planId碰撞明确阻断', () => {
   const initial = stateWith();
-  const plan = prepare(orderResult(), initial).savePlan;
+  const raw = orderResult(
+    { depositAmount: '300', paymentAmount: '300' },
+    '王总订礼品盒100个每个10元，先付定金300元，8月1日交'
+  );
+  const plan = prepare(raw, initial).savePlan;
   const store = createRecordMemoryStore(initial);
   const first = commit(plan, store);
   const stateAfterFirst = store.getState();
   const second = commit(plan, store);
   assert.strictEqual(first.status, COMMIT_STATUSES.COMMITTED);
+  assert.strictEqual(first.businessDiff.customers.created.length, 1);
+  assert.strictEqual(first.businessDiff.orders.created.length, 1);
+  assert.strictEqual(first.businessDiff.payments.created.length, 1);
+  assert.strictEqual(first.fullDiff.aiParseLogs.created.length, 1);
+  assert.strictEqual(stateAfterFirst.aiParseLogs.length, 1);
+  assert.strictEqual(stateAfterFirst.aiParseLogs[0].action, 'save_order');
   assert.strictEqual(second.status, COMMIT_STATUSES.ALREADY_COMMITTED);
   assert.strictEqual(second.idempotentReplay, true);
   assert.deepStrictEqual(store.getState(), stateAfterFirst);
@@ -516,8 +546,11 @@ test('代表业务与现有business隔离保存结果等价', () => {
   const cases = [
     ['新客户订单', stateWith(), orderResult()],
     ['已有客户订单', stateWith({ customers: [wang] }), orderResult({ customerId: 'cus-wang' })],
-    ['新订单含定金', stateWith(), orderResult({ depositAmount: '300', paymentAmount: '300' },
-      '王总订礼品盒100个每个10元，先付定金300元，8月1日交')],
+    ['新订单含定金', stateWith(), Object.assign(
+      orderResult({ depositAmount: '300', paymentAmount: '300' },
+        '王总订礼品盒100个每个10元，先付定金300元，8月1日交'),
+      { id: 'parse-composite-order-deposit' }
+    )],
     ['多商品订单', stateWith(), orderResult({
       productName: '礼品盒', amount: '1600', totalAmount: '1600',
       items: [
@@ -603,7 +636,8 @@ test('代表业务与现有business隔离保存结果等价', () => {
     const prepared = prepare(raw, initial, action, { pendingReason: '用户选择稍后整理' });
     assert.strictEqual(prepared.savePlan.blocked, false, `${name}:${JSON.stringify(prepared.savePlan.blockingIssues)}`);
     const legacy = legacySave(initial, prepared.finalResult, action);
-    const modern = newSave(initial, prepared, name).state;
+    const shared = newSave(initial, prepared, name);
+    const modern = shared.state;
     assert.deepStrictEqual(canonicalState(modern, initial), canonicalState(legacy, initial), name);
     if (typeof legacyEquivalenceVisitor === 'function') {
       legacyEquivalenceVisitor({
@@ -626,6 +660,50 @@ test('代表业务与现有business隔离保存结果等价', () => {
       assert.strictEqual(modern.aiParseLogs.length, 100);
       assert.strictEqual(modern.aiParseLogs[0].originalText, raw.original_text);
       assert.strictEqual(modern.aiParseLogs.some((item) => item.id === 'old-log-99'), false);
+    }
+    if (name === '新订单含定金') {
+      [legacy, modern].forEach((savedState) => {
+        assert.strictEqual(savedState.orders.length, 1);
+        assert.strictEqual(savedState.paymentRecords.length, 1);
+        assert.strictEqual(savedState.orderProgress.length, 2);
+        assert.strictEqual(savedState.operationLogs.length, 0);
+        assert.strictEqual(savedState.paymentRecords[0].kind, 'deposit');
+        assert.strictEqual(savedState.paymentRecords[0].orderId, savedState.orders[0].id);
+        assert.strictEqual(savedState.aiParseLogs.length, 1);
+        assert.strictEqual(savedState.aiParseLogs[0].action, 'save_order');
+        assert.strictEqual(savedState.aiParseLogs[0].userId, 'local-user');
+        assert.strictEqual(savedState.aiParseLogs[0].inputSource, 'test');
+        assert.strictEqual(savedState.aiParseLogs[0].originalText, raw.original_text);
+        assert.strictEqual(savedState.aiParseLogs[0].parseResult.id, 'parse-composite-order-deposit');
+        assert.strictEqual(savedState.aiParseLogs[0].parseResult.intent, 'order');
+        assert.strictEqual(savedState.aiParseLogs[0].parseResult.operation, 'create_order');
+        assert.strictEqual(savedState.aiParseLogs[0].parseResult.fields.depositAmount, '300');
+        assert.strictEqual(savedState.aiParseLogs[0].createdAt, FIXED_INSTANT);
+      });
+      assert.strictEqual(
+        prepared.savePlan.operations.filter((operation) => operation.entityType === 'AI_PARSE_LOG').length,
+        1
+      );
+      assert.strictEqual(
+        stableHash(legacy.aiParseLogs[0].parseResult, 'parse-result1'),
+        stableHash(modern.aiParseLogs[0].parseResult, 'parse-result1')
+      );
+      assert.strictEqual(shared.receipt.stateVersionBefore, 1);
+      assert.strictEqual(shared.receipt.stateVersionAfter, 2);
+      assert.strictEqual(shared.receipt.fullDiff.aiParseLogs.created.length, 1);
+      const recentMatches = buildRecentRecords(modern, 3)
+        .filter((record) => record.title.includes(raw.original_text.slice(0, 8)));
+      assert.strictEqual(recentMatches.length, 1);
+    }
+    if (name === '订单定金') {
+      [legacy, modern].forEach((savedState) => {
+        assert.strictEqual(savedState.aiParseLogs.length, 1);
+        assert.strictEqual(savedState.aiParseLogs[0].action, 'save_order_deposit');
+      });
+      assert.strictEqual(
+        prepared.savePlan.operations.filter((operation) => operation.entityType === 'AI_PARSE_LOG').length,
+        1
+      );
     }
     if (name === '报价') assert.strictEqual(modern.quotations[0].originalText, raw.original_text);
     if (name === '部分收款') assert.strictEqual(modern.paymentRecords[0].originalText, raw.original_text);
