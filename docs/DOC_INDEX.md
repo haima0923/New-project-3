@@ -2,12 +2,12 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前Composite Order + Deposit解析日志Envelope候选分支：
-> `fix/record-order-deposit-parse-log-dedup-v1`。E2E V1.2 已把
+> 当前多商品新建订单Operation Log测试合同候选分支：
+> `fix/record-multi-create-operation-log-contract-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。当前120题双轮为：
-> `PASS=19 / CASE_FAIL=101 / RUNNER_ERROR=0 / BLOCKED=0`；60条P0失败全部单题重跑，
-> P1分层抽查11条，26个Cluster覆盖101条失败；Hybrid/Raw parser调用图两轮一致，
+> `PASS=22 / CASE_FAIL=98 / RUNNER_ERROR=0 / BLOCKED=0`；57条P0失败全部单题重跑，
+> P1分层抽查11条，26个Cluster覆盖98条失败；Hybrid/Raw parser调用图两轮一致，
 > evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
 > 事务清理门禁均通过。`BASIC-010`的“这单”现在产生可信、未解析且不含orderId的结构化
 > 订单指代Evidence，并沿raw parser、Hybrid、Confirmation和Preflight输入完整透传；
@@ -42,15 +42,19 @@
 > Standalone Deposit仍写一条`save_order_deposit`。Legacy与Shared SavePlan日志基数一致，
 > 重放和回滚零增量，首页最近记录同一原文只出现一次。BASIC-014同时采用已审计的Fake
 > Provider Surface分层合同并变为PASS；剩余6条SURFACE_ERROR保持原失败层，隔离提交Lane
-> 总数保持88。
+> 总数保持88。MULTI-001、MULTI-002和MULTI-006现在冻结多商品新建订单的窄日志合同：
+> 每条只创建一个包含多个`items[]`的订单，保留一条顶层`aiParseLogs/save_order`，不写
+> `operationLogs`；Fake Deep Provider继续使FULL_PAGE生产资格为
+> `BLOCKED_NON_REAL_PROVIDER`，页面业务能力为true但effective正式保存为false。生产保存
+> 调用仍为0，隔离Legacy提交继续验证客户、订单、items、revision和receipt。三条现为PASS，
+> 剩余3条SURFACE_ERROR保持原失败层，隔离提交Lane总数仍为88。
 > 当前已确认本地Parser缺陷数量为0。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
 > Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
 > 该计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
 > HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
-> 认证头被请求携带的证据。本阶段只修改Legacy与Shared SavePlan的parse log所有权、
-> BASIC-014两项Surface Expected、对应专项测试和文档；没有修改parser、Route、AI、
-> fixture、Preflight、页面、首页生产逻辑、日志Schema、Storage/Coordinator核心、Corpus
-> Validator或Runner断言语义。Shared生产提交仍关闭。
+> 认证头被请求携带的证据。本阶段只修改MULTI-001/002/006的Surface与operationLogs测试
+> Expected及对应文档；没有修改生产代码、Runner、Validator、Fixture、Parser、Route、AI、
+> Preflight、页面、business、Storage/Coordinator或Provider信任政策。Shared生产提交仍关闭。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 

@@ -1486,3 +1486,45 @@ receipt；生产Surface因Fake Provider为`BLOCKED / true / false`且生产写�
 120题离线双轮为`PASS=19 / CASE_FAIL=101 / RUNNER_ERROR=0 / BLOCKED=0`，
 `SURFACE_ERROR=6`。仅BASIC-014变化，其他119题保持冻结状态、最早失败层、Route和业务Diff；
 隔离提交Lane总数仍为88。
+
+## 43. 多商品新建订单Operation Log与Provider Surface合同
+
+`MULTI-001`、`MULTI-002`和`MULTI-006`各自只创建一个订单；多个商品保存在同一订单的
+`items[]`中，不拆成多个订单，也不按商品分别写业务操作日志。当前正式窄合同为：
+
+```text
+create_order                         → operationLogs +0
+update_order                         → operationLogs +1
+update_order_status                  → operationLogs +1
+update_order_delivery_date           → operationLogs +1
+delete_record                        → operationLogs +1
+```
+
+`operationLogs`不是所有持久化动作的完整审计日志。新建订单由订单记录、顶层
+`aiParseLogs(action=save_order)` Envelope、State Diff、revision、receipt及实际提交结果
+共同审计。三条多商品题必须继续断言一个订单、完整items、客户、金额、交期、原文、
+`aiParseLogs +1`、`operationLogs +0`以及revision/receipt各1。
+
+三条题均使用Fake Deep Provider。Domain和FULL_PAGE业务能力完整，因此
+`domainCanSaveFormal=true`且`surfaceCanCompleteFormal=true`；但Fake Provider不具备
+生产资格，Surface必须为：
+
+```text
+status = BLOCKED
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+effectiveCanSaveFormal = false
+pageFormalSaveAllowed = false
+blockingCodes = [UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION]
+```
+
+生产页面、business和Storage正式保存调用均为0；`SAVE_FORMAL` Action Plan和
+`PAGE_PRODUCTION_OBSERVATION + TEST_ONLY_ISOLATED_LEGACY_COMMIT`两条Lane保持不变。
+隔离Legacy Store仍提交客户1和订单1，并验证全部items、单一parse-log Envelope、零
+operation log及一次revision/receipt。
+
+120题离线双轮均为`PASS=22 / CASE_FAIL=98 / RUNNER_ERROR=0 / BLOCKED=0`，
+`SURFACE_ERROR=3`。仅上述三条由`CASE_FAIL / SURFACE_ERROR`变为PASS；其他117题状态、
+最早失败层、Ownership、Route、AI请求、Preflight、Eligibility、Surface Actual和业务
+Diff不变。57条P0失败全部单题重跑，P1分层抽查11条，26个Cluster覆盖98/98失败；
+隔离提交Lane总数仍为88。两轮网络、真实Storage、fixture、跨Case泄漏、Journal/Backup、
+Parser Graph、Voice Evidence、陈旧Session和重复Voice Standard AI门禁均为0。

@@ -787,3 +787,44 @@ SURFACE_ERROR    6
 跨Case泄漏、Journal/Backup、Parser Graph、Voice Evidence、陈旧Session和重复Voice
 Standard AI门禁均为0；专项`duplicateCompositeParseLogCount=0`且
 `standaloneDepositParseLogMissingCount=0`。
+
+## 25. 多商品新建订单Operation Log与Provider Surface重基线
+
+`MULTI-001`、`MULTI-002`和`MULTI-006`继续走`AI_DEEP`，Fake Deep请求各1次，最终
+Semantic均为`order / create_order`。三条分别创建一个含2、3、2个items的订单；客户、
+各项商品、数量、单位、单价、总额与明确交期保持原断言。
+
+FULL_PAGE具备完成这些订单的业务能力，但Fake Deep Provider不具备生产资格，因此三条
+Surface Expected统一冻结为：
+
+```text
+surface.status = BLOCKED
+surfaceCanCompleteFormal = true
+effectiveCanSaveFormal = false
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+pageFormalSaveAllowed = false
+```
+
+生产页面、business和Storage正式保存调用均为0。`TEST_ONLY_ISOLATED_LEGACY_COMMIT`
+继续在隔离Store中创建客户1和订单1，保存同一订单的全部items，并产生一条顶层
+`aiParseLogs(action=save_order)`、零条`operationLogs`、一次revision和一张receipt。
+新建订单不写业务操作日志；已有订单的部分显式修改、状态变化及删除仍按既有窄合同写日志。
+
+120题离线双轮结果一致：
+
+```text
+ACTIVE         120
+PASS            22
+CASE_FAIL       98
+RUNNER_ERROR     0
+BLOCKED          0
+SURFACE_ERROR    3
+```
+
+与19/101冻结报告逐题比较，仅`MULTI-001/002/006`由`CASE_FAIL / SURFACE_ERROR /
+UNCLASSIFIED_REQUIRES_REVIEW`变为PASS；其他117题的状态、最早失败层、Ownership、Route、
+AI请求、Preflight、Eligibility、Surface Actual、业务Diff、aiParseLogs和operationLogs
+Actual均不变。57条P0失败全部单题重跑，P1分层抽查11条，26个Cluster覆盖98/98失败；
+隔离提交Lane总数保持88。两轮硬门禁中的网络、真实Storage、fixture、跨Case泄漏、
+Journal/Backup、Parser Graph、Voice Evidence、陈旧Session及重复Voice Standard AI计数
+全部为0；`FIN-001/013/014`继续稳定为`CASE_FAIL / SURFACE_ERROR`。
