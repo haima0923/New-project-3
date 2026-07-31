@@ -701,3 +701,48 @@ STATE_DIFF=4 / STORAGE_TRANSACTION=1 / SURFACE=8`。62条P0失败全部单题重
 最早失败层、Ownership、Route、AI请求、Preflight、Eligibility、Surface Actual和业务
 Diff完全一致。两轮网络、真实Storage、fixture、跨Case泄漏、Journal/Backup、Parser Graph、
 Voice Evidence、陈旧Session和重复Voice Standard AI硬门禁全部为0。
+
+## 23. BASIC-011 Fake Deep Provider Surface合同重基线
+
+本轮只把BASIC-011的FULL_PAGE Surface Expected从`CAN_COMPLETE / true / true`修正为
+`BLOCKED / true / false`，没有修改生产代码、Corpus Validator、Runner、AI fixture、
+Provider信任政策、Domain Preflight、Action Plan、关系选择或隔离提交Lane。
+
+BASIC-011原文“王总这笔待收今天付了1500元”继续走`AI_DEEP`，Fake Deep AI请求恰好
+1次；Semantic保持`payment / record_payment`。Runner真实调用
+`changeReceivable(rec-open-a)`一次，选择后`requiredSelections=[]`。业务Domain与
+Surface能力完整，但Fake Provider不能取得生产资格：
+
+```text
+domainCanSaveFormal = true
+domainCanSavePending = true
+surfaceCanCompleteFormal = true
+productionEligibility = BLOCKED_NON_REAL_PROVIDER
+effectiveCanSaveFormal = false
+pageFormalSaveAllowed = false
+surface.status = BLOCKED
+blockingCodes = [UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION]
+```
+
+生产页面正式和pending保存调用均为0，production business与Storage写入均为0。
+`TEST_ONLY_ISOLATED_LEGACY_COMMIT`继续提交payment 1条、更新receivable 1条、把
+paidAmount从1000更新为2500，并产生revision与receipt各1；Journal/Backup最终为0。
+隔离提交Lane总数保持88。
+
+120题离线双轮结果一致：
+
+```text
+ACTIVE         120
+PASS            18
+CASE_FAIL      102
+RUNNER_ERROR     0
+BLOCKED          0
+```
+
+Failure Stage为`AI_NORMALIZE=23 / LOCAL_PARSE=6 / PREFLIGHT=20 / ROUTE=41 /
+STATE_DIFF=4 / STORAGE_TRANSACTION=1 / SURFACE=7`。61条P0失败全部单题重跑，P1分层
+抽查11条，26个Cluster覆盖102/102失败。与17/103冻结报告逐题比较，仅BASIC-011从
+`CASE_FAIL / SURFACE_ERROR / UNCLASSIFIED_REQUIRES_REVIEW`转为PASS；其他119题的状态、
+最早失败层、Ownership、Route、AI请求、Preflight、Eligibility、Surface Actual和业务
+Diff完全一致。两轮网络、真实Storage、fixture、跨Case泄漏、Journal/Backup、Parser
+Graph、Voice Evidence、陈旧Session和重复Voice Standard AI硬门禁全部为0。
