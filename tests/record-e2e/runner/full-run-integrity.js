@@ -151,6 +151,32 @@ function assertRuntimeIsolation(result) {
 
   const voiceEvidence = result.voiceCompletionEvidence || {};
   assertAuditZero(
+    Number(voiceEvidence.duplicateVoiceStandardAIRequestCount || 0),
+    `${result.caseId}.duplicateVoiceStandardAIRequestCount`,
+    'DUPLICATE_VOICE_STANDARD_AI_REQUEST'
+  );
+  if (voiceEvidence.voiceStandardEligible === true) {
+    const route = String(voiceEvidence.actualRoute || '').toUpperCase();
+    const totalCount = Number(voiceEvidence.AIRequestCount || 0);
+    const standardCount = Number(voiceEvidence.standardAIRequestCount || 0);
+    const deepCount = Number(voiceEvidence.deepAIRequestCount || 0);
+    if (route !== 'AI_STANDARD'
+      || totalCount !== 1
+      || standardCount !== 1
+      || deepCount !== 0) {
+      throw integrityError(
+        'VOICE_STANDARD_AI_REQUEST_COUNT_MISMATCH',
+        `${result.caseId} eligible voice standard route must request Standard AI exactly once`,
+        {
+          actualRoute: route || null,
+          AIRequestCount: totalCount,
+          deepAIRequestCount: deepCount,
+          standardAIRequestCount: standardCount
+        }
+      );
+    }
+  }
+  assertAuditZero(
     Number(result.voiceAudit && result.voiceAudit.staleSessionAcceptedCount || 0),
     `${result.caseId}.voiceStaleSessionAcceptedCount`,
     'VOICE_STALE_SESSION_ACCEPTED'
@@ -323,6 +349,13 @@ function assertFullAttemptIntegrity(attempt, plans) {
       'record-e2e-full-case-set-v1'
     ),
     crossCaseLeakCount: 0,
+    duplicateVoiceStandardAIRequestCount: attempt.results.reduce((sum, result) => (
+      sum + Number(
+        result.voiceCompletionEvidence
+        && result.voiceCompletionEvidence.duplicateVoiceStandardAIRequestCount
+        || 0
+      )
+    ), 0),
     fixtureMutationCount: 0,
     hostFilesystemStorageCalls: 0,
     isolationAuditNotExecutedCount: 0,

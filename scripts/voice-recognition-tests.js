@@ -360,19 +360,74 @@ function testNoPermission() {
   }, { authSetting: { 'scope.record': false } });
 }
 
-async function testHybridPropagationDoesNotChangeRoute() {
+async function testHybridPropagationEnablesNarrowStandardRoute() {
   const runtime = loadVoiceRecognition(createManager());
+  const previousGetApp = global.getApp;
+  const memoryStorage = {};
+  const requestPaths = [];
   try {
+    const completeVoiceTranscript = (text) => {
+      let result = null;
+      runtime.voice.startVoiceRecognition({
+        onResult: (value) => { result = value; }
+      });
+      runtime.manager.onStart({ synthetic: true });
+      runtime.manager.onStop({ result: text, synthetic: true });
+      assert(result, 'Fake Voice final callback must produce a completed result');
+      return result;
+    };
     let finalResult = null;
-    runtime.voice.startVoiceRecognition({
-      onResult: (value) => { finalResult = value; }
+    finalResult = completeVoiceTranscript('赵姐礼品盒五百套三块八一套');
+    global.getApp = () => ({
+      globalData: {
+        aiAuthEnabled: true,
+        aiParseEndpoint: '/api/ai/parse',
+        apiBaseUrl: 'memory://voice-route-test'
+      }
     });
-    runtime.manager.onStart({ synthetic: true });
-    runtime.manager.onStop({
-      result: '赵姐礼品盒五百套三块八一套',
-      synthetic: true
+    Object.assign(global.wx, {
+      getStorageSync(key) { return memoryStorage[key]; },
+      login(options) { options.success({ code: 'voice-route-test-code' }); },
+      removeStorageSync(key) { delete memoryStorage[key]; },
+      request(options) {
+        const pathName = String(options.url || '').replace('memory://voice-route-test', '');
+        requestPaths.push(pathName);
+        if (pathName === '/api/auth/wechat-login') {
+          options.success({
+            statusCode: 200,
+            data: {
+              token: 'REDACTED_SYNTHETIC_TEST_TOKEN',
+              expiresAt: '2099-01-01T00:00:00.000Z'
+            }
+          });
+          return;
+        }
+        assert.strictEqual(pathName, '/api/ai/parse');
+        options.success({
+          statusCode: 200,
+          data: {
+            provider: 'e2e-fake-standard',
+            intent: 'order',
+            operation: 'create_order',
+            fields: {
+              amount: 1900,
+              customerName: '赵姐',
+              productName: '礼品盒',
+              quantity: 500,
+              unit: '套',
+              unitPrice: 3.8
+            },
+            field_conflicts: [],
+            low_confidence_fields: [],
+            missing_fields: []
+          }
+        });
+      },
+      setStorageSync(key, value) { memoryStorage[key] = value; }
     });
     const aiParser = require('../utils/ai-parser');
+    const { prewarmAiAuth } = require('../utils/api-client');
+    await prewarmAiAuth();
     const basePayload = {
       text: finalResult.text,
       source: 'voice',
@@ -405,10 +460,39 @@ async function testHybridPropagationDoesNotChangeRoute() {
         status: 'FORGED_STATUS'
       })
     }));
+    const noRecordFinal = completeVoiceTranscript('今天天气不错，晚点出去走走');
+    const noRecordResult = await aiParser.parseHybridInput(Object.assign({}, basePayload, {
+      text: noRecordFinal.text,
+      voiceCompletionEvidence: noRecordFinal.voiceCompletionEvidence
+    }));
+    const localOrderFinal = completeVoiceTranscript(
+      '王总订水杯100个，5块5一个，明天交'
+    );
+    const localOrderResult = await aiParser.parseHybridInput(Object.assign({}, basePayload, {
+      text: localOrderFinal.text,
+      voiceCompletionEvidence: localOrderFinal.voiceCompletionEvidence
+    }));
     assert.strictEqual(withoutEvidence.parse_route.decision, 'pending');
-    assert.strictEqual(withEvidence.parse_route.decision, 'pending');
+    assert.strictEqual(withEvidence.parse_route.decision, 'ai_standard');
     assert.strictEqual(withoutEvidence.ai_fallback.attempted, false);
-    assert.strictEqual(withEvidence.ai_fallback.attempted, false);
+    assert.strictEqual(withEvidence.ai_fallback.attempted, true);
+    assert.strictEqual(withEvidence.ai_fallback.status, 'used');
+    assert.strictEqual(withEvidence.intent, 'order');
+    assert.strictEqual(withEvidence.operation, 'create_order');
+    assert.strictEqual(
+      requestPaths.filter((pathName) => pathName === '/api/ai/parse').length,
+      1,
+      '同一个可信final语音处理链只能发起一次Standard AI请求'
+    );
+    assert.strictEqual(noRecordResult.parse_route.decision, 'no_record');
+    assert.strictEqual(noRecordResult.ai_fallback.attempted, false);
+    assert.strictEqual(localOrderResult.parse_route.decision, 'local');
+    assert.strictEqual(localOrderResult.ai_fallback.attempted, false);
+    assert.strictEqual(
+      requestPaths.filter((pathName) => pathName === '/api/ai/parse').length,
+      1,
+      '可信final闲聊和本地已解决订单均不得增加AI请求'
+    );
     assert.strictEqual(
       withEvidence.parse_route.voice_completion_evidence_present,
       true
@@ -420,6 +504,12 @@ async function testHybridPropagationDoesNotChangeRoute() {
     assert.strictEqual(
       withEvidence.parse_route.voice_completion_evidence_source,
       'FAKE_VOICE_FINAL_CALLBACK'
+    );
+    assert.strictEqual(withEvidence.parse_route.voice_standard_eligible, true);
+    assert(
+      withEvidence.parse_route.voice_standard_reason_codes.includes(
+        'VOICE_STANDARD_REVIEW_REQUIRED'
+      )
     );
     assert.strictEqual(
       Object.keys(forgedTyped.parse_route).some(
@@ -433,6 +523,8 @@ async function testHybridPropagationDoesNotChangeRoute() {
       finalResult.voiceCompletionEvidence.transcriptFingerprint
     ));
   } finally {
+    if (previousGetApp === undefined) delete global.getApp;
+    else global.getApp = previousGetApp;
     runtime.restore();
   }
 }
@@ -451,7 +543,7 @@ async function run() {
     testStaleSessionAndSupersede,
     testFingerprintAndManualInvalidation,
     testNoPermission,
-    testHybridPropagationDoesNotChangeRoute
+    testHybridPropagationEnablesNarrowStandardRoute
   ];
   for (const test of tests) await test();
   console.log(`语音最终转写Evidence专项通过：${tests.length}/${tests.length}。`);

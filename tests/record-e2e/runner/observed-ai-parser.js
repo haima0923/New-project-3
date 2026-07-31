@@ -73,9 +73,20 @@ function summarizeHybridResult(result) {
     ),
     route: route.decision || '',
     voiceCompletionEvidencePresent: route.voice_completion_evidence_present === true,
+    voiceCompletionEvidenceFingerprintMatched:
+      route.voice_completion_evidence_fingerprint_matched === true,
+    voiceCompletionEvidenceSessionMatched:
+      route.voice_completion_evidence_session_matched === true,
     voiceCompletionEvidenceSource: route.voice_completion_evidence_source || null,
     voiceCompletionEvidenceStatus: route.voice_completion_evidence_status || null,
     voiceCompletionEvidenceValid: route.voice_completion_evidence_valid === true,
+    voiceStandardEligible: route.voice_standard_eligible === true,
+    voiceStandardExclusionCodes: safeClone(
+      route.voice_standard_exclusion_codes || []
+    ),
+    voiceStandardReasonCodes: safeClone(
+      route.voice_standard_reason_codes || []
+    ),
     source: result && result.source || ''
   };
 }

@@ -4,6 +4,7 @@ const { saveConfirmedDraft } = require('../utils/business');
 const {
   parseHybridInput,
   evaluateClearNonBusinessNoRecord,
+  evaluateCompletedVoiceStandardReview,
   evaluateSafeLocalReceivableRoute,
   requestWithDeadline,
   ROUTE_AI_STANDARD,
@@ -210,6 +211,102 @@ function clearNoRecordFacts(overrides = {}) {
   });
 }
 
+function voiceStandardFacts(overrides = {}) {
+  const base = {
+    aiAlreadyRequested: false,
+    asyncPending: false,
+    businessEvidenceCount: 6,
+    clearNoRecordEligible: false,
+    conflicts: [],
+    contextPolicy: 'none',
+    deepReviewRequested: false,
+    evidenceCollectionCompleted: true,
+    fields: {
+      amount: '1900',
+      customerName: '赵姐',
+      productName: '礼品盒',
+      quantity: '500',
+      unit: '套',
+      unitPrice: '3.8'
+    },
+    financialRisk: false,
+    forceAiRequired: false,
+    formalSaveBlocked: false,
+    hasConversationRisk: false,
+    hasHistoryReference: false,
+    hasProductSuggestion: false,
+    hasSemanticDeepRisk: false,
+    inputChannel: 'VOICE_TRANSCRIPT',
+    intent: 'unknown',
+    intentCandidates: ['unknown'],
+    intentEvidence: {
+      scores: {
+        dunning: 0,
+        order: 0,
+        payment: 0,
+        quotation: 0,
+        receivable: 0,
+        todo: 0
+      }
+    },
+    itemCount: 0,
+    items: [],
+    lowConfidenceFields: [],
+    missingFields: ['intent'],
+    mixedBusiness: false,
+    operation: '',
+    parserCompleted: true,
+    relationEvidenceCount: 0,
+    relationReferences: {},
+    requiresExistingRecord: false,
+    safety: {
+      evidence_sufficient: true,
+      field_validations: {
+        conflict_fields: [],
+        invalid_fields: [],
+        semantic_low_fields: []
+      },
+      low_confidence_fields: [],
+      missing_fields: ['intent'],
+      status: 'NEEDS_AI',
+      unsafe_fields: []
+    },
+    structuredBusinessFieldCount: 6,
+    suggestedOperation: '',
+    voiceCompletionAudit: {
+      evidenceSource: 'FAKE_VOICE_FINAL_CALLBACK',
+      fingerprintMatched: true,
+      isFinal: true,
+      present: true,
+      sessionMatched: true,
+      status: 'COMPLETED',
+      valid: true
+    }
+  };
+  return Object.assign({}, base, overrides, {
+    fields: Object.assign({}, base.fields, overrides.fields || {}),
+    intentEvidence: Object.assign({}, base.intentEvidence, overrides.intentEvidence || {}, {
+      scores: Object.assign(
+        {},
+        base.intentEvidence.scores,
+        overrides.intentEvidence && overrides.intentEvidence.scores || {}
+      )
+    }),
+    safety: Object.assign({}, base.safety, overrides.safety || {}, {
+      field_validations: Object.assign(
+        {},
+        base.safety.field_validations,
+        overrides.safety && overrides.safety.field_validations || {}
+      )
+    }),
+    voiceCompletionAudit: Object.assign(
+      {},
+      base.voiceCompletionAudit,
+      overrides.voiceCompletionAudit || {}
+    )
+  });
+}
+
 async function main() {
   const screenshotLocal = parseInput({
     text: '老板今天要订5个椅子，20块钱一个。这周日交货',
@@ -345,6 +442,167 @@ async function main() {
   noRecordExclusions.forEach(([name, overrides, code]) => {
     const qualification = evaluateClearNonBusinessNoRecord(clearNoRecordFacts(overrides));
     assert.strictEqual(qualification.eligible, false, `${name}不得取得NO_RECORD资格`);
+    assert(qualification.exclusions.includes(code), `${name}必须记录排除原因${code}`);
+  });
+
+  const verifiedVoiceStandard = evaluateCompletedVoiceStandardReview(
+    voiceStandardFacts()
+  );
+  assert.strictEqual(
+    verifiedVoiceStandard.eligible,
+    true,
+    '可信final语音、充分业务字段且intent未决时必须取得AI_STANDARD窄资格'
+  );
+  [
+    'VOICE_FINAL_TRANSCRIPT_VERIFIED',
+    'VOICE_STRUCTURED_BUSINESS_EVIDENCE',
+    'VOICE_INTENT_UNRESOLVED',
+    'VOICE_STANDARD_REVIEW_REQUIRED'
+  ].forEach((code) => {
+    assert(
+      verifiedVoiceStandard.reasonCodes.includes(code),
+      `Voice Standard资格必须记录${code}`
+    );
+  });
+
+  const voiceStandardExclusions = [
+    ['非语音渠道', { inputChannel: 'MANUAL_TEXT' }, 'VOICE_INPUT_CHANNEL_REQUIRED'],
+    ['Completion Evidence缺失', {
+      voiceCompletionAudit: { present: false, valid: false }
+    }, 'VOICE_COMPLETION_EVIDENCE_MISSING'],
+    ['PARTIAL', {
+      voiceCompletionAudit: { status: 'PARTIAL', isFinal: false, valid: false }
+    }, 'VOICE_COMPLETION_NOT_FINAL'],
+    ['CANCELLED', {
+      voiceCompletionAudit: { status: 'CANCELLED', isFinal: false, valid: false }
+    }, 'VOICE_COMPLETION_NOT_FINAL'],
+    ['FAILED', {
+      voiceCompletionAudit: { status: 'FAILED', isFinal: false, valid: false }
+    }, 'VOICE_COMPLETION_NOT_FINAL'],
+    ['TIMED_OUT', {
+      voiceCompletionAudit: { status: 'TIMED_OUT', isFinal: false, valid: false }
+    }, 'VOICE_COMPLETION_NOT_FINAL'],
+    ['旧session', {
+      voiceCompletionAudit: { sessionMatched: false, valid: false }
+    }, 'VOICE_SESSION_MISMATCH'],
+    ['fingerprint不匹配', {
+      voiceCompletionAudit: { fingerprintMatched: false, valid: false }
+    }, 'VOICE_TRANSCRIPT_FINGERPRINT_MISMATCH'],
+    ['未知回调来源', {
+      voiceCompletionAudit: { evidenceSource: 'FORGED_CALLBACK' }
+    }, 'VOICE_COMPLETION_SOURCE_UNTRUSTED'],
+    ['Parser未完成', {
+      parserCompleted: false
+    }, 'VOICE_ASYNC_INCOMPLETE'],
+    ['Evidence采集未完成', {
+      evidenceCollectionCompleted: false
+    }, 'VOICE_ASYNC_INCOMPLETE'],
+    ['只有客户', {
+      businessEvidenceCount: 1,
+      fields: {
+        amount: '',
+        productName: '',
+        quantity: '',
+        unit: '',
+        unitPrice: ''
+      },
+      structuredBusinessFieldCount: 1
+    }, 'VOICE_BUSINESS_EVIDENCE_INSUFFICIENT'],
+    ['只有日期', {
+      businessEvidenceCount: 1,
+      fields: {
+        amount: '',
+        customerName: '',
+        dueDate: '2026-07-31',
+        productName: '',
+        quantity: '',
+        unit: '',
+        unitPrice: ''
+      },
+      structuredBusinessFieldCount: 1
+    }, 'VOICE_BUSINESS_EVIDENCE_INSUFFICIENT'],
+    ['只有商品', {
+      businessEvidenceCount: 1,
+      fields: {
+        amount: '',
+        customerName: '',
+        quantity: '',
+        unit: '',
+        unitPrice: ''
+      },
+      structuredBusinessFieldCount: 1
+    }, 'VOICE_BUSINESS_EVIDENCE_INSUFFICIENT'],
+    ['只有数字', {
+      businessEvidenceCount: 1,
+      fields: {
+        amount: '500',
+        customerName: '',
+        productName: '',
+        quantity: '',
+        unit: '',
+        unitPrice: ''
+      },
+      structuredBusinessFieldCount: 1
+    }, 'VOICE_BUSINESS_EVIDENCE_INSUFFICIENT'],
+    ['业务字段缺失', {
+      missingFields: ['intent', 'productName']
+    }, 'VOICE_BUSINESS_FIELDS_MISSING'],
+    ['低置信字段', {
+      lowConfidenceFields: ['productName']
+    }, 'VOICE_LOW_CONFIDENCE_FIELDS'],
+    ['数量冲突', {
+      conflicts: [{ field: 'quantity' }]
+    }, 'VOICE_CONFLICT_PRESENT'],
+    ['价格冲突', {
+      conflicts: [{ field: 'unitPrice' }]
+    }, 'VOICE_CONFLICT_PRESENT'],
+    ['多业务混合', {
+      intentCandidates: ['order', 'quotation'],
+      mixedBusiness: true
+    }, 'VOICE_MIXED_INTENT'],
+    ['金融风险', {
+      financialRisk: true
+    }, 'VOICE_FINANCIAL_RISK'],
+    ['危险关系引用', {
+      relationEvidenceCount: 1,
+      relationReferences: {
+        order: { explicit: true, requiresResolution: true }
+      }
+    }, 'VOICE_DANGEROUS_RELATION_REFERENCE'],
+    ['本地intent已明确', {
+      intent: 'order',
+      missingFields: []
+    }, 'VOICE_LOCAL_INTENT_RESOLVED'],
+    ['主动Deep', {
+      deepReviewRequested: true
+    }, 'VOICE_DEEP_REVIEW_REQUIRED'],
+    ['历史风险', {
+      contextPolicy: 'order_history',
+      hasHistoryReference: true
+    }, 'VOICE_DEEP_REVIEW_REQUIRED'],
+    ['多商品', {
+      itemCount: 2
+    }, 'VOICE_DEEP_REVIEW_REQUIRED'],
+    ['NO_RECORD', {
+      clearNoRecordEligible: true,
+      fields: {
+        amount: '',
+        customerName: '',
+        productName: '',
+        quantity: '',
+        unit: '',
+        unitPrice: ''
+      }
+    }, 'VOICE_CLEAR_NO_RECORD'],
+    ['已经请求AI', {
+      aiAlreadyRequested: true
+    }, 'VOICE_AI_ALREADY_REQUESTED']
+  ];
+  voiceStandardExclusions.forEach(([name, overrides, code]) => {
+    const qualification = evaluateCompletedVoiceStandardReview(
+      voiceStandardFacts(overrides)
+    );
+    assert.strictEqual(qualification.eligible, false, `${name}不得取得Voice AI_STANDARD资格`);
     assert(qualification.exclusions.includes(code), `${name}必须记录排除原因${code}`);
   });
 

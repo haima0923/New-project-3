@@ -121,12 +121,27 @@ function publicObservation(observation) {
   };
 }
 
-function buildRouteEvidence(observation, rawParser, voiceAudit = {}) {
+function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudit = {}) {
   const parseResult = observation && observation.afterEdits
     && observation.afterEdits.parseResult || {};
   const route = parseResult.parse_route || {};
   const aiFallback = parseResult.ai_fallback || {};
+  const parseTrace = parseResult.parse_trace || {};
   const hybridInvocations = rawParser && rawParser.hybridInvocations || [];
+  const canonicalRaw = rawParser && rawParser.summary
+    && rawParser.summary.canonicalLocalResults
+    && rawParser.summary.canonicalLocalResults[0]
+    && rawParser.summary.canonicalLocalResults[0].resultSummary || {};
+  const networkEvents = Array.isArray(networkAudit.events)
+    ? networkAudit.events
+    : [];
+  const standardAiRequestCount = networkEvents.filter((event) => (
+    event && event.path === '/api/ai/parse'
+  )).length;
+  const deepAiRequestCount = networkEvents.filter((event) => (
+    event && event.path === '/api/ai/parse/deep'
+  )).length;
+  const observedAiRequestCount = standardAiRequestCount + deepAiRequestCount;
   const parserCollectionCompleted = Boolean(
     rawParser
     && rawParser.collectionCompleted === true
@@ -164,6 +179,20 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}) {
     businessEvidenceCount: Number(route.business_evidence_count || 0),
     structuredBusinessFieldCount: Number(route.structured_business_field_count || 0),
     relationEvidenceCount: Number(route.relation_evidence_count || 0),
+    rawBusinessType: canonicalRaw.businessType || canonicalRaw.intent || null,
+    rawOperation: canonicalRaw.operation || null,
+    semanticBusinessType: parseResult.intent || null,
+    effectiveOperation: parseResult.operation || null,
+    lowConfidenceFieldCount: Number(
+      route.voice_standard_low_confidence_field_count || 0
+    ),
+    conflictCount: Number(route.voice_standard_conflict_count || 0),
+    financialRiskFlags: route.voice_standard_financial_risk === true
+      ? ['VOICE_FINANCIAL_RISK']
+      : [],
+    mixedIntentFlags: route.voice_standard_mixed_intent === true
+      ? ['VOICE_MIXED_INTENT']
+      : [],
     asyncWorkCompleted: parserCollectionCompleted,
     parserObservationCompleted: parserCollectionCompleted,
     safeLocalReceivableEligible: Object.prototype.hasOwnProperty.call(
@@ -176,7 +205,22 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}) {
     receivableRiskExclusions: safeClone(
       route.receivable_risk_exclusions || []
     ),
-    AIRequestCount: aiFallback.attempted === true ? 1 : 0,
+    AIRequestCount: networkAudit.auditPerformed === true
+      ? observedAiRequestCount
+      : (aiFallback.attempted === true ? 1 : 0),
+    standardAIRequestCount: standardAiRequestCount,
+    deepAIRequestCount: deepAiRequestCount,
+    duplicateVoiceStandardAIRequestCount: voiceEvidencePresent
+      ? Math.max(0, standardAiRequestCount - 1)
+      : 0,
+    AIProfile: route.decision === 'ai_deep'
+      ? 'DEEP'
+      : (route.decision === 'ai_standard' ? 'STANDARD' : 'NONE'),
+    AIProviderIdentity: parseResult.provider
+      || aiFallback.provider_kind
+      || null,
+    postAINormalizedResult: safeClone(parseTrace.aiDraft || null),
+    postAIMergedSemanticResult: safeClone(parseTrace.finalDraft || null),
     deepReviewAvailable: route.deep_review_available === true,
     deepReviewRequested: hybridInvocations.some((item) => (
       item && item.phase === 'DEEP_REVIEW'
@@ -195,6 +239,17 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}) {
       voiceAudit.partialCallbackInvocationCount || 0
     ),
     voiceFingerprintMatched,
+    voiceCompletionEvidenceValid:
+      route.voice_completion_evidence_valid === true,
+    voiceSessionMatched:
+      route.voice_completion_evidence_session_matched === true,
+    voiceStandardEligible: route.voice_standard_eligible === true,
+    voiceStandardReasonCodes: safeClone(
+      route.voice_standard_reason_codes || []
+    ),
+    voiceStandardExclusionCodes: safeClone(
+      route.voice_standard_exclusion_codes || []
+    ),
     voiceSessionId: firstVoiceEvidence.sessionId || null,
     voiceSessionStatus: firstVoiceEvidence.status || null,
     voiceTranscriptDelivered: voiceAudit.transcriptDelivered === true,
@@ -1149,7 +1204,13 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     sourceDraft,
     primaryProductionObservation
   );
-  const routeEvidence = buildRouteEvidence(sourceObservation, rawParser, audit.voiceAudit);
+  const routeEvidence = buildRouteEvidence(
+    sourceObservation,
+    rawParser,
+    audit.voiceAudit,
+    audit.networkAudit
+  );
+  routeEvidence.FakeFixtureId = spec.aiFixture && spec.aiFixture.fixtureId || null;
   const noRecordEvidence = buildNoRecordEvidence({
     businessDiff: stateDiff.businessDiff,
     driverEvidence: sourceObservation && sourceObservation.driver
@@ -1218,17 +1279,26 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     voiceCompletionEvidence: {
       actualRoute: routeEvidence.actualRoute,
       AIRequestCount: routeEvidence.AIRequestCount,
+      deepAIRequestCount: routeEvidence.deepAIRequestCount,
       parseHybridReceivedVoiceEvidence: routeEvidence.parseHybridReceivedVoiceEvidence,
+      standardAIRequestCount: routeEvidence.standardAIRequestCount,
       voiceCompletionEvidenceFingerprint: routeEvidence.voiceCompletionEvidenceFingerprint,
       voiceCompletionEvidencePresent: routeEvidence.voiceCompletionEvidencePresent,
       voiceCompletionEvidenceSequence: routeEvidence.voiceCompletionEvidenceSequence,
       voiceCompletionEvidenceSource: routeEvidence.voiceCompletionEvidenceSource,
       voiceCompletionEvidenceStatus: routeEvidence.voiceCompletionEvidenceStatus,
+      voiceCompletionEvidenceValid: routeEvidence.voiceCompletionEvidenceValid,
       voiceFinalCallbackInvocationCount: routeEvidence.voiceFinalCallbackInvocationCount,
       voiceFingerprintMatched: routeEvidence.voiceFingerprintMatched,
       voicePartialCallbackInvocationCount: routeEvidence.voicePartialCallbackInvocationCount,
       voiceSessionId: routeEvidence.voiceSessionId,
+      voiceSessionMatched: routeEvidence.voiceSessionMatched,
       voiceSessionStatus: routeEvidence.voiceSessionStatus,
+      voiceStandardEligible: routeEvidence.voiceStandardEligible,
+      voiceStandardReasonCodes: routeEvidence.voiceStandardReasonCodes,
+      voiceStandardExclusionCodes: routeEvidence.voiceStandardExclusionCodes,
+      duplicateVoiceStandardAIRequestCount:
+        routeEvidence.duplicateVoiceStandardAIRequestCount,
       voiceTranscriptDelivered: routeEvidence.voiceTranscriptDelivered
     },
     voiceAudit: audit.voiceAudit

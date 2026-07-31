@@ -1171,6 +1171,33 @@ const tests = [
         assert.strictEqual(result.parserObservation.collectionCompleted, true, `${caseId}采集必须完成`);
         assert.strictEqual(result.parserObservation.validationCompleted, true, `${caseId}调用图验证必须完成`);
       }
+      const voice004 = await executeOne(bundle('REC-E2E-VOICE-004'));
+      assert.strictEqual(voice004.routeEvidence.actualRoute, 'AI_STANDARD');
+      assert.strictEqual(voice004.routeEvidence.voiceStandardEligible, true);
+      assert.strictEqual(voice004.routeEvidence.AIRequestCount, 1);
+      assert.strictEqual(voice004.routeEvidence.standardAIRequestCount, 1);
+      assert.strictEqual(voice004.routeEvidence.deepAIRequestCount, 0);
+      assert.strictEqual(
+        voice004.routeEvidence.duplicateVoiceStandardAIRequestCount,
+        0
+      );
+      assert.strictEqual(
+        voice004.routeEvidence.FakeFixtureId,
+        'ai-case-rec-e2e-voice-004-v1'
+      );
+      assert.strictEqual(voice004.routeEvidence.rawBusinessType, 'unknown');
+      assert.strictEqual(voice004.routeEvidence.rawOperation, null);
+      assert.strictEqual(voice004.routeEvidence.semanticBusinessType, 'order');
+      assert.strictEqual(voice004.routeEvidence.effectiveOperation, 'create_order');
+      const voice006 = await executeOne(bundle('REC-E2E-VOICE-006'));
+      assert.strictEqual(voice006.routeEvidence.actualRoute, 'AI_STANDARD');
+      assert.strictEqual(voice006.routeEvidence.AIRequestCount, 1);
+      assert.strictEqual(voice006.routeEvidence.standardAIRequestCount, 1);
+      assert.strictEqual(
+        voice006.routeEvidence.duplicateVoiceStandardAIRequestCount,
+        0
+      );
+      assert.strictEqual(voice006.primaryFailure.stage, 'SURFACE_ERROR');
     }
   },
   {

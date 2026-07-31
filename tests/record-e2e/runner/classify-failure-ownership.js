@@ -254,7 +254,9 @@ function classifyFailureOwnership(testCase, result) {
     });
   }
 
-  if (testCase.caseId === 'REC-E2E-VOICE-004') {
+  if (testCase.caseId === 'REC-E2E-VOICE-004'
+    && String(result.routeEvidence && result.routeEvidence.actualRoute || '').toUpperCase()
+      !== String(testCase.expected.route || '').toUpperCase()) {
     return ownership('CONFIRMED_ROUTE_DEFECT', 'HIGH', {
       actualRoute: result.routeEvidence && result.routeEvidence.actualRoute || '',
       expectedRoute: testCase.expected.route,

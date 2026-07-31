@@ -231,6 +231,49 @@ const tests = [
     }
   },
   {
+    name: 'full-attempt-rejects-duplicate-voice-standard-ai-request',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = cleanResult('CASE-A');
+      result.voiceCompletionEvidence = {
+        duplicateVoiceStandardAIRequestCount: 1
+      };
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'DUPLICATE_VOICE_STANDARD_AI_REQUEST'
+      );
+    }
+  },
+  {
+    name: 'full-attempt-requires-exactly-one-ai-request-for-eligible-voice-standard',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = cleanResult('CASE-A');
+      result.voiceCompletionEvidence = {
+        actualRoute: 'AI_STANDARD',
+        AIRequestCount: 0,
+        deepAIRequestCount: 0,
+        duplicateVoiceStandardAIRequestCount: 0,
+        standardAIRequestCount: 0,
+        voiceStandardEligible: true
+      };
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'VOICE_STANDARD_AI_REQUEST_COUNT_MISMATCH'
+      );
+    }
+  },
+  {
     name: 'stale-voice-session-count-compares-provider-generation-to-accepted-session',
     run() {
       const events = [{
