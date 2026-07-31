@@ -1350,3 +1350,29 @@ Domain Preflight仍必须阻断正式订单，不能补造dueDate或产生正式
 必须继续暴露既有Surface差异。Clear Non-Business final语音继续NO_RECORD且零AI，
 本地已解决语音继续LOCAL且零AI，金融Deep政策不能降级。详细合同见
 `docs/RECORD_VOICE_STANDARD_ROUTE_V1.md`。
+
+## 38. VOICE-004分层缺交期安全合同
+
+VOICE-004准确转写“赵姐礼品盒五百套三块八一套”继续完整断言可信Voice final
+Evidence、session与转写指纹匹配、`AI_STANDARD`、Standard Fake AI恰好1次、
+`order/create_order`以及客户、商品、数量、单位、单价和金额。原文和既有Fake结果均未
+提供交期，Expected因此使用canonical字段`orderDeliveryDate`声明缺失；运行时
+Confirmation仍输出`dueDate`。
+
+Runner与Corpus Validator现在复用同一个测试基础设施字段合同。Validator继续拒绝
+Expected中的非canonical `dueDate`；Confirmation的missing/conflict集合比较会在
+`create_order/update_order`下把两边的`dueDate`精确映射为`orderDeliveryDate`，然后
+去重、稳定排序并精确比较。该过程不修改Case或Actual对象，也不做模糊匹配；字段值读取
+继续使用既有canonical到runtime映射，其他业务断言不扩张。
+
+VOICE-004采用仓库现有`DO_NOT_SAVE / BLOCKED_BUSINESS_SAFETY / ZERO_SIDE_EFFECTS`
+合同：`domainCanSaveFormal=false`、`domainCanSavePending=true`、
+`MISSING_REQUIRED_FIELD`、无required selection；不调用正式或pending保存，不进入
+`TEST_ONLY_ISOLATED_LEGACY_COMMIT`，Outcome为`BLOCKED`且所有业务、Storage、事务、
+Receipt、Journal和Backup差异为0。正确安全阻断构成Case PASS，不代表订单已落库。
+
+动态Execution Plan证明VOICE-004提交Lane由1变0，其他119题保持88条，因此全量
+`TEST_ONLY_ISOLATED_LEGACY_COMMIT`基线从89机械调整为88。120题离线双轮均为
+`PASS=15 / CASE_FAIL=105 / RUNNER_ERROR=0 / BLOCKED=0`；只有VOICE-004状态变化，
+其他119题的状态、最早失败层、Ownership、Route、Preflight、AI请求次数和业务Diff
+与冻结报告一致。

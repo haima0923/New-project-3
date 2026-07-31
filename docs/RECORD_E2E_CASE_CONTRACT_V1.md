@@ -357,7 +357,7 @@ Phase 2 Runner 应：
 
 页面选择器、点击坐标和截图路径属于 Driver，不写入 Case；真实模型重复次数、成本和稳定性属于质量 Runner，不与确定性代码回归混算。
 
-## 19. Phase 2A 迁移基线
+## 19. 当前执行边界基线（Phase 2A后续演进）
 
 120条ACTIVE题的执行边界分布为：
 
@@ -366,14 +366,14 @@ Phase 2 Runner 应：
 | PAGE_PRODUCTION_OBSERVATION | 110 |
 | HEADLESS_PRODUCTION_OBSERVATION | 10 |
 | PAGE_CONFIRMED_DRAFT_DERIVATION | 6 |
-| TEST_ONLY_ISOLATED_LEGACY_COMMIT | 89 |
+| TEST_ONLY_ISOLATED_LEGACY_COMMIT | 88 |
 | PAGE_DUPLICATE_TRIGGER_GUARD | 1 |
 | RELATION_REFERENCE_TAMPER_GUARD | 2 |
 | TRANSACTION_EXACT_REPLAY | 1 |
 | RESTART_PERSISTENCE | 5 |
 | CONCURRENT_BASE_REVISION | 1 |
 
-79条正式业务语义题与10条待整理题允许TEST_ONLY隔离执行；29条BLOCKED与2条NO_RECORD题禁止隔离提交。受保护的`riskLevel/result/route/routing/preflight/confirmation/surface/save action+status/stateDiff`迁移前后指纹保持一致。本阶段没有实现Runner、修改产品代码或形成任何运行通过结论。
+78条正式业务语义题与10条待整理题允许TEST_ONLY隔离执行；30条BLOCKED与2条NO_RECORD题禁止隔离提交。VOICE-004在缺少订单交期时采用现有`DO_NOT_SAVE / BLOCKED`安全合同，因此不再进入隔离提交Lane。受保护的`riskLevel/result/route/routing/preflight/confirmation/surface/save action+status/stateDiff`迁移前后指纹保持一致。本阶段没有修改产品代码。
 
 ## 20. 危险关系注入与报价候选
 

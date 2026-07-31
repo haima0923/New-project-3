@@ -580,3 +580,44 @@ BLOCKED         0
 每轮新增`duplicateVoiceStandardAIRequestCount=0`，并且网络、真实Storage、fixture、
 跨Case泄漏、Journal/Backup、Parser Graph及三项Voice Evidence门禁全部为0。详细政策见
 `docs/RECORD_VOICE_STANDARD_ROUTE_V1.md`。
+
+## 20. VOICE-004分层缺交期安全合同重基线
+
+VOICE-004保留全部Voice Completion、Route、AI、Normalize、Merge和业务字段断言：
+可信final Evidence有效，Route为`AI_STANDARD`，Standard Fake AI请求恰好1次，
+Deep与重复请求为0，语义为`order/create_order`，客户赵姐、礼品盒、500套、单价3.8、
+金额1900均保持。原文与Fake结果没有交期，运行时Confirmation输出
+`missingFields=[dueDate]`；Expected使用canonical
+`missingFields=[orderDeliveryDate]`，由共享的精确字段别名合同在断言时标准化。
+
+该Case现在采用既有`DO_NOT_SAVE / BLOCKED_BUSINESS_SAFETY / ZERO_SIDE_EFFECTS`
+模式。Domain Preflight继续返回`domainCanSaveFormal=false`、
+`domainCanSavePending=true`及`MISSING_REQUIRED_FIELD`；页面未调用正式或pending
+保存，business与Storage写入口均未调用，Outcome为`BLOCKED`，正式/pending持久化、
+业务Diff、事务、Receipt、Journal与Backup均为0。没有补造dueDate，也没有放宽Preflight。
+
+动态Execution Plan统计为：
+
+```text
+VOICE-004 TEST_ONLY_ISOLATED_LEGACY_COMMIT: 1 → 0
+其他119题提交Lane: 88 → 88
+全量提交Lane: 89 → 88
+```
+
+120题离线双轮均为：
+
+```text
+ACTIVE         120
+PASS            15
+CASE_FAIL      105
+RUNNER_ERROR     0
+BLOCKED          0
+```
+
+相对14/106冻结基线仅VOICE-004从`CASE_FAIL / PREFLIGHT_ERROR`转为PASS；
+`PREFLIGHT_ERROR`从21降为20，其他Failure Stage与Ownership保持。其他119题的顶层
+状态、最早失败层、Ownership、Route、Preflight语义、AI请求次数和业务Diff逐题一致。
+两轮确定性稳定；63条P0失败全部单题重跑，P1分层抽查12条，27个Cluster覆盖105/105
+失败。每轮网络、真实Storage、fixture mutation、跨Case泄漏、Journal/Backup、Parser
+Evidence、orphan/uncorrelated/shadow、隔离审计、三项Voice Evidence和重复Voice
+Standard AI请求硬门禁全部为0。

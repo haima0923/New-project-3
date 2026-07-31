@@ -155,3 +155,19 @@ BLOCKED          0
 orphan/uncorrelated/shadow调用、Voice Evidence缺失/指纹不符/旧session接受及重复
 Voice Standard AI请求全部为0。未使用真实麦克风或千问，production仍为`LEGACY_ONLY`，
 `sharedProductionCommitEnabled=false`。
+
+## 8. VOICE-004分层缺交期安全合同补充
+
+后续6B.4-R1没有改变本文件定义的Voice Standard Route。VOICE-004仍需满足可信final
+Evidence、session与指纹匹配、`AI_STANDARD`、Standard Fake AI恰好1次、
+`order/create_order`以及全部已确认字段断言。
+
+唯一合同修正位于测试分层：原文没有交期，因此Expected明确
+`orderDeliveryDate`缺失；运行时`dueDate`通过测试基础设施共享的精确别名合同与其等价。
+Domain Preflight的`MISSING_REQUIRED_FIELD`正确阻止正式保存，Case使用现有
+`DO_NOT_SAVE / BLOCKED`模式，不调用正式或pending保存，也不进入隔离Legacy提交。
+零持久化、零业务Diff和零Storage/事务副作用与Route成功一起构成PASS。
+
+全量双轮从14/106更新为15/105，只有VOICE-004状态变化；提交Lane因该Case移除隔离
+提交从89变为88。其他119题以及VOICE-006的`SURFACE_ERROR`保持冻结责任。此补充没有
+修改Voice glue、Route、AI fixture/Normalizer、Preflight、页面、business或Storage。
