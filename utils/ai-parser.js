@@ -567,6 +567,10 @@ const NO_RECORD_BUSINESS_FIELD_KEYS = Object.freeze([
   'unit',
   'unitPrice'
 ]);
+const VOICE_STANDARD_TRUSTED_EVIDENCE_SOURCES = Object.freeze([
+  'FAKE_VOICE_FINAL_CALLBACK',
+  'VOICE_PROVIDER_FINAL_CALLBACK'
+]);
 
 function countRelationEvidence(relationReferences) {
   if (!relationReferences || typeof relationReferences !== 'object') return 0;
@@ -676,8 +680,171 @@ function evaluateClearNonBusinessNoRecord(facts = {}) {
   };
 }
 
+function evaluateCompletedVoiceStandardReview(facts = {}) {
+  const fields = facts.fields || {};
+  const items = toArray(facts.items || fields.items || []).filter(hasMeaningfulItem);
+  const safety = facts.safety || {};
+  const validations = safety.field_validations || {};
+  const completion = facts.voiceCompletionAudit || {};
+  const inputChannel = String(facts.inputChannel || '').trim().toLowerCase();
+  const missingFields = uniqueStrings([]
+    .concat(facts.missingFields || [], safety.missing_fields || []));
+  const unresolvedBusinessFields = missingFields.filter((field) => field !== 'intent');
+  const lowConfidenceFields = uniqueStrings([]
+    .concat(facts.lowConfidenceFields || [], safety.low_confidence_fields || []));
+  const conflicts = toArray(facts.conflicts || []);
+  const invalidFields = uniqueStrings(validations.invalid_fields || []);
+  const semanticLowFields = uniqueStrings(validations.semantic_low_fields || []);
+  const safetyConflictFields = uniqueStrings(validations.conflict_fields || []);
+  const unsafeFields = uniqueStrings(safety.unsafe_fields || []);
+  const intentCandidates = uniqueStrings(facts.intentCandidates || [])
+    .filter((intent) => intent && intent !== 'unknown');
+  const intentScores = facts.intentEvidence && facts.intentEvidence.scores || {};
+  const positiveIntentScoreKeys = NO_RECORD_INTENT_SCORE_KEYS.filter((key) => (
+    Number(intentScores[key]) > 0
+  ));
+  const relationEvidenceCount = Number.isFinite(Number(facts.relationEvidenceCount))
+    ? Number(facts.relationEvidenceCount)
+    : countRelationEvidence(facts.relationReferences);
+  const structuredBusinessFields = NO_RECORD_BUSINESS_FIELD_KEYS.filter((key) => (
+    hasMeaningfulValue(fields[key])
+  ));
+  const structuredBusinessFieldCount = Number.isFinite(
+    Number(facts.structuredBusinessFieldCount)
+  )
+    ? Number(facts.structuredBusinessFieldCount)
+    : structuredBusinessFields.length;
+  const businessEvidenceCount = Number.isFinite(Number(facts.businessEvidenceCount))
+    ? Number(facts.businessEvidenceCount)
+    : structuredBusinessFieldCount + items.length + relationEvidenceCount;
+  const item = items[0] || {};
+  const customerPresent = hasMeaningfulValue(fields.customerName)
+    || hasMeaningfulValue(fields.customerId);
+  const productPresent = hasMeaningfulValue(fields.productName)
+    || hasMeaningfulValue(item.productName);
+  const quantity = Number(fields.quantity || item.quantity);
+  const priceOrAmount = Number(
+    fields.unitPrice
+    || item.unitPrice
+    || fields.amount
+    || fields.totalAmount
+    || fields.calculatedAmount
+    || item.totalAmount
+  );
+  const strongBusinessCombination = customerPresent
+    && productPresent
+    && Number.isFinite(quantity)
+    && quantity > 0
+    && Number.isFinite(priceOrAmount)
+    && priceOrAmount > 0;
+  const exclusions = [];
+  const reasonCodes = [];
+
+  if (!['voice', 'voice_transcript'].includes(inputChannel)) {
+    exclusions.push('VOICE_INPUT_CHANNEL_REQUIRED');
+  } else {
+    reasonCodes.push('VOICE_INPUT_CHANNEL_CONFIRMED');
+  }
+  if (completion.present !== true) exclusions.push('VOICE_COMPLETION_EVIDENCE_MISSING');
+  if (completion.status !== 'COMPLETED' || completion.isFinal !== true) {
+    exclusions.push('VOICE_COMPLETION_NOT_FINAL');
+  }
+  if (completion.valid !== true) exclusions.push('VOICE_COMPLETION_EVIDENCE_INVALID');
+  else reasonCodes.push('VOICE_FINAL_TRANSCRIPT_VERIFIED');
+  if (completion.sessionMatched !== true) exclusions.push('VOICE_SESSION_MISMATCH');
+  else reasonCodes.push('VOICE_SESSION_MATCHED');
+  if (completion.fingerprintMatched !== true) {
+    exclusions.push('VOICE_TRANSCRIPT_FINGERPRINT_MISMATCH');
+  } else {
+    reasonCodes.push('VOICE_TRANSCRIPT_FINGERPRINT_MATCHED');
+  }
+  if (!VOICE_STANDARD_TRUSTED_EVIDENCE_SOURCES.includes(completion.evidenceSource)) {
+    exclusions.push('VOICE_COMPLETION_SOURCE_UNTRUSTED');
+  }
+  if (facts.parserCompleted !== true || facts.evidenceCollectionCompleted !== true) {
+    exclusions.push('VOICE_ASYNC_INCOMPLETE');
+  } else {
+    reasonCodes.push('VOICE_PARSER_AND_EVIDENCE_COMPLETE');
+  }
+  if (facts.asyncPending) exclusions.push('VOICE_ASYNC_INCOMPLETE');
+  if (facts.intent !== 'unknown') exclusions.push('VOICE_LOCAL_INTENT_RESOLVED');
+  else reasonCodes.push('VOICE_INTENT_UNRESOLVED');
+  if (hasMeaningfulValue(facts.operation) || hasMeaningfulValue(facts.suggestedOperation)) {
+    exclusions.push('VOICE_CANONICAL_OPERATION_PRESENT');
+  }
+  if (facts.clearNoRecordEligible) exclusions.push('VOICE_CLEAR_NO_RECORD');
+  if (businessEvidenceCount <= 0 || structuredBusinessFieldCount <= 0) {
+    exclusions.push('VOICE_BUSINESS_EVIDENCE_INSUFFICIENT');
+  } else {
+    reasonCodes.push('VOICE_STRUCTURED_BUSINESS_EVIDENCE');
+  }
+  if (!strongBusinessCombination) exclusions.push('VOICE_BUSINESS_EVIDENCE_INSUFFICIENT');
+  else reasonCodes.push('VOICE_STRONG_BUSINESS_FIELD_COMBINATION');
+  if (unresolvedBusinessFields.length) exclusions.push('VOICE_BUSINESS_FIELDS_MISSING');
+  if (lowConfidenceFields.length || semanticLowFields.length) {
+    exclusions.push('VOICE_LOW_CONFIDENCE_FIELDS');
+  }
+  if (conflicts.length || safetyConflictFields.length) {
+    exclusions.push('VOICE_CONFLICT_PRESENT');
+  }
+  if (invalidFields.length || unsafeFields.length) {
+    exclusions.push('VOICE_UNSAFE_OR_INVALID_FIELDS');
+  }
+  if (safety.evidence_sufficient !== true) {
+    exclusions.push('VOICE_SOURCE_EVIDENCE_INSUFFICIENT');
+  }
+  if (safety.status !== 'NEEDS_AI') exclusions.push('VOICE_STANDARD_REVIEW_NOT_REQUIRED');
+  if (facts.financialRisk) exclusions.push('VOICE_FINANCIAL_RISK');
+  if (facts.mixedBusiness
+    || intentCandidates.length > 1
+    || positiveIntentScoreKeys.length > 1) {
+    exclusions.push('VOICE_MIXED_INTENT');
+  }
+  if (facts.hasConversationRisk) exclusions.push('VOICE_MIXED_INTENT');
+  if (facts.contextPolicy && facts.contextPolicy !== 'none') {
+    exclusions.push('VOICE_DEEP_REVIEW_REQUIRED');
+  }
+  if (facts.hasHistoryReference
+    || facts.hasSemanticDeepRisk
+    || facts.forceAiRequired
+    || Number(facts.itemCount || 0) > 1) {
+    exclusions.push('VOICE_DEEP_REVIEW_REQUIRED');
+  }
+  if (facts.deepReviewRequested) exclusions.push('VOICE_DEEP_REVIEW_REQUIRED');
+  if (relationEvidenceCount || facts.requiresExistingRecord) {
+    exclusions.push('VOICE_DANGEROUS_RELATION_REFERENCE');
+  }
+  if (facts.formalSaveBlocked) exclusions.push('VOICE_FORMAL_SAVE_BLOCKED');
+  if (facts.hasProductSuggestion) exclusions.push('VOICE_LOCAL_CONFIRMATION_AVAILABLE');
+  if (facts.aiAlreadyRequested) exclusions.push('VOICE_AI_ALREADY_REQUESTED');
+
+  const uniqueExclusions = uniqueStrings(exclusions);
+  if (!uniqueExclusions.length) reasonCodes.push('VOICE_STANDARD_REVIEW_REQUIRED');
+  return {
+    businessEvidenceCount,
+    completionEvidenceValid: completion.valid === true,
+    conflictCount: conflicts.length + safetyConflictFields.length,
+    eligible: uniqueExclusions.length === 0,
+    exclusions: uniqueExclusions,
+    financialRisk: facts.financialRisk === true,
+    fingerprintMatched: completion.fingerprintMatched === true,
+    lowConfidenceFieldCount: uniqueStrings(
+      lowConfidenceFields.concat(semanticLowFields)
+    ).length,
+    mixedIntent: facts.mixedBusiness === true
+      || intentCandidates.length > 1
+      || positiveIntentScoreKeys.length > 1,
+    reasonCodes: uniqueStrings(reasonCodes),
+    relationEvidenceCount,
+    sessionMatched: completion.sessionMatched === true,
+    structuredBusinessFieldCount
+  };
+}
+
 function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') {
   const source = payload.source || localResult.source || 'typed';
+  const inputChannel = String(payload.inputChannel || source).trim().toLowerCase();
+  const isVoiceInput = ['voice', 'voice_transcript'].includes(inputChannel);
   const text = normalizeBusinessText(String(payload.rawText || payload.text || localResult.original_text || ''));
   const safety = localResult.local_parse_safety || {};
   const fields = localResult.fields || {};
@@ -738,9 +905,10 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     safety,
     suggestedOperation: localResult.suggested_operation
   });
+  const voiceCompletionAudit = payload.voiceCompletionEvidenceAudit || {};
   const clearNoRecord = evaluateClearNonBusinessNoRecord({
-    asyncWorkCompleted: payload.source === 'voice'
-      ? payload.voiceTranscriptionCompleted === true
+    asyncWorkCompleted: isVoiceInput
+      ? voiceCompletionAudit.valid === true
       : true,
     conflicts,
     contextPolicy: policy,
@@ -777,12 +945,60 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
       'PROCESSING_COMPLETE'
     ].concat(clearNoRecord.reasonCodes))
     : clearNoRecord.reasonCodes;
-  const voiceCompletionAudit = payload.voiceCompletionEvidenceAudit || {};
-  const withRouteAudit = (route) => Object.assign({}, route, source === 'voice' ? {
+  const voiceStandardReview = evaluateCompletedVoiceStandardReview({
+    aiAlreadyRequested: Number(payload.aiRequestCount || 0) > 0
+      || payload.aiAlreadyRequested === true,
+    asyncPending: false,
+    businessEvidenceCount: clearNoRecord.businessEvidenceCount,
+    clearNoRecordEligible: clearNoRecord.eligible,
+    conflicts,
+    contextPolicy: policy,
+    deepReviewRequested,
+    evidenceCollectionCompleted: true,
+    fields,
+    financialRisk: hasFinancialRisk,
+    forceAiRequired: shouldForceAi(payload, localResult),
+    formalSaveBlocked: localResult.formal_save_blocked === true,
+    hasConversationRisk,
+    hasHistoryReference,
+    hasProductSuggestion,
+    hasSemanticDeepRisk,
+    inputChannel,
+    intent: localResult.intent,
+    intentCandidates: localResult.intent_candidates || [],
+    intentEvidence: localResult.intent_evidence || {},
+    itemCount: items.length,
+    items,
+    lowConfidenceFields: localResult.low_confidence_fields || [],
+    missingFields: localResult.missing_fields || [],
+    mixedBusiness: localResult.mixed_business === true,
+    operation: localResult.operation,
+    parserCompleted: true,
+    relationEvidenceCount: clearNoRecord.relationEvidenceCount,
+    relationReferences: localResult.relation_references || {},
+    requiresExistingRecord: localResult.requires_existing_record === true,
+    safety,
+    structuredBusinessFieldCount: clearNoRecord.structuredBusinessFieldCount,
+    suggestedOperation: localResult.suggested_operation,
+    voiceCompletionAudit
+  });
+  const withRouteAudit = (route) => Object.assign({}, route, isVoiceInput ? {
       voice_completion_evidence_present: voiceCompletionAudit.present === true,
+      voice_completion_evidence_fingerprint_matched:
+        voiceCompletionAudit.fingerprintMatched === true,
+      voice_completion_evidence_session_matched:
+        voiceCompletionAudit.sessionMatched === true,
       voice_completion_evidence_source: voiceCompletionAudit.evidenceSource || null,
       voice_completion_evidence_status: voiceCompletionAudit.status || null,
-      voice_completion_evidence_valid: voiceCompletionAudit.valid === true
+      voice_completion_evidence_valid: voiceCompletionAudit.valid === true,
+      voice_standard_eligible: voiceStandardReview.eligible,
+      voice_standard_conflict_count: voiceStandardReview.conflictCount,
+      voice_standard_exclusion_codes: voiceStandardReview.exclusions,
+      voice_standard_financial_risk: voiceStandardReview.financialRisk,
+      voice_standard_low_confidence_field_count:
+        voiceStandardReview.lowConfidenceFieldCount,
+      voice_standard_mixed_intent: voiceStandardReview.mixedIntent,
+      voice_standard_reason_codes: voiceStandardReview.reasonCodes
     }
     : {}, localResult.intent === 'unknown'
     ? {
@@ -831,6 +1047,15 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
         ['存在未完成或未归零的业务Evidence，不能直接丢弃。']
           .concat(clearNoRecord.exclusions, localReasons)
       )
+    });
+  }
+
+  if (voiceStandardReview.eligible) {
+    return withRouteAudit({
+      decision: ROUTE_AI_STANDARD,
+      label: ROUTE_LABELS[ROUTE_AI_STANDARD],
+      reason_codes: voiceStandardReview.reasonCodes,
+      reasons: ['语音终稿和关键业务字段均已核验；本地业务类型未决，本次请AI标准核对一次。']
     });
   }
 
@@ -2471,6 +2696,11 @@ function parseHybridInput(payload, dependencies = {}) {
     present: voiceEvidencePresent,
     valid: voiceValidation.valid === true,
     fingerprintMatched: voiceValidation.fingerprintMatched === true,
+    isFinal: voiceEvidencePresent
+      && inputPayload.voiceCompletionEvidence.isFinal === true,
+    sessionMatched: voiceEvidencePresent
+      && !toArray(voiceValidation.reasons).includes('VOICE_SESSION_NOT_CURRENT')
+      && !toArray(voiceValidation.reasons).includes('VOICE_SESSION_NOT_COMPLETED'),
     status: voiceEvidencePresent
       ? String(inputPayload.voiceCompletionEvidence.status || '')
       : '',
@@ -2505,6 +2735,7 @@ module.exports = {
   getAiBusinessResultValidity,
   getParseRouteDecision,
   evaluateClearNonBusinessNoRecord,
+  evaluateCompletedVoiceStandardReview,
   evaluateSafeLocalReceivableRoute,
   applyClearNoRecordRouteProjection,
   applySafeLocalReceivableRouteProjection,
