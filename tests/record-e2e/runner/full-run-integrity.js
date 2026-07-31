@@ -149,6 +149,34 @@ function assertRuntimeIsolation(result) {
     'UNCORRELATED_RAW_INVOCATION_DETECTED'
   );
 
+  const voiceEvidence = result.voiceCompletionEvidence || {};
+  assertAuditZero(
+    Number(result.voiceAudit && result.voiceAudit.staleSessionAcceptedCount || 0),
+    `${result.caseId}.voiceStaleSessionAcceptedCount`,
+    'VOICE_STALE_SESSION_ACCEPTED'
+  );
+  const expectsVoiceFinal = result.inputChannel === 'VOICE_TRANSCRIPT';
+  if (expectsVoiceFinal) {
+    if (voiceEvidence.voiceCompletionEvidencePresent !== true
+      || voiceEvidence.parseHybridReceivedVoiceEvidence !== true
+      || voiceEvidence.voiceFingerprintMatched !== true
+      || voiceEvidence.voiceCompletionEvidenceStatus !== 'COMPLETED'
+      || !voiceEvidence.voiceSessionId
+      || Number(voiceEvidence.voiceFinalCallbackInvocationCount || 0) !== 1) {
+      throw integrityError(
+        'VOICE_COMPLETION_EVIDENCE_MISSING',
+        `${result.caseId} trusted final voice evidence missing`,
+        { voiceEvidence }
+      );
+    }
+  } else if (voiceEvidence.voiceCompletionEvidencePresent === true) {
+    throw integrityError(
+      'NON_VOICE_COMPLETION_EVIDENCE_PRESENT',
+      `${result.caseId} non-voice input received voice completion evidence`,
+      { voiceEvidence }
+    );
+  }
+
   const transaction = result.finalTransactionAudit;
   if (!transaction
     || !Number.isInteger(transaction.journalCount)
@@ -314,7 +342,12 @@ function assertFullAttemptIntegrity(attempt, plans) {
     realWxStorageCalls: 0,
     shadowParserInvocationCount: 0,
     uncorrelatedInvocationCount: 0,
-    unknownFakeRouteRequests: 0
+    unknownFakeRouteRequests: 0,
+    voiceEvidenceMissingCount: 0,
+    voiceFingerprintMismatchCount: 0,
+    voiceStaleSessionAcceptedCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.voiceAudit && result.voiceAudit.staleSessionAcceptedCount || 0)
+    ), 0)
   };
 }
 

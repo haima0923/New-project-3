@@ -82,6 +82,82 @@ function validateHybridCardinality(hybrid, errors) {
   }
 }
 
+function validateVoiceCompletionPropagation(hybrid, errors) {
+  const evidence = hybrid.voiceInputEvidence || {};
+  const result = hybrid.resultSummary || {};
+  const isVoice = evidence.source === 'voice'
+    || evidence.inputChannel === 'VOICE_TRANSCRIPT';
+  if (!isVoice) {
+    if (evidence.present === true) {
+      push(errors, 'NON_VOICE_COMPLETION_EVIDENCE_PRESENT', {
+        hybridInvocationId: hybrid.hybridInvocationId,
+        inputChannel: evidence.inputChannel,
+        source: evidence.source
+      });
+    }
+    if (result.voiceCompletionEvidencePresent === true
+      || result.voiceCompletionEvidenceValid === true
+      || result.voiceCompletionEvidenceStatus
+      || result.voiceCompletionEvidenceSource) {
+      push(errors, 'NON_VOICE_ROUTE_TRACE_EVIDENCE_PRESENT', {
+        hybridInvocationId: hybrid.hybridInvocationId
+      });
+    }
+    return;
+  }
+  if (evidence.present !== true) {
+    push(errors, 'VOICE_COMPLETION_EVIDENCE_MISSING', {
+      hybridInvocationId: hybrid.hybridInvocationId,
+      phase: hybrid.phase,
+      surface: hybrid.surface
+    });
+    return;
+  }
+  if (evidence.status !== 'COMPLETED') {
+    push(errors, 'VOICE_COMPLETION_STATUS_INVALID', {
+      hybridInvocationId: hybrid.hybridInvocationId,
+      status: evidence.status
+    });
+  }
+  if (!['VOICE_PROVIDER_FINAL_CALLBACK', 'FAKE_VOICE_FINAL_CALLBACK'].includes(
+    evidence.evidenceSource
+  )) {
+    push(errors, 'VOICE_COMPLETION_SOURCE_INVALID', {
+      evidenceSource: evidence.evidenceSource,
+      hybridInvocationId: hybrid.hybridInvocationId
+    });
+  }
+  if (!evidence.sessionId || !evidence.fingerprint || Number(evidence.sequence) < 1) {
+    push(errors, 'VOICE_COMPLETION_BINDING_INCOMPLETE', {
+      hybridInvocationId: hybrid.hybridInvocationId
+    });
+  }
+  if (evidence.fingerprintMatched !== true) {
+    push(errors, 'VOICE_COMPLETION_FINGERPRINT_MISMATCH', {
+      hybridInvocationId: hybrid.hybridInvocationId
+    });
+  }
+  if (result.voiceCompletionEvidencePresent !== true
+    || result.voiceCompletionEvidenceValid !== true
+    || result.voiceCompletionEvidenceStatus !== evidence.status
+    || result.voiceCompletionEvidenceSource !== evidence.evidenceSource) {
+    push(errors, 'VOICE_COMPLETION_ROUTE_TRACE_MISMATCH', {
+      hybridInvocationId: hybrid.hybridInvocationId,
+      inputEvidence: {
+        evidenceSource: evidence.evidenceSource,
+        present: evidence.present,
+        status: evidence.status
+      },
+      resultEvidence: {
+        evidenceSource: result.voiceCompletionEvidenceSource,
+        present: result.voiceCompletionEvidencePresent,
+        status: result.voiceCompletionEvidenceStatus,
+        valid: result.voiceCompletionEvidenceValid
+      }
+    });
+  }
+}
+
 function validateParserInvocationGraph(observation, productionPath) {
   const graph = safeClone(observation || {});
   const errors = [];
@@ -151,6 +227,7 @@ function validateParserInvocationGraph(observation, productionPath) {
       }
     });
     validateHybridCardinality(hybrid, errors);
+    validateVoiceCompletionPropagation(hybrid, errors);
   });
   directs.forEach((direct) => {
     if (direct.started !== true || direct.completed !== true) {
@@ -284,7 +361,22 @@ function validateParserInvocationGraph(observation, productionPath) {
       rawInvocationCount: (item.rawInvocations || []).length
     })),
     rawRoleCounts: countBy(raw, (item) => item.role),
-    rawFailureCount: rawFailures.length
+    rawFailureCount: rawFailures.length,
+    voiceCompletionEvidenceCount: hybrids.filter((hybrid) => (
+      hybrid.voiceInputEvidence
+      && hybrid.voiceInputEvidence.present === true
+    )).length,
+    voiceFingerprintMismatchCount: hybrids.filter((hybrid) => (
+      hybrid.voiceInputEvidence
+      && hybrid.voiceInputEvidence.present === true
+      && hybrid.voiceInputEvidence.fingerprintMatched !== true
+    )).length,
+    voiceEvidenceMissingCount: hybrids.filter((hybrid) => {
+      const evidence = hybrid.voiceInputEvidence || {};
+      const isVoice = evidence.source === 'voice'
+        || evidence.inputChannel === 'VOICE_TRANSCRIPT';
+      return isVoice && evidence.present !== true;
+    }).length
   };
   const validated = Object.assign(graph, {
     errors,

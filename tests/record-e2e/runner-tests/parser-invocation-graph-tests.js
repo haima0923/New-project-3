@@ -150,6 +150,117 @@ const tests = [
     }
   },
   {
+    name: 'voice-hybrid-requires-completed-session-bound-evidence',
+    async run() {
+      const hybrid = makeHybrid(1);
+      hybrid.voiceInputEvidence = {
+        entrySurface: 'FULL_PAGE',
+        inputChannel: 'VOICE_TRANSCRIPT',
+        source: 'voice',
+        present: true,
+        status: 'COMPLETED',
+        evidenceSource: 'FAKE_VOICE_FINAL_CALLBACK',
+        fingerprint: 'voice-transcript-v1_example',
+        fingerprintMatched: true,
+        sessionId: 'voice-session-1',
+        sequence: 4
+      };
+      hybrid.resultSummary = Object.assign({}, hybrid.resultSummary, {
+        voiceCompletionEvidencePresent: true,
+        voiceCompletionEvidenceSource: 'FAKE_VOICE_FINAL_CALLBACK',
+        voiceCompletionEvidenceStatus: 'COMPLETED',
+        voiceCompletionEvidenceValid: true
+      });
+      const graph = validateParserInvocationGraph(
+        makeGraph([hybrid]),
+        pathContract()
+      );
+      assert.deepStrictEqual(graph.errors, []);
+      assert.strictEqual(graph.summary.voiceCompletionEvidenceCount, 1);
+      assert.strictEqual(graph.summary.voiceEvidenceMissingCount, 0);
+    }
+  },
+  {
+    name: 'voice-route-trace-must-match-input-evidence',
+    async run() {
+      const hybrid = makeHybrid(1);
+      hybrid.voiceInputEvidence = {
+        inputChannel: 'VOICE_TRANSCRIPT',
+        source: 'voice',
+        present: true,
+        status: 'COMPLETED',
+        evidenceSource: 'FAKE_VOICE_FINAL_CALLBACK',
+        fingerprint: 'voice-transcript-v1_example',
+        fingerprintMatched: true,
+        sessionId: 'voice-session-1',
+        sequence: 4
+      };
+      const graph = validateParserInvocationGraph(
+        makeGraph([hybrid]),
+        pathContract()
+      );
+      assert(errorCodes(graph).includes('VOICE_COMPLETION_ROUTE_TRACE_MISMATCH'));
+    }
+  },
+  {
+    name: 'voice-hybrid-missing-or-mismatched-evidence-is-rejected',
+    async run() {
+      const missing = makeHybrid(1);
+      missing.voiceInputEvidence = {
+        inputChannel: 'VOICE_TRANSCRIPT',
+        source: 'voice',
+        present: false
+      };
+      const missingGraph = validateParserInvocationGraph(
+        makeGraph([missing]),
+        pathContract()
+      );
+      assert(errorCodes(missingGraph).includes('VOICE_COMPLETION_EVIDENCE_MISSING'));
+
+      const mismatched = makeHybrid(1);
+      mismatched.voiceInputEvidence = {
+        inputChannel: 'VOICE_TRANSCRIPT',
+        source: 'voice',
+        present: true,
+        status: 'COMPLETED',
+        evidenceSource: 'FAKE_VOICE_FINAL_CALLBACK',
+        fingerprint: 'wrong',
+        fingerprintMatched: false,
+        sessionId: 'voice-session-1',
+        sequence: 4
+      };
+      const mismatchGraph = validateParserInvocationGraph(
+        makeGraph([mismatched]),
+        pathContract()
+      );
+      assert(errorCodes(mismatchGraph).includes(
+        'VOICE_COMPLETION_FINGERPRINT_MISMATCH'
+      ));
+    }
+  },
+  {
+    name: 'non-voice-hybrid-cannot-carry-final-voice-evidence',
+    async run() {
+      const hybrid = makeHybrid(1);
+      hybrid.voiceInputEvidence = {
+        inputChannel: 'MANUAL_TEXT',
+        source: 'typed',
+        present: true,
+        status: 'COMPLETED',
+        evidenceSource: 'FAKE_VOICE_FINAL_CALLBACK',
+        fingerprint: 'forged',
+        fingerprintMatched: true,
+        sessionId: 'voice-session-1',
+        sequence: 4
+      };
+      const graph = validateParserInvocationGraph(
+        makeGraph([hybrid]),
+        pathContract()
+      );
+      assert(errorCodes(graph).includes('NON_VOICE_COMPLETION_EVIDENCE_PRESENT'));
+    }
+  },
+  {
     name: 'one-hybrid-thirteen-raw-is-captured',
     async run() {
       const graph = validThirteen();

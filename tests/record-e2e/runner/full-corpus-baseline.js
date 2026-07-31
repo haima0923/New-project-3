@@ -219,6 +219,8 @@ function compactVoiceAudit(audit) {
   if (!audit) return null;
   return {
     eventTypes: (audit.events || []).map((item) => item && item.type).filter(Boolean),
+    finalCallbackInvocationCount: Number(audit.finalCallbackInvocationCount || 0),
+    partialCallbackInvocationCount: Number(audit.partialCallbackInvocationCount || 0),
     transcriptDelivered: audit.transcriptDelivered === true
   };
 }
@@ -266,6 +268,7 @@ function compactCaseResult(result) {
     storageAudit: result.storageAudit,
     surfaceEvidence: result.surfaceEvidence,
     transactionReplayEvidence: result.transactionReplayEvidence,
+    voiceCompletionEvidence: result.voiceCompletionEvidence,
     voiceAudit: compactVoiceAudit(result.voiceAudit)
   };
 }

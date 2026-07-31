@@ -1,5 +1,6 @@
 const { AsyncLocalStorage } = require('async_hooks');
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
+const { createTranscriptFingerprint } = require('../../../utils/voice-recognition');
 const {
   compactRawParser,
   compactRelationReferences
@@ -63,14 +64,41 @@ function summarizeRawResult(result) {
 }
 
 function summarizeHybridResult(result) {
+  const route = result && result.parse_route || {};
   return {
     businessType: String(result && result.intent || 'unknown'),
     operation: result && result.operation || null,
     relationReferences: compactRelationReferences(
       result && result.relation_references
     ),
-    route: result && result.parse_route && result.parse_route.decision || '',
+    route: route.decision || '',
+    voiceCompletionEvidencePresent: route.voice_completion_evidence_present === true,
+    voiceCompletionEvidenceSource: route.voice_completion_evidence_source || null,
+    voiceCompletionEvidenceStatus: route.voice_completion_evidence_status || null,
+    voiceCompletionEvidenceValid: route.voice_completion_evidence_valid === true,
     source: result && result.source || ''
+  };
+}
+
+function summarizeVoiceInputEvidence(payload = {}) {
+  const evidence = payload.voiceCompletionEvidence;
+  const present = Boolean(evidence && typeof evidence === 'object');
+  const expectedFingerprint = present
+    ? createTranscriptFingerprint(evidence.sessionId, inputTextFromPayload(payload))
+    : '';
+  return {
+    entrySurface: String(payload.entrySurface || ''),
+    inputChannel: String(payload.inputChannel || ''),
+    source: String(payload.source || ''),
+    present,
+    status: present ? String(evidence.status || '') : '',
+    evidenceSource: present ? String(evidence.evidenceSource || '') : '',
+    fingerprint: present ? String(evidence.transcriptFingerprint || '') : '',
+    fingerprintMatched: present
+      && Boolean(expectedFingerprint)
+      && evidence.transcriptFingerprint === expectedFingerprint,
+    sessionId: present ? String(evidence.sessionId || '') : '',
+    sequence: present ? Number(evidence.resultSequence || 0) : 0
   };
 }
 
@@ -217,7 +245,8 @@ function observeHybridInvocation(payload, invoke) {
       resultSummary: null,
       sequence: hybridSequence,
       started: true,
-      surface: pageContext.surface || 'HEADLESS'
+      surface: pageContext.surface || 'HEADLESS',
+      voiceInputEvidence: summarizeVoiceInputEvidence(payload)
   };
   hybridInvocations.push(hybridInvocation);
   const context = {

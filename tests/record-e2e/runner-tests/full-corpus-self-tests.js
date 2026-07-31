@@ -19,6 +19,7 @@ const {
 } = require('../runner/full-run-integrity');
 const { sanitizeEvidence } = require('../runner/sanitize-evidence');
 const { validateOutputPath, writeFullReport } = require('../runner/write-full-report');
+const { countStaleSessionAccepted } = require('../runner/create-fake-voice');
 
 function lane(name = 'PAGE_PRODUCTION_OBSERVATION') {
   return {
@@ -210,6 +211,40 @@ const tests = [
         () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
         'RAW_PARSER_EVIDENCE_MISSING'
       );
+    }
+  },
+  {
+    name: 'full-attempt-rejects-stale-voice-session-acceptance',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = cleanResult('CASE-A');
+      result.voiceAudit = { staleSessionAcceptedCount: 1 };
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'VOICE_STALE_SESSION_ACCEPTED'
+      );
+    }
+  },
+  {
+    name: 'stale-voice-session-count-compares-provider-generation-to-accepted-session',
+    run() {
+      const events = [{
+        type: 'FINAL_CALLBACK',
+        recordVoiceSessionId: 'voice-session-A'
+      }];
+      assert.strictEqual(countStaleSessionAccepted(events, {
+        acceptedFinalCount: 1,
+        evidence: { sessionId: 'voice-session-B' }
+      }), 1);
+      assert.strictEqual(countStaleSessionAccepted(events, {
+        acceptedFinalCount: 1,
+        evidence: { sessionId: 'voice-session-A' }
+      }), 0);
     }
   },
   {

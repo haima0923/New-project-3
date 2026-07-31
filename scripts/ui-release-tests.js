@@ -88,7 +88,14 @@ function run() {
   includes(input, 'bindtouchend="stopVoice"', '完整记一笔语音入口应支持松开结束');
   includes(inputJs, "require('../../utils/voice-recognition')", '完整记一笔必须复用真实的微信语音识别链路');
   includes(inputJs, 'onResult: (result)', '语音识别成功后必须处理最终文本');
-  includes(inputJs, '() => this.runParse()', '语音转文字后必须进入确认卡链路');
+  includes(inputJs, "this.runParse('standard', {", '语音转文字后必须进入确认卡链路');
+  includes(inputJs, 'voiceCompletionEvidence: this.voiceCompletionEvidence', '完整页必须把最终语音Evidence传给Parser');
+  includes(inputJs, 'this.activeParseRequestToken !== parseRequestToken', '完整页编辑后必须拒绝迟到的旧语音解析结果');
+  includes(dashboardJs, "this.runQuickParse(text, 'voice', null, 'standard', {", '首页语音转文字后必须进入确认卡链路');
+  includes(dashboardJs, 'voiceCompletionEvidence: this.voiceCompletionEvidence', '首页必须把最终语音Evidence传给Parser');
+  includes(dashboardJs, 'this.activeQuickParseRequestToken !== parseRequestToken', '首页编辑后必须拒绝迟到的旧语音解析结果');
+  includes(dashboardJs, "cancelVoiceRecognition('HOME_QUICK_HIDDEN')", '首页隐藏时必须关闭语音会话');
+  excludes(dashboardJs, 'result.text || this.voicePartialText', '首页final不得回退到partial文本');
   excludes(inputJs, 'wx.getRecorderManager', '完整记一笔不能只录音不转文字');
   includes(inputJs, "parseButtonText: '生成确认卡'", '用户应先看到确认卡，再进行保存');
   includes(input, '先放待整理', '确认页应保留不确定信息的安全出口');
