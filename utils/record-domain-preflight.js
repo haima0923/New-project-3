@@ -1,4 +1,9 @@
 const { applyFinalParseSafety } = require('./parse-safety');
+const {
+  RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS,
+  deriveReceivablePaymentKind,
+  getReceivableRemainingBalance
+} = require('./payment-kind');
 
 const PREFLIGHT_SCHEMA_VERSION = 'record-domain-preflight-v1';
 const PRODUCTION_MODE = 'PRODUCTION_ROUTING';
@@ -245,7 +250,8 @@ function resolveDraftTotalAmount(fields = {}) {
 }
 
 function getReceivableRemainingAmount(receivable = {}) {
-  return Math.max(0, toMoney(receivable.amount) - toMoney(receivable.paidAmount));
+  const balance = getReceivableRemainingBalance(receivable.amount, receivable.paidAmount);
+  return balance.valid ? balance.remainingAmount : 0;
 }
 
 function calculateOrderDepositAmount(state = {}, orderId) {
@@ -268,14 +274,24 @@ function calculateOrderRemainingSettlement(state = {}, order) {
 }
 
 function getReceivablePaymentIssue(receivable, amount) {
-  const paymentAmount = toMoney(amount);
   if (!receivable) return '没有找到这笔待收款';
   if (!ACTIVE_RECEIVABLE_STATUSES.includes(receivable.status)) return '这笔钱已经结清，不能重复记录';
-  if (paymentAmount <= 0) return '先填本次收款金额';
-  const remaining = getReceivableRemainingAmount(receivable);
-  if (remaining <= 0) return '这笔钱已经结清，不能重复记录';
-  if (paymentAmount > remaining) return `本次收款不能超过还差 ${remaining} 元`;
-  return '';
+  const balance = getReceivableRemainingBalance(receivable.amount, receivable.paidAmount);
+  if (!balance.valid) return '这笔待收款的金额历史不完整，请先核对原记录';
+  const classification = deriveReceivablePaymentKind({
+    paymentAmount: amount,
+    remainingBefore: balance.remainingAmount,
+    isLinkedReceivable: true,
+    isLegacyReceivable: receivable.source === 'legacy'
+  });
+  if (classification.ok) return '';
+  if (classification.errorCode === RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS.PAYMENT_EXCEEDS_REMAINING) {
+    return `本次收款不能超过还差 ${balance.remainingAmount} 元`;
+  }
+  if (classification.errorCode === RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS.RECEIVABLE_ALREADY_SETTLED) {
+    return '这笔钱已经结清，不能重复记录';
+  }
+  return '先填本次收款金额';
 }
 
 function isQuotationConverted(state = {}, quotation = {}) {

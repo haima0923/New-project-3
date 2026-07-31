@@ -51,6 +51,7 @@ function getRecordTypeMeta(type) {
 function getPaymentKindLabel(kind) {
   return {
     deposit: '定金',
+    partial_payment: '部分收款',
     final_payment: '尾款',
     receivable_payment: '收款',
     legacy_payment: '历史收款'

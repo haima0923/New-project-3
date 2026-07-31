@@ -3,9 +3,15 @@ const { applyFinalParseSafety } = require('./parse-safety');
 const { ensureProductCatalog, learnProductCatalogFromRecord } = require('./product-catalog');
 const { generateId, getCustomerDisplay, normalizeCustomer, simpleFingerprint } = require('./storage');
 const { normalizeUnit, unitsMatch } = require('./units');
+const {
+  RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS,
+  deriveReceivablePaymentKind,
+  getReceivableRemainingBalance
+} = require('./payment-kind');
 
 const activeReceivableStatuses = ['待收', '部分收款'];
 const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
+const INTERNAL_ORDER_DEPOSIT_PAYMENT = Symbol('INTERNAL_ORDER_DEPOSIT_PAYMENT');
 const depositKinds = ['deposit'];
 const recordCollections = {
   quotation: 'quotations',
@@ -580,6 +586,7 @@ function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCust
   const linkedReceivable = (state.receivables || []).find((item) => item.orderId === order.id);
   const payment = linkedReceivable
     ? recordPayment(state, linkedReceivable.id, paymentAmount, {
+      internalPaymentPurpose: INTERNAL_ORDER_DEPOSIT_PAYMENT,
       kind: 'deposit',
       originalText,
       remark: fields.remark || parseResult.original_text || '订单定金'
@@ -1111,7 +1118,6 @@ function savePayment(state, parseResult) {
     return payment;
   }
   const payment = recordPayment(state, activeReceivable.id, paymentAmount, {
-    kind: activeReceivable.orderId ? 'final_payment' : 'receivable_payment',
     originalText,
     remark: fields.remark || ''
   });
@@ -1524,10 +1530,22 @@ function getReceivablePaymentError(receivable, amount) {
   if (!receivable) return '没有找到这笔待收款';
   if (!activeReceivableStatuses.includes(receivable.status)) return '这笔钱已经结清，不能重复记录';
   if (paymentAmount <= 0) return '先填本次收款金额';
-  const remaining = getReceivableRemaining(receivable);
-  if (remaining <= 0) return '这笔钱已经结清，不能重复记录';
-  if (paymentAmount > remaining) return `本次收款不能超过还差 ${formatMoneyValue(remaining)} 元`;
-  return '';
+  const remaining = getReceivableRemainingBalance(receivable.amount, receivable.paidAmount);
+  if (!remaining.valid) return '这笔待收款的金额历史不完整，请先核对原记录';
+  const classification = deriveReceivablePaymentKind({
+    paymentAmount,
+    remainingBefore: remaining.remainingAmount,
+    isLinkedReceivable: true,
+    isLegacyReceivable: receivable.source === 'legacy'
+  });
+  if (classification.ok) return '';
+  if (classification.errorCode === RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS.PAYMENT_EXCEEDS_REMAINING) {
+    return `本次收款不能超过还差 ${formatMoneyValue(remaining.remainingAmount)} 元`;
+  }
+  if (classification.errorCode === RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS.RECEIVABLE_ALREADY_SETTLED) {
+    return '这笔钱已经结清，不能重复记录';
+  }
+  return '先填本次收款金额';
 }
 
 function recordPayment(state, receivableId, amount, options = {}) {
@@ -1537,17 +1555,28 @@ function recordPayment(state, receivableId, amount, options = {}) {
     const order = (state.orders || []).find((item) => item.id === receivable.orderId);
     if (!order || order.customerId !== receivable.customerId) return null;
   }
-  const paymentAmount = toMoney(amount);
-  const paid = toMoney(receivable.paidAmount) + paymentAmount;
+  const remaining = getReceivableRemainingBalance(receivable.amount, receivable.paidAmount);
+  if (!remaining.valid) return null;
+  const classification = deriveReceivablePaymentKind({
+    paymentAmount: amount,
+    remainingBefore: remaining.remainingAmount,
+    isLinkedReceivable: true,
+    isLegacyReceivable: receivable.source === 'legacy'
+  });
+  if (!classification.ok) return null;
+  const paymentAmount = classification.normalizedPaymentAmount;
+  const paid = (remaining.paidCents + classification.paymentAmountCents) / 100;
   receivable.paidAmount = String(paid);
-  receivable.status = paid >= toMoney(receivable.amount) ? '已结清' : '部分收款';
+  receivable.status = classification.remainingAfterCents === 0 ? '已结清' : '部分收款';
   receivable.updatedAt = new Date().toISOString();
   const payment = createPaymentRecord(state, {
     customerId: receivable.customerId,
     orderId: receivable.orderId || '',
     receivableId: receivable.id,
     amount: paymentAmount,
-    kind: options.kind || (receivable.orderId ? 'final_payment' : 'receivable_payment'),
+    kind: options.internalPaymentPurpose === INTERNAL_ORDER_DEPOSIT_PAYMENT
+      ? 'deposit'
+      : classification.kind,
     originalText: options.originalText || '',
     remark: options.remark || ''
   });

@@ -35,6 +35,10 @@ const {
   stableHash,
   stableSerialize
 } = require('./record-state-diff');
+const {
+  deriveReceivablePaymentKind,
+  getReceivableRemainingBalance
+} = require('./payment-kind');
 
 const TEMP_PREFIX_BY_COLLECTION = Object.freeze({
   customers: 'customer', quotations: 'quotation', orders: 'order', receivables: 'receivable',
@@ -316,16 +320,34 @@ function createPayment(state, data, runtime, nextTempId) {
 }
 
 function applyPaymentToReceivable(state, receivable, amount, options, runtime, nextTempId) {
-  const paid = toMoney(receivable.paidAmount) + toMoney(amount);
+  const remaining = getReceivableRemainingBalance(receivable.amount, receivable.paidAmount);
+  if (!remaining.valid) {
+    const error = new Error('待收款金额历史无法安全计算剩余余额。');
+    error.code = 'RECEIVABLE_REMAINING_BALANCE_INVALID';
+    throw error;
+  }
+  const classification = deriveReceivablePaymentKind({
+    paymentAmount: amount,
+    remainingBefore: remaining.remainingAmount,
+    isLinkedReceivable: true,
+    isLegacyReceivable: receivable.source === 'legacy'
+  });
+  if (!classification.ok) {
+    const error = new Error('待收款收款金额不能按最新余额安全分类。');
+    error.code = classification.errorCode;
+    error.paymentClassification = classification;
+    throw error;
+  }
+  const paid = (remaining.paidCents + classification.paymentAmountCents) / 100;
   receivable.paidAmount = String(paid);
-  receivable.status = paid >= toMoney(receivable.amount) ? '已结清' : '部分收款';
+  receivable.status = classification.remainingAfterCents === 0 ? '已结清' : '部分收款';
   receivable.updatedAt = runtime.nowInstant;
   return createPayment(state, {
     customerId: receivable.customerId,
     orderId: receivable.orderId || '',
     receivableId: receivable.id,
-    amount: toMoney(amount),
-    kind: options.kind || (receivable.orderId ? 'final_payment' : 'receivable_payment'),
+    amount: classification.normalizedPaymentAmount,
+    kind: options.paymentPurpose === 'ORDER_DEPOSIT' ? 'deposit' : classification.kind,
     originalText: options.originalText,
     remark: options.remark
   }, runtime, nextTempId);
@@ -477,6 +499,7 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
     const linkedReceivable = (state.receivables || []).find((item) => item.orderId === order.id) || null;
     if (linkedReceivable) {
       applyPaymentToReceivable(state, linkedReceivable, amount, {
+        paymentPurpose: 'ORDER_DEPOSIT',
         kind: 'deposit', originalText, remark: fields.remark || finalResult.original_text || '订单定金'
       }, runtime, nextTempId);
     } else {
@@ -532,7 +555,7 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
     const amount = toMoney(fields.paymentAmount || fields.amount);
     if (receivable) {
       applyPaymentToReceivable(state, receivable, amount, {
-        kind: receivable.orderId ? 'final_payment' : 'receivable_payment', originalText, remark: fields.remark || ''
+        originalText, remark: fields.remark || ''
       }, runtime, nextTempId);
       appendParseLog(state, finalResult, 'save_payment', runtime, nextTempId);
       return state;

@@ -41,6 +41,7 @@ function getSourceLabel(source) {
 function getPaymentKindLabel(kind) {
   return {
     deposit: '定金',
+    partial_payment: '部分收款',
     final_payment: '尾款',
     receivable_payment: '待收回款',
     legacy_payment: '历史欠款回款',
