@@ -1,5 +1,35 @@
 # 记一笔确定性全量基线 V1
 
+## 最新增量基线：Payment Kind Balance Classification（2026-07-31）
+
+在冻结基线`fed80c859d27d6b7b17877deb836643e7abdddcb`上，待收款收款类型改为按
+保存时剩余余额派生。FIN-001/013/014从`SURFACE_ERROR`转为PASS；BASIC-011和
+VOICE-010继续PASS并新增`partial_payment`强断言。双轮实际结果：
+
+```text
+ACTIVE        120
+Executed      120
+PASS           25
+CASE_FAIL      95
+RUNNER_ERROR    0
+BLOCKED         0
+SURFACE_ERROR   0
+```
+
+相对冻结基线`22/98`，仅FIN-001/013/014顶层状态与最早失败层改变；120题Route无变化，
+业务Diff只在审定的FIN-001/013/014、BASIC-011和VOICE-010发生。双轮稳定，54条P0失败
+全部单题重跑，P1分层抽查11条；隔离Legacy提交Lane总数保持88。
+
+每轮网络、真实微信/宿主Storage、Fixture mutation、跨Case泄漏、Parser Evidence、
+orphan/uncorrelated/shadow invocation、Voice、Journal/Backup门禁均为0。新增的
+`duplicatePaymentCommitCount`、`paymentKindBalanceMismatchCount`和
+`overpaymentCommitCount`也进入全量硬门禁并为0。详细合同见
+`docs/RECORD_PAYMENT_KIND_POLICY_V1.md`。
+
+旧`shared-core-phase1a`专项在当前工作区与冻结HEAD均稳定为22通过/4个既有失败，内容为
+历史AI合并/低置信字段和冻结指纹差异；本轮未修改该套件或相关AI逻辑。Shared SavePlan、
+CAS、exact replay、stale plan和回滚专项均通过。
+
 ## 1. 结论与边界
 
 E2E Phase 2B.2-R1 在 Headless Runner Kernel V1 上，从清洁的独立 Worker 环境重新执行

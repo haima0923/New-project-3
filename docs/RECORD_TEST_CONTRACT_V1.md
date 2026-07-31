@@ -1,5 +1,28 @@
 # 记一笔第一阶段测试合同（V1）
 
+## Payment Kind余额硬门禁增量（2026-07-31）
+
+对`effectiveOperation=record_payment`且隔离提交实际创建关联待收款payment的Case，
+Runner必须从Actual业务Diff核验：
+
+- 每次动作最多创建一笔关联payment；
+- payment金额小于保存前剩余余额时kind为`partial_payment`；
+- payment金额等于保存前剩余余额时kind为`final_payment`；
+- receivable的`paidAmount/status`与payment一致；
+- 超额收款不能产生提交。
+
+上述判断不得读取Expected、Case ID、AI kind或原文。全量Attempt必须显式报告并要求：
+
+```text
+duplicatePaymentCommitCount = 0
+paymentKindBalanceMismatchCount = 0
+overpaymentCommitCount = 0
+```
+
+业务分类使用两位小数转整数分的共享合同。FIN-001/013/014、BASIC-011和VOICE-010
+必须断言`partial_payment`；exact final、超额、零/负数、精度、定金、未关联及历史兼容
+由专项覆盖。详见`docs/RECORD_PAYMENT_KIND_POLICY_V1.md`。
+
 > 状态：**合同已定稿；Release A RC1 的生产 Legacy 事务基础设施候选已通过离线与
 > 微信开发者工具隔离验证；production 固定 `LEGACY_ONLY`，共享生产 Commit 仍禁用；
 > 尚未上传或发布，没有真实用户 canary、可信远程 kill switch、客户端覆盖率、真机或
@@ -113,7 +136,7 @@ Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保�
 - 真实拓扑只有一个业务 bundle key；登录态和五个页面交接/偏好 key 明确排除，bundle 内15类已知路径及未知兼容字段进入稳定投影；没有独立持久化的records索引。
 - Storage gateway和adapter身份由私有注册表保护；普通对象不能伪造WX，FAKE不能升级为生产target，调用者伪造、跨adapter或过期snapshot均fail closed。
 - `previewCommit()`在MemoryStore中执行共享计划，返回business/full diff和单bundle proposedWrites；所有用例gateway写入/删除次数为0，`commit()`在任意迁移mode和失败注入下都返回`SHARED_PRODUCTION_COMMIT_DISABLED`。
-- Phase 1E.1的22个代表场景分别经过fake-wx legacy保存/重载与共享投影/Preview/反投影；ID按既有等价合同规范化后，13个业务/审计集合、meta、dunningTemplates及兼容顶层状态完整等价，`fullDiff`与Memory commit一致。
+- Phase 1E.1的23个代表场景分别经过fake-wx legacy保存/重载与共享投影/Preview/反投影；ID按既有等价合同规范化后，13个业务/审计集合、meta、dunningTemplates及兼容顶层状态完整等价，`fullDiff`与Memory commit一致；本阶段新增未关联普通收款场景，验证其继续保存为`unlinked_payment`。
 - 未知客户/报价/订单/待收字段保留；原本不存在且未变化的productCatalog、operationLogs、deletedRecords不会被反投影凭空物化；登录态/页面key变化不使计划过期，业务、日志或目标状态变化会使旧计划失效。
 - 源码静态检查确认当前有23处生产业务bundle写入调用，并按文件、调用种类和文件内序号逐点绑定到生命周期；6个非业务key的生产者/消费者也与源码静态核对，且全`pages/utils`扫描未发现清单外直接Storage字面量key。报价转单、订单生成待收、直接收款/催款、订单进度、提醒完成和软删除只做代表性边界验证，其余入口明确标为尚未迁移，不以清单存在冒充SavePlan等价。
 
@@ -176,7 +199,7 @@ Phase 1E.1仍不是生产保存迁移：页面和现有business继续走旧保�
   继续拒绝；页面参数、普通配置和 Shared 请求不能提升生产模式；
 - 已有有效 Bundle 启动零写入；无 Bundle 时只通过 Coordinator 初始化一次；
   PREPARED、目标主 Bundle、有效 Backup 和矛盾材料恢复顺序均先于初始化；
-- 22 个代表场景按同一初始 state 比较旧 Legacy、Shared Memory 和事务 Legacy，
+- 23 个代表场景按同一初始 state 比较旧 Legacy、Shared Memory 和事务 Legacy，
   客户、报价、订单、待收、付款、提醒、待整理、原文、items、关系、日志和目录业务
   差异为 0；
 - 两个页面读取同一 base 时 A 提交成功、B 同步返回 `LEGACY_SAVE_STALE` 且不覆盖；

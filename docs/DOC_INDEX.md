@@ -2,12 +2,12 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前多商品新建订单Operation Log测试合同候选分支：
-> `fix/record-multi-create-operation-log-contract-v1`。E2E V1.2 已把
+> 当前待收款收款类型余额分类候选分支：
+> `fix/record-payment-kind-balance-classification-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。当前120题双轮为：
-> `PASS=22 / CASE_FAIL=98 / RUNNER_ERROR=0 / BLOCKED=0`；57条P0失败全部单题重跑，
-> P1分层抽查11条，26个Cluster覆盖98条失败；Hybrid/Raw parser调用图两轮一致，
+> `PASS=25 / CASE_FAIL=95 / RUNNER_ERROR=0 / BLOCKED=0 / SURFACE_ERROR=0`；54条P0失败全部单题重跑，
+> P1分层抽查11条，24个Cluster覆盖95条失败；Hybrid/Raw parser调用图两轮一致，
 > evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
 > 事务清理门禁均通过。`BASIC-010`的“这单”现在产生可信、未解析且不含orderId的结构化
 > 订单指代Evidence，并沿raw parser、Hybrid、Confirmation和Preflight输入完整透传；
@@ -46,15 +46,19 @@
 > 每条只创建一个包含多个`items[]`的订单，保留一条顶层`aiParseLogs/save_order`，不写
 > `operationLogs`；Fake Deep Provider继续使FULL_PAGE生产资格为
 > `BLOCKED_NON_REAL_PROVIDER`，页面业务能力为true但effective正式保存为false。生产保存
-> 调用仍为0，隔离Legacy提交继续验证客户、订单、items、revision和receipt。三条现为PASS，
-> 剩余3条SURFACE_ERROR保持原失败层，隔离提交Lane总数仍为88。
+> 调用仍为0，隔离Legacy提交继续验证客户、订单、items、revision和receipt。三条现为PASS。
+> 收款保存现在按事务绑定的待收剩余余额派生kind：未收清写`partial_payment`、正好收清写
+> `final_payment`、超额拒绝；AI和调用方kind不能覆盖。Legacy、Shared SavePlan和server
+> 镜像遵守同一整数分合同，定金、未关联与历史值保持兼容。FIN-001/013/014转为PASS，
+> BASIC-011/VOICE-010继续PASS并强制断言`partial_payment`；全量新增的重复提交、余额分类
+> 不一致和超额提交硬门禁均为0，隔离提交Lane总数仍为88。
 > 当前已确认本地Parser缺陷数量为0。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
 > Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
 > 该计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
 > HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
-> 认证头被请求携带的证据。本阶段只修改MULTI-001/002/006的Surface与operationLogs测试
-> Expected及对应文档；没有修改生产代码、Runner、Validator、Fixture、Parser、Route、AI、
-> Preflight、页面、business、Storage/Coordinator或Provider信任政策。Shared生产提交仍关闭。
+> 认证头被请求携带的证据。本阶段只修改余额分类、三条保存镜像、必要显示映射、五条Case
+> 合同及全量硬门禁；没有修改Fixture、Parser、Route、AI、页面、Storage/Coordinator核心或
+> Provider信任政策。Shared生产提交仍关闭。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
 
@@ -111,6 +115,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md` | Provider final callback、session/转写指纹绑定、FULL/HOME机械透传及非语音渠道保护 |
 | `docs/RECORD_VOICE_STANDARD_ROUTE_V1.md` | 可信语音终稿、充分业务Evidence和intent未决的窄AI_STANDARD资格、单次AI及保护边界 |
 | `docs/RECORD_PARSE_LOG_ENVELOPE_POLICY_V1.md` | 顶层确认保存的解析日志Envelope所有权、订单加定金去重、Standalone保护及事务/重放边界 |
+| `docs/RECORD_PAYMENT_KIND_POLICY_V1.md` | 关联待收款收款按保存时剩余余额派生partial/final、金额精度、三条保存路径及兼容边界 |
 | `docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md` | 明确订单指代的结构化Evidence、语言边界、State独立性及raw→Preflight透传合同 |
 | `docs/RECORD_RECEIVABLE_ROUTE_POLICY_V1.md` | Safe Local待收款Route、复杂待收款PENDING和订单关系与Route分离政策 |
 | `docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md` | 明确订单指代待收款的选择前阻断、真实选择、最新State复核和危险关系边界 |
