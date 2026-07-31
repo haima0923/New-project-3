@@ -2800,6 +2800,13 @@
                 "value": "王总这笔待收今天付了1500元"
               },
               {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "kind",
+                "assert": "EXACT",
+                "value": "partial_payment"
+              },
+              {
                 "collection": "receivables",
                 "change": "UPDATED",
                 "path": "paidAmount",

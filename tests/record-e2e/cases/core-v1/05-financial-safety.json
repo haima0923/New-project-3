@@ -127,9 +127,9 @@
             ]
           },
           "fullPage": {
-            "status": "CAN_COMPLETE",
+            "status": "BLOCKED",
             "surfaceCanCompleteFormal": true,
-            "effectiveCanSaveFormal": true,
+            "effectiveCanSaveFormal": false,
             "missingCapabilities": []
           }
         },
@@ -185,7 +185,7 @@
                 "change": "CREATED",
                 "path": "kind",
                 "assert": "EXACT",
-                "value": "payment"
+                "value": "partial_payment"
               }
             ],
             "relationAssertions": [
@@ -223,7 +223,7 @@
                 "deletedCount": 0
               },
               "operationLogs": {
-                "createdCount": 1,
+                "createdCount": 0,
                 "updatedCount": 0,
                 "deletedCount": 0
               }
@@ -2933,9 +2933,9 @@
             ]
           },
           "fullPage": {
-            "status": "CAN_COMPLETE",
+            "status": "BLOCKED",
             "surfaceCanCompleteFormal": true,
-            "effectiveCanSaveFormal": true,
+            "effectiveCanSaveFormal": false,
             "missingCapabilities": []
           }
         },
@@ -2984,7 +2984,7 @@
                 "change": "CREATED",
                 "path": "kind",
                 "assert": "EXACT",
-                "value": "payment"
+                "value": "partial_payment"
               }
             ],
             "relationAssertions": [
@@ -3022,7 +3022,7 @@
                 "deletedCount": 0
               },
               "operationLogs": {
-                "createdCount": 1,
+                "createdCount": 0,
                 "updatedCount": 0,
                 "deletedCount": 0
               }
@@ -3237,9 +3237,9 @@
             ]
           },
           "fullPage": {
-            "status": "CAN_COMPLETE",
+            "status": "BLOCKED",
             "surfaceCanCompleteFormal": true,
-            "effectiveCanSaveFormal": true,
+            "effectiveCanSaveFormal": false,
             "missingCapabilities": []
           }
         },
@@ -3288,7 +3288,7 @@
                 "change": "CREATED",
                 "path": "kind",
                 "assert": "EXACT",
-                "value": "payment"
+                "value": "partial_payment"
               }
             ],
             "relationAssertions": [
@@ -3326,7 +3326,7 @@
                 "deletedCount": 0
               },
               "operationLogs": {
-                "createdCount": 1,
+                "createdCount": 0,
                 "updatedCount": 0,
                 "deletedCount": 0
               }

@@ -2453,6 +2453,13 @@
                 "path": "originalText",
                 "assert": "EXACT",
                 "value": "王总那笔欠款今天收了一千五百元"
+              },
+              {
+                "collection": "payments",
+                "change": "CREATED",
+                "path": "kind",
+                "assert": "EXACT",
+                "value": "partial_payment"
               }
             ],
             "relationAssertions": [
