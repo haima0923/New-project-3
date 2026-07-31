@@ -13,7 +13,13 @@ const {
   isNoRecordPersistenceForbidden
 } = require('../../utils/record-domain-preflight');
 const { getState, saveState } = require('../../utils/storage');
-const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
+const {
+  cancelVoiceRecognition,
+  invalidateVoiceCompletionEvidence,
+  startVoiceRecognition,
+  stopVoiceRecognition,
+  validateVoiceCompletionEvidence
+} = require('../../utils/voice-recognition');
 const { getFieldLabel, isVisibleField } = require('../../utils/display');
 const { normalizeUnit, unitsMatch } = require('../../utils/units');
 const {
@@ -662,9 +668,29 @@ Page({
     this.load();
   },
 
-  onUnload() {
+  onHide() {
+    this.activeQuickParseRequestToken = null;
     clearParseProgress(this);
-    stopVoiceRecognition();
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'HOME_QUICK_HIDDEN');
+      this.voiceCompletionEvidence = null;
+    }
+    cancelVoiceRecognition('HOME_QUICK_HIDDEN');
+    this.setData({ parsing: false });
+  },
+
+  onUnload() {
+    this.activeQuickParseRequestToken = null;
+    clearParseProgress(this);
+    if (this.voicePressTimer) {
+      clearTimeout(this.voicePressTimer);
+      this.voicePressTimer = null;
+    }
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'HOME_QUICK_UNLOAD');
+      this.voiceCompletionEvidence = null;
+    }
+    cancelVoiceRecognition('HOME_QUICK_UNLOAD');
   },
 
   load() {
@@ -696,6 +722,11 @@ Page({
     // 登录准备和录音并行，不占用户松手后生成确认卡的 8 秒。
     prewarmAiAuth();
     vibrateOnVoiceStart();
+    this.activeQuickParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'NEW_VOICE_SESSION_STARTED');
+      this.voiceCompletionEvidence = null;
+    }
     this.setData({
       voiceRecording: true,
       voiceOverlayVisible: true,
@@ -747,7 +778,7 @@ Page({
           this.voiceGestureTarget = 'send';
           return;
         }
-        const text = String(result.text || this.voicePartialText || '').trim();
+        const text = String(result && result.text || '').trim();
         if (!text) {
           this.setData({
             voiceRecording: false,
@@ -757,27 +788,31 @@ Page({
           wx.showToast({ title: '没有听清楚', icon: 'none' });
           return;
         }
+        const voiceCompletionEvidence = result && result.voiceCompletionEvidence || null;
+        const validation = validateVoiceCompletionEvidence(
+          voiceCompletionEvidence,
+          text,
+          { inputChannel: 'VOICE_TRANSCRIPT' }
+        );
+        this.voiceCompletionEvidence = validation.valid
+          ? voiceCompletionEvidence
+          : null;
         this.setData({
           voiceRecording: false,
           composerText: text,
           voiceTip: '已识别成文字，请确认后保存。'
         });
-        this.runQuickParse(text, 'voice');
+        this.runQuickParse(text, 'voice', null, 'standard', {
+          entrySurface: 'HOME_QUICK',
+          inputChannel: 'VOICE_TRANSCRIPT',
+          voiceCompletionEvidence: this.voiceCompletionEvidence
+        });
       },
       onError: (error) => {
+        this.voiceCompletionEvidence = null;
         if (this.voiceCanceling) {
           this.voiceCanceling = false;
           this.voiceGestureTarget = 'send';
-          return;
-        }
-        const partialText = String(this.voicePartialText || '').trim();
-        if (partialText) {
-          this.setData({
-            voiceRecording: false,
-            composerText: partialText,
-            voiceTip: '已识别成文字，请确认后保存。'
-          });
-          this.runQuickParse(partialText, 'voice');
           return;
         }
         this.setData({
@@ -869,7 +904,11 @@ Page({
       voiceOverlayVisible: false,
       voiceTip: ''
     });
-    stopVoiceRecognition();
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'HOME_QUICK_VOICE_CANCELLED');
+      this.voiceCompletionEvidence = null;
+    }
+    cancelVoiceRecognition('HOME_QUICK_VOICE_CANCELLED');
   },
 
   switchVoiceToTextInput() {
@@ -881,18 +920,38 @@ Page({
       voiceOverlayVisible: false,
       voiceTip: ''
     });
-    stopVoiceRecognition();
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'VOICE_SWITCHED_TO_TEXT_INPUT');
+      this.voiceCompletionEvidence = null;
+    }
+    cancelVoiceRecognition('VOICE_SWITCHED_TO_TEXT_INPUT');
     wx.setStorageSync('force_text_input', true);
     wx.switchTab({ url: '/pages/input/input' });
   },
 
   onComposerInput(event) {
     const composerText = event.detail.value;
+    this.activeQuickParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'MANUAL_EDIT_AFTER_VOICE');
+      this.voiceCompletionEvidence = null;
+    }
+    if (this.data.parsing) {
+      clearParseProgress(this);
+    }
     if (String(composerText || '').trim()) prewarmAiAuth();
-    this.setData({ composerText });
+    this.setData({
+      composerText,
+      parsing: false
+    });
   },
 
   pasteClipboard() {
+    this.activeQuickParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'PASTE_REPLACED_VOICE_INPUT');
+      this.voiceCompletionEvidence = null;
+    }
     wx.getClipboardData({
       success: (res) => {
         const analysis = analyzeClipboardText(res.data || '');
@@ -952,7 +1011,7 @@ Page({
     this.runQuickParse(text, 'typed');
   },
 
-  runQuickParse(text, source, pasteAnalysis, reviewMode = 'standard') {
+  runQuickParse(text, source, pasteAnalysis, reviewMode = 'standard', sourceContext = null) {
     const state = getState();
     const payload = {
       text,
@@ -961,6 +1020,24 @@ Page({
       state,
       reviewMode
     };
+    if (source === 'voice') {
+      const requestedEvidence = sourceContext && sourceContext.voiceCompletionEvidence
+        || this.voiceCompletionEvidence
+        || null;
+      const validation = validateVoiceCompletionEvidence(
+        requestedEvidence,
+        text,
+        { inputChannel: 'VOICE_TRANSCRIPT' }
+      );
+      payload.inputChannel = 'VOICE_TRANSCRIPT';
+      payload.entrySurface = sourceContext && sourceContext.entrySurface || 'HOME_QUICK';
+      if (validation.valid) {
+        payload.voiceCompletionEvidence = validation.evidence;
+      }
+    } else {
+      payload.inputChannel = source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT';
+      payload.entrySurface = 'HOME_QUICK';
+    }
     if (source === 'paste' && pasteAnalysis) {
       payload.rawText = pasteAnalysis.rawText;
       payload.extractedText = pasteAnalysis.extractedText || text;
@@ -971,6 +1048,9 @@ Page({
       payload.extractedText = previous.extracted_text || text;
       payload.rawMessages = previous.raw_messages || [];
     }
+    this.quickParseRequestSequence = Number(this.quickParseRequestSequence || 0) + 1;
+    const parseRequestToken = `home-parse-${this.quickParseRequestSequence}`;
+    this.activeQuickParseRequestToken = parseRequestToken;
     this.setData({
       parsing: true,
       voiceTip: source === 'voice' ? this.data.voiceTip : ''
@@ -978,6 +1058,8 @@ Page({
     startParseProgress(this, source);
     parseHybridInput(payload)
       .then((parseResult) => {
+        if (this.activeQuickParseRequestToken !== parseRequestToken) return;
+        this.activeQuickParseRequestToken = null;
         const confirmState = buildHomeConfirmState(parseResult);
         finishParseProgress(this);
         this.setData(Object.assign({}, confirmState, {
@@ -986,6 +1068,8 @@ Page({
         }));
       })
       .catch(() => {
+        if (this.activeQuickParseRequestToken !== parseRequestToken) return;
+        this.activeQuickParseRequestToken = null;
         finishParseProgress(this);
         this.setData({
           parsing: false,
@@ -1043,7 +1127,13 @@ Page({
     if (rejection) return rejection;
     if (!(parseResult.parse_route || {}).deep_review_available) return;
     const text = parseResult.extracted_text || parseResult.original_text || this.data.composerText;
-    this.runQuickParse(text, parseResult.source || 'typed', null, 'deep');
+    this.runQuickParse(text, parseResult.source || 'typed', null, 'deep', {
+      entrySurface: 'HOME_QUICK',
+      inputChannel: parseResult.source === 'voice' ? 'VOICE_TRANSCRIPT' : '',
+      voiceCompletionEvidence: parseResult.source === 'voice'
+        ? this.voiceCompletionEvidence
+        : null
+    });
   },
 
   changeConfirmDate(event) {

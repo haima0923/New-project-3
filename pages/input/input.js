@@ -15,7 +15,13 @@ const {
 } = require('../../utils/record-domain-preflight');
 const { getCatalogCheck, getProductSuggestions, getSpecSuggestions } = require('../../utils/product-catalog');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
-const { startVoiceRecognition, stopVoiceRecognition } = require('../../utils/voice-recognition');
+const {
+  cancelVoiceRecognition,
+  invalidateVoiceCompletionEvidence,
+  startVoiceRecognition,
+  stopVoiceRecognition,
+  validateVoiceCompletionEvidence
+} = require('../../utils/voice-recognition');
 const { normalizeUnit, unitsMatch } = require('../../utils/units');
 const {
   analyzeClipboardText,
@@ -1915,15 +1921,29 @@ Page({
   },
 
   onHide() {
+    this.activeParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_HIDDEN');
+      this.voiceCompletionEvidence = null;
+    }
     this.cancelVoice();
     finishParseProgress(this);
+    this.setData({
+      parsing: false,
+      parseButtonText: '生成确认卡'
+    });
   },
 
   onUnload() {
+    this.activeParseRequestToken = null;
     clearParseProgress(this);
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_UNLOAD');
+      this.voiceCompletionEvidence = null;
+    }
     if (this.data.voiceRecording) {
       this.voiceCancelled = true;
-      stopVoiceRecognition();
+      cancelVoiceRecognition('FULL_PAGE_UNLOAD');
     }
   },
 
@@ -1943,6 +1963,11 @@ Page({
 
   setSource(event) {
     const source = event.currentTarget.dataset.source;
+    this.activeParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'INPUT_SOURCE_CHANGED');
+      this.voiceCompletionEvidence = null;
+    }
     this.setData(Object.assign({
       source,
       sourceLabel: INPUT_SOURCE_LABELS[source],
@@ -1952,6 +1977,18 @@ Page({
 
   onTextInput(event) {
     const text = event.detail.value;
+    this.activeParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'MANUAL_EDIT_AFTER_VOICE');
+      this.voiceCompletionEvidence = null;
+    }
+    if (this.data.parsing) {
+      clearParseProgress(this);
+      this.setData({
+        parsing: false,
+        parseButtonText: '生成确认卡'
+      });
+    }
     if (String(text || '').trim()) prewarmAiAuth();
     if (isWechatChatText(text)) {
       const analysis = analyzeClipboardText(text);
@@ -1965,11 +2002,21 @@ Page({
       }, getSourceState('paste')));
       return;
     }
-    this.setData({ text, pasteAnalysis: null });
+    this.setData({
+      text,
+      source: 'typed',
+      sourceLabel: INPUT_SOURCE_LABELS.typed,
+      pasteAnalysis: null
+    });
   },
 
   readClipboardToInput(options = {}) {
     const append = Boolean(options.append);
+    this.activeParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'PASTE_REPLACED_VOICE_INPUT');
+      this.voiceCompletionEvidence = null;
+    }
     wx.getClipboardData({
       success: (res) => {
         const analysis = analyzeClipboardText(res.data || '');
@@ -2039,6 +2086,11 @@ Page({
     // 录音期间预先完成登录；失败不打断录音，真正解析时会给出明确原因。
     prewarmAiAuth();
     this.voiceCancelled = false;
+    this.activeParseRequestToken = null;
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'NEW_VOICE_SESSION_STARTED');
+      this.voiceCompletionEvidence = null;
+    }
     this.setData(Object.assign({
       source: 'voice',
       sourceLabel: INPUT_SOURCE_LABELS.voice,
@@ -2077,6 +2129,15 @@ Page({
           });
           return;
         }
+        const voiceCompletionEvidence = result && result.voiceCompletionEvidence || null;
+        const validation = validateVoiceCompletionEvidence(
+          voiceCompletionEvidence,
+          text,
+          { inputChannel: 'VOICE_TRANSCRIPT' }
+        );
+        this.voiceCompletionEvidence = validation.valid
+          ? voiceCompletionEvidence
+          : null;
         this.setData(Object.assign({
           text,
           source: 'voice',
@@ -2086,9 +2147,14 @@ Page({
           voiceButtonText: '按住说一句',
           voiceTip: '已转成文字，正在整理成确认卡。',
           pasteAnalysis: null
-        }, getSourceState('voice')), () => this.runParse());
+        }, getSourceState('voice')), () => this.runParse('standard', {
+          entrySurface: 'FULL_PAGE',
+          inputChannel: 'VOICE_TRANSCRIPT',
+          voiceCompletionEvidence: this.voiceCompletionEvidence
+        }));
       },
       onError: (error) => {
+        this.voiceCompletionEvidence = null;
         this.setData({
           voiceRecording: false,
           voiceButtonClass: 'voice-button-idle',
@@ -2126,7 +2192,11 @@ Page({
   cancelVoice() {
     if (!this.data.voiceRecording) return;
     this.voiceCancelled = true;
-    stopVoiceRecognition();
+    if (this.voiceCompletionEvidence) {
+      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_VOICE_CANCELLED');
+      this.voiceCompletionEvidence = null;
+    }
+    cancelVoiceRecognition('FULL_PAGE_VOICE_CANCELLED');
     this.setData({
       voiceRecording: false,
       voiceButtonClass: 'voice-button-idle',
@@ -2135,7 +2205,7 @@ Page({
     });
   },
 
-  runParse(reviewMode = 'standard') {
+  runParse(reviewMode = 'standard', sourceContext = null) {
     let text = this.data.text.trim();
     let pasteAnalysis = null;
     let source = this.data.source;
@@ -2157,6 +2227,9 @@ Page({
       wx.showToast({ title: '先输入一句话或粘贴聊天', icon: 'none' });
       return;
     }
+    this.parseRequestSequence = Number(this.parseRequestSequence || 0) + 1;
+    const parseRequestToken = `full-parse-${this.parseRequestSequence}`;
+    this.activeParseRequestToken = parseRequestToken;
     this.setData({
       parsing: true,
       parseButtonText: '正在识别',
@@ -2171,6 +2244,24 @@ Page({
       state,
       reviewMode
     };
+    if (source === 'voice') {
+      const requestedEvidence = sourceContext && sourceContext.voiceCompletionEvidence
+        || this.voiceCompletionEvidence
+        || null;
+      const validation = validateVoiceCompletionEvidence(
+        requestedEvidence,
+        text,
+        { inputChannel: 'VOICE_TRANSCRIPT' }
+      );
+      payload.inputChannel = 'VOICE_TRANSCRIPT';
+      payload.entrySurface = sourceContext && sourceContext.entrySurface || 'FULL_PAGE';
+      if (validation.valid) {
+        payload.voiceCompletionEvidence = validation.evidence;
+      }
+    } else {
+      payload.inputChannel = source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT';
+      payload.entrySurface = 'FULL_PAGE';
+    }
     if (pasteAnalysis) {
       payload.rawText = pasteAnalysis.rawText;
       payload.extractedText = pasteAnalysis.extractedText;
@@ -2178,6 +2269,8 @@ Page({
     }
     parseHybridInput(payload)
       .then((parseResult) => {
+      if (this.activeParseRequestToken !== parseRequestToken) return;
+      this.activeParseRequestToken = null;
       finishParseProgress(this);
       const confirmationState = buildConfirmationState(state, parseResult, parseResult.intent, parseResult.fields);
       const aiStatus = (parseResult.ai_fallback && parseResult.ai_fallback.status) || 'not_requested';
@@ -2213,6 +2306,8 @@ Page({
       }));
       })
       .catch(() => {
+      if (this.activeParseRequestToken !== parseRequestToken) return;
+      this.activeParseRequestToken = null;
       finishParseProgress(this);
       this.setData({
         parsing: false,

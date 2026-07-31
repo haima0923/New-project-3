@@ -6,6 +6,7 @@ const { numberPattern, parseChineseNumber } = require('./chinese-number');
 const { applyLocalParseSafety, NEEDS_USER_CONFIRM } = require('./parse-safety');
 const { resolveBusinessTimeContext } = require('./record-flow-runtime');
 const { normalizeUnit, unitsMatch } = require('./units');
+const { validateVoiceCompletionEvidence } = require('./voice-recognition');
 
 // 普通 AI 只是一轮快速核对：网络层最多 6.7 秒，外层连同本地整理最多 8 秒。
 // 深度核对只能由用户主动点击，不能占用日常确认卡的 8 秒预算。
@@ -776,7 +777,14 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
       'PROCESSING_COMPLETE'
     ].concat(clearNoRecord.reasonCodes))
     : clearNoRecord.reasonCodes;
-  const withRouteAudit = (route) => Object.assign({}, route, localResult.intent === 'unknown'
+  const voiceCompletionAudit = payload.voiceCompletionEvidenceAudit || {};
+  const withRouteAudit = (route) => Object.assign({}, route, source === 'voice' ? {
+      voice_completion_evidence_present: voiceCompletionAudit.present === true,
+      voice_completion_evidence_source: voiceCompletionAudit.evidenceSource || null,
+      voice_completion_evidence_status: voiceCompletionAudit.status || null,
+      voice_completion_evidence_valid: voiceCompletionAudit.valid === true
+    }
+    : {}, localResult.intent === 'unknown'
     ? {
       business_evidence_count: clearNoRecord.businessEvidenceCount,
       no_record_eligible: clearNoRecord.eligible,
@@ -2440,10 +2448,45 @@ function parseHybridInput(payload, dependencies = {}) {
   } catch (error) {
     return Promise.reject(error);
   }
-  const resolvedPayload = Object.assign({}, payload || {}, {
+  const inputPayload = payload || {};
+  const voiceEvidencePresent = Object.prototype.hasOwnProperty.call(
+    inputPayload,
+    'voiceCompletionEvidence'
+  ) && Boolean(inputPayload.voiceCompletionEvidence);
+  const voiceValidation = voiceEvidencePresent
+    ? validateVoiceCompletionEvidence(
+      inputPayload.voiceCompletionEvidence,
+      inputPayload.text,
+      {
+        inputChannel: inputPayload.inputChannel || inputPayload.source
+      }
+    )
+    : {
+      evidence: null,
+      fingerprintMatched: false,
+      reasons: ['VOICE_EVIDENCE_MISSING'],
+      valid: false
+    };
+  const voiceCompletionEvidenceAudit = {
+    present: voiceEvidencePresent,
+    valid: voiceValidation.valid === true,
+    fingerprintMatched: voiceValidation.fingerprintMatched === true,
+    status: voiceEvidencePresent
+      ? String(inputPayload.voiceCompletionEvidence.status || '')
+      : '',
+    evidenceSource: voiceEvidencePresent
+      ? String(inputPayload.voiceCompletionEvidence.evidenceSource || '')
+      : '',
+    exclusionReasonCodes: voiceValidation.reasons || []
+  };
+  const resolvedPayload = Object.assign({}, inputPayload, {
     businessDate: runtime.businessDate,
     businessTimezone: runtime.businessTimezone,
-    nowInstant: runtime.nowInstant
+    nowInstant: runtime.nowInstant,
+    voiceCompletionEvidence: voiceValidation.valid
+      ? voiceValidation.evidence
+      : null,
+    voiceCompletionEvidenceAudit
   });
   const prepared = prepareHybridLocalStage(resolvedPayload);
   const localOnlyResult = finishHybridWithoutAi(prepared);
