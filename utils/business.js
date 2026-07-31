@@ -465,7 +465,7 @@ function findOrderForDeposit(state, fields = {}, customer = null) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCustomer = null) {
+function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCustomer = null, options = {}) {
   const fields = parseResult.fields || {};
   const originalText = getOriginalTextFromDraft(parseResult);
   const paymentAmount = toMoney(getPaymentAmount(fields));
@@ -509,7 +509,9 @@ function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCust
       originalText,
       remark: fields.remark || parseResult.original_text || '未关联订单定金'
     });
-    appendParseLog(state, parseResult, 'save_unlinked_order_deposit');
+    if (options.emitAiParseLog !== false) {
+      appendParseLog(state, parseResult, 'save_unlinked_order_deposit');
+    }
     return { order: null, payment };
   }
 
@@ -560,7 +562,9 @@ function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCust
     note: `记录定金 ${payment.amount} 元`,
     createdAt: new Date().toISOString()
   });
-  appendParseLog(state, parseResult, 'save_order_deposit');
+  if (options.emitAiParseLog !== false) {
+    appendParseLog(state, parseResult, 'save_order_deposit');
+  }
   return { order, payment };
 }
 
@@ -816,7 +820,7 @@ function saveOrder(state, parseResult) {
         paymentAmount: fields.depositAmount || fields.paymentAmount,
         paymentKind: 'deposit'
       })
-    }), order, customer);
+    }), order, customer, { emitAiParseLog: false });
   }
   appendParseLog(state, parseResult, 'save_order');
   return order;

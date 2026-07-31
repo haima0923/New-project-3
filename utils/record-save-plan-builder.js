@@ -455,9 +455,6 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
         id: nextTempId('orderProgress'), orderId: order.id, status: order.status,
         note: `记录定金 ${formatMoney(depositAmount)} 元`, createdAt: runtime.nowInstant
       });
-      appendParseLog(state, Object.assign({}, finalResult, {
-        fields: Object.assign({}, fields, { paymentAmount: fields.depositAmount || fields.paymentAmount, paymentKind: 'deposit' })
-      }), 'save_order_deposit', runtime, nextTempId);
     }
     appendParseLog(state, finalResult, 'save_order', runtime, nextTempId);
     return state;
