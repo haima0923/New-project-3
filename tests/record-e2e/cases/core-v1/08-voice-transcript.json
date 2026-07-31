@@ -770,13 +770,12 @@
       "execution": {
         "schemaVersion": "record-e2e-execution-boundary-v1",
         "lanes": [
-          "PAGE_PRODUCTION_OBSERVATION",
-          "TEST_ONLY_ISOLATED_LEGACY_COMMIT"
+          "PAGE_PRODUCTION_OBSERVATION"
         ],
         "observationSurface": "FULL_PAGE",
         "missingCapabilityDisposition": "CASE_FAIL",
         "missingCapabilityFailureStage": "SURFACE_ERROR",
-        "draftSourceSurface": "FULL_PAGE"
+        "draftSourceSurface": "NOT_APPLICABLE"
       },
       "input": {
         "channel": "VOICE_TRANSCRIPT",
@@ -806,7 +805,7 @@
       "interaction": {
         "userEdits": [],
         "userSelections": [],
-        "requestedSaveAction": "SAVE_FORMAL",
+        "requestedSaveAction": "DO_NOT_SAVE",
         "restartAfterSave": false,
         "requiredCapabilities": []
       },
@@ -833,7 +832,9 @@
             }
           ],
           "allowedValues": {},
-          "absentFields": [],
+          "absentFields": [
+            "orderDeliveryDate"
+          ],
           "conflictValues": {}
         },
         "route": "AI_STANDARD",
@@ -844,9 +845,11 @@
           "expectedAiCall": "MUST_CALL"
         },
         "preflight": {
-          "domainCanSaveFormal": true,
+          "domainCanSaveFormal": false,
           "domainCanSavePending": true,
-          "blockingCodes": [],
+          "blockingCodes": [
+            "MISSING_REQUIRED_FIELD"
+          ],
           "requiredSelections": []
         },
         "confirmation": {
@@ -854,7 +857,9 @@
             "customerName",
             "items"
           ],
-          "missingFields": [],
+          "missingFields": [
+            "orderDeliveryDate"
+          ],
           "conflictFields": []
         },
         "surface": {
@@ -867,76 +872,49 @@
             ]
           },
           "fullPage": {
-            "status": "CAN_COMPLETE",
+            "status": "BLOCKED",
             "surfaceCanCompleteFormal": true,
-            "effectiveCanSaveFormal": true,
+            "effectiveCanSaveFormal": false,
             "missingCapabilities": []
           }
         },
         "save": {
-          "action": "SAVE_FORMAL",
-          "status": "FORMAL_COMMITTED"
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED"
         },
         "stateDiff": {
           "business": {
-            "collections": {
-              "customers": {
-                "createdCount": 1,
-                "updatedCount": 0,
-                "deletedCount": 0
-              },
-              "orders": {
-                "createdCount": 1,
-                "updatedCount": 0,
-                "deletedCount": 0
-              }
-            },
-            "fieldAssertions": [
-              {
-                "collection": "orders",
-                "change": "CREATED",
-                "path": "unitPrice",
-                "assert": "EXACT",
-                "value": 3.8
-              },
-              {
-                "collection": "orders",
-                "change": "CREATED",
-                "path": "originalText",
-                "assert": "EXACT",
-                "value": "赵姐礼品盒五百套三块八一套"
-              }
-            ],
-            "relationAssertions": [],
-            "mustRemainUnchanged": [
-              "quotations",
-              "receivables",
-              "payments",
-              "todos",
-              "pendingNotes"
-            ]
-          },
-          "full": {
-            "collections": {
-              "customers": {
-                "createdCount": 1,
-                "updatedCount": 0,
-                "deletedCount": 0
-              },
-              "orders": {
-                "createdCount": 1,
-                "updatedCount": 0,
-                "deletedCount": 0
-              }
-            },
+            "collections": {},
             "fieldAssertions": [],
             "relationAssertions": [],
             "mustRemainUnchanged": [
+              "customers",
               "quotations",
+              "orders",
               "receivables",
               "payments",
               "todos",
-              "pendingNotes"
+              "pendingNotes",
+              "productCatalog",
+              "operationLogs",
+              "aiParseLogs"
+            ]
+          },
+          "full": {
+            "collections": {},
+            "fieldAssertions": [],
+            "relationAssertions": [],
+            "mustRemainUnchanged": [
+              "customers",
+              "quotations",
+              "orders",
+              "receivables",
+              "payments",
+              "todos",
+              "pendingNotes",
+              "productCatalog",
+              "operationLogs",
+              "aiParseLogs"
             ]
           }
         },
@@ -958,23 +936,24 @@
           "backupFinal": "NOT_APPLICABLE"
         },
         "productionObservation": {
-          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
+          "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
           "pageFormalSaveAllowed": false,
           "blockingCodes": [
+            "MISSING_REQUIRED_FIELD",
             "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
           ],
           "providerClassification": "NON_REAL_FAKE",
           "requiredCapabilitiesSatisfied": true
         },
         "isolatedExecution": {
-          "enabled": true,
-          "action": "SAVE_FORMAL",
-          "status": "TEST_ONLY_ISOLATED_COMMITTED",
-          "marker": "TEST_ONLY_ISOLATED_COMMIT",
-          "source": "PAGE_DERIVED_CONFIRMED_DRAFT",
-          "sourceLane": "PAGE_PRODUCTION_OBSERVATION",
-          "target": "ISOLATED_LEGACY_STORE",
-          "stateDiff": "EXPECTED_STATE_DIFF"
+          "enabled": false,
+          "action": "DO_NOT_SAVE",
+          "status": "BLOCKED",
+          "marker": "NOT_APPLICABLE",
+          "source": "NOT_APPLICABLE",
+          "sourceLane": "NOT_APPLICABLE",
+          "target": "NONE",
+          "stateDiff": "ZERO_SIDE_EFFECTS"
         }
       },
       "allowances": [],

@@ -13,6 +13,9 @@ const path = require('path');
 const {
   validateExecutionPlanPreconditions
 } = require('../tests/record-e2e/runner/validate-plan-preconditions');
+const {
+  nonCanonicalExpectedFieldsForOperation
+} = require('../tests/record-e2e/runner/field-aliases');
 
 const ROOT = path.resolve(__dirname, '..');
 const E2E_ROOT = path.join(ROOT, 'tests', 'record-e2e');
@@ -41,7 +44,7 @@ const EXPECTED_EXECUTION_LANE_COUNTS = Object.freeze({
   PAGE_PRODUCTION_OBSERVATION: 110,
   HEADLESS_PRODUCTION_OBSERVATION: 10,
   PAGE_CONFIRMED_DRAFT_DERIVATION: 6,
-  TEST_ONLY_ISOLATED_LEGACY_COMMIT: 89,
+  TEST_ONLY_ISOLATED_LEGACY_COMMIT: 88,
   PAGE_DUPLICATE_TRIGGER_GUARD: 1,
   TRANSACTION_EXACT_REPLAY: 1,
   RELATION_REFERENCE_TAMPER_GUARD: 2,
@@ -158,19 +161,6 @@ const DATE_FIELD_PATTERN = /(?:^|\.)(?:dueDate|requiredDeliveryDate|quoteDate|re
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CASE_ID_PATTERN = /^REC-E2E-[A-Z]+-\d{3}$/;
 const FIELD_PATH_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*(?:\[\d+\]|\.[A-Za-z_][A-Za-z0-9_]*)*$/;
-const CANONICAL_RESULT_FIELD_ALIASES = Object.freeze({
-  record_payment: new Set(['amount', 'paidAt']),
-  record_order_deposit: new Set(['amount', 'paymentAmount', 'paidAt']),
-  create_order: new Set(['dueDate']),
-  update_order: new Set(['dueDate']),
-  create_quotation: new Set(['dueDate']),
-  update_quotation: new Set(['dueDate']),
-  create_receivable: new Set(['amount', 'dueDate']),
-  create_receivable_with_payment: new Set(['amount', 'dueDate']),
-  create_todo: new Set(['dueDate']),
-  pending: new Set(['dueDate', 'paidAt'])
-});
-
 let failures = [];
 let warnings = [];
 
@@ -928,7 +918,7 @@ function validateResult(testCase, enums) {
       fail(`${label} ${entryPath}不能同时声明期望值和ABSENT`);
     }
   });
-  const forbiddenAliases = CANONICAL_RESULT_FIELD_ALIASES[result.operation] || new Set();
+  const forbiddenAliases = nonCanonicalExpectedFieldsForOperation(result.operation);
   [
     ...Object.keys(result.fields),
     ...Object.keys(result.allowedValues),
@@ -996,7 +986,9 @@ function validatePreflightAndSave(testCase, enums) {
     ...checkArray(confirmation.missingFields, `${label}.expected.confirmation.missingFields`),
     ...checkArray(confirmation.conflictFields, `${label}.expected.confirmation.conflictFields`)
   ];
-  const forbiddenAliases = CANONICAL_RESULT_FIELD_ALIASES[proposalOf(testCase).operation] || new Set();
+  const forbiddenAliases = nonCanonicalExpectedFieldsForOperation(
+    proposalOf(testCase).operation
+  );
   confirmationPaths.forEach((entryPath) => {
     if (!FIELD_PATH_PATTERN.test(entryPath)) fail(`${label} Confirmation字段路径非法：${entryPath}`);
     const rootField = (entryPath.match(/^[A-Za-z_][A-Za-z0-9_]*/) || [''])[0];

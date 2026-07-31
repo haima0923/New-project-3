@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 const assert = require('assert');
 const fs = require('fs');
-const { safeClone, stableHash } = require('../../../utils/record-state-diff');
+const {
+  isCollectionDiffEmpty,
+  safeClone,
+  stableHash
+} = require('../../../utils/record-state-diff');
 const { assertCase, failureStageFor } = require('../runner/assert-case');
 const { assertIsolationAudit } = require('../runner/assert-isolation-audit');
 const { buildExecutionPlan } = require('../runner/build-execution-plan');
@@ -26,6 +30,11 @@ const {
   proposalFromDraft
 } = require('../runner/observation-semantics');
 const { executeOne } = require('../runner/run-suite');
+const {
+  nonCanonicalExpectedFieldsForOperation,
+  normalizeFieldPaths,
+  runtimeFieldPathForCanonical
+} = require('../runner/field-aliases');
 const {
   validateExecutionPlanPreconditions
 } = require('../runner/validate-plan-preconditions');
@@ -88,6 +97,115 @@ function initialCanonicalRawResult(evidence) {
 }
 
 const tests = [
+  {
+    name: 'field-aliases-normalize-delivery-date-equivalence',
+    async run() {
+      const operation = 'create_order';
+      const canonical = ['orderDeliveryDate'];
+      const runtime = ['dueDate'];
+      assert.deepStrictEqual(normalizeFieldPaths(canonical, operation), ['orderDeliveryDate']);
+      assert.deepStrictEqual(normalizeFieldPaths(runtime, operation), ['orderDeliveryDate']);
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['dueDate', 'orderDeliveryDate'], operation),
+        ['orderDeliveryDate']
+      );
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['orderDeliveryDate', 'customerName'], operation),
+        ['customerName', 'orderDeliveryDate']
+      );
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['customerName', 'dueDate'], operation),
+        ['customerName', 'orderDeliveryDate']
+      );
+      assert.strictEqual(runtimeFieldPathForCanonical('orderDeliveryDate'), 'dueDate');
+    }
+  },
+  {
+    name: 'field-aliases-preserve-exact-date-semantics',
+    async run() {
+      const operation = 'create_order';
+      assert.notDeepStrictEqual(
+        normalizeFieldPaths(['dueDate'], operation),
+        normalizeFieldPaths(['paymentDate'], operation)
+      );
+      assert.notDeepStrictEqual(
+        normalizeFieldPaths(['dueDate'], operation),
+        normalizeFieldPaths(['expectedPaymentDate'], operation)
+      );
+      assert.notDeepStrictEqual(
+        normalizeFieldPaths(['dueDate', 'customerName'], operation),
+        normalizeFieldPaths(['dueDate'], operation)
+      );
+      assert.notDeepStrictEqual(
+        normalizeFieldPaths(['dueDate'], operation),
+        normalizeFieldPaths(['dueDate', 'customerName'], operation)
+      );
+      assert.notDeepStrictEqual(
+        normalizeFieldPaths(['orderDelivaryDate'], operation),
+        normalizeFieldPaths(['orderDeliveryDate'], operation)
+      );
+      assert.notDeepStrictEqual(
+        normalizeFieldPaths([], operation),
+        normalizeFieldPaths(['dueDate'], operation)
+      );
+    }
+  },
+  {
+    name: 'field-aliases-do-not-mutate-inputs-or-unrelated-fields',
+    async run() {
+      const actual = ['dueDate', 'quantity', 'dueDate'];
+      const expected = ['orderDeliveryDate', 'quantity'];
+      const actualBefore = safeClone(actual);
+      const expectedBefore = safeClone(expected);
+      assert.deepStrictEqual(
+        normalizeFieldPaths(actual, 'create_order'),
+        ['orderDeliveryDate', 'quantity']
+      );
+      assert.deepStrictEqual(
+        normalizeFieldPaths(expected, 'create_order'),
+        ['orderDeliveryDate', 'quantity']
+      );
+      assert.deepStrictEqual(actual, actualBefore);
+      assert.deepStrictEqual(expected, expectedBefore);
+      assert.strictEqual(runtimeFieldPathForCanonical('customerName'), 'customerName');
+      assert.strictEqual(runtimeFieldPathForCanonical('productName'), 'productName');
+      assert.strictEqual(runtimeFieldPathForCanonical('quantity'), 'quantity');
+      assert.strictEqual(runtimeFieldPathForCanonical('amount'), 'amount');
+    }
+  },
+  {
+    name: 'field-aliases-preserve-existing-value-contracts-without-broadening',
+    async run() {
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['dueDate'], 'create_receivable'),
+        ['dueDate']
+      );
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['amount'], 'record_payment'),
+        ['amount']
+      );
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['dueDate'], 'create_todo'),
+        ['dueDate']
+      );
+      assert.deepStrictEqual(
+        normalizeFieldPaths(['dueDate'], 'create_quotation'),
+        ['dueDate']
+      );
+      assert.strictEqual(runtimeFieldPathForCanonical('receivableAmount'), 'amount');
+      assert.strictEqual(runtimeFieldPathForCanonical('receivableDueDate'), 'dueDate');
+      assert.strictEqual(runtimeFieldPathForCanonical('paymentDate'), 'dueDate');
+      assert.strictEqual(runtimeFieldPathForCanonical('todoRemindDate'), 'dueDate');
+      assert.strictEqual(
+        nonCanonicalExpectedFieldsForOperation('create_order').has('dueDate'),
+        true
+      );
+      assert.strictEqual(
+        nonCanonicalExpectedFieldsForOperation('create_order').has('orderDeliveryDate'),
+        false
+      );
+    }
+  },
   {
     name: 'wrong-expected-sentinel-fails',
     async run() {
@@ -1185,10 +1303,92 @@ const tests = [
         voice004.routeEvidence.FakeFixtureId,
         'ai-case-rec-e2e-voice-004-v1'
       );
+      assert.strictEqual(voice004.routeEvidence.AIProviderIdentity, 'e2e-fake-standard');
       assert.strictEqual(voice004.routeEvidence.rawBusinessType, 'unknown');
       assert.strictEqual(voice004.routeEvidence.rawOperation, null);
       assert.strictEqual(voice004.routeEvidence.semanticBusinessType, 'order');
       assert.strictEqual(voice004.routeEvidence.effectiveOperation, 'create_order');
+      assert.strictEqual(voice004.caseStatus, 'PASS');
+      assert.strictEqual(
+        voice004.voiceCompletionEvidence.voiceFinalCallbackInvocationCount,
+        1
+      );
+      assert.strictEqual(
+        voice004.voiceCompletionEvidence.voiceCompletionEvidenceStatus,
+        'COMPLETED'
+      );
+      assert.strictEqual(
+        voice004.voiceCompletionEvidence.voiceCompletionEvidenceValid,
+        true
+      );
+      assert.strictEqual(voice004.voiceCompletionEvidence.voiceSessionMatched, true);
+      assert.strictEqual(voice004.voiceCompletionEvidence.voiceFingerprintMatched, true);
+      assert.deepStrictEqual(
+        voice004.pageEvidence.afterEdits.missingFields,
+        ['dueDate']
+      );
+      assert.strictEqual(voice004.pageEvidence.afterEdits.fields.dueDate, '');
+      assert.deepStrictEqual(voice004.preflightEvidence.blockingCodes, [
+        'MISSING_REQUIRED_FIELD'
+      ]);
+      assert.strictEqual(voice004.preflightEvidence.domainCanSaveFormal, false);
+      assert.strictEqual(voice004.preflightEvidence.domainCanSavePending, true);
+      assert.deepStrictEqual(voice004.preflightEvidence.requiredSelections, []);
+      assert.strictEqual(
+        voice004.observationSemantics.outcome.disposition,
+        'BLOCKED'
+      );
+      assert.strictEqual(
+        voice004.observationSemantics.outcome.formalSaveSucceeded,
+        false
+      );
+      assert.strictEqual(
+        voice004.observationSemantics.outcome.pendingSaveSucceeded,
+        false
+      );
+      assert.strictEqual(
+        voice004.observationSemantics.outcome.persistedRecordType,
+        null
+      );
+      assert.strictEqual(voice004.isolatedCommitEvidence, null);
+      assert.strictEqual(isCollectionDiffEmpty(voice004.businessDiff), true);
+      assert.strictEqual(isCollectionDiffEmpty(voice004.fullDiff), true);
+      const voice004Driver = voice004.pageEvidence.pageDriverEvidence;
+      assert(voice004Driver);
+      assert.strictEqual(voice004Driver.pagePrimaryActionCalls.saveFormal, 0);
+      assert.strictEqual(voice004Driver.pagePrimaryActionCalls.savePending, 0);
+      assert.strictEqual(voice004Driver.productionBusinessCalls.saveConfirmedDraft, 0);
+      assert.strictEqual(voice004Driver.productionBusinessCalls.savePendingNote, 0);
+      assert.strictEqual(voice004Driver.productionStorageCalls.saveState, 0);
+      assert.strictEqual(voice004.finalTransactionAudit.journalCount, 0);
+      assert.strictEqual(voice004.finalTransactionAudit.backupCount, 0);
+      const absentDeliveryDate = voice004.assertions.find((entry) => (
+        entry.layer === 'PROPOSAL'
+        && entry.name === 'absentFields.orderDeliveryDate'
+      ));
+      assert(absentDeliveryDate);
+      assert.strictEqual(absentDeliveryDate.pass, true);
+      const missingDeliveryDate = voice004.assertions.find((entry) => (
+        entry.layer === 'CONFIRMATION'
+        && entry.name === 'missingFields'
+      ));
+      assert(missingDeliveryDate);
+      assert.deepStrictEqual(missingDeliveryDate.actual, ['orderDeliveryDate']);
+      assert.deepStrictEqual(missingDeliveryDate.expected, ['orderDeliveryDate']);
+      assert.strictEqual(missingDeliveryDate.pass, true);
+      const forgedDeliveryDateEvidence = safeClone(voice004);
+      forgedDeliveryDateEvidence.observationSemantics.proposal.fields.dueDate = '2026-07-31';
+      const forgedDeliveryDateResult = assertCase(
+        bundle('REC-E2E-VOICE-004').testCase,
+        forgedDeliveryDateEvidence
+      );
+      const forgedAbsentDeliveryDate = forgedDeliveryDateResult.assertions.find((entry) => (
+        entry.layer === 'PROPOSAL'
+        && entry.name === 'absentFields.orderDeliveryDate'
+      ));
+      assert(forgedAbsentDeliveryDate);
+      assert.strictEqual(forgedAbsentDeliveryDate.pass, false);
+      assert.strictEqual(forgedDeliveryDateResult.caseStatus, 'CASE_FAIL');
       const voice006 = await executeOne(bundle('REC-E2E-VOICE-006'));
       assert.strictEqual(voice006.routeEvidence.actualRoute, 'AI_STANDARD');
       assert.strictEqual(voice006.routeEvidence.AIRequestCount, 1);
