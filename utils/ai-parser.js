@@ -841,6 +841,88 @@ function evaluateCompletedVoiceStandardReview(facts = {}) {
   };
 }
 
+const TRUSTED_QUOTATION_REFERENCE_KINDS = Object.freeze([
+  'EXPLICIT_QUOTATION_DEICTIC',
+  'EXPLICIT_QUOTATION_NAMED_REFERENCE'
+]);
+const TRUSTED_QUOTATION_REFERENCE_SOURCE_FIELDS = Object.freeze([
+  'ORIGINAL_TEXT',
+  'EXTRACTED_TEXT'
+]);
+
+function getTrustedLocalUnresolvedQuotationReference(value) {
+  const quotation = normalizeObject(value, null);
+  if (!quotation || Array.isArray(value)) return null;
+  if (quotation.entityType !== 'QUOTATION'
+    || quotation.explicit !== true
+    || quotation.requiresResolution !== true
+    || quotation.evidenceSource !== 'LOCAL_PARSER'
+    || quotation.resolvedEntityId !== null) return null;
+  if (!TRUSTED_QUOTATION_REFERENCE_KINDS.includes(String(quotation.kind || ''))) {
+    return null;
+  }
+  if (!TRUSTED_QUOTATION_REFERENCE_SOURCE_FIELDS.includes(
+    String(quotation.sourceField || '')
+  )) return null;
+  const sourceText = String(quotation.sourceText || '');
+  const normalizedReference = String(quotation.normalizedReference || '');
+  const confidence = Number(quotation.confidence);
+  const sourceSpan = quotation.sourceSpan;
+  if (!sourceText.trim() || !normalizedReference.trim()) return null;
+  if (!Number.isFinite(confidence) || confidence <= 0 || confidence > 1) return null;
+  if (!sourceSpan || typeof sourceSpan !== 'object' || Array.isArray(sourceSpan)) {
+    return null;
+  }
+  if (!Number.isInteger(sourceSpan.start)
+    || !Number.isInteger(sourceSpan.end)
+    || sourceSpan.start < 0
+    || sourceSpan.end <= sourceSpan.start
+    || sourceSpan.end - sourceSpan.start !== sourceText.length) return null;
+  return quotation;
+}
+
+function evaluateExplicitQuotationConversionDeepReview(localResult = {}) {
+  const intentEvidence = normalizeObject(localResult.intent_evidence, {});
+  const conversionSignals = toArray(
+    intentEvidence.quotationToOrderConversionSignals
+  );
+  const conversion = conversionSignals.find((signal) => (
+    signal
+    && signal.direction === 'QUOTATION_TO_ORDER'
+    && signal.explicit === true
+    && signal.evidenceSource === 'LOCAL_PARSER'
+  )) || null;
+  const relationReferences = normalizeObject(
+    localResult.relation_references,
+    {}
+  );
+  const quotation = normalizeObject(relationReferences.quotation, null);
+  const trustedQuotation = getTrustedLocalUnresolvedQuotationReference(quotation);
+  const quotationReferenceTrusted = Boolean(trustedQuotation);
+  const relevant = Boolean(conversion);
+  const eligible = Boolean(conversion && quotationReferenceTrusted);
+  const reasonCodes = [];
+  const exclusionCodes = [];
+  if (conversion) reasonCodes.push('QUOTATION_TO_ORDER_CONVERSION_VERIFIED');
+  if (quotationReferenceTrusted) {
+    reasonCodes.push('EXPLICIT_QUOTATION_REFERENCE_REQUIRES_RESOLUTION');
+  }
+  if (eligible) reasonCodes.push('QUOTATION_CONVERSION_DEEP_REVIEW_AVAILABLE');
+  if (relevant && !quotation) {
+    exclusionCodes.push('EXPLICIT_QUOTATION_REFERENCE_MISSING');
+  } else if (relevant && !quotationReferenceTrusted) {
+    exclusionCodes.push('EXPLICIT_QUOTATION_REFERENCE_UNTRUSTED');
+  }
+  return {
+    conversion,
+    eligible,
+    exclusionCodes,
+    quotation: trustedQuotation,
+    reasonCodes,
+    relevant
+  };
+}
+
 function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') {
   const source = payload.source || localResult.source || 'typed';
   const inputChannel = String(payload.inputChannel || source).trim().toLowerCase();
@@ -863,6 +945,8 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     && (localResult.missing_fields || []).length === 0;
   const hasHistoryReference = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|按原来|价格不变|还是)/.test(text);
   const deepReviewRequested = payload.reviewMode === 'deep';
+  const quotationConversionDeepReview =
+    evaluateExplicitQuotationConversionDeepReview(localResult);
   // 缺少客户/商品等事实时，“颜色、备注”不能把题目升级成深度 AI；AI 不能替老板编事实。
   const hasSemanticDeepRisk = DEEP_AI_PATTERN.test(text) && (!hasMissingCriticalFact || hasHistoryReference);
   const hasDeepRisk = hasFinancialRisk
@@ -870,7 +954,8 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     || policy !== 'none'
     || conflicts.length > 0
     || items.length > 1
-    || hasSemanticDeepRisk;
+    || hasSemanticDeepRisk
+    || quotationConversionDeepReview.eligible;
   const hasProductSuggestion = Boolean(localResult.field_suggestions && localResult.field_suggestions.productName);
   const hasOnlyLocallyConfirmableUnitConflict = conflicts.length > 0
     && conflicts.every((item) => ((item && item.field) || item) === 'priceUnit');
@@ -881,6 +966,7 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     && policy === 'none'
     && items.length <= 1
     && !hasSemanticDeepRisk
+    && !quotationConversionDeepReview.eligible
     && !deepReviewRequested;
   const localReasons = uniqueReasonTexts(safety.reason_texts || []);
   const safeLocalReceivable = evaluateSafeLocalReceivableRoute({
@@ -1015,7 +1101,14 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
       safe_local_receivable_eligible: safeLocalReceivable.eligible,
       safe_local_receivable_reason_codes: safeLocalReceivable.reasonCodes
     }
-    : {});
+    : {}, quotationConversionDeepReview.relevant ? {
+      quotation_conversion_deep_review_eligible:
+        quotationConversionDeepReview.eligible,
+      quotation_conversion_deep_review_exclusion_codes:
+        quotationConversionDeepReview.exclusionCodes,
+      quotation_conversion_deep_review_reason_codes:
+        quotationConversionDeepReview.reasonCodes
+    } : {});
 
   if (localResult.formal_save_blocked) {
     return withRouteAudit({
@@ -1059,7 +1152,11 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     });
   }
 
-  if (hasMissingCriticalFact && !hasFinancialRisk && !hasConversationRisk && !hasHistoryReference) {
+  if (hasMissingCriticalFact
+    && !hasFinancialRisk
+    && !hasConversationRisk
+    && !hasHistoryReference
+    && !quotationConversionDeepReview.eligible) {
     return withRouteAudit({
       decision: ROUTE_PENDING,
       label: '待补充后再保存',
@@ -1110,6 +1207,9 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     if (conflicts.length) reasons.push('内容前后有冲突，不能自动选一个答案。');
     if (policy !== 'none') reasons.push('涉及历史记录或关联旧单。');
     if (hasSemanticDeepRisk) reasons.push('出现改价、最终确认、特殊要求等复杂说法。');
+    if (quotationConversionDeepReview.eligible) {
+      reasons.push('明确要求把所指报价转成订单，但具体报价仍需核对。');
+    }
     if (localResult.intent === 'unknown') reasons.push('本地没有稳定判断出业务类型。');
     if (deepReviewRequested) {
       return withRouteAudit({
@@ -2736,6 +2836,8 @@ module.exports = {
   getParseRouteDecision,
   evaluateClearNonBusinessNoRecord,
   evaluateCompletedVoiceStandardReview,
+  evaluateExplicitQuotationConversionDeepReview,
+  getTrustedLocalUnresolvedQuotationReference,
   evaluateSafeLocalReceivableRoute,
   applyClearNoRecordRouteProjection,
   applySafeLocalReceivableRouteProjection,
