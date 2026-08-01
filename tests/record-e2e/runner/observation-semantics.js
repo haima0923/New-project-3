@@ -21,37 +21,42 @@ function compactRelationReferences(value) {
   const references = value && typeof value === 'object' && !Array.isArray(value)
     ? value
     : {};
-  const order = references.order && typeof references.order === 'object'
-    && !Array.isArray(references.order)
-    ? references.order
-    : null;
-  if (!order) return {};
-  return {
-    order: {
-      confidence: Number.isFinite(Number(order.confidence))
-        ? Number(order.confidence)
+  return ['order', 'quotation'].reduce((result, key) => {
+    const reference = references[key] && typeof references[key] === 'object'
+      && !Array.isArray(references[key])
+      ? references[key]
+      : null;
+    if (!reference) return result;
+    result[key] = {
+      confidence: Number.isFinite(Number(reference.confidence))
+        ? Number(reference.confidence)
         : null,
-      entityType: String(order.entityType || ''),
-      evidenceSource: String(order.evidenceSource || ''),
-      explicit: order.explicit === true,
-      kind: String(order.kind || ''),
-      normalizedReference: String(order.normalizedReference || ''),
-      requiresResolution: order.requiresResolution === true,
-      resolvedEntityId: order.resolvedEntityId === null
+      entityType: String(reference.entityType || ''),
+      evidenceSource: String(reference.evidenceSource || ''),
+      explicit: reference.explicit === true,
+      kind: String(reference.kind || ''),
+      normalizedReference: String(reference.normalizedReference || ''),
+      requiresResolution: reference.requiresResolution === true,
+      resolvedEntityId: reference.resolvedEntityId === null
         ? null
-        : String(order.resolvedEntityId || ''),
+        : String(reference.resolvedEntityId || ''),
       sourceSpan: {
-        start: Number.isFinite(Number(order.sourceSpan && order.sourceSpan.start))
-          ? Number(order.sourceSpan.start)
+        start: Number.isFinite(Number(
+          reference.sourceSpan && reference.sourceSpan.start
+        ))
+          ? Number(reference.sourceSpan.start)
           : null,
-        end: Number.isFinite(Number(order.sourceSpan && order.sourceSpan.end))
-          ? Number(order.sourceSpan.end)
+        end: Number.isFinite(Number(
+          reference.sourceSpan && reference.sourceSpan.end
+        ))
+          ? Number(reference.sourceSpan.end)
           : null
       },
-      sourceText: String(order.sourceText || ''),
-      sourceField: String(order.sourceField || '')
-    }
-  };
+      sourceText: String(reference.sourceText || ''),
+      sourceField: String(reference.sourceField || '')
+    };
+    return result;
+  }, {});
 }
 
 function compactRawParser(result = {}) {

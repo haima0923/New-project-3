@@ -362,68 +362,135 @@ function buildReceivableOrderGateEvidence(observation, isolated) {
 
 function buildRelationEvidence(rawParser, confirmationDraft, productionObservation) {
   const hybridInvocations = rawParser && rawParser.hybridInvocations || [];
-  const rawStages = hybridInvocations.flatMap((hybrid) => (
+  const allRawStages = hybridInvocations.flatMap((hybrid) => (
     (hybrid.rawInvocations || []).map((raw) => ({
       hybridInvocationId: hybrid.hybridInvocationId,
       rawInvocationId: raw.rawInvocationId,
+      intentEvidence: safeClone(
+        raw.resultSummary && raw.resultSummary.intentEvidence || {}
+      ),
       relationReferences: compactRelationReferences(
         raw.resultSummary && raw.resultSummary.relationReferences
       )
     }))
-  )).filter((stage) => stage.relationReferences.order);
+  ));
+  const rawStages = allRawStages.filter((stage) => (
+    Object.keys(stage.relationReferences).length > 0
+  ));
   const hybridStages = hybridInvocations.map((hybrid) => ({
     hybridInvocationId: hybrid.hybridInvocationId,
     phase: hybrid.phase,
     relationReferences: compactRelationReferences(
       hybrid.resultSummary && hybrid.resultSummary.relationReferences
     )
-  })).filter((stage) => stage.relationReferences.order);
+  })).filter((stage) => Object.keys(stage.relationReferences).length > 0);
   const confirmationReferences = compactRelationReferences(
     confirmationDraft && confirmationDraft.relation_references
   );
   const preflightInputReferences = compactRelationReferences(
     productionObservation && productionObservation.preflightInputRelationReferences
   );
-  const order = preflightInputReferences.order
-    || confirmationReferences.order
-    || hybridStages[0] && hybridStages[0].relationReferences.order
-    || rawStages[0] && rawStages[0].relationReferences.order
-    || null;
-  const allReferences = []
-    .concat(rawStages.map((stage) => stage.relationReferences.order))
-    .concat(hybridStages.map((stage) => stage.relationReferences.order))
-    .concat(confirmationReferences.order || [])
-    .concat(preflightInputReferences.order || []);
-  if (order) {
-    const stageMissing = rawStages.length === 0
-      || hybridStages.length !== hybridInvocations.length
-      || !confirmationReferences.order
-      || !preflightInputReferences.order;
-    if (stageMissing) {
-      throw Object.assign(new Error(
-        'Structured order relation evidence did not reach every production stage'
-      ), {
-        code: 'RELATION_EVIDENCE_PROPAGATION_MISSING'
-      });
-    }
-    const expectedFingerprint = stableHash(order, 'relation-evidence-propagation-v1');
-    const mismatch = allReferences.some((reference) => (
-      stableHash(reference, 'relation-evidence-propagation-v1') !== expectedFingerprint
+
+  function entityPropagation(key) {
+    const rawEntityStages = rawStages.filter((stage) => (
+      stage.relationReferences[key]
     ));
-    if (mismatch) {
+    const hybridEntityStages = hybridStages.filter((stage) => (
+      stage.relationReferences[key]
+    ));
+    const reference = preflightInputReferences[key]
+      || confirmationReferences[key]
+      || hybridEntityStages[0] && hybridEntityStages[0].relationReferences[key]
+      || rawEntityStages[0] && rawEntityStages[0].relationReferences[key]
+      || null;
+    const allReferences = []
+      .concat(rawEntityStages.map((stage) => stage.relationReferences[key]))
+      .concat(hybridEntityStages.map((stage) => stage.relationReferences[key]))
+      .concat(confirmationReferences[key] || [])
+      .concat(preflightInputReferences[key] || []);
+    if (reference) {
+      const totalRawInvocationCount = allRawStages.length;
+      const stageMissing = totalRawInvocationCount === 0
+        || rawEntityStages.length !== totalRawInvocationCount
+        || hybridEntityStages.length !== hybridInvocations.length
+        || !confirmationReferences[key]
+        || !preflightInputReferences[key];
+      if (stageMissing) {
+        throw Object.assign(new Error(
+          `Structured ${key} relation evidence did not reach every production stage`
+        ), {
+          code: 'RELATION_EVIDENCE_PROPAGATION_MISSING'
+        });
+      }
+      const expectedFingerprint = stableHash(
+        reference,
+        'relation-evidence-propagation-v1'
+      );
+      const mismatch = allReferences.some((item) => (
+        stableHash(item, 'relation-evidence-propagation-v1')
+          !== expectedFingerprint
+      ));
+      if (mismatch) {
+        throw Object.assign(new Error(
+          `Structured ${key} relation evidence changed between production stages`
+        ), {
+          code: 'RELATION_EVIDENCE_PROPAGATION_MISMATCH'
+        });
+      }
+    }
+    const propagationStages = [];
+    if (rawEntityStages.length) propagationStages.push('RAW_PARSER');
+    if (hybridEntityStages.length) propagationStages.push('HYBRID_RESULT');
+    if (confirmationReferences[key]) propagationStages.push('CONFIRMATION_DRAFT');
+    if (preflightInputReferences[key]) propagationStages.push('PREFLIGHT_INPUT');
+    return { propagationStages, reference };
+  }
+
+  const orderPropagation = entityPropagation('order');
+  const quotationPropagation = entityPropagation('quotation');
+  const order = orderPropagation.reference;
+  const quotation = quotationPropagation.reference;
+  const conversionSignals = allRawStages.flatMap((stage) => (
+    stage.intentEvidence.quotationToOrderConversionSignals || []
+  ));
+  const conversion = conversionSignals[0] || null;
+  if (conversion) {
+    const conversionFingerprint = stableHash(
+      conversion,
+      'quotation-to-order-conversion-evidence-v1'
+    );
+    const conversionMismatch = conversionSignals.some((signal) => (
+      stableHash(signal, 'quotation-to-order-conversion-evidence-v1')
+        !== conversionFingerprint
+    ));
+    if (conversionMismatch) {
       throw Object.assign(new Error(
-        'Structured order relation evidence changed between production stages'
+        'Quotation-to-order conversion evidence changed between raw parser invocations'
       ), {
         code: 'RELATION_EVIDENCE_PROPAGATION_MISMATCH'
       });
     }
   }
-  const propagationStages = [];
-  if (rawStages.length) propagationStages.push('RAW_PARSER');
-  if (hybridStages.length) propagationStages.push('HYBRID_RESULT');
-  if (confirmationReferences.order) propagationStages.push('CONFIRMATION_DRAFT');
-  if (preflightInputReferences.order) propagationStages.push('PREFLIGHT_INPUT');
   return {
+    quotationToOrderConversionEvidencePresent: Boolean(conversion),
+    conversionDirection: conversion && conversion.direction || null,
+    conversionSourceText: conversion && conversion.sourceText || null,
+    conversionSourceSpan: conversion ? safeClone(conversion.sourceSpan) : null,
+    quotationRelationEvidencePresent: Boolean(quotation),
+    quotationRelationKind: quotation && quotation.kind || null,
+    quotationRelationSourceText: quotation && quotation.sourceText || null,
+    quotationRelationSourceSpan: quotation
+      ? safeClone(quotation.sourceSpan)
+      : null,
+    quotationRelationRequiresResolution: quotation
+      ? quotation.requiresResolution === true
+      : null,
+    quotationRelationResolvedEntityId: quotation
+      ? quotation.resolvedEntityId
+      : null,
+    quotationRelationEvidenceSource: quotation && quotation.evidenceSource || null,
+    quotationRelationEvidencePropagationStages:
+      quotationPropagation.propagationStages,
     relationEvidenceSource: order && order.evidenceSource || null,
     relationEvidenceKind: order && order.kind || null,
     relationEvidenceSourceSpan: order ? safeClone(order.sourceSpan) : null,
@@ -431,7 +498,7 @@ function buildRelationEvidence(rawParser, confirmationDraft, productionObservati
       ? order.requiresResolution === true
       : null,
     relationEvidenceResolvedId: order ? order.resolvedEntityId : null,
-    relationEvidencePropagationStages: propagationStages,
+    relationEvidencePropagationStages: orderPropagation.propagationStages,
     stages: {
       rawParser: rawStages,
       hybridResult: hybridStages,

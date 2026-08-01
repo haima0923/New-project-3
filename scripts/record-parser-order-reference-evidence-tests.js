@@ -3,6 +3,7 @@
 const assert = require('assert');
 const {
   extractOrderRelationReference,
+  extractQuotationRelationReference,
   parseInput
 } = require('../utils/parser');
 const {
@@ -88,6 +89,225 @@ async function run() {
   positives.forEach(([text, kind, sourceText]) => {
     assertReferenceShape(text, kind, sourceText);
   });
+
+  const conversionPositives = [
+    ['把王总那个保温杯报价再转成订单', '王总', '保温杯'],
+    ['将李姐那份礼品盒报价转为订单', '李姐', '礼品盒'],
+    ['请把陈老板那个报价转换成订单', '陈老板', ''],
+    ['这个报价转成订单', '', ''],
+    ['那张报价转为订单', '', ''],
+    ['王总保温杯报价转订单', '王总', '保温杯'],
+    ['报价单再转成订单', '', '']
+  ];
+  conversionPositives.forEach(([text, customerName, productName]) => {
+    const result = parse(text);
+    const signals = result.intent_evidence.quotationToOrderConversionSignals;
+    assert.strictEqual(result.intent, 'order', `${text}: order intent`);
+    assert.strictEqual(result.operation, '', `${text}: no new operation enum`);
+    assert.strictEqual(signals.length, 1, `${text}: one conversion signal`);
+    assert.strictEqual(signals[0].direction, 'QUOTATION_TO_ORDER');
+    assert.strictEqual(signals[0].explicit, true);
+    assert.strictEqual(signals[0].evidenceSource, 'LOCAL_PARSER');
+    assert.strictEqual(signals[0].sourceField, 'ORIGINAL_TEXT');
+    assert.strictEqual(
+      text.slice(signals[0].sourceSpan.start, signals[0].sourceSpan.end),
+      signals[0].sourceText,
+      `${text}: conversion sourceSpan`
+    );
+    assert.strictEqual(result.fields.customerName, customerName, `${text}: customer`);
+    assert.strictEqual(result.fields.productName, productName, `${text}: product`);
+    assert.strictEqual(result.fields.quotationId, undefined, `${text}: no quotationId`);
+    assert.strictEqual(
+      result.intent_evidence.winningReason,
+      'EXPLICIT_QUOTATION_TO_ORDER_CONVERSION'
+    );
+  });
+
+  const conversionNegatives = [
+    '这个报价已经转成订单了',
+    '这个报价转成订单了吗',
+    '这个报价是不是转成订单了',
+    '不要把这个报价转成订单',
+    '这个报价不能转成订单',
+    '这个报价还没转成订单',
+    '报价转订单失败了',
+    '把订单转成报价',
+    '订单转为报价'
+  ];
+  conversionNegatives.forEach((text) => {
+    const result = parse(text);
+    assert.notStrictEqual(result.intent, 'order', `${text}: no create-order intent`);
+    assert.deepStrictEqual(
+      result.intent_evidence.quotationToOrderConversionSignals || [],
+      [],
+      `${text}: no conversion evidence`
+    );
+    assert.strictEqual(result.fields.quotationId, undefined, `${text}: no quotationId`);
+  });
+
+  const ordinaryQuotation = parse('给王总报价保温杯300个18元');
+  assert.strictEqual(ordinaryQuotation.intent, 'quotation');
+  assert.deepStrictEqual(
+    ordinaryQuotation.intent_evidence.quotationToOrderConversionSignals || [],
+    []
+  );
+  const ordinaryOrder = parse('王总下单保温杯300个18元');
+  assert.strictEqual(ordinaryOrder.intent, 'order');
+  assert.deepStrictEqual(
+    ordinaryOrder.intent_evidence.quotationToOrderConversionSignals || [],
+    []
+  );
+  [
+    '王总保温杯报价300个',
+    '看看王总那个保温杯报价',
+    '修改王总那个报价',
+    '提醒我跟进王总那个报价'
+  ].forEach((text) => {
+    const result = parse(text);
+    assert.notStrictEqual(result.intent, 'order', `${text}: reference is not conversion`);
+    assert.deepStrictEqual(
+      result.intent_evidence.quotationToOrderConversionSignals || [],
+      []
+    );
+  });
+
+  const conversionTarget = parse('把王总那个保温杯报价再转成订单');
+  const conversionSignal = conversionTarget.intent_evidence
+    .quotationToOrderConversionSignals[0];
+  assert.strictEqual(conversionTarget.fields.customerName, '王总');
+  assert.strictEqual(conversionTarget.fields.productName, '保温杯');
+  assert.deepStrictEqual(conversionSignal.sourceSpan, { start: 8, end: 15 });
+  assert.strictEqual(conversionSignal.sourceText, '报价再转成订单');
+  const quotationReference = conversionTarget.relation_references.quotation;
+  assert.strictEqual(quotationReference.entityType, 'QUOTATION');
+  assert.strictEqual(
+    quotationReference.kind,
+    'EXPLICIT_QUOTATION_NAMED_REFERENCE'
+  );
+  assert.strictEqual(quotationReference.explicit, true);
+  assert.strictEqual(quotationReference.requiresResolution, true);
+  assert.strictEqual(quotationReference.resolvedEntityId, null);
+  assert.strictEqual(quotationReference.evidenceSource, 'LOCAL_PARSER');
+  assert.strictEqual(quotationReference.sourceText, '王总那个保温杯报价');
+  assert.deepStrictEqual(quotationReference.sourceSpan, { start: 1, end: 10 });
+  assert.strictEqual(
+    quotationReference.normalizedReference,
+    '王总:保温杯:QUOTATION'
+  );
+  assert.strictEqual(
+    conversionTarget.original_text.slice(
+      quotationReference.sourceSpan.start,
+      quotationReference.sourceSpan.end
+    ),
+    quotationReference.sourceText
+  );
+  assert.deepStrictEqual(
+    extractQuotationRelationReference(
+      '把王总那个保温杯报价再转成订单',
+      {
+        hasQuotationToOrderConversion: true,
+        customerName: '王总',
+        productName: '保温杯'
+      }
+    ),
+    quotationReference
+  );
+  const pastedConversion = parseInput({
+    text: '把王总那个保温杯报价再转成订单',
+    rawText: '王总：聊天背景\n把王总那个保温杯报价再转成订单',
+    extractedText: '把王总那个保温杯报价再转成订单',
+    source: 'paste',
+    context: 'input',
+    state: EMPTY_STATE,
+    businessDate: BUSINESS_DATE,
+    businessTimezone: 'Asia/Shanghai',
+    nowInstant: NOW_INSTANT
+  });
+  const pastedConversionSignal = pastedConversion.intent_evidence
+    .quotationToOrderConversionSignals[0];
+  const pastedQuotationReference = pastedConversion.relation_references.quotation;
+  assert.strictEqual(pastedConversionSignal.sourceField, 'EXTRACTED_TEXT');
+  assert.strictEqual(pastedQuotationReference.sourceField, 'EXTRACTED_TEXT');
+  assert.strictEqual(
+    pastedConversion.extracted_text.slice(
+      pastedConversionSignal.sourceSpan.start,
+      pastedConversionSignal.sourceSpan.end
+    ),
+    pastedConversionSignal.sourceText
+  );
+  assert.strictEqual(
+    pastedConversion.extracted_text.slice(
+      pastedQuotationReference.sourceSpan.start,
+      pastedQuotationReference.sourceSpan.end
+    ),
+    pastedQuotationReference.sourceText
+  );
+
+  const deicticQuotation = parse('这个报价转成订单')
+    .relation_references.quotation;
+  assert.strictEqual(deicticQuotation.kind, 'EXPLICIT_QUOTATION_DEICTIC');
+  assert.strictEqual(deicticQuotation.resolvedEntityId, null);
+  const bareConversion = parse('报价转订单');
+  assert.strictEqual(bareConversion.intent, 'order');
+  assert.strictEqual(bareConversion.relation_references, undefined);
+  assert.strictEqual(bareConversion.fields.quotationId, undefined);
+
+  const quotationEvidenceJson = JSON.stringify(
+    conversionTarget.relation_references
+  );
+  assert.deepStrictEqual(
+    JSON.parse(quotationEvidenceJson),
+    conversionTarget.relation_references
+  );
+  assert.strictEqual(
+    stableHash(
+      conversionTarget.relation_references,
+      'quotation-relation-evidence-v1'
+    ),
+    stableHash(
+      JSON.parse(quotationEvidenceJson),
+      'quotation-relation-evidence-v1'
+    )
+  );
+
+  const quotationStateVariants = [
+    EMPTY_STATE,
+    {
+      ...EMPTY_STATE,
+      quotations: [{ id: 'quo-only', customerId: 'cus-wang', productName: '保温杯' }]
+    },
+    {
+      ...EMPTY_STATE,
+      quotations: [
+        { id: 'quo-one', customerId: 'cus-wang', productName: '保温杯' },
+        { id: 'quo-two', customerId: 'cus-wang', productName: '保温杯' }
+      ]
+    }
+  ];
+  const stateIndependentQuotationEvidence = quotationStateVariants.map((state) => {
+    const result = parse('把王总那个保温杯报价再转成订单', state);
+    assert.strictEqual(result.fields.quotationId, undefined);
+    return {
+      conversion: result.intent_evidence.quotationToOrderConversionSignals,
+      relation: result.relation_references
+    };
+  });
+  stateIndependentQuotationEvidence.slice(1).forEach((evidence) => {
+    assert.deepStrictEqual(evidence, stateIndependentQuotationEvidence[0]);
+  });
+
+  assert.strictEqual(
+    parse('把手产品报价转成订单').fields.customerName,
+    '',
+    'product name containing 把 must not become a customer'
+  );
+  const mixedConversion = parse('把王总那个报价转成订单，明天提醒我跟进');
+  assert.strictEqual(mixedConversion.mixed_business, true);
+  assert.strictEqual(mixedConversion.formal_save_blocked, true);
+  assert.strictEqual(
+    mixedConversion.intent_evidence.quotationToOrderConversionSignals.length,
+    1
+  );
 
   [
     CUSTOMER_LEVEL_TEXT,
@@ -398,6 +618,150 @@ async function run() {
   assert.strictEqual(targetCase.routeEvidence.actualRoute, 'LOCAL');
   assert.strictEqual(targetCase.routeEvidence.AIRequestCount, 0);
 
+  const conversionRun = await runSuite({
+    caseId: 'REC-E2E-REL-008',
+    repeat: 1
+  });
+  const conversionCase = conversionRun.attempts[0].results[0];
+  assert.strictEqual(conversionCase.caseStatus, 'CASE_FAIL');
+  assert.strictEqual(conversionCase.failureStage, 'ROUTE_ERROR');
+  const conversionRaw = conversionCase.parserObservation.summary
+    .canonicalLocalResults[0].resultSummary;
+  assert.strictEqual(conversionRaw.businessType, 'order');
+  assert.strictEqual(conversionRaw.operation, null);
+  assert.strictEqual(
+    conversionRaw.intentEvidence.winningReason,
+    'EXPLICIT_QUOTATION_TO_ORDER_CONVERSION'
+  );
+  assert.strictEqual(
+    conversionCase.observationSemantics.semanticResult.businessType,
+    'order'
+  );
+  assert.strictEqual(
+    conversionCase.observationSemantics.semanticResult.effectiveOperation,
+    'create_order'
+  );
+  assert.strictEqual(
+    conversionCase.observationSemantics.proposal.fields.customerName,
+    '王总'
+  );
+  assert.strictEqual(
+    conversionCase.observationSemantics.proposal.fields.productName,
+    '保温杯'
+  );
+  assert.strictEqual(
+    conversionCase.observationSemantics.proposal.fields.quotationId,
+    undefined
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence
+      .quotationToOrderConversionEvidencePresent,
+    true
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.conversionDirection,
+    'QUOTATION_TO_ORDER'
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.conversionSourceText,
+    '报价再转成订单'
+  );
+  assert.deepStrictEqual(
+    conversionCase.relationEvidence.conversionSourceSpan,
+    { start: 8, end: 15 }
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.quotationRelationEvidencePresent,
+    true
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.quotationRelationKind,
+    'EXPLICIT_QUOTATION_NAMED_REFERENCE'
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.quotationRelationSourceText,
+    '王总那个保温杯报价'
+  );
+  assert.deepStrictEqual(
+    conversionCase.relationEvidence.quotationRelationSourceSpan,
+    { start: 1, end: 10 }
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.quotationRelationRequiresResolution,
+    true
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.quotationRelationResolvedEntityId,
+    null
+  );
+  assert.strictEqual(
+    conversionCase.relationEvidence.quotationRelationEvidenceSource,
+    'LOCAL_PARSER'
+  );
+  assert.deepStrictEqual(
+    conversionCase.relationEvidence
+      .quotationRelationEvidencePropagationStages,
+    ['RAW_PARSER', 'HYBRID_RESULT', 'CONFIRMATION_DRAFT', 'PREFLIGHT_INPUT']
+  );
+  assert.throws(
+    () => buildRelationEvidence(
+      Object.assign({}, conversionCase.parserObservation, {
+        hybridInvocations: []
+      }),
+      {
+        relation_references:
+          conversionCase.relationEvidence.stages.confirmationDraft
+      },
+      {
+        preflightInputRelationReferences:
+          conversionCase.relationEvidence.stages.preflightInput
+      }
+    ),
+    (error) => error.code === 'RELATION_EVIDENCE_PROPAGATION_MISSING'
+  );
+  const changedQuotationConfirmation = JSON.parse(JSON.stringify(
+    conversionCase.relationEvidence.stages.confirmationDraft
+  ));
+  changedQuotationConfirmation.quotation.normalizedReference =
+    'FORGED_QUOTATION_REFERENCE';
+  assert.throws(
+    () => buildRelationEvidence(
+      conversionCase.parserObservation,
+      { relation_references: changedQuotationConfirmation },
+      {
+        preflightInputRelationReferences:
+          conversionCase.relationEvidence.stages.preflightInput
+      }
+    ),
+    (error) => error.code === 'RELATION_EVIDENCE_PROPAGATION_MISMATCH'
+  );
+  assert.strictEqual(conversionCase.routeEvidence.actualRoute, 'PENDING');
+  assert.strictEqual(conversionCase.routeEvidence.AIRequestCount, 0);
+  Object.values(conversionCase.businessDiff).forEach((diff) => {
+    assert.deepStrictEqual(diff.created, []);
+    assert.deepStrictEqual(diff.deleted, []);
+    assert.deepStrictEqual(diff.updated, []);
+  });
+
+  const quotationUpdateRun = await runSuite({
+    caseId: 'REC-E2E-REL-010',
+    repeat: 1
+  });
+  const quotationUpdateCase = quotationUpdateRun.attempts[0].results[0];
+  const quotationUpdateRaw = quotationUpdateCase.parserObservation.summary
+    .canonicalLocalResults[0].resultSummary;
+  assert.strictEqual(quotationUpdateRaw.businessType, 'quotation');
+  assert.strictEqual(quotationUpdateRaw.operation, 'update_quotation');
+  assert.strictEqual(
+    quotationUpdateCase.relationEvidence
+      .quotationToOrderConversionEvidencePresent,
+    false
+  );
+  assert.strictEqual(
+    quotationUpdateCase.relationEvidence.quotationRelationEvidencePresent,
+    false
+  );
+
   const customerLevelRun = await runSuite({
     caseId: 'REC-E2E-BASIC-009',
     repeat: 1
@@ -425,7 +789,11 @@ async function run() {
     'propagation=raw/hybrid/confirmation/preflight-input',
     'ai-merge-guard=2',
     'runner-targets=2',
-    'runner-hard-gates=2',
+    `quotation-conversion-positive=${conversionPositives.length}`,
+    `quotation-conversion-negative=${conversionNegatives.length}`,
+    'quotation-relation=3',
+    'quotation-runner-targets=2',
+    'runner-hard-gates=4',
     'preflight-relation-gate=1'
   ].join(' '));
 }
