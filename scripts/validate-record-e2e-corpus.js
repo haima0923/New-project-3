@@ -1130,8 +1130,21 @@ function validateRelationReferenceTamperContract(testCase) {
     || baseDraft.operation !== proposalOf(testCase).operation) {
     fail(`${label} 危险关系测试底稿业务类型或operation与业务Expected不一致`);
   }
-  if ((proposalOf(testCase).fields || {}).quotationId !== contract.injectedId) {
-    fail(`${label} 危险关系注入ID必须等于业务Expected中的quotationId`);
+  const proposalQuotationId = (proposalOf(testCase).fields || {}).quotationId;
+  if (proposalQuotationId !== undefined && proposalQuotationId !== contract.injectedId) {
+    fail(`${label} 业务Expected中的quotationId如存在必须等于危险关系注入ID`);
+  }
+  if (proposalQuotationId === undefined) {
+    const expectedRejected = asArray(
+      testCase.expected.preflight.rejectedQuotationReferences
+    );
+    if (testCase.expected.preflight.selectedQuotationId !== ''
+      || testCase.expected.preflight.quotationSelectionConfirmed !== false
+      || !expectedRejected.some((item) => (
+        item && item.quotationId === contract.injectedId
+      ))) {
+      fail(`${label} 未选中的危险报价必须在主Preflight Expected中表达为rejected reference`);
+    }
   }
   const quoteSelections = asArray(testCase.interaction.userSelections)
     .filter((item) => item.kind === 'quotationId');
@@ -1148,11 +1161,18 @@ function validateRelationReferenceTamperContract(testCase) {
   }
   const expectedCodes = unique(asArray(expected.blockingCodes)).sort();
   const preflightCodes = unique(asArray(testCase.expected.preflight.blockingCodes)).sort();
+  const rejectedMainCodes = unique(asArray(
+    testCase.expected.preflight.rejectedQuotationReferences
+  ).flatMap((item) => asArray(item && item.selectionBlockingCodes))).sort();
+  const mainUsesRejectedReferenceContract = rejectedMainCodes.length > 0;
   if (expected.domainCanSaveFormal !== false
     || expected.saveAttempted !== false
     || expected.injectedReferenceExcludedFromSafeCandidates !== true
     || expected.formalBusinessDiff !== 'ZERO_SIDE_EFFECTS'
-    || canonicalJson(expectedCodes) !== canonicalJson(preflightCodes)
+    || (mainUsesRejectedReferenceContract
+      ? (canonicalJson(expectedCodes) !== canonicalJson(rejectedMainCodes)
+        || expectedCodes.some((code) => !preflightCodes.includes(code)))
+      : canonicalJson(expectedCodes) !== canonicalJson(preflightCodes))
     || hasAnyBusinessDiff(testCase)) {
     fail(`${label} 危险关系Expected必须精确阻断、排除候选且零正式副作用`);
   }
@@ -1950,7 +1970,7 @@ function validateStateReferences(testCase, resolvedStateFixtureMap) {
         fail(`${label} 危险报价引用fixture没有可验证的跨客户或重复转单事实`);
       } else if (
         canonicalJson(expectedCodes.slice().sort()) !== canonicalJson(factualCodes)
-        || canonicalJson(expectedPreflightCodes) !== canonicalJson(factualCodes)
+        || factualCodes.some((code) => !expectedPreflightCodes.includes(code))
       ) {
         fail(`${label} 危险报价引用阻断码必须由fixture事实独立决定：${factualCodes.join(',')}`);
       }

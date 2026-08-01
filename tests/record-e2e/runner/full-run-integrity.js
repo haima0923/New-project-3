@@ -264,6 +264,28 @@ function assertRuntimeIsolation(result) {
     `${result.caseId}.untrustedQuotationIdPromotionCount`,
     'UNTRUSTED_QUOTATION_ID_PROMOTED'
   );
+  [
+    ['unconfirmedQuotationIdAcceptedCount', 'UNCONFIRMED_QUOTATION_ID_ACCEPTED'],
+    ['aiQuotationIdPromotedCount', 'AI_QUOTATION_ID_PROMOTED'],
+    ['dangerousQuotationSelectedCount', 'DANGEROUS_QUOTATION_SELECTED'],
+    ['dangerousQuotationFieldInheritanceCount', 'DANGEROUS_QUOTATION_FIELD_INHERITED'],
+    ['quotationAutoSelectionCount', 'QUOTATION_AUTO_SELECTED'],
+    ['quotationSelectionMissingCount', 'QUOTATION_SELECTION_REQUIREMENT_MISSING']
+  ].forEach(([field, code]) => {
+    if (!Object.prototype.hasOwnProperty.call(routeEvidence, field)
+      || !Number.isFinite(Number(routeEvidence[field]))) {
+      throw integrityError(
+        'QUOTATION_TRUST_AUDIT_MISSING',
+        `${result.caseId}.${field} must be recorded by the actual runner`,
+        { field, value: routeEvidence[field] }
+      );
+    }
+    assertAuditZero(
+      Number(routeEvidence[field]),
+      `${result.caseId}.${field}`,
+      code
+    );
+  });
   if (routeEvidence.quotationConversionDeepReviewEligible === true) {
     const route = String(routeEvidence.actualRoute || '').toUpperCase();
     if (routeEvidence.initialRoute !== 'PENDING'
@@ -529,6 +551,30 @@ function assertFullAttemptIntegrity(attempt, plans) {
         && result.routeEvidence.untrustedQuotationIdPromotionCount
         || 0
       )
+    ), 0),
+    unconfirmedQuotationIdAcceptedCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.routeEvidence
+        && result.routeEvidence.unconfirmedQuotationIdAcceptedCount || 0)
+    ), 0),
+    aiQuotationIdPromotedCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.routeEvidence
+        && result.routeEvidence.aiQuotationIdPromotedCount || 0)
+    ), 0),
+    dangerousQuotationSelectedCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.routeEvidence
+        && result.routeEvidence.dangerousQuotationSelectedCount || 0)
+    ), 0),
+    dangerousQuotationFieldInheritanceCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.routeEvidence
+        && result.routeEvidence.dangerousQuotationFieldInheritanceCount || 0)
+    ), 0),
+    quotationAutoSelectionCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.routeEvidence
+        && result.routeEvidence.quotationAutoSelectionCount || 0)
+    ), 0),
+    quotationSelectionMissingCount: attempt.results.reduce((sum, result) => (
+      sum + Number(result.routeEvidence
+        && result.routeEvidence.quotationSelectionMissingCount || 0)
     ), 0),
     unknownFakeRouteRequests: 0,
     voiceEvidenceMissingCount: 0,

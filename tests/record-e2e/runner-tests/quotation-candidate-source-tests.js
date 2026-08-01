@@ -76,6 +76,41 @@ function preflight(operation, fixtureState, fields = {}, options = {}) {
   if (options.modelCandidates) {
     finalResult.quotation_candidates = clone(options.modelCandidates);
   }
+  if (options.explicitQuotationConversion) {
+    const sourceText = options.referenceSourceText || '王总那个保温杯报价';
+    const originalText = `${sourceText}再转成订单`;
+    finalResult.original_text = originalText;
+    finalResult.intent_evidence = {
+      quotationToOrderConversionSignals: [{
+        kind: 'QUOTATION_TO_ORDER_CONVERSION',
+        direction: 'QUOTATION_TO_ORDER',
+        explicit: true,
+        confidence: 0.99,
+        evidenceSource: 'LOCAL_PARSER',
+        sourceField: 'ORIGINAL_TEXT',
+        sourceText: '报价再转成订单',
+        sourceSpan: {
+          start: originalText.indexOf('报价再转成订单'),
+          end: originalText.indexOf('报价再转成订单') + '报价再转成订单'.length
+        }
+      }]
+    };
+    finalResult.relation_references = {
+      quotation: {
+        entityType: 'QUOTATION',
+        kind: options.referenceKind || 'EXPLICIT_QUOTATION_NAMED_REFERENCE',
+        explicit: true,
+        requiresResolution: true,
+        sourceText,
+        sourceSpan: { start: 0, end: sourceText.length },
+        confidence: 0.97,
+        normalizedReference: options.normalizedReference || '王总:保温杯:QUOTATION',
+        resolvedEntityId: null,
+        evidenceSource: 'LOCAL_PARSER',
+        sourceField: 'ORIGINAL_TEXT'
+      }
+    };
+  }
   return evaluateRecordDomainPreflight({
     mode: 'PRODUCTION_ROUTING',
     resultScope: 'PRODUCTION_RESULT',
@@ -398,6 +433,273 @@ test('validUntil is projected but does not invent a date-expiry policy', () => {
   }))[0];
   assert.strictEqual(actual.validUntil, '2025-01-01');
   assert.strictEqual(actual.selectionEligible, true);
+});
+
+test('unique converted named quotation becomes rejected evidence without selection', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-converted', 'cus-a', {
+      productName: '保温杯',
+      items: [{ productName: '保温杯' }],
+      status: '已转订单',
+      convertedOrderId: 'ord-existing'
+    })],
+    orders: [{ id: 'ord-existing', customerId: 'cus-a', quotationId: 'quo-converted' }]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), []);
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert.strictEqual(actual.quotationRelationGate.selectedQuotationId, '');
+  assert.strictEqual(actual.quotationRelationGate.selectionConfirmed, false);
+  assert.strictEqual(actual.quotationRelationGate.status, 'DANGEROUS_REFERENCE_REJECTED');
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences.map((item) => item.quotationId), [
+    'quo-converted'
+  ]);
+  assert(blockingCodes(actual).includes('QUOTATION_ALREADY_CONVERTED'));
+});
+
+test('unique deleted named quotation is rejected from latest State', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-deleted', 'cus-a', {
+      productName: '保温杯',
+      items: [{ productName: '保温杯' }]
+    })],
+    deletedRecords: [{ recordType: 'quotation', recordId: 'quo-deleted' }]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), []);
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences[0]
+    .selectionBlockingCodes, ['QUOTATION_TARGET_NOT_FOUND']);
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+});
+
+test('unique inactive named quotation is rejected without becoming selected', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-inactive', 'cus-a', {
+      productName: '保温杯',
+      items: [{ productName: '保温杯' }],
+      status: '已失效'
+    })]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), []);
+  assert(actual.candidates.rejectedQuotationReferences[0]
+    .selectionBlockingCodes.includes('QUOTATION_TARGET_NOT_ACTIVE'));
+  assert.strictEqual(actual.quotationRelationGate.selectedQuotationId, '');
+});
+
+test('unique safe named quotation still requires a real selection', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-safe', 'cus-a', {
+      productName: '保温杯',
+      items: [{ productName: '保温杯' }]
+    })]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), ['quo-safe']);
+  assert(actual.requiredSelections.includes('quotationId'));
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert.strictEqual(actual.domainCanSaveFormal, false);
+});
+
+test('multiple safe named quotations remain unselected in stable order', () => {
+  const actual = preflight('create_order', state({
+    quotations: [
+      quotation('quo-z', 'cus-a', { productName: '保温杯', items: [{ productName: '保温杯' }] }),
+      quotation('quo-a', 'cus-a', { productName: '保温杯', items: [{ productName: '保温杯' }] })
+    ]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), ['quo-a', 'quo-z']);
+  assert(actual.requiredSelections.includes('quotationId'));
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+});
+
+test('safe and dangerous named matches expose only safe candidates', () => {
+  const actual = preflight('create_order', state({
+    quotations: [
+      quotation('quo-safe', 'cus-a', { productName: '保温杯', items: [{ productName: '保温杯' }] }),
+      quotation('quo-converted', 'cus-a', {
+        productName: '保温杯',
+        items: [{ productName: '保温杯' }],
+        status: '已转订单',
+        convertedOrderId: 'ord-existing'
+      })
+    ],
+    orders: [{ id: 'ord-existing', customerId: 'cus-a', quotationId: 'quo-converted' }]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), ['quo-safe']);
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences, []);
+  assert(actual.requiredSelections.includes('quotationId'));
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+});
+
+test('multiple dangerous named matches stay ambiguous without choosing a rejected id', () => {
+  const actual = preflight('create_order', state({
+    quotations: [
+      quotation('quo-one', 'cus-a', {
+        productName: '保温杯', items: [{ productName: '保温杯' }], status: '已转订单'
+      }),
+      quotation('quo-two', 'cus-a', {
+        productName: '保温杯', items: [{ productName: '保温杯' }], status: '已失效'
+      })
+    ]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true
+  });
+  assert.deepStrictEqual(candidateIds(actual), []);
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences, []);
+  assert.strictEqual(actual.quotationRelationGate.status, 'AMBIGUOUS_REFERENCE');
+  assert(actual.requiredSelections.includes('quotationId'));
+});
+
+test('unconfirmed safe quotation id is only a candidate and requires confirmation', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-safe', 'cus-a')]
+  }), {
+    quotationId: 'quo-safe',
+    productName: '合成商品',
+    quantity: 10,
+    unit: '个',
+    unitPrice: 5,
+    dueDate: '2026-07-30'
+  });
+  assert.deepStrictEqual(candidateIds(actual), ['quo-safe']);
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert(actual.requiredSelections.includes('quotationId'));
+  assert(blockingCodes(actual).includes('QUOTATION_SELECTION_CONFIRMATION_REQUIRED'));
+});
+
+test('unconfirmed converted quotation id is rejected and never resolved', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-converted', 'cus-a', { status: '已转订单' })]
+  }), { quotationId: 'quo-converted' });
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences.map((item) => item.quotationId), [
+    'quo-converted'
+  ]);
+  assert(blockingCodes(actual).includes('QUOTATION_ALREADY_CONVERTED'));
+});
+
+test('unconfirmed cross-customer quotation id is rejected without customer disclosure', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-cross', 'cus-b')]
+  }), { quotationId: 'quo-cross' });
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert.strictEqual(actual.candidates.rejectedQuotationReferences[0].customerId, '');
+  assert.strictEqual(actual.candidates.rejectedQuotationReferences[0].status, '');
+  assert.strictEqual(actual.candidates.rejectedQuotationReferences[0].convertedOrderId, '');
+  assert(blockingCodes(actual).includes('QUOTATION_CUSTOMER_MISMATCH'));
+});
+
+test('unconfirmed missing quotation id is rejected and never resolved', () => {
+  const actual = preflight('create_order', state(), { quotationId: 'quo-missing' });
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences[0]
+    .selectionBlockingCodes, ['QUOTATION_TARGET_NOT_FOUND']);
+});
+
+test('real confirmed safe quotation selection resolves after latest-State validation', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-safe', 'cus-a')]
+  }), {
+    quotationId: 'quo-safe',
+    quotationSelectionConfirmed: true,
+    productName: '合成商品',
+    quantity: 10,
+    unit: '个',
+    unitPrice: 5,
+    dueDate: '2026-07-30'
+  });
+  assert.strictEqual(actual.resolvedRelations.quotationId, 'quo-safe');
+  assert.strictEqual(actual.resolvedRelations.resolutionSource.quotationId, 'USER_CONFIRMED_SELECTION');
+  assert.strictEqual(actual.requiredSelections.includes('quotationId'), false);
+});
+
+test('confirmed converted quotation selection remains rejected', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-converted', 'cus-a', { status: '已转订单' })]
+  }), {
+    quotationId: 'quo-converted',
+    quotationSelectionConfirmed: true
+  });
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert(blockingCodes(actual).includes('QUOTATION_ALREADY_CONVERTED'));
+  assert.strictEqual(actual.quotationRelationGate.selectionConfirmed, false);
+});
+
+test('confirmation flag without quotation id never becomes confirmed relation state', () => {
+  const actual = preflight('create_order', state({
+    quotations: [quotation('quo-safe', 'cus-a')]
+  }), {
+    quotationSelectionConfirmed: true,
+    productName: '合成商品',
+    quantity: 10,
+    unit: '个',
+    unitPrice: 5,
+    dueDate: '2026-07-30'
+  });
+  assert.strictEqual(actual.quotationRelationGate.selectedQuotationId, '');
+  assert.strictEqual(actual.quotationRelationGate.selectionConfirmed, false);
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+});
+
+test('confirmed safe id outside explicit named matches uses target code not confirmation code', () => {
+  const actual = preflight('create_order', state({
+    quotations: [
+      quotation('quo-target', 'cus-a', {
+        productName: '保温杯', items: [{ productName: '保温杯' }]
+      }),
+      quotation('quo-other', 'cus-a', {
+        productName: '饭盒', items: [{ productName: '饭盒' }]
+      })
+    ]
+  }), {
+    quotationId: 'quo-other',
+    quotationSelectionConfirmed: true,
+    customerName: '王总',
+    productName: '保温杯'
+  }, {
+    explicitQuotationConversion: true
+  });
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert(blockingCodes(actual).includes('QUOTATION_TARGET_REQUIRED'));
+  assert.strictEqual(
+    blockingCodes(actual).includes('QUOTATION_SELECTION_CONFIRMATION_REQUIRED'),
+    false
+  );
+});
+
+test('AI quotation suggestions cannot disambiguate explicit safe and dangerous matches', () => {
+  const actual = preflight('create_order', state({
+    quotations: [
+      quotation('quo-safe', 'cus-a', {
+        productName: '保温杯', items: [{ productName: '保温杯' }]
+      }),
+      quotation('quo-danger', 'cus-a', {
+        productName: '保温杯', items: [{ productName: '保温杯' }], status: '已转订单'
+      })
+    ]
+  }), { customerName: '王总', productName: '保温杯' }, {
+    explicitQuotationConversion: true,
+    modelCandidates: [
+      { id: 'quo-danger', confidence: 1 },
+      { id: 'quo-safe', confidence: 0.1 },
+      { id: 'quo-danger' },
+      { id: '' },
+      { id: { nested: 'quo-safe' } }
+    ]
+  });
+  assert.deepStrictEqual(candidateIds(actual), ['quo-safe']);
+  assert.strictEqual(actual.resolvedRelations.quotationId, '');
+  assert(actual.requiredSelections.includes('quotationId'));
+  assert.deepStrictEqual(actual.candidates.rejectedQuotationReferences, []);
 });
 
 test('Shared Confirmation projects Preflight candidates without forcing new-order selection', () => {

@@ -1136,9 +1136,16 @@ test('正常报价转订单保存后双向关系一致', () => {
   const createState = () => stateWith({
     customers: [customer('cus_wang', '王总')], quotations: [quotation('quo_1', 'cus_wang')]
   });
-  const draft = orderResult({ customerId: 'cus_wang', quotationId: 'quo_1' }, {
+  const draft = orderResult({
+    customerId: 'cus_wang',
+    quotationId: 'quo_1',
+    quotationSelectionConfirmed: true
+  }, {
     original_text: '王总把这份报价转成订单，2026年8月1日交',
-    manual_fields: ['customerName', 'customerId', 'quotationId', 'productName', 'quantity', 'unitPrice', 'amount', 'dueDate']
+    manual_fields: [
+      'customerName', 'customerId', 'quotationId', 'quotationSelectionConfirmed',
+      'productName', 'quantity', 'unitPrice', 'amount', 'dueDate'
+    ]
   });
   [saveConfirmedDraft, saveConfirmedDraftServer].forEach((save, index) => {
     const state = createState();

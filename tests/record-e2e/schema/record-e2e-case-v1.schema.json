@@ -994,6 +994,74 @@
           "items": {
             "type": "string"
           }
+        },
+        "selectedQuotationId": {
+          "type": "string"
+        },
+        "quotationSelectionConfirmed": {
+          "type": "boolean"
+        },
+        "safeQuotationCandidateIds": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "rejectedQuotationReferences": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "quotationId",
+              "selectionEligible",
+              "selectionBlockingCodes"
+            ],
+            "properties": {
+              "quotationId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "selectionEligible": {
+                "const": false
+              },
+              "selectionBlockingCodes": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        },
+        "quotationRelationGate": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "resolved",
+            "selectedQuotationId",
+            "selectionConfirmed"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolved": {
+              "type": "boolean"
+            },
+            "selectedQuotationId": {
+              "type": "string"
+            },
+            "selectionConfirmed": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },

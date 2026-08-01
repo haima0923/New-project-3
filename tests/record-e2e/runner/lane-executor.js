@@ -39,9 +39,54 @@ const {
 } = require('../../../utils/record-storage-transaction-contract');
 
 const PROVIDER_BLOCK = 'UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION';
+const ACTIVE_QUOTATION_STATUS = '待确认';
+const CONVERTED_QUOTATION_STATUSES = new Set([
+  'converted', 'ordered', '已转订单', '已下单'
+]);
+const INACTIVE_QUOTATION_STATUSES = new Set([
+  'cancelled', 'canceled', 'void', '已作废', '已取消', '已失效'
+]);
 
 function blockingCodes(preflight) {
   return (preflight && preflight.blockingIssues || []).map((item) => item.code);
+}
+
+function independentQuotationDanger(state = {}, quotationId = '', customerId = '') {
+  const id = String(quotationId || '');
+  const matches = (state.quotations || []).filter((item) => (
+    String(item && item.id || '') === id
+  ));
+  if (!id || matches.length !== 1) return { dangerous: Boolean(id), quotation: null };
+  const quotation = matches[0];
+  const deleted = (state.deletedRecords || []).some((item) => (
+    item && item.recordType === 'quotation' && String(item.recordId || '') === id
+  ));
+  const normalizedStatus = String(quotation.status || '').toLowerCase();
+  const converted = Boolean(
+    quotation.convertedOrderId
+    || CONVERTED_QUOTATION_STATUSES.has(normalizedStatus)
+    || (state.orders || []).some((order) => String(order && order.quotationId || '') === id)
+  );
+  const crossCustomer = Boolean(
+    customerId && String(quotation.customerId || '') !== String(customerId)
+  );
+  const inactive = INACTIVE_QUOTATION_STATUSES.has(normalizedStatus)
+    || String(quotation.status || '') !== ACTIVE_QUOTATION_STATUS;
+  return {
+    dangerous: deleted || converted || crossCustomer || inactive,
+    quotation
+  };
+}
+
+function quotationInheritedFieldProjection(fields = {}) {
+  return {
+    amount: fields.amount || fields.totalAmount || '',
+    items: safeClone(fields.items || []),
+    productName: fields.productName || '',
+    quantity: fields.quantity || '',
+    unit: fields.unit || '',
+    unitPrice: fields.unitPrice || ''
+  };
 }
 
 function productionEligibility(route, codes) {
@@ -60,13 +105,20 @@ function observationLane(spec) {
 function deriveProductionObservation(spec, observation) {
   const draft = observation.afterEdits.parseResult || {};
   const preflight = evaluateDraftPreflight(draft, spec.initialState.state);
-  const codes = blockingCodes(preflight);
   const prepared = prepareLegacyDraft(draft, spec.initialState.state, spec.ai.profile);
-  const businessPreflight = prepared.executionPreflight || preflight;
+  const productionPreflight = prepared.productionPreflight || preflight;
+  const businessPreflight = prepared.executionPreflight || productionPreflight;
+  const codes = Array.from(new Set(blockingCodes(productionPreflight).concat(
+    ['FAKE_STANDARD', 'FAKE_DEEP', 'REPLAY'].includes(spec.ai.profile)
+      ? [PROVIDER_BLOCK]
+      : []
+  )));
   const businessCodes = blockingCodes(businessPreflight)
     .filter((code) => code !== PROVIDER_BLOCK);
   const isHeadless = observation.afterEdits.surface === 'HEADLESS';
   const capabilitiesSatisfied = observation.missingCapabilities.length === 0;
+  const quotationRelationGate = businessPreflight.quotationRelationGate || {};
+  const quotationCandidates = businessPreflight.candidates || {};
   const pageFormalSaveAllowed = isHeadless
     ? null
     : (
@@ -90,7 +142,25 @@ function deriveProductionObservation(spec, observation) {
     preflightInputRelationReferences: compactRelationReferences(
       draft.relation_references
     ),
-    requiredSelections: safeClone(businessPreflight.requiredSelections || [])
+    requiredSelections: safeClone(businessPreflight.requiredSelections || []),
+    selectedQuotationId: String(
+      quotationRelationGate.selectedQuotationId
+      || businessPreflight.resolvedRelations
+        && businessPreflight.resolvedRelations.quotationId
+      || ''
+    ),
+    quotationSelectionConfirmed:
+      quotationRelationGate.selectionConfirmed === true
+      && quotationRelationGate.resolved === true,
+    safeQuotationCandidateIds: safeClone(
+      (quotationCandidates.quotationSelectionCandidates || [])
+        .map((item) => String(item.quotationId || item.id || ''))
+        .filter(Boolean)
+    ),
+    rejectedQuotationReferences: safeClone(
+      quotationCandidates.rejectedQuotationReferences || []
+    ),
+    quotationRelationGate: safeClone(quotationRelationGate)
   };
 }
 
@@ -1345,6 +1415,53 @@ async function executeLanes(runtime, spec, plan, options = {}) {
     audit.networkAudit
   );
   routeEvidence.FakeFixtureId = spec.aiFixture && spec.aiFixture.fixtureId || null;
+  const quotationGate = primaryProductionObservation.quotationRelationGate || {};
+  const quotationDriverEvidence = sourceObservation && sourceObservation.driver
+    && sourceObservation.driver.evidence || {};
+  const quotationSelections = (quotationDriverEvidence.selections || [])
+    .filter((item) => item && item.applied === true && item.kind === 'quotationId');
+  const appliedQuotationSelectionIds = new Set(
+    quotationSelections.map((item) => String(item.selectedId || '')).filter(Boolean)
+  );
+  const resolvedQuotationId = String(quotationGate.selectedQuotationId || '');
+  const actualFinalFields = sourceObservation && sourceObservation.afterEdits
+    && sourceObservation.afterEdits.fields || {};
+  const actualCustomerId = String(actualFinalFields.customerId || '');
+  const resolvedDanger = independentQuotationDanger(
+    spec.initialState.state,
+    resolvedQuotationId,
+    actualCustomerId
+  );
+  routeEvidence.unconfirmedQuotationIdAcceptedCount = resolvedQuotationId
+    && actualFinalFields.quotationSelectionConfirmed !== true ? 1 : 0;
+  routeEvidence.aiQuotationIdPromotedCount = quotationGate.resolved === true
+    && quotationGate.applies === true
+    && Number(routeEvidence.AIRequestCount || 0) > 0
+    && !appliedQuotationSelectionIds.has(resolvedQuotationId) ? 1 : 0;
+  routeEvidence.dangerousQuotationSelectedCount = resolvedQuotationId
+    && resolvedDanger.dangerous ? 1 : 0;
+  routeEvidence.dangerousQuotationFieldInheritanceCount = quotationSelections
+    .filter((item) => independentQuotationDanger(
+      spec.initialState.state,
+      item.selectedId,
+      actualCustomerId
+    ).dangerous)
+    .filter((item) => stableHash(
+      quotationInheritedFieldProjection(item.preSelectionFields),
+      'quotation-inherited-fields-v1'
+    ) !== stableHash(
+      quotationInheritedFieldProjection(item.postSelectionFields),
+      'quotation-inherited-fields-v1'
+    )).length;
+  routeEvidence.quotationAutoSelectionCount = quotationGate.applies === true
+    && quotationGate.resolved === true
+    && quotationGate.selectionConfirmed === true
+    && !appliedQuotationSelectionIds.has(resolvedQuotationId) ? 1 : 0;
+  routeEvidence.quotationSelectionMissingCount = quotationGate.requiresResolution === true
+    && (quotationGate.safeCandidateIds || []).length > 0
+    && quotationGate.resolved !== true
+    && !(primaryProductionObservation.requiredSelections || []).includes('quotationId')
+    ? 1 : 0;
   const noRecordEvidence = buildNoRecordEvidence({
     businessDiff: stateDiff.businessDiff,
     driverEvidence: sourceObservation && sourceObservation.driver
@@ -1386,7 +1503,20 @@ async function executeLanes(runtime, spec, plan, options = {}) {
       domainCanSavePending: primaryProductionObservation.domainCanSavePending,
       operation: primaryProductionObservation.operation,
       preflightFingerprint: primaryProductionObservation.preflightFingerprint,
-      requiredSelections: primaryProductionObservation.requiredSelections
+      requiredSelections: primaryProductionObservation.requiredSelections,
+      selectedQuotationId: primaryProductionObservation.selectedQuotationId,
+      quotationSelectionConfirmed:
+        primaryProductionObservation.quotationSelectionConfirmed,
+      safeQuotationCandidateIds:
+        primaryProductionObservation.safeQuotationCandidateIds,
+      rejectedQuotationReferences: (
+        primaryProductionObservation.rejectedQuotationReferences || []
+      ).map((item) => ({
+        quotationId: String(item.quotationId || ''),
+        selectionEligible: item.selectionEligible === true,
+        selectionBlockingCodes: safeClone(item.selectionBlockingCodes || [])
+      })),
+      quotationRelationGate: primaryProductionObservation.quotationRelationGate
     },
     productionObservation: primaryProductionObservation,
     receivableOrderGateEvidence: buildReceivableOrderGateEvidence(

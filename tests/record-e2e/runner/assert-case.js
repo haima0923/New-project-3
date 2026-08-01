@@ -464,6 +464,40 @@ function assertProductionLayers(testCase, evidence, collector) {
     normalizeCodes(actualPreflight.blockingCodes),
     normalizeCodes(expected.preflight.blockingCodes)
   );
+  [
+    'requiredSelections',
+    'selectedQuotationId',
+    'quotationSelectionConfirmed',
+    'safeQuotationCandidateIds',
+    'rejectedQuotationReferences'
+  ].forEach((field) => {
+    if (!Object.prototype.hasOwnProperty.call(expected.preflight, field)) return;
+    collector.check(
+      'PREFLIGHT',
+      field,
+      actualPreflight[field],
+      expected.preflight[field],
+      {
+        compare: field === 'requiredSelections'
+          ? (actual, wanted) => semanticEqual(
+            normalizeFieldPaths(actual, operation),
+            normalizeFieldPaths(wanted, operation)
+          )
+          : undefined
+      }
+    );
+  });
+  if (expected.preflight.quotationRelationGate) {
+    Object.keys(expected.preflight.quotationRelationGate).forEach((field) => {
+      collector.check(
+        'PREFLIGHT',
+        `quotationRelationGate.${field}`,
+        actualPreflight.quotationRelationGate
+          && actualPreflight.quotationRelationGate[field],
+        expected.preflight.quotationRelationGate[field]
+      );
+    });
+  }
   collector.check(
     'CONFIRMATION',
     'missingFields',

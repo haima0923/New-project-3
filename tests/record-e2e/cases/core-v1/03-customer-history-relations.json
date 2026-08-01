@@ -1729,12 +1729,18 @@
           "fields": {
             "customerName": "王总",
             "customerId": "cus-syn-a",
-            "quotationId": "quo-syn-a-1",
             "productName": "保温杯"
           },
-          "items": [],
+          "items": [
+            {
+              "productName": "保温杯"
+            }
+          ],
           "allowedValues": {},
-          "absentFields": [],
+          "absentFields": [
+            "quotationId",
+            "quotationSelectionConfirmed"
+          ],
           "conflictValues": {}
         },
         "route": "AI_DEEP",
@@ -1748,15 +1754,42 @@
           "domainCanSaveFormal": false,
           "domainCanSavePending": true,
           "blockingCodes": [
+            "AI_RESULT_UNRESOLVED",
+            "FIELD_CONFLICT",
+            "LOW_CONFIDENCE_FIELD",
+            "MISSING_REQUIRED_FIELD",
             "QUOTATION_ALREADY_CONVERTED"
           ],
-          "requiredSelections": []
+          "requiredSelections": [],
+          "selectedQuotationId": "",
+          "quotationSelectionConfirmed": false,
+          "safeQuotationCandidateIds": [],
+          "rejectedQuotationReferences": [
+            {
+              "quotationId": "quo-syn-a-1",
+              "selectionEligible": false,
+              "selectionBlockingCodes": [
+                "QUOTATION_ALREADY_CONVERTED"
+              ]
+            }
+          ],
+          "quotationRelationGate": {
+            "status": "DANGEROUS_REFERENCE_REJECTED",
+            "resolved": false,
+            "selectedQuotationId": "",
+            "selectionConfirmed": false
+          }
         },
         "confirmation": {
           "requiredFields": [
-            "quotationId"
+            "customerName",
+            "items"
           ],
-          "missingFields": [],
+          "missingFields": [
+            "orderDeliveryDate",
+            "quantity",
+            "unitPrice"
+          ],
           "conflictFields": [
             "quotationStatus"
           ]
@@ -1836,6 +1869,10 @@
           "productionEligibility": "BLOCKED_BUSINESS_SAFETY",
           "pageFormalSaveAllowed": false,
           "blockingCodes": [
+            "AI_RESULT_UNRESOLVED",
+            "FIELD_CONFLICT",
+            "LOW_CONFIDENCE_FIELD",
+            "MISSING_REQUIRED_FIELD",
             "QUOTATION_ALREADY_CONVERTED",
             "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
           ],

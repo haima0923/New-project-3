@@ -32,13 +32,13 @@ function withPage(run) {
   }
 }
 
-function prepareConfirmation(page, parseResult) {
+function prepareConfirmation(page, parseResult, intentIndex = 0) {
   page.setData({
     fields: parseResult.fields,
     intent: parseResult.intent,
     parseResult
   });
-  page.changeIntent({ detail: { value: 0 } });
+  page.changeIntent({ detail: { value: intentIndex } });
   page.setData(page.data);
 }
 
@@ -54,6 +54,58 @@ function quotationDraft(fields = {}) {
       customerName: '王总',
       unitPrice: '16'
     }, fields),
+    missing_fields: [],
+    low_confidence_fields: []
+  };
+}
+
+function quotationConversionOrderDraft(options = {}) {
+  const sourceText = options.sourceText || '王总那个保温杯报价';
+  const originalText = `${sourceText}再转成订单`;
+  const conversionText = '报价再转成订单';
+  const normalizedReference = options.normalizedReference || '王总:保温杯:QUOTATION';
+  return {
+    intent: 'order',
+    operation: 'create_order',
+    source: 'typed',
+    original_text: originalText,
+    parse_route: { decision: 'local' },
+    fields: Object.assign({
+      customerId: 'cus-syn-a',
+      customerName: '王总',
+      productName: options.productName === undefined ? '保温杯' : options.productName,
+      dueDate: '2026-07-30'
+    }, options.fields || {}),
+    intent_evidence: {
+      quotationToOrderConversionSignals: [{
+        kind: 'QUOTATION_TO_ORDER_CONVERSION',
+        direction: 'QUOTATION_TO_ORDER',
+        explicit: true,
+        confidence: 0.99,
+        evidenceSource: 'LOCAL_PARSER',
+        sourceField: 'ORIGINAL_TEXT',
+        sourceText: conversionText,
+        sourceSpan: {
+          start: originalText.indexOf(conversionText),
+          end: originalText.indexOf(conversionText) + conversionText.length
+        }
+      }]
+    },
+    relation_references: {
+      quotation: {
+        entityType: 'QUOTATION',
+        kind: 'EXPLICIT_QUOTATION_NAMED_REFERENCE',
+        explicit: true,
+        requiresResolution: true,
+        sourceText,
+        sourceSpan: { start: 0, end: sourceText.length },
+        confidence: 0.97,
+        normalizedReference,
+        resolvedEntityId: null,
+        evidenceSource: 'LOCAL_PARSER',
+        sourceField: 'ORIGINAL_TEXT'
+      }
+    },
     missing_fields: [],
     low_confidence_fields: []
   };
@@ -542,6 +594,63 @@ const tests = [
         assert.strictEqual(page.data.operation, 'create_order');
         assert.strictEqual(page.data.showGenericQuotationSelection, false);
         assert.strictEqual(page.data.selectedQuotationId, '');
+      });
+    }
+  },
+  {
+    name: 'explicit-conversion-unique-safe-quotation-requires-real-page-selection',
+    run() {
+      withPage(({ driver, page }) => {
+        prepareConfirmation(page, quotationConversionOrderDraft(), 1);
+        assert.strictEqual(page.data.operation, 'create_order');
+        assert.strictEqual(page.data.quotationSelectionRequired, true);
+        assert.strictEqual(page.data.showGenericQuotationSelection, true);
+        assert.deepStrictEqual(candidateIds(page), ['quo-syn-a-1']);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.strictEqual(page.data.quotationSelectionConfirmed, false);
+        assert(page.data.preflightBlockingReasons.includes('QUOTATION_TARGET_REQUIRED'));
+
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), true);
+        assert.strictEqual(page.data.selectedQuotationId, 'quo-syn-a-1');
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
+        assert.strictEqual(page.data.fields.quotationSelectionConfirmed, true);
+        assert.strictEqual(page.data.quotationSelectionConfirmed, true);
+        assert.strictEqual(
+          page.data.preflightBlockingReasons.includes('QUOTATION_TARGET_REQUIRED'),
+          false
+        );
+        assert.strictEqual(driver.evidence.pageMethodCalls.changeQuotation, 1);
+        assert.strictEqual(driver.evidence.pageMethodCalls.applyQuotationSelection, 1);
+      });
+    }
+  },
+  {
+    name: 'explicit-conversion-multiple-safe-quotations-never-auto-select-and-can-reselect',
+    run() {
+      withPage(({ page }) => {
+        prepareConfirmation(page, quotationConversionOrderDraft({
+          sourceText: '王总的报价',
+          normalizedReference: '王总:QUOTATION',
+          productName: ''
+        }), 1);
+        assert.strictEqual(page.data.quotationSelectionRequired, true);
+        assert.deepStrictEqual(candidateIds(page), ['quo-syn-a-1', 'quo-syn-a-2']);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+
+        assert.strictEqual(page.changeQuotation({ detail: { value: 1 } }), true);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-2');
+        assert.strictEqual(page.data.fields.quotationSelectionConfirmed, true);
+        assert.strictEqual(page.clearQuotationSelection(), true);
+        assert.strictEqual(page.data.selectedQuotationId, '');
+        assert.strictEqual(Boolean(page.data.fields.quotationId), false);
+        assert.strictEqual(page.data.quotationSelectionConfirmed, false);
+        assert(page.data.preflightBlockingReasons.includes('QUOTATION_TARGET_REQUIRED'));
+
+        assert.strictEqual(page.changeQuotation({ detail: { value: 0 } }), true);
+        assert.strictEqual(page.data.fields.quotationId, 'quo-syn-a-1');
+        assert.strictEqual(page.data.fields.quotationSelectionConfirmed, true);
       });
     }
   },

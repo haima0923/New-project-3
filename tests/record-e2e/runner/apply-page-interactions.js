@@ -192,6 +192,7 @@ async function applySelection(driver, selection, evidence) {
     };
   }
   const preSelectionPreflight = captureSelectionPreflight(page, driver.evidence);
+  const preSelectionFields = safeClone(page.data && page.data.fields || {});
   const methodInvocationCountBefore = Number(
     driver.evidence.pageMethodCalls[method] || 0
   );
@@ -208,6 +209,7 @@ async function applySelection(driver, selection, evidence) {
     );
   }
   const postSelectionPreflight = captureSelectionPreflight(page, driver.evidence);
+  const postSelectionFields = safeClone(page.data && page.data.fields || {});
   if (kind === 'orderId' && !depositOperation) {
     const actualOrderId = String(
       (page.data.fields && page.data.fields.orderId)
@@ -251,7 +253,9 @@ async function applySelection(driver, selection, evidence) {
     methodInvocationCountAfter,
     methodInvocationCountBefore,
     methodInvocationDelta,
+    postSelectionFields,
     postSelectionPreflight,
+    preSelectionFields,
     preSelectionPreflight,
     selectedId: selection.selectedId,
     candidateIds

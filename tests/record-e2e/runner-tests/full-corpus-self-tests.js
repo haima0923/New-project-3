@@ -87,6 +87,14 @@ function cleanResult(caseId, laneName = 'PAGE_PRODUCTION_OBSERVATION') {
         validationCompleted: true
       }
     },
+    routeEvidence: {
+      aiQuotationIdPromotedCount: 0,
+      dangerousQuotationFieldInheritanceCount: 0,
+      dangerousQuotationSelectedCount: 0,
+      quotationAutoSelectionCount: 0,
+      quotationSelectionMissingCount: 0,
+      unconfirmedQuotationIdAcceptedCount: 0
+    },
     runtimeEvidence: { workerIsolation: 'DEDICATED_CHILD_PROCESS' },
     storageAudit: {
       auditPerformed: true,
@@ -125,7 +133,9 @@ function linkedPaymentResult(overrides = {}) {
     : overrides.afterPaid;
   const kind = overrides.kind || 'partial_payment';
   const paymentCount = overrides.paymentCount || 1;
-  result.routeEvidence = { effectiveOperation: 'record_payment' };
+  result.routeEvidence = Object.assign({}, result.routeEvidence, {
+    effectiveOperation: 'record_payment'
+  });
   result.businessDiff = {
     payments: {
       created: Array.from({ length: paymentCount }, (_, index) => ({
@@ -302,15 +312,38 @@ const tests = [
         ['duplicateDeepReviewInvocationCount', 'DUPLICATE_DEEP_REVIEW_INVOCATION'],
         ['duplicateDeepAIRequestCount', 'DUPLICATE_DEEP_AI_REQUEST'],
         ['quotationLocalEvidenceDropCount', 'QUOTATION_LOCAL_EVIDENCE_DROPPED'],
-        ['untrustedQuotationIdPromotionCount', 'UNTRUSTED_QUOTATION_ID_PROMOTED']
+        ['untrustedQuotationIdPromotionCount', 'UNTRUSTED_QUOTATION_ID_PROMOTED'],
+        ['unconfirmedQuotationIdAcceptedCount', 'UNCONFIRMED_QUOTATION_ID_ACCEPTED'],
+        ['aiQuotationIdPromotedCount', 'AI_QUOTATION_ID_PROMOTED'],
+        ['dangerousQuotationSelectedCount', 'DANGEROUS_QUOTATION_SELECTED'],
+        ['dangerousQuotationFieldInheritanceCount', 'DANGEROUS_QUOTATION_FIELD_INHERITED'],
+        ['quotationAutoSelectionCount', 'QUOTATION_AUTO_SELECTED'],
+        ['quotationSelectionMissingCount', 'QUOTATION_SELECTION_REQUIREMENT_MISSING']
       ].forEach(([field, code]) => {
         const result = cleanResult('CASE-A');
-        result.routeEvidence = { [field]: 1 };
+        result.routeEvidence[field] = 1;
         expectThrow(
           () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
           code
         );
       });
+    }
+  },
+  {
+    name: 'full-attempt-rejects-missing-quotation-trust-audit-counters',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = cleanResult('CASE-A');
+      delete result.routeEvidence.dangerousQuotationFieldInheritanceCount;
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'QUOTATION_TRUST_AUDIT_MISSING'
+      );
     }
   },
   {
@@ -323,7 +356,7 @@ const tests = [
         }
       }];
       const result = cleanResult('CASE-A');
-      result.routeEvidence = {
+      result.routeEvidence = Object.assign({}, result.routeEvidence, {
         actualRoute: 'PENDING',
         AIRequestCount: 0,
         deepAIRequestCount: 0,
@@ -337,7 +370,7 @@ const tests = [
         secondHybridInvocationCount: 1,
         standardAIRequestCount: 0,
         untrustedQuotationIdPromotionCount: 0
-      };
+      });
       expectThrow(
         () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
         'QUOTATION_CONVERSION_DEEP_REVIEW_COUNT_MISMATCH'
@@ -376,6 +409,12 @@ const tests = [
       assert.strictEqual(audit.quotationLocalEvidenceDropCount, 0);
       assert.strictEqual(audit.overpaymentCommitCount, 0);
       assert.strictEqual(audit.untrustedQuotationIdPromotionCount, 0);
+      assert.strictEqual(audit.unconfirmedQuotationIdAcceptedCount, 0);
+      assert.strictEqual(audit.aiQuotationIdPromotedCount, 0);
+      assert.strictEqual(audit.dangerousQuotationSelectedCount, 0);
+      assert.strictEqual(audit.dangerousQuotationFieldInheritanceCount, 0);
+      assert.strictEqual(audit.quotationAutoSelectionCount, 0);
+      assert.strictEqual(audit.quotationSelectionMissingCount, 0);
     }
   },
   {
