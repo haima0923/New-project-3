@@ -1551,3 +1551,19 @@ operation log及一次revision/receipt。
 Diff不变。57条P0失败全部单题重跑，P1分层抽查11条，26个Cluster覆盖98/98失败；
 隔离提交Lane总数仍为88。两轮网络、真实Storage、fixture、跨Case泄漏、Journal/Backup、
 Parser Graph、Voice Evidence、陈旧Session和重复Voice Standard AI门禁均为0。
+
+## 44. 报价转订单 Parser Evidence 合同
+
+方向明确的`报价/报价单 + 可选再 + 转/转换 + 成/为 + 订单`必须由Raw Parser产生独立
+`QUOTATION_TO_ORDER` Evidence并让order胜出；Raw operation保持空，Semantic必须由现有
+映射得到`create_order`。历史、疑问、否定、失败及反向订单转报价不得生成该Evidence。
+
+存在命名或指示报价时，Parser复用`relation_references.quotation`，输出
+`QUOTATION`、`explicit=true`、`requiresResolution=true`和`resolvedEntityId=null`。
+Parser不得读取State、自动选择报价或写`quotationId`。裸“报价转订单”不构造具体关系。
+
+Runner必须从真实Parser记录转换和报价关系字段，并验证报价关系沿Raw、Hybrid、
+Confirmation与Preflight输入保持一致。REL-008因此从Raw quotation/create_quotation修正为
+Raw order、Semantic order/create_order；当前Route仍为PENDING且AI为0，Case仍在真实
+ROUTE_ERROR层。120题双轮保持25/95，其他119题核心观察不变，Lane保持88。完整边界见
+`docs/RECORD_PARSER_QUOTATION_TO_ORDER_EVIDENCE_V1.md`。

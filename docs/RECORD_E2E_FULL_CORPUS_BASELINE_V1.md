@@ -1,6 +1,33 @@
 # 记一笔确定性全量基线 V1
 
-## 最新增量基线：Payment Kind Balance Classification（2026-07-31）
+## 最新增量基线：Quotation-to-Order Parser Evidence（2026-08-01）
+
+在冻结基线`38a416f9c936cd14dc4352d092e55336cc5cf0a3`上，REL-008的方向性转换由
+Raw quotation修正为order，现有Semantic自然得到`order / create_order`；客户从“把王总”
+修正为“王总”。Parser新增`QUOTATION_TO_ORDER`转换Evidence及未解析的
+`relation_references.quotation`，准确引用“王总那个保温杯报价”，但不读取State、不写
+`quotationId`。REL-008仍为`PENDING / AIRequestCount=0 / CASE_FAIL / ROUTE_ERROR`，正式
+业务Diff为0。
+
+两轮实际结果保持：
+
+```text
+ACTIVE        120
+Executed      120
+PASS           25
+CASE_FAIL      95
+RUNNER_ERROR    0
+BLOCKED         0
+SURFACE_ERROR   0
+```
+
+54条P0失败全部单题重跑，P1分层抽查11条，24个Cluster覆盖95/95失败。除REL-008外，
+其他119题的顶层状态、最早失败层、Route、AI请求次数和业务Diff与冻结报告完全一致。
+隔离Legacy提交Lane总数保持88。两轮网络、真实Storage、fixture、跨Case泄漏、
+Journal/Backup、Parser Graph、Voice及Payment硬门禁均为0。完整合同见
+`docs/RECORD_PARSER_QUOTATION_TO_ORDER_EVIDENCE_V1.md`。
+
+## 上一增量基线：Payment Kind Balance Classification（2026-07-31）
 
 在冻结基线`fed80c859d27d6b7b17877deb836643e7abdddcb`上，待收款收款类型改为按
 保存时剩余余额派生。FIN-001/013/014从`SURFACE_ERROR`转为PASS；BASIC-011和
@@ -858,3 +885,18 @@ Actual均不变。57条P0失败全部单题重跑，P1分层抽查11条，26个C
 隔离提交Lane总数保持88。两轮硬门禁中的网络、真实Storage、fixture、跨Case泄漏、
 Journal/Backup、Parser Graph、Voice Evidence、陈旧Session及重复Voice Standard AI计数
 全部为0；`FIN-001/013/014`继续稳定为`CASE_FAIL / SURFACE_ERROR`。
+
+## 26. Quotation-to-Order Parser Evidence重基线
+
+REL-008“把王总那个保温杯报价再转成订单”现在由Raw Parser输出order；Raw operation仍为
+null，现有Domain语义投影为`create_order`。转换Evidence为“报价再转成订单”`[8,15)`；
+报价关系Evidence为“王总那个保温杯报价”`[1,10)`，并保持
+`requiresResolution=true / resolvedEntityId=null / LOCAL_PARSER`。客户和商品为王总、保温杯。
+
+当前生产Route仍为PENDING，AI请求为0；Preflight因quantity、dueDate和unitPrice缺失阻断，
+没有自动选择已转报价、没有quotationId、没有正式或pending业务Diff。Case继续稳定为
+`CASE_FAIL / ROUTE_ERROR`，因此总计数与25/95冻结基线相同。
+
+双轮确定性稳定；54条P0失败全部单题重跑，P1抽查11条，24个Cluster覆盖95条失败。
+其他119题的状态、最早失败层、Route、AI次数和业务Diff逐题相同；隔离提交Lane为88，
+所有网络、真实Storage、fixture、Parser Graph、Journal/Backup硬门禁为0。
