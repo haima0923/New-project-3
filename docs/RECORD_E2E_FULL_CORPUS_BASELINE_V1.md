@@ -900,3 +900,34 @@ null，现有Domain语义投影为`create_order`。转换Evidence为“报价再
 双轮确定性稳定；54条P0失败全部单题重跑，P1抽查11条，24个Cluster覆盖95条失败。
 其他119题的状态、最早失败层、Route、AI次数和业务Diff逐题相同；隔离提交Lane为88，
 所有网络、真实Storage、fixture、Parser Graph、Journal/Backup硬门禁为0。
+
+## 27. REL-008明确报价转换Deep Review重基线
+
+REL-008同时具备本地`QUOTATION_TO_ORDER`转换Evidence，以及“王总那个保温杯报价”的
+明确、未解析`LOCAL_PARSER` quotation关系。首次页面保持`PENDING`，开放Deep按钮且AI为0；
+Runner真实调用一次`requestDeepReview()`后，第二次Hybrid为1、Route为`AI_DEEP`、Fake Deep
+请求为1，没有重复调用。
+
+本地quotation Evidence在Initial/Deep两次Raw和Hybrid、Confirmation与Preflight输入中
+完全一致；Merge不会被AI空relation、候选或冲突建议覆盖。`resolvedEntityId`和
+`quotationId`均继续为空。因此REL-008顶层仍为`CASE_FAIL`，但最早失败由`ROUTE_ERROR`
+推进到`AI_NORMALIZE_ERROR / ASSERTION_FAILED:fields.quotationId`，没有修改该题业务Expected、
+Fixture或关系选择政策。
+
+120题离线双轮结果一致：
+
+```text
+ACTIVE         120
+PASS            25
+CASE_FAIL       95
+RUNNER_ERROR     0
+BLOCKED          0
+SURFACE_ERROR    0
+```
+
+与修改前报告逐题比较，其他119题的顶层状态、最早失败层、Route、AI次数、Deep入口、关系
+Evidence和业务Diff均未变化。54条P0失败全部单题重跑，P1分层抽查11条，24个Cluster覆盖
+95/95失败；隔离提交Lane保持88。两轮`duplicateDeepReviewInvocationCount`、
+`duplicateDeepAIRequestCount`、`quotationLocalEvidenceDropCount`、
+`untrustedQuotationIdPromotionCount`以及网络、真实Storage、Fixture、Parser Graph、
+Journal/Backup等硬门禁均为0。

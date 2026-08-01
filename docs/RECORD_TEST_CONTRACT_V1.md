@@ -1567,3 +1567,31 @@ Confirmation与Preflight输入保持一致。REL-008因此从Raw quotation/creat
 Raw order、Semantic order/create_order；当前Route仍为PENDING且AI为0，Case仍在真实
 ROUTE_ERROR层。120题双轮保持25/95，其他119题核心观察不变，Lane保持88。完整边界见
 `docs/RECORD_PARSER_QUOTATION_TO_ORDER_EVIDENCE_V1.md`。
+
+## 45. 明确报价转订单 Deep Review 与Merge信任合同
+
+报价转订单的特殊Deep资格不得扫描原文，只能同时消费Parser已有的两组可信Evidence：
+明确`QUOTATION_TO_ORDER`转换，以及`LOCAL_PARSER`产生、明确、待解析且
+`resolvedEntityId=null`的quotation关系。只有方向而没有明确报价关系的裸“报价转订单”
+继续`PENDING / deepReviewAvailable=false / AI=0`。
+
+合格输入首次必须`PENDING / deepReviewAvailable=true / AI=0`。Runner必须通过页面真实
+`requestDeepReview()`点击，并断言第二次Hybrid恰好1次、Route为`AI_DEEP`、Deep AI恰好
+1次。Runner不得直接调用Fixture。以下硬门禁必须为0：
+
+```text
+duplicateDeepReviewInvocationCount
+duplicateDeepAIRequestCount
+quotationLocalEvidenceDropCount
+untrustedQuotationIdPromotionCount
+```
+
+AI Merge只能机械保留本地可信quotation Evidence。AI无relation、空relation、候选或冲突
+建议均不能删除、改写或解析它；没有本地Evidence时AI也不能创建可信关系。最终
+`quotationId`继续为空，REL-008由`ROUTE_ERROR`推进到
+`AI_NORMALIZE_ERROR / ASSERTION_FAILED:fields.quotationId`，不修改业务Expected。
+
+120题离线双轮保持`PASS=25 / CASE_FAIL=95 / RUNNER_ERROR=0 / BLOCKED=0`且
+`SURFACE_ERROR=0`。仅REL-008的Route、AI次数和最早失败层改变；其他119题状态、最早失败
+层、Route、AI次数、关系Evidence和业务Diff不变，隔离提交Lane仍为88。完整合同见
+`docs/RECORD_ROUTE_QUOTATION_DEEP_EVIDENCE_V1.md`。
