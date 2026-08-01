@@ -206,6 +206,95 @@ function buildMatchedOrderRelationReference(text, match, details, options = {}) 
   };
 }
 
+function buildMatchedQuotationRelationReference(match, details, options = {}) {
+  const sourceText = String(match && match[0] || '');
+  if (!match || match.index === undefined || !sourceText) return null;
+  return {
+    entityType: 'QUOTATION',
+    kind: details.kind,
+    explicit: true,
+    requiresResolution: true,
+    sourceText,
+    sourceSpan: {
+      start: match.index,
+      end: match.index + sourceText.length
+    },
+    confidence: details.confidence,
+    normalizedReference: details.normalizedReference,
+    resolvedEntityId: null,
+    evidenceSource: 'LOCAL_PARSER',
+    sourceField: options.sourceField || 'ORIGINAL_TEXT'
+  };
+}
+
+function extractQuotationRelationReference(text, options = {}) {
+  if (!options.hasQuotationToOrderConversion) return null;
+  const source = String(text || '');
+  const sourceField = options.sourceField || 'ORIGINAL_TEXT';
+  const customerName = String(options.customerName || '');
+  const productName = String(options.productName || '');
+  let match;
+
+  if (customerName && productName) {
+    match = new RegExp(
+      `${escapeRegExp(customerName)}(?:的|那个|这个|那份|这份|那张|这张)?${escapeRegExp(productName)}(?:的)?报价单?`
+    ).exec(source);
+    if (match) {
+      return buildMatchedQuotationRelationReference(match, {
+        kind: 'EXPLICIT_QUOTATION_NAMED_REFERENCE',
+        confidence: 0.97,
+        normalizedReference: `${customerName}:${productName}:QUOTATION`
+      }, { sourceField });
+    }
+  }
+
+  if (customerName) {
+    match = new RegExp(
+      `${escapeRegExp(customerName)}(?:的|那个|这个|那份|这份|那张|这张)报价单?`
+    ).exec(source);
+    if (match) {
+      return buildMatchedQuotationRelationReference(match, {
+        kind: 'EXPLICIT_QUOTATION_NAMED_REFERENCE',
+        confidence: 0.97,
+        normalizedReference: `${customerName}:QUOTATION`
+      }, { sourceField });
+    }
+  }
+
+  if (productName) {
+    match = new RegExp(`${escapeRegExp(productName)}(?:的)?报价单?`).exec(source);
+    if (match) {
+      return buildMatchedQuotationRelationReference(match, {
+        kind: 'EXPLICIT_QUOTATION_NAMED_REFERENCE',
+        confidence: 0.95,
+        normalizedReference: `${productName}:QUOTATION`
+      }, { sourceField });
+    }
+  }
+
+  const deicticPatterns = [
+    {
+      pattern: /这张报价|这份报价|这个报价/,
+      normalizedReference: 'THIS_QUOTATION'
+    },
+    {
+      pattern: /那张报价|那份报价|那个报价/,
+      normalizedReference: 'THAT_QUOTATION'
+    }
+  ];
+  for (const item of deicticPatterns) {
+    match = item.pattern.exec(source);
+    if (match) {
+      return buildMatchedQuotationRelationReference(match, {
+        kind: 'EXPLICIT_QUOTATION_DEICTIC',
+        confidence: 0.99,
+        normalizedReference: item.normalizedReference
+      }, { sourceField });
+    }
+  }
+  return null;
+}
+
 function extractOrderRelationReference(text, options = {}) {
   if (options.intent !== 'receivable') return null;
   const source = String(text || '');
@@ -304,6 +393,8 @@ function cleanCustomerName(value) {
   if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天|大后天)/.test(cleaned)) return '';
   if (/^(客户|老客户|这个客户|那个客户|老板|昨天|昨天没|今天|明天|后天|刚|刚才|刚刚|又|义乌|那笔|上一笔|不|不要|先|再|还有|另外|那个|这个)$/.test(cleaned)) return '';
   if (/客户/.test(cleaned) && !/(总|老板|经理|姐|哥|先生|女士)$/.test(cleaned)) return '';
+  if (/(?:报价|订单)/.test(cleaned)
+    && !/(总|老板|经理|姐|哥|先生|女士)$/.test(cleaned)) return '';
   if (/^(今天|明天|后天|月底|下周|下个月)$/.test(cleaned)) return '';
   return cleaned;
 }
@@ -329,6 +420,13 @@ function extractCustomerName(text) {
   }
   const shortName = extractShortCustomerName(text);
   if (shortName.value) return shortName;
+  const disposalDirected = text.match(
+    /^(?:请|麻烦)?(?:把|将)\s*([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))(?=那个|这个|那份|这份|那张|这张|的|报价|订单)/
+  );
+  if (disposalDirected) {
+    const name = cleanCustomerName(disposalDirected[1]);
+    if (name) return { value: name, source: 'rule:customer_disposal_title' };
+  }
   const directed = text.match(/(?:报价给|报给|发给|卖给|转给|给|帮|找)\s*([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
   if (directed) {
     const name = cleanCustomerName(directed[1]);
@@ -346,6 +444,7 @@ function extractCustomerName(text) {
   }
   const fallback = text.match(new RegExp(`([\\u4e00-\\u9fa5]{1,4})(?:${CUSTOMER_ACTION_PATTERN})`));
   if (!fallback) return { value: '', source: '' };
+  if (/^(?:把|将)/.test(fallback[1])) return { value: '', source: '' };
   const name = cleanCustomerName(fallback[1].replace(/^(给|帮|找|客户|那个)/, ''));
   if (!name) return { value: '', source: '' };
   return { value: name, source: 'rule:customer_action' };
@@ -1347,8 +1446,72 @@ function intentSignalSpansOverlap(left, right) {
     && right.sourceSpan.start < left.sourceSpan.end;
 }
 
-function analyzeQuotationOrderIntent(text) {
+function isActionableQuotationToOrderSignal(text, signal) {
   const source = String(text || '');
+  const start = signal.sourceSpan.start;
+  const end = signal.sourceSpan.end;
+  const clauseStart = Math.max(
+    source.lastIndexOf('，', start - 1),
+    source.lastIndexOf(',', start - 1),
+    source.lastIndexOf('。', start - 1),
+    source.lastIndexOf('；', start - 1),
+    source.lastIndexOf(';', start - 1),
+    source.lastIndexOf('\n', start - 1)
+  ) + 1;
+  const clauseEndCandidates = ['，', ',', '。', '；', ';', '\n']
+    .map((separator) => source.indexOf(separator, end))
+    .filter((index) => index >= 0);
+  const clauseEnd = clauseEndCandidates.length
+    ? Math.min(...clauseEndCandidates)
+    : source.length;
+  const prefix = source.slice(clauseStart, start);
+  const suffix = source.slice(end, clauseEnd);
+  const clause = source.slice(clauseStart, clauseEnd);
+
+  if (/(?:不要|别|不能|不可|禁止|拒绝|不允许|不可以|先不|暂时不|还没|尚未|没有|并未|未|没|不是|并非|是否|是不是|能不能)[^，,。；;\n]*$/.test(prefix)) {
+    return false;
+  }
+  if (/(?:已经|早已|早就|曾经|之前|先前|刚才|刚刚)[^，,。；;\n]*$/.test(prefix)) {
+    return false;
+  }
+  if (/^(?:了|过|已经|已|成功|完成|失败|不成功|没成功|未成功|出错|了吗|吗|么)/.test(suffix)) {
+    return false;
+  }
+  if (/[？?]/.test(clause) || /(?:吗|么)(?:$|[？?])/.test(clause)) {
+    return false;
+  }
+  return true;
+}
+
+function collectQuotationToOrderConversionSignals(text, options = {}) {
+  const source = String(text || '');
+  return collectIntentSignalMatches(
+    source,
+    /(?:这张|那张|这份|那份|这个|那个)?报价单?(?:再)?(?:转换|转)(?:成|为)?订单/g,
+    'QUOTATION_TO_ORDER_CONVERSION'
+  ).filter((signal) => isActionableQuotationToOrderSignal(source, signal))
+    .map((signal) => ({
+      ...signal,
+      direction: 'QUOTATION_TO_ORDER',
+      explicit: true,
+      confidence: 0.99,
+      evidenceSource: 'LOCAL_PARSER',
+      sourceField: options.sourceField || 'ORIGINAL_TEXT'
+    }));
+}
+
+function collectQuotationToOrderPhraseSignals(text) {
+  return collectIntentSignalMatches(
+    String(text || ''),
+    /(?:这张|那张|这份|那份|这个|那个)?报价单?[^，,。；;\n]{0,8}(?:转换|转)(?:成|为)?订单/g,
+    'QUOTATION_TO_ORDER_PHRASE'
+  );
+}
+
+function analyzeQuotationOrderIntent(text, options = {}) {
+  const source = String(text || '');
+  const conversionSource = String(options.conversionText || source);
+  const conversionSourceField = options.conversionSourceField || 'ORIGINAL_TEXT';
   const hasQuantity = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(source);
   const hasBareUnitPrice = new RegExp(`(${numberPattern()})\\s*${UNIT_PATTERN}\\s*(${numberPattern()})(?!\\s*(?:${RAW_UNIT_PATTERN}|月|号|日))`).test(source);
   const hasPrice = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零一二两三四五六七八九十百千万俩]+)\\s*(?:块|元|毛|角|分)|(?:一|每)${RAW_UNIT_PATTERN}|单价`).test(source)
@@ -1443,6 +1606,13 @@ function analyzeQuotationOrderIntent(text) {
   ).filter((signal) => !/(?:还没|尚未|并未|没有|没|未|暂时不|先不|不|别|不要|不能|不会|拒绝|禁止|取消)(?:再|先|能|会|要|准备)?(?:出货|出)(?=$|[，,。；;\n])/.test(
     signal.sourceText
   ));
+  const quotationToOrderPhraseSignals = collectQuotationToOrderPhraseSignals(
+    conversionSource
+  );
+  const quotationToOrderConversionSignals = collectQuotationToOrderConversionSignals(
+    conversionSource,
+    { sourceField: conversionSourceField }
+  );
 
   return {
     orderDeliverySignals,
@@ -1452,25 +1622,36 @@ function analyzeQuotationOrderIntent(text) {
     orderSignalText,
     quotationNegationSignals,
     quotationPositiveSignals,
+    quotationToOrderConversionSignals,
+    quotationToOrderPhraseSignals,
     reaffirmedOrderSignals
   };
 }
 
-function scoreIntent(text, context, businessDate) {
+function scoreIntent(text, context, businessDate, options = {}) {
   if (context === 'query') return { intent: 'query', candidates: ['query'] };
   if (EXPLICIT_NON_RECORD_PATTERN.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
   }
+  const quotationOrderIntent = analyzeQuotationOrderIntent(text, {
+    conversionText: options.conversionText || text,
+    conversionSourceField: options.conversionSourceField || 'ORIGINAL_TEXT'
+  });
+  const hasQuotationToOrderPhrase = quotationOrderIntent.quotationToOrderPhraseSignals.length > 0;
+  const hasQuotationToOrderConversion = quotationOrderIntent.quotationToOrderConversionSignals.length > 0;
   if (/(?:先按|按).{0,12}(?:不对|不是).{0,12}(?:最后|最终).{0,12}(?:块|元|价)/.test(text)) {
     return { intent: 'quotation', candidates: ['quotation'] };
   }
-  if (/(?:不对|不是|改成).*(?:带走|交货|发货|做|订)|(?:带走|交货|发货|做|订).*(?:照上回|按上回|上次)/.test(text)) {
+  if (!hasQuotationToOrderPhrase
+    && /(?:不对|不是|改成).*(?:带走|交货|发货|做|订)|(?:带走|交货|发货|做|订).*(?:照上回|按上回|上次)/.test(text)) {
     return { intent: 'order', candidates: ['order'] };
   }
   if (/(?:数量\s*改成|数量改为|先别按旧价|最后按|最终).*(?:个|件|箱|套|只|条|交|发|出|拿)/.test(text)) {
     return { intent: 'order', candidates: ['order'] };
   }
-  if (/(?:提醒我|别忘了|记得).*(?:回|回复|答复|联系|跟进)/.test(text) && !/(?:催.*(?:款|货款|尾款)|(?:款|货款|尾款).*催)/.test(text)) {
+  if (!hasQuotationToOrderConversion
+    && /(?:提醒我|别忘了|记得).*(?:回|回复|答复|联系|跟进)/.test(text)
+    && !/(?:催.*(?:款|货款|尾款)|(?:款|货款|尾款).*催)/.test(text)) {
     return { intent: 'todo', candidates: ['todo'] };
   }
   if (/售后|断了|坏了|破了|质量问题/.test(text) && /处理|跟进|先/.test(text)) {
@@ -1485,7 +1666,6 @@ function scoreIntent(text, context, businessDate) {
   if (/(?:不要做了?|别做|取消|先别发|暂时别发|等通知|客户取消)/.test(text) && !/(?:改这次|改成|改为|换成)/.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
   }
-  const quotationOrderIntent = analyzeQuotationOrderIntent(text);
   const hasPhraseLevelOutboundDeliverySignal = quotationOrderIntent.orderDeliverySignals.length > 0;
   const hasClearOrderFacts = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`).test(text)
     && /(?:\d+(?:\.\d+)?|[零一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分)/.test(text)
@@ -1604,6 +1784,9 @@ function scoreIntent(text, context, businessDate) {
     && !hasUnnegatedQuotationSignal) {
     scores.quotation = 0;
   }
+  if (hasQuotationToOrderConversion) {
+    scores.order += 20;
+  }
   if (/老客户/.test(text) && !hasQuantity && !extractProduct(text).value) scores.order = 0;
 
   const candidates = Object.keys(scores)
@@ -1624,10 +1807,14 @@ function scoreIntent(text, context, businessDate) {
       orderPositiveSignals: quotationOrderIntent.orderPositiveSignals,
       quotationNegationSignals: quotationOrderIntent.quotationNegationSignals,
       quotationPositiveSignals: quotationOrderIntent.quotationPositiveSignals,
+      quotationToOrderConversionSignals:
+        quotationOrderIntent.quotationToOrderConversionSignals,
       reaffirmedOrderSignals: quotationOrderIntent.reaffirmedOrderSignals,
       scores: { ...scores },
       winningIntent: isDunning ? 'dunning' : (candidates[0] || 'unknown'),
-      winningReason: (quotationOrderIntent.reaffirmedOrderSignals.length
+      winningReason: hasQuotationToOrderConversion && candidates[0] === 'order'
+        ? 'EXPLICIT_QUOTATION_TO_ORDER_CONVERSION'
+        : ((quotationOrderIntent.reaffirmedOrderSignals.length
         || (quotationOrderIntent.orderNegationSignals.length && hasSurvivingOrderAction))
         && candidates[0] === 'order'
         ? 'REAFFIRMED_ORDER_ACTION'
@@ -1635,7 +1822,7 @@ function scoreIntent(text, context, businessDate) {
           && quotationOrderIntent.quotationPositiveSignals.length
           && candidates[0] === 'quotation'
           ? 'EXPLICIT_QUOTATION_WITH_NEGATED_ORDER_ACTION'
-          : 'HIGHEST_INTENT_SCORE')
+          : 'HIGHEST_INTENT_SCORE'))
     }
   };
 }
@@ -1831,7 +2018,15 @@ function parseInput({
     || (hasTerminationSignal && !requiresExistingRecord)
     || mixedBusiness;
   const structuredDraft = source === 'paste' ? getPasteStructuredDraft(pasteMeta) : null;
-  const scoredIntent = scoreIntent(normalized, context, businessDate);
+  const relationSourceField = source === 'paste'
+    && rawText
+    && originalText !== extractedOriginalText
+    ? 'EXTRACTED_TEXT'
+    : 'ORIGINAL_TEXT';
+  const scoredIntent = scoreIntent(normalized, context, businessDate, {
+    conversionText: extractedOriginalText,
+    conversionSourceField: relationSourceField
+  });
   const customer = extractCustomerName(normalized);
   const chatCustomerName = source === 'paste' ? getPasteCustomerName(pasteMeta) : '';
   const customerName = chooseCustomerName(chatCustomerName, customer.value, normalized);
@@ -1842,10 +2037,17 @@ function parseInput({
   const hasMultiProductDraft = multiProductNames.length > 1 || rawItemDrafts.length > 1;
   const explicitQuotationSignal = hasExplicitQuotationSignal(normalized);
   const structuredIntent = structuredDraft && structuredDraft.intent;
+  const hasQuotationToOrderConversion = Boolean(
+    scoredIntent.evidence
+    && scoredIntent.evidence.quotationToOrderConversionSignals
+    && scoredIntent.evidence.quotationToOrderConversionSignals.length
+  );
   const intent = structuredIntent
     ? structuredIntent
     : hasMultiProductDraft
-    ? (scoredIntent.intent === 'quotation' || explicitQuotationSignal ? 'quotation' : 'order')
+    ? (hasQuotationToOrderConversion
+      ? 'order'
+      : (scoredIntent.intent === 'quotation' || explicitQuotationSignal ? 'quotation' : 'order'))
     : ((structuredDraft && structuredDraft.intent) || scoredIntent.intent);
   const quantity = extractQuantity(normalized);
   const productNumberQuantity = quantity.quantity ? { quantity: '', unit: '', source: '' } : extractQuantityAfterKnownProduct(normalized);
@@ -2042,10 +2244,22 @@ function parseInput({
     intent,
     customerName,
     productName,
-    sourceField: source === 'paste' && rawText && originalText !== extractedOriginalText
-      ? 'EXTRACTED_TEXT'
-      : 'ORIGINAL_TEXT'
+    sourceField: relationSourceField
   });
+  const quotationRelationReference = extractQuotationRelationReference(
+    extractedOriginalText,
+    {
+      hasQuotationToOrderConversion,
+      customerName,
+      productName,
+      sourceField: relationSourceField
+    }
+  );
+  const relationReferences = {};
+  if (orderRelationReference) relationReferences.order = orderRelationReference;
+  if (quotationRelationReference) {
+    relationReferences.quotation = quotationRelationReference;
+  }
 
   const result = {
     id: `parse_${Date.now()}`,
@@ -2099,6 +2313,7 @@ function parseInput({
       orderPositiveSignals: [],
       quotationNegationSignals: [],
       quotationPositiveSignals: [],
+      quotationToOrderConversionSignals: [],
       reaffirmedOrderSignals: [],
       scores: {},
       winningIntent: intent,
@@ -2115,10 +2330,8 @@ function parseInput({
     },
     createdAt: new Date().toISOString()
   };
-  if (orderRelationReference) {
-    result.relation_references = {
-      order: orderRelationReference
-    };
+  if (Object.keys(relationReferences).length) {
+    result.relation_references = relationReferences;
   }
   if (source === 'paste' && rawText && originalText !== extractedOriginalText) {
     result.raw_text = originalText;
@@ -2137,6 +2350,7 @@ function parseInput({
 
 module.exports = {
   extractOrderRelationReference,
+  extractQuotationRelationReference,
   parseInput,
   shouldSuggestAiFallback
 };
