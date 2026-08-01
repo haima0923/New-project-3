@@ -14,7 +14,15 @@ const EXPLICIT_ORDER_REFERENCE_KINDS = Object.freeze([
   'EXPLICIT_ORDER_IDENTIFIER',
   'EXPLICIT_ORDER_NAMED_REFERENCE'
 ]);
+const EXPLICIT_QUOTATION_REFERENCE_KINDS = Object.freeze([
+  'EXPLICIT_QUOTATION_DEICTIC',
+  'EXPLICIT_QUOTATION_NAMED_REFERENCE'
+]);
 const ORDER_REFERENCE_SOURCE_FIELDS = Object.freeze([
+  'ORIGINAL_TEXT',
+  'EXTRACTED_TEXT'
+]);
+const QUOTATION_REFERENCE_SOURCE_FIELDS = Object.freeze([
   'ORIGINAL_TEXT',
   'EXTRACTED_TEXT'
 ]);
@@ -190,6 +198,59 @@ function getExplicitOrderReference(result = {}) {
   return reference;
 }
 
+function getExplicitQuotationConversionEvidence(result = {}) {
+  const evidence = result.intent_evidence;
+  const signals = evidence && Array.isArray(evidence.quotationToOrderConversionSignals)
+    ? evidence.quotationToOrderConversionSignals
+    : [];
+  return signals.find((signal) => {
+    if (!signal || typeof signal !== 'object' || Array.isArray(signal)) return false;
+    if (signal.kind !== 'QUOTATION_TO_ORDER_CONVERSION'
+      || signal.direction !== 'QUOTATION_TO_ORDER'
+      || signal.explicit !== true
+      || signal.evidenceSource !== 'LOCAL_PARSER') return false;
+    if (!QUOTATION_REFERENCE_SOURCE_FIELDS.includes(String(signal.sourceField || ''))) return false;
+    if (!String(signal.sourceText || '').trim()) return false;
+    const sourceSpan = signal.sourceSpan;
+    return Boolean(sourceSpan
+      && Number.isInteger(sourceSpan.start)
+      && Number.isInteger(sourceSpan.end)
+      && sourceSpan.start >= 0
+      && sourceSpan.end > sourceSpan.start
+      && sourceSpan.end - sourceSpan.start === String(signal.sourceText).length);
+  }) || null;
+}
+
+function getExplicitQuotationReference(result = {}) {
+  const relationReferences = result.relation_references;
+  const reference = relationReferences && relationReferences.quotation;
+  if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return null;
+  if (String(reference.entityType || '').toUpperCase() !== 'QUOTATION') return null;
+  if (reference.explicit !== true || reference.requiresResolution !== true) return null;
+  if (!EXPLICIT_QUOTATION_REFERENCE_KINDS.includes(String(reference.kind || ''))) return null;
+  if (reference.evidenceSource !== 'LOCAL_PARSER' || reference.resolvedEntityId !== null) return null;
+  if (!QUOTATION_REFERENCE_SOURCE_FIELDS.includes(String(reference.sourceField || ''))) return null;
+  if (!String(reference.sourceText || '').trim()
+    || !String(reference.normalizedReference || '').trim()) return null;
+  const confidence = Number(reference.confidence);
+  if (!Number.isFinite(confidence) || confidence <= 0 || confidence > 1) return null;
+  const sourceSpan = reference.sourceSpan;
+  if (!sourceSpan || typeof sourceSpan !== 'object' || Array.isArray(sourceSpan)) return null;
+  if (!Number.isInteger(sourceSpan.start)
+    || !Number.isInteger(sourceSpan.end)
+    || sourceSpan.start < 0
+    || sourceSpan.end <= sourceSpan.start
+    || sourceSpan.end - sourceSpan.start !== String(reference.sourceText).length) return null;
+  return reference;
+}
+
+function requiresExplicitQuotationResolution(operation, businessType, result = {}) {
+  return operation === 'create_order'
+    && businessType === 'order'
+    && Boolean(getExplicitQuotationConversionEvidence(result))
+    && Boolean(getExplicitQuotationReference(result));
+}
+
 function requiresExplicitReceivableOrderResolution(operation, businessType, result = {}) {
   return operation === 'create_receivable'
     && businessType === 'receivable'
@@ -320,6 +381,139 @@ function getQuotationProductSummary(quotation = {}) {
     .filter((value, index, array) => array.indexOf(value) === index);
   if (itemNames.length) return itemNames.join('、');
   return String(quotation.productName || '').trim();
+}
+
+function normalizeRelationMatchValue(value) {
+  return String(value || '').trim().replace(/\s+/g, '');
+}
+
+function getQuotationProductNames(quotation = {}) {
+  const itemNames = (Array.isArray(quotation.items) ? quotation.items : [])
+    .map((item) => normalizeRelationMatchValue(item && item.productName))
+    .filter(Boolean);
+  const topLevel = normalizeRelationMatchValue(quotation.productName);
+  return uniqueStrings(itemNames.concat(topLevel ? [topLevel] : []));
+}
+
+function getDraftProductNames(fields = {}) {
+  const itemNames = (Array.isArray(fields.items) ? fields.items : [])
+    .map((item) => normalizeRelationMatchValue(item && item.productName))
+    .filter(Boolean);
+  const topLevel = normalizeRelationMatchValue(fields.productName);
+  return uniqueStrings(itemNames.concat(topLevel ? [topLevel] : []));
+}
+
+function getNamedQuotationReferenceFacts(reference, fields, customer) {
+  if (!reference || reference.kind !== 'EXPLICIT_QUOTATION_NAMED_REFERENCE') {
+    return { valid: false, customerName: '', productNames: [] };
+  }
+  const normalizedReference = String(reference.normalizedReference || '');
+  const parts = normalizedReference.split(':').map(normalizeRelationMatchValue);
+  if (parts.pop() !== 'QUOTATION' || !parts.length || parts.some((part) => !part)) {
+    return { valid: false, customerName: '', productNames: [] };
+  }
+  const fieldCustomerName = normalizeRelationMatchValue(fields.customerName);
+  const resolvedCustomerName = normalizeRelationMatchValue(customer && customer.name);
+  const draftProductNames = getDraftProductNames(fields);
+  let customerName = '';
+  let productNames = [];
+  if (parts.length > 1) {
+    customerName = parts[0];
+    productNames = parts.slice(1);
+  } else if (parts[0] === fieldCustomerName || parts[0] === resolvedCustomerName) {
+    customerName = parts[0];
+  } else {
+    productNames = parts.slice();
+  }
+  const customerMatches = !customerName || (
+    customerName === fieldCustomerName
+    && customerName === resolvedCustomerName
+  );
+  const productsMatchDraft = !productNames.length || productNames.every((name) => (
+    draftProductNames.includes(name)
+  ));
+  return {
+    valid: customerMatches && productsMatchDraft,
+    customerName,
+    productNames
+  };
+}
+
+function quotationMatchesExplicitReference(quotation, reference, fields, customer) {
+  if (!quotation || !reference || !customer) return false;
+  if (String(quotation.customerId || '') !== String(customer.id || '')) return false;
+  const draftProductNames = getDraftProductNames(fields);
+  if (reference.kind === 'EXPLICIT_QUOTATION_NAMED_REFERENCE') {
+    const facts = getNamedQuotationReferenceFacts(reference, fields, customer);
+    if (!facts.valid) return false;
+    const expectedProducts = facts.productNames.length
+      ? facts.productNames
+      : draftProductNames;
+    if (!expectedProducts.length) return true;
+    const quotationProductNames = getQuotationProductNames(quotation);
+    return expectedProducts.every((name) => quotationProductNames.includes(name));
+  }
+  if (reference.kind === 'EXPLICIT_QUOTATION_DEICTIC') {
+    if (!draftProductNames.length) return true;
+    const quotationProductNames = getQuotationProductNames(quotation);
+    return draftProductNames.every((name) => quotationProductNames.includes(name));
+  }
+  return false;
+}
+
+function classifyExplicitQuotationMatches(state, operation, customerId, fields, reference) {
+  const customer = getCustomerById(state, customerId);
+  const matches = customer
+    ? (state.quotations || []).filter((quotation) => (
+      quotationMatchesExplicitReference(quotation, reference, fields, customer)
+    ))
+    : [];
+  const idCounts = matches.reduce((counts, quotation) => {
+    const id = String(quotation && quotation.id || '');
+    if (id) counts[id] = Number(counts[id] || 0) + 1;
+    return counts;
+  }, {});
+  const safeMatches = [];
+  const dangerousMatches = [];
+  const ambiguousMatches = [];
+  matches.forEach((quotation) => {
+    const id = String(quotation && quotation.id || '');
+    if (!id || idCounts[id] !== 1) {
+      ambiguousMatches.push({
+        quotation,
+        blockingCodes: ['QUOTATION_TARGET_NOT_FOUND']
+      });
+      return;
+    }
+    const codes = getQuotationSelectionBlockingCodes(
+      state, quotation, operation, customerId
+    );
+    if (codes.length) dangerousMatches.push({ quotation, blockingCodes: codes });
+    else safeMatches.push(quotation);
+  });
+  safeMatches.sort((left, right) => compareStableIds(left && left.id, right && right.id));
+  dangerousMatches.sort((left, right) => compareStableIds(
+    left && left.quotation && left.quotation.id,
+    right && right.quotation && right.quotation.id
+  ));
+  ambiguousMatches.sort((left, right) => compareStableIds(
+    left && left.quotation && left.quotation.id,
+    right && right.quotation && right.quotation.id
+  ));
+  const uniquelyRejected = reference
+    && reference.kind === 'EXPLICIT_QUOTATION_NAMED_REFERENCE'
+    && safeMatches.length === 0
+    && dangerousMatches.length === 1
+    && ambiguousMatches.length === 0
+    && matches.length === 1
+    ? dangerousMatches[0]
+    : null;
+  return {
+    ambiguousMatches,
+    dangerousMatches,
+    safeMatches,
+    uniquelyRejected
+  };
 }
 
 function getQuotationSelectionBlockingCodes(state, quotation, operation, customerId) {
@@ -715,8 +909,11 @@ function evaluateRecordDomainPreflight(input = {}) {
   const operation = resolveOperation(result, input.operation || '');
   const businessType = input.businessType || (operation === 'record_order_deposit' ? 'order_deposit' : result.intent || 'unknown');
   const explicitOrderReference = getExplicitOrderReference(result);
+  const explicitQuotationReference = getExplicitQuotationReference(result);
   const explicitReceivableOrderResolutionRequired = relationsEnabled
     && requiresExplicitReceivableOrderResolution(operation, businessType, result);
+  const explicitQuotationResolutionRequired = relationsEnabled
+    && requiresExplicitQuotationResolution(operation, businessType, result);
   const blockingIssues = [];
   const warnings = [];
   const requiredSelections = [];
@@ -900,62 +1097,176 @@ function evaluateRecordDomainPreflight(input = {}) {
       requiresUserSelection: false,
       candidates: [],
       candidatesResolved: false
-    };
+  };
   const resolvedCustomerId = relationsEnabled ? (customerResolution.customerId || fields.customerId || '') : '';
-  const selectedQuotationId = relationsEnabled ? (input.selectedQuotationId || fields.quotationId || '') : '';
+  const inputQuotationId = relationsEnabled ? String(input.selectedQuotationId || '') : '';
+  const fieldQuotationId = relationsEnabled ? String(fields.quotationId || '') : '';
+  const rawQuotationId = inputQuotationId || fieldQuotationId;
+  const quotationIdConflict = Boolean(
+    inputQuotationId && fieldQuotationId && inputQuotationId !== fieldQuotationId
+  );
+  const quotationSelectionConfirmed = Boolean(
+    fields.quotationSelectionConfirmed === true
+    || (input.userConfirmedRelations || []).includes('quotationId')
+  );
   const selectedOrderId = relationsEnabled ? (input.selectedOrderId || fields.orderId || '') : '';
   const selectedReceivableId = relationsEnabled ? (input.selectedReceivableId || fields.receivableId || '') : '';
+  const quotationRelationMatches = explicitQuotationResolutionRequired
+    ? classifyExplicitQuotationMatches(
+      state,
+      operation,
+      resolvedCustomerId,
+      fields,
+      explicitQuotationReference
+    )
+    : {
+      ambiguousMatches: [],
+      dangerousMatches: [],
+      safeMatches: [],
+      uniquelyRejected: null
+    };
+  const explicitSafeQuotationIds = quotationRelationMatches.safeMatches
+    .map((item) => String(item.id || ''));
+  const createOrderSelectionTrusted = operation !== 'create_order'
+    || (quotationSelectionConfirmed && !quotationIdConflict);
+  const selectedQuotationId = createOrderSelectionTrusted ? rawQuotationId : '';
   let quotation = null;
+  let rejectedQuotation = null;
+  let rejectedQuotationCodes = [];
   let order = null;
   let receivable = null;
   let quotationResolutionSource = 'NONE';
   let orderResolutionSource = 'NONE';
   let receivableResolutionSource = 'NONE';
 
-  if (selectedQuotationId) {
+  if (quotationIdConflict) {
+    requiredSelections.push('quotationId');
+    addIssue(blockingIssues, quotationChecks, issue(
+      'QUOTATION_SELECTION_CONFLICT', 'quotationId', 'ZERO_TOLERANCE',
+      'QUOTATION_SELECTION_CONFIRMATION', 'SELECT_QUOTATION',
+      [inputQuotationId, fieldQuotationId]
+    ));
+  }
+
+  if (rawQuotationId) {
     const deletedQuotationIds = getDeletedQuotationIds(state);
-    quotation = (state.quotations || []).find((item) => item.id === selectedQuotationId) || null;
-    if (quotation && deletedQuotationIds.has(String(selectedQuotationId))) quotation = null;
-    if (!quotation) addIssue(blockingIssues, quotationChecks, issue(
-      findOtherCollectionType(state, selectedQuotationId, 'quotation') ? 'UPDATE_TARGET_TYPE_MISMATCH' : 'QUOTATION_TARGET_NOT_FOUND',
-      'quotationId', 'ZERO_TOLERANCE', 'QUOTATION_TARGET', 'SELECT_QUOTATION', [selectedQuotationId]
-    ));
-    else if (recordCustomerMismatch(state, quotation, fields, resolvedCustomerId)) addIssue(blockingIssues, quotationChecks, issue(
-      'QUOTATION_CUSTOMER_MISMATCH', 'quotationId', 'ZERO_TOLERANCE', 'QUOTATION_CUSTOMER_LINK', 'SELECT_QUOTATION', [quotation.id]
-    ));
-    else {
-      quotationResolutionSource = 'EXPLICIT_SELECTION';
+    const rawQuotation = (state.quotations || [])
+      .find((item) => String(item.id || '') === rawQuotationId) || null;
+    let rawCodes;
+    if (!rawQuotation || deletedQuotationIds.has(rawQuotationId)) {
+      rawCodes = [findOtherCollectionType(state, rawQuotationId, 'quotation')
+        ? 'UPDATE_TARGET_TYPE_MISMATCH'
+        : 'QUOTATION_TARGET_NOT_FOUND'];
+    } else if (operation === 'update_order') {
       const convertedOrder = (state.orders || []).find((item) => (
-        item.id === quotation.convertedOrderId || item.quotationId === quotation.id
+        item.id === rawQuotation.convertedOrderId
+        || item.quotationId === rawQuotation.id
       ));
-      if (['create_order', 'update_order'].includes(operation)
-        && isQuotationConverted(state, quotation)
+      if (recordCustomerMismatch(state, rawQuotation, fields, resolvedCustomerId)) {
+        rawCodes = ['QUOTATION_CUSTOMER_MISMATCH'];
+      } else if (isQuotationConverted(state, rawQuotation)
         && (!selectedOrderId || !convertedOrder || convertedOrder.id !== selectedOrderId)) {
-        addIssue(blockingIssues, duplicateChecks, issue(
-          'QUOTATION_ALREADY_CONVERTED', 'quotationId', 'ZERO_TOLERANCE',
-          'QUOTATION_CONVERSION_DUPLICATE', 'SELECT_QUOTATION',
-          [quotation.id, convertedOrder && convertedOrder.id], { resolvableByUser: false }
+        rawCodes = ['QUOTATION_ALREADY_CONVERTED'];
+      } else {
+        rawCodes = [];
+      }
+    } else {
+      rawCodes = getQuotationSelectionBlockingCodes(
+        state, rawQuotation, operation, resolvedCustomerId
+      );
+    }
+    const explicitSelectionMismatch = operation === 'create_order'
+      && explicitQuotationResolutionRequired
+      && rawCodes.length === 0
+      && !explicitSafeQuotationIds.includes(rawQuotationId);
+    if (operation === 'create_order'
+      && (!quotationSelectionConfirmed || quotationIdConflict || explicitSelectionMismatch)) {
+      requiredSelections.push('quotationId');
+      if (rawCodes.length) {
+        rejectedQuotation = rawQuotation;
+        rejectedQuotationCodes = rawCodes.slice();
+      } else if (!quotationSelectionConfirmed || quotationIdConflict) {
+        addIssue(blockingIssues, quotationChecks, issue(
+          'QUOTATION_SELECTION_CONFIRMATION_REQUIRED', 'quotationId', 'DANGEROUS',
+          'QUOTATION_SELECTION_CONFIRMATION', 'SELECT_QUOTATION', [rawQuotationId]
         ));
       }
-      if (operation === 'update_quotation'
-        && (isQuotationConverted(state, quotation)
-          || INACTIVE_QUOTATION_STATUSES.includes(String(quotation.status || '').toLowerCase())
-          || quotation.status !== '待确认')) addIssue(blockingIssues, targetChecks, issue(
-        'QUOTATION_TARGET_NOT_UPDATABLE', 'quotationId', 'ZERO_TOLERANCE', 'UPDATE_TARGET_STATUS', 'SELECT_QUOTATION', [quotation.id], { resolvableByUser: false }
+      if (explicitSelectionMismatch) addIssue(blockingIssues, quotationChecks, issue(
+        'QUOTATION_TARGET_REQUIRED', 'quotationId', 'ZERO_TOLERANCE',
+        'EXPLICIT_QUOTATION_RELATION', 'SELECT_QUOTATION', explicitSafeQuotationIds
       ));
-      if (operation === 'create_order'
-        && !isQuotationConverted(state, quotation)
-        && String(quotation.status || '') !== ACTIVE_QUOTATION_STATUS) addIssue(
-        blockingIssues, quotationChecks,
-        issue('QUOTATION_TARGET_NOT_ACTIVE', 'quotationId', 'ZERO_TOLERANCE',
-          'QUOTATION_ORDER_SOURCE_STATUS', 'SELECT_QUOTATION', [quotation.id], { resolvableByUser: false })
-      );
+    } else if (rawCodes.length) {
+      rejectedQuotation = rawQuotation;
+      rejectedQuotationCodes = rawCodes.slice();
+    } else {
+      quotation = rawQuotation;
+      quotationResolutionSource = operation === 'create_order'
+        ? 'USER_CONFIRMED_SELECTION'
+        : 'EXPLICIT_SELECTION';
     }
   } else if (operation === 'update_quotation') {
     requiredSelections.push('quotationId');
     addIssue(blockingIssues, targetChecks, issue(
       'QUOTATION_TARGET_REQUIRED', 'quotationId', 'ZERO_TOLERANCE', 'UPDATE_TARGET_REQUIRED', 'SELECT_QUOTATION'
     ));
+  }
+
+  if (rejectedQuotationCodes.length) {
+    rejectedQuotationCodes.forEach((code) => {
+      const relatedIds = [rawQuotationId || (rejectedQuotation && rejectedQuotation.id)];
+      if (code === 'QUOTATION_ALREADY_CONVERTED') {
+        const convertedOrder = rejectedQuotation && (state.orders || []).find((item) => (
+          item.id === rejectedQuotation.convertedOrderId
+          || item.quotationId === rejectedQuotation.id
+        ));
+        addIssue(blockingIssues, duplicateChecks, issue(
+          code, 'quotationId', 'ZERO_TOLERANCE',
+          'QUOTATION_CONVERSION_DUPLICATE', 'SELECT_QUOTATION',
+          relatedIds.concat(convertedOrder && convertedOrder.id),
+          { resolvableByUser: false }
+        ));
+      } else {
+        addIssue(blockingIssues, quotationChecks, issue(
+          code, 'quotationId', 'ZERO_TOLERANCE',
+          code === 'QUOTATION_CUSTOMER_MISMATCH'
+            ? 'QUOTATION_CUSTOMER_LINK'
+            : 'QUOTATION_TARGET',
+          'SELECT_QUOTATION', relatedIds,
+          { resolvableByUser: false }
+        ));
+      }
+    });
+  }
+
+  if (operation === 'create_order' && explicitQuotationResolutionRequired && !rawQuotationId) {
+    if (quotationRelationMatches.safeMatches.length) {
+      requiredSelections.push('quotationId');
+      addIssue(blockingIssues, quotationChecks, issue(
+        'QUOTATION_TARGET_REQUIRED', 'quotationId', 'ZERO_TOLERANCE',
+        'EXPLICIT_QUOTATION_RELATION', 'SELECT_QUOTATION', explicitSafeQuotationIds
+      ));
+    } else if (quotationRelationMatches.uniquelyRejected) {
+      rejectedQuotation = quotationRelationMatches.uniquelyRejected.quotation;
+      rejectedQuotationCodes = quotationRelationMatches.uniquelyRejected.blockingCodes.slice();
+      rejectedQuotationCodes.forEach((code) => addIssue(
+        blockingIssues,
+        code === 'QUOTATION_ALREADY_CONVERTED' ? duplicateChecks : quotationChecks,
+        issue(
+          code, 'quotationId', 'ZERO_TOLERANCE',
+          code === 'QUOTATION_ALREADY_CONVERTED'
+            ? 'QUOTATION_CONVERSION_DUPLICATE'
+            : 'EXPLICIT_QUOTATION_RELATION',
+          'SELECT_QUOTATION', [rejectedQuotation.id],
+          { resolvableByUser: false }
+        )
+      ));
+    } else {
+      requiredSelections.push('quotationId');
+      addIssue(blockingIssues, quotationChecks, issue(
+        'QUOTATION_TARGET_REQUIRED', 'quotationId', 'ZERO_TOLERANCE',
+        'EXPLICIT_QUOTATION_RELATION', 'SELECT_QUOTATION', explicitSafeQuotationIds
+      ));
+    }
   }
 
   if (selectedOrderId) {
@@ -1397,48 +1708,87 @@ function evaluateRecordDomainPreflight(input = {}) {
   const quotationSelectionRequired = requiredSelections.includes('quotationId');
   const customerCandidates = customerResolution.candidates;
   const quotationCandidateCustomerId = customerResolution.customerId || '';
-  const quotationSelectionCandidates = buildQuotationSelectionCandidates(
-    state,
-    operation,
-    quotationCandidateCustomerId,
-    quotationSelectionRequired,
-    selectedQuotationId
-  );
+  const quotationSelectionCandidates = explicitQuotationResolutionRequired
+    ? quotationRelationMatches.safeMatches.map((item) => (
+      projectQuotationSelectionCandidate(
+        state,
+        item,
+        customerResolution.customer,
+        operation,
+        quotationSelectionRequired,
+        selectedQuotationId
+      )
+    ))
+    : buildQuotationSelectionCandidates(
+      state,
+      operation,
+      quotationCandidateCustomerId,
+      quotationSelectionRequired,
+      selectedQuotationId
+    );
   const safeQuotationIds = new Set(
     quotationSelectionCandidates.map((item) => String(item.quotationId || item.id || ''))
   );
-  const quotationRelationBlockingCodes = uniqueStrings(
-    blockingIssues
-      .filter((item) => (
-        item.field === 'quotationId'
-        || (item.relatedRecordIds || []).includes(selectedQuotationId)
-      ))
-      .map((item) => item.code)
+  const rejectedQuotationId = String(
+    rejectedQuotation && rejectedQuotation.id || rawQuotationId || ''
   );
-  const quotationSelectionSupported = ['update_quotation', 'create_order']
-    .includes(operation);
-  const quotationSelectionBlockingCodes = quotationSelectionSupported
-    ? getQuotationSelectionBlockingCodes(
-      state,
-      quotation,
-      operation,
-      quotationCandidateCustomerId
-    )
-    : [];
-  const rejectedQuotationReferences = selectedQuotationId
-    && !safeQuotationIds.has(String(selectedQuotationId))
-    && (quotationRelationBlockingCodes.length > 0 || quotationSelectionSupported)
+  const rejectedQuotationReferences = rejectedQuotationId
+    && rejectedQuotationCodes.length
+    && !safeQuotationIds.has(rejectedQuotationId)
     ? [{
-      quotationId: String(selectedQuotationId),
-      customerId: String(quotation && quotation.customerId || ''),
-      status: String(quotation && quotation.status || ''),
-      convertedOrderId: String(quotation && quotation.convertedOrderId || ''),
+      quotationId: rejectedQuotationId,
+      customerId: rejectedQuotationCodes.includes('QUOTATION_CUSTOMER_MISMATCH')
+        ? ''
+        : String(rejectedQuotation && rejectedQuotation.customerId || ''),
+      status: rejectedQuotationCodes.includes('QUOTATION_CUSTOMER_MISMATCH')
+        ? ''
+        : String(rejectedQuotation && rejectedQuotation.status || ''),
+      convertedOrderId: rejectedQuotationCodes.includes('QUOTATION_CUSTOMER_MISMATCH')
+        ? ''
+        : String(rejectedQuotation && rejectedQuotation.convertedOrderId || ''),
       selectionEligible: false,
-      selectionBlockingCodes: uniqueStrings(
-        quotationRelationBlockingCodes.concat(quotationSelectionBlockingCodes)
-      )
+      selectionBlockingCodes: uniqueStrings(rejectedQuotationCodes)
     }]
     : [];
+  const quotationRelationGate = {
+    applies: explicitQuotationResolutionRequired || (
+      operation === 'create_order' && Boolean(rawQuotationId)
+    ),
+    evidenceKind: explicitQuotationResolutionRequired
+      ? String(explicitQuotationReference && explicitQuotationReference.kind || '')
+      : '',
+    evidenceSource: explicitQuotationResolutionRequired
+      ? String(explicitQuotationReference && explicitQuotationReference.evidenceSource || '')
+      : '',
+    requiresResolution: explicitQuotationResolutionRequired,
+    providedQuotationId: rawQuotationId,
+    selectedQuotationId: String(quotation && quotation.id || ''),
+    selectionConfirmed: operation === 'create_order'
+      ? (quotationSelectionConfirmed && Boolean(quotation))
+      : Boolean(quotation),
+    safeCandidateIds: Array.from(safeQuotationIds),
+    dangerousMatchIds: quotationRelationMatches.dangerousMatches
+      .map((item) => String(item.quotation && item.quotation.id || '')),
+    ambiguousMatchIds: quotationRelationMatches.ambiguousMatches
+      .map((item) => String(item.quotation && item.quotation.id || '')),
+    rejectedQuotationIds: rejectedQuotationReferences
+      .map((item) => item.quotationId),
+    resolved: Boolean(quotation),
+    status: !explicitQuotationResolutionRequired && !rawQuotationId
+      ? 'NOT_APPLICABLE'
+      : (quotation
+        ? 'RESOLVED'
+        : (rejectedQuotationReferences.length
+          ? 'DANGEROUS_REFERENCE_REJECTED'
+          : (quotationIdConflict
+            ? 'SELECTION_CONFLICT'
+            : (quotationSelectionCandidates.length
+              ? 'SELECTION_REQUIRED'
+              : (quotationRelationMatches.ambiguousMatches.length
+                || quotationRelationMatches.dangerousMatches.length > 1
+                ? 'AMBIGUOUS_REFERENCE'
+                : 'NO_SAFE_CANDIDATE')))))
+  };
   // Compatibility alias: quotationCandidates now has the same safe-selection
   // semantics as quotationSelectionCandidates. Dangerous current references
   // are exposed only through rejectedQuotationReferences and relation checks.
@@ -1513,6 +1863,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     resolvedRelations,
     candidates,
     orderReferenceGate,
+    quotationRelationGate,
     amountChecks,
     stateFacts: {
       customers: (state.customers || []).map((item) => ({ id: item.id, name: item.name, mergedInto: item.mergedInto || '' })),
@@ -1541,6 +1892,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     resolvedRelations,
     candidates,
     orderReferenceGate,
+    quotationRelationGate,
     customerChecks,
     quotationChecks,
     orderChecks,
