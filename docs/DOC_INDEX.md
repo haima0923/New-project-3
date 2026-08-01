@@ -2,12 +2,12 @@
 
 本文件用于新开 Codex 对话时快速建立项目上下文。Codex 应先读本文件，再根据任务读取对应文档。
 
-> 当前明确报价转订单Deep Review候选分支：
-> `fix/record-route-quotation-deep-evidence-v1`。E2E V1.2 已把
+> 当前报价关系信任门禁候选分支：
+> `fix/record-quotation-relation-trust-gate-v1`。E2E V1.2 已把
 > raw parser、semantic result、proposal 和最终 outcome 分层；pending只表示最终
 > disposition，不再覆盖推测业务类型。当前120题双轮为：
-> `PASS=25 / CASE_FAIL=95 / RUNNER_ERROR=0 / BLOCKED=0 / SURFACE_ERROR=0`；54条P0失败全部单题重跑，
-> P1分层抽查11条，24个Cluster覆盖95条失败；Hybrid/Raw parser调用图两轮一致，
+> `PASS=26 / CASE_FAIL=94 / RUNNER_ERROR=0 / BLOCKED=0 / SURFACE_ERROR=0`；53条P0失败全部单题重跑，
+> P1分层抽查11条，23个Cluster覆盖94条失败；Hybrid/Raw parser调用图两轮一致，
 > evidence missing/orphan/uncorrelated/shadow均为0。网络/真实Storage/fixture/Worker/
 > 事务清理门禁均通过。`BASIC-010`的“这单”现在产生可信、未解析且不含orderId的结构化
 > 订单指代Evidence，并沿raw parser、Hybrid、Confirmation和Preflight输入完整透传；
@@ -56,15 +56,18 @@
 > create_order；“王总那个保温杯报价”产生未解析quotation关系Evidence，客户名为王总。
 > 只有转换和明确quotation关系两组可信Evidence同时存在时，首次PENDING才开放用户主动
 > Deep；真实`requestDeepReview()`后恰好一次AI_DEEP。本地关系贯穿Merge到Preflight，
-> `quotationId`仍为空，REL-008推进到下一层`AI_NORMALIZE_ERROR`。裸转换句继续PENDING且
-> 不开放Deep。Parser不读取State、不写quotationId。
+> `quotationId`仍为空。Domain Preflight只消费结构化Evidence和最新State：已转报价
+> `quo-syn-a-1`只作为`QUOTATION_ALREADY_CONVERTED`拒绝事实，安全候选为空、没有自动选择、
+> 正式/pending保存和业务Diff均为0，因此REL-008为PASS。安全报价即使唯一也必须由用户真实
+> `SELECT_QUOTATION`确认；AI建议、危险报价和未确认ID不能提升为可信关系。裸转换句继续
+> PENDING且不开放Deep。Parser不读取State、不写quotationId。
 > 当前已确认本地Parser缺陷数量为0。所有回归现在由默认离线、显式白名单且fail-closed的进程预加载门禁运行；
 > Live AI smoke要求CLI和环境双重授权，最终全量统一入口控制台审计的network attempt为0。
-> 该计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
+> 网络计数与六项报价关系信任计数已进入全量JSON硬门禁。误触审计不能证明远端绝对未收到旧请求；可以确认应用未收到
 > HTTP status、response headers、response body或真实AI结果，且未发现真实数据、密钥或
-> 认证头被请求携带的证据。本阶段只修改`utils/ai-parser.js`中的双Evidence Route资格和
-> 可信quotation关系Merge白名单，以及必要测试、Runner硬门禁和文档；没有修改Fixture、
-> Parser、页面、Preflight、business、Storage/Coordinator核心或Provider信任政策。
+> 认证头被请求携带的证据。本阶段生产代码只修改`utils/record-domain-preflight.js`中的
+> 报价关系信任门禁，并机械更新必要测试、Runner硬门禁和文档；没有修改Fixture、Parser、
+> Route、AI Normalizer/Merge、页面、business、Storage/Coordinator核心或Provider信任政策。
 > Shared生产提交仍关闭。
 > 状态为 **HEADLESS NODE PAGE-METHOD RUNNER / 120-CASE DETERMINISTIC BASELINE /
 > NOT WX WXML E2E / REAL QWEN NOT CALLED / NOT RELEASE**。
@@ -120,6 +123,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 | `docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md` | 单字“出”订单误触发、短语级Evidence、商业非订单与多商品交付保护及AMB-005重基线 |
 | `docs/RECORD_PARSER_QUOTATION_TO_ORDER_EVIDENCE_V1.md` | 报价转订单方向Evidence、未解析quotation关系、否定/反向边界及REL-008重基线 |
 | `docs/RECORD_ROUTE_QUOTATION_DEEP_EVIDENCE_V1.md` | 双Evidence报价转换Deep资格、用户主动单次AI_DEEP、本地quotation关系Merge保留和裸句保护 |
+| `docs/RECORD_QUOTATION_RELATION_TRUST_GATE_V1.md` | 明确报价转订单的用户确认信任边界、安全/危险候选分类、AI ID拒绝和REL-008零写入合同 |
 | `docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md` | Clear Non-Business canonical NO_RECORD资格、页面与business持久化硬门禁、合法PENDING及异步保护 |
 | `docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md` | Provider final callback、session/转写指纹绑定、FULL/HOME机械透传及非语音渠道保护 |
 | `docs/RECORD_VOICE_STANDARD_ROUTE_V1.md` | 可信语音终稿、充分业务Evidence和intent未决的窄AI_STANDARD资格、单次AI及保护边界 |
@@ -147,7 +151,7 @@ docs/CODEX_DAILY_PLAYBOOK.md
 - `docs/RECORD_SHARED_CORE_CONTRACT.md` 管共享核心的接口和平台边界。
 - `docs/RECORD_TEST_CONTRACT_V1.md` 管第一阶段自动测试、评分和报告。
 - `docs/RECORD_E2E_CASE_CONTRACT_V1.md` 管 120 条核心题的机器结构和跨 Runner 复用边界；PAGE、HEADLESS、TEST_ONLY隔离提交和事务exact replay必须分lane判分。
-- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`管raw/semantic/proposal/outcome分层；`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`管明确已收款parser与负例边界；`docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`管报价正向Evidence、订单否定范围与重新肯定保护；`docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`管单字“出”的订单信号边界与短语级Evidence；`docs/RECORD_PARSER_QUOTATION_TO_ORDER_EVIDENCE_V1.md`管报价转订单方向意图和未解析报价关系；`docs/RECORD_ROUTE_QUOTATION_DEEP_EVIDENCE_V1.md`管双Evidence Route资格、用户主动Deep和AI Merge关系信任边界，但不覆盖Preflight关系选择；`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`管Clear Non-Business canonical Route及零持久化门禁；`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`管语音Provider最终回调、session/指纹绑定及FULL/HOME透传；`docs/RECORD_VOICE_STANDARD_ROUTE_V1.md`管可信终稿、充分结构化业务Evidence和intent未决的窄AI_STANDARD资格；`docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`管明确订单指代的parser Evidence与机械透传；`docs/RECORD_RECEIVABLE_ROUTE_POLICY_V1.md`管Safe Local待收款Route；`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`管明确订单指代待收款的Preflight门禁；`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`管默认离线、Live授权和进程级网络门禁；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择；`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`管首页单商品编辑同步与保存前一致性门禁。它们都不代表WXML/DOM页面E2E或真实千问质量。
+- `docs/RECORD_E2E_RUNNER_KERNEL_V1.md` 管Headless执行内核；`docs/RECORD_E2E_FULL_CORPUS_BASELINE_V1.md`管120题双轮结果；`docs/RECORD_E2E_OBSERVATION_SEMANTICS_V1.md`管raw/semantic/proposal/outcome分层；`docs/RECORD_PARSER_PAYMENT_INTENT_V1.md`管明确已收款parser与负例边界；`docs/RECORD_PARSER_QUOTATION_NEGATION_V1.md`管报价正向Evidence、订单否定范围与重新肯定保护；`docs/RECORD_PARSER_ORDER_SIGNAL_BOUNDARY_V1.md`管单字“出”的订单信号边界与短语级Evidence；`docs/RECORD_PARSER_QUOTATION_TO_ORDER_EVIDENCE_V1.md`管报价转订单方向意图和未解析报价关系；`docs/RECORD_ROUTE_QUOTATION_DEEP_EVIDENCE_V1.md`管双Evidence Route资格、用户主动Deep和AI Merge关系保留；`docs/RECORD_QUOTATION_RELATION_TRUST_GATE_V1.md`管Preflight的安全/危险报价分类、用户确认、AI ID拒绝与零自动关联；`docs/RECORD_NO_RECORD_ROUTE_POLICY_V1.md`管Clear Non-Business canonical Route及零持久化门禁；`docs/RECORD_VOICE_COMPLETION_EVIDENCE_V1.md`管语音Provider最终回调、session/指纹绑定及FULL/HOME透传；`docs/RECORD_VOICE_STANDARD_ROUTE_V1.md`管可信终稿、充分结构化业务Evidence和intent未决的窄AI_STANDARD资格；`docs/RECORD_ORDER_REFERENCE_EVIDENCE_V1.md`管明确订单指代的parser Evidence与机械透传；`docs/RECORD_RECEIVABLE_ROUTE_POLICY_V1.md`管Safe Local待收款Route；`docs/RECORD_RECEIVABLE_ORDER_RELATION_V1.md`管明确订单指代待收款的Preflight门禁；`docs/RECORD_OFFLINE_TEST_SAFETY_V1.md`管默认离线、Live授权和进程级网络门禁；`docs/RECORD_SELECT_ORDER_SURFACE_V1.md`管完整页订单选择；`docs/RECORD_QUOTATION_CANDIDATE_SOURCE_V1.md`管安全报价候选与危险引用；`docs/RECORD_SELECT_QUOTATION_SURFACE_V1.md`管完整页报价选择；`docs/RECORD_HOME_PRIMARY_ITEM_SYNC_V1.md`管首页单商品编辑同步与保存前一致性门禁。它们都不代表WXML/DOM页面E2E或真实千问质量。
 - `docs/RECORD_SHARED_SAVE_CUTOVER_PLAN.md` 管共享保存切换控制与发布顺序；它从属于共享核心安全合同，不能覆盖生产固定 `LEGACY_ONLY` 或自行批准 canary。
 - `docs/RECORD_RELEASE_A_RC1_CHECKLIST.md` 管 Release A 候选证据和发布前人工检查；它不构成上传、发布或开启 Shared 的授权。
 - `PARSER_AI_AUDIT.md`、`BUSINESS_FLOW_AUDIT.md`、`TEST_AUDIT.md` 是代码事实审计；

@@ -1,6 +1,33 @@
 # 记一笔确定性全量基线 V1
 
-## 最新增量基线：Quotation-to-Order Parser Evidence（2026-08-01）
+## 最新增量基线：Quotation Relation Trust Gate（2026-08-01）
+
+在冻结基线`108209ae98bce5f85205ed24ab117afa4d8d6f80`上，Domain Preflight开始直接
+消费既有`LOCAL_PARSER`报价关系Evidence和最新State。明确报价转订单时，安全报价无论
+唯一或多张都必须经过真实`SELECT_QUOTATION`确认；AI建议、未确认ID、已转单、删除、失效、
+跨客户或不存在的报价均不能成为已解析关系，也不能向订单继承字段。
+
+REL-008命名匹配的`quo-syn-a-1`已转为订单，因此只进入
+`rejectedQuotationReferences / QUOTATION_ALREADY_CONVERTED`，不进入安全候选，不写入
+`quotationId`，正式及pending保存和业务Diff均为0，Case由失败变为PASS。双轮实际结果：
+
+```text
+ACTIVE        120
+Executed      120
+PASS           26
+CASE_FAIL      94
+RUNNER_ERROR    0
+BLOCKED         0
+SURFACE_ERROR   0
+```
+
+与冻结HEAD仓库外只读归档的25/95逐题比较，只有REL-008改变；其他119题的状态、最早失败层、
+Route、AI次数和业务Diff不变。53条P0失败全部单题重跑，P1分层抽查11条，23个Cluster覆盖
+94/94失败，隔离提交Lane保持88。六项报价信任硬计数及网络、Storage、Fixture、Parser
+Graph、Journal/Backup门禁两轮均为0。完整合同见
+`docs/RECORD_QUOTATION_RELATION_TRUST_GATE_V1.md`。
+
+## 上一增量基线：Quotation-to-Order Parser Evidence（2026-08-01）
 
 在冻结基线`38a416f9c936cd14dc4352d092e55336cc5cf0a3`上，REL-008的方向性转换由
 Raw quotation修正为order，现有Semantic自然得到`order / create_order`；客户从“把王总”
@@ -931,3 +958,42 @@ Evidence和业务Diff均未变化。54条P0失败全部单题重跑，P1分层�
 `duplicateDeepAIRequestCount`、`quotationLocalEvidenceDropCount`、
 `untrustedQuotationIdPromotionCount`以及网络、真实Storage、Fixture、Parser Graph、
 Journal/Backup等硬门禁均为0。
+
+## 28. REL-008报价关系信任门禁重基线
+
+REL-008继续通过真实页面`requestDeepReview()`进入一次`AI_DEEP`，AI请求恰好1次。本地
+quotation关系Evidence从Raw、Hybrid、Confirmation到Preflight输入保持不变；AI建议不再
+被期待或允许提升为可信`quotationId`。
+
+最新State中命名匹配的`quo-syn-a-1`已经转为`ord-from-quo-a`，因此Preflight输出：
+
+```text
+selectedQuotationId = ""
+quotationSelectionConfirmed = false
+safeQuotationCandidateIds = []
+rejectedQuotationReferences = [quo-syn-a-1 / QUOTATION_ALREADY_CONVERTED]
+quotationRelationGate.status = DANGEROUS_REFERENCE_REJECTED
+quotationRelationGate.resolved = false
+requiredSelections = []
+domainCanSaveFormal = false
+```
+
+正式和pending保存均未执行，业务Diff为0，REL-008由
+`CASE_FAIL / AI_NORMALIZE_ERROR / ASSERTION_FAILED:fields.quotationId`变为PASS。
+
+120题离线双轮结果一致：
+
+```text
+ACTIVE         120
+PASS            26
+CASE_FAIL       94
+RUNNER_ERROR     0
+BLOCKED          0
+SURFACE_ERROR    0
+```
+
+起始HEAD `108209ae98bce5f85205ed24ab117afa4d8d6f80`的仓库外只读归档重跑为25/95；
+逐题比较只有REL-008状态和失败统计变化，其他119题状态、最早失败层、Route、AI次数和业务
+Diff相同。53条P0失败全部单题重跑，P1分层抽查11条，23个Cluster覆盖94/94失败，隔离提交
+Lane保持88。新增六项报价关系信任计数与网络、真实Storage、Fixture、Parser Graph、
+Journal/Backup等硬门禁两轮全部为0。

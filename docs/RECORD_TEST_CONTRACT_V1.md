@@ -1595,3 +1595,33 @@ AI Merge只能机械保留本地可信quotation Evidence。AI无relation、空re
 `SURFACE_ERROR=0`。仅REL-008的Route、AI次数和最早失败层改变；其他119题状态、最早失败
 层、Route、AI次数、关系Evidence和业务Diff不变，隔离提交Lane仍为88。完整合同见
 `docs/RECORD_ROUTE_QUOTATION_DEEP_EVIDENCE_V1.md`。
+
+## 46. 明确报价转订单关系信任门禁
+
+对带有可信`LOCAL_PARSER`明确quotation关系Evidence的`create_order`，Domain Preflight必须
+直接消费结构化Evidence和最新State，不得扫描原文。安全报价无论唯一或多张都只形成
+`safeQuotationCandidateIds`，在真实`SELECT_QUOTATION`确认前不得写入`quotationId`或解除
+阻断；危险、跨客户、不存在及AI建议ID不得成为已解析关系。
+
+唯一命名匹配且已转单、删除或失效的报价进入`rejectedQuotationReferences`；安全与危险
+并存时只暴露安全候选；多危险匹配保持歧义，不自动选中具体报价。只有用户确认且最新State
+复核通过的安全选择可成为`USER_CONFIRMED_SELECTION`。普通`create_order`及历史
+`update_order`关系兼容语义保持不变。
+
+REL-008现在保持`AI_DEEP / AIRequestCount=1`，但`quotationId`为空、确认false、安全候选空，
+已转报价`quo-syn-a-1`仅作为`QUOTATION_ALREADY_CONVERTED`拒绝事实；Preflight和生产资格
+阻断，正式/pending保存与业务Diff均为0，因此Case为PASS。全量新增并要求以下计数为0：
+
+```text
+unconfirmedQuotationIdAcceptedCount
+aiQuotationIdPromotedCount
+dangerousQuotationSelectedCount
+dangerousQuotationFieldInheritanceCount
+quotationAutoSelectionCount
+quotationSelectionMissingCount
+```
+
+120题离线双轮均为`PASS=26 / CASE_FAIL=94 / RUNNER_ERROR=0 / BLOCKED=0`。与起始HEAD的
+仓库外只读归档25/95逐题对比，只有REL-008状态变化；其他119题的状态、最早失败层、Route、
+AI次数和业务Diff不变，隔离提交Lane保持88。完整政策见
+`docs/RECORD_QUOTATION_RELATION_TRUST_GATE_V1.md`。
