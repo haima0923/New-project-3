@@ -544,6 +544,95 @@ async function run() {
     'AI payload must not create trusted local relation evidence'
   );
 
+  const localQuotationReference = conversionTarget.relation_references;
+  const quotationAiBase = {
+    provider: 'mock',
+    intent: 'order',
+    operation: 'create_order',
+    fields: Object.assign({}, conversionTarget.fields),
+    missing_fields: [],
+    low_confidence_fields: [],
+    field_conflicts: []
+  };
+  const quotationMergeVariants = [
+    {
+      label: 'AI没有返回relation',
+      ai: quotationAiBase
+    },
+    {
+      label: 'AI返回空relation',
+      ai: Object.assign({}, quotationAiBase, { relation_references: {} })
+    },
+    {
+      label: 'AI只返回quotation candidates',
+      ai: Object.assign({}, quotationAiBase, {
+        quotation_candidates: [{ id: 'quo-ai-candidate', reason: '仅供用户选择' }]
+      })
+    },
+    {
+      label: 'AI返回冲突quotation建议',
+      ai: Object.assign({}, quotationAiBase, {
+        fields: Object.assign({}, quotationAiBase.fields, {
+          quotationId: 'quo-ai-forged'
+        }),
+        relation_references: {
+          quotation: {
+            entityType: 'QUOTATION',
+            kind: 'AI_SUGGESTION',
+            explicit: true,
+            requiresResolution: false,
+            sourceText: '伪造报价',
+            sourceSpan: { start: 0, end: 4 },
+            confidence: 1,
+            normalizedReference: 'AI:QUOTATION',
+            resolvedEntityId: 'quo-ai-forged',
+            evidenceSource: 'AI'
+          }
+        }
+      })
+    }
+  ];
+  quotationMergeVariants.forEach(({ label, ai }) => {
+    const result = normalizeAiResult(
+      conversionTarget,
+      ai,
+      { providerKind: 'MOCK' }
+    );
+    assert.deepStrictEqual(
+      result.relation_references,
+      localQuotationReference,
+      `${label}: LOCAL_PARSER quotation Evidence必须完整保留`
+    );
+    assert.deepStrictEqual(
+      result.relation_references.quotation.sourceSpan,
+      { start: 1, end: 10 },
+      `${label}: AI不得改写本地sourceSpan`
+    );
+    assert.strictEqual(
+      result.relation_references.quotation.resolvedEntityId,
+      null,
+      `${label}: AI不得解析quotation relation`
+    );
+    assert.strictEqual(
+      result.fields.quotationId,
+      undefined,
+      `${label}: AI不得把候选或直接ID升级成quotationId`
+    );
+  });
+
+  const aiQuotationReferenceCannotCreate = normalizeAiResult(
+    bareConversion,
+    Object.assign({}, quotationAiBase, {
+      relation_references: localQuotationReference
+    }),
+    { providerKind: 'MOCK' }
+  );
+  assert.strictEqual(
+    aiQuotationReferenceCannotCreate.relation_references,
+    undefined,
+    '缺少本地quotation Evidence时，AI不得创造可信报价关系'
+  );
+
   const targetRun = await runSuite({
     caseId: 'REC-E2E-BASIC-010',
     repeat: 1
@@ -624,7 +713,7 @@ async function run() {
   });
   const conversionCase = conversionRun.attempts[0].results[0];
   assert.strictEqual(conversionCase.caseStatus, 'CASE_FAIL');
-  assert.strictEqual(conversionCase.failureStage, 'ROUTE_ERROR');
+  assert.strictEqual(conversionCase.failureStage, 'AI_NORMALIZE_ERROR');
   const conversionRaw = conversionCase.parserObservation.summary
     .canonicalLocalResults[0].resultSummary;
   assert.strictEqual(conversionRaw.businessType, 'order');
@@ -735,8 +824,34 @@ async function run() {
     ),
     (error) => error.code === 'RELATION_EVIDENCE_PROPAGATION_MISMATCH'
   );
-  assert.strictEqual(conversionCase.routeEvidence.actualRoute, 'PENDING');
-  assert.strictEqual(conversionCase.routeEvidence.AIRequestCount, 0);
+  assert.strictEqual(conversionCase.routeEvidence.initialRoute, 'PENDING');
+  assert.strictEqual(conversionCase.routeEvidence.initialDeepReviewAvailable, true);
+  assert.strictEqual(
+    conversionCase.routeEvidence.quotationConversionDeepReviewEligible,
+    true
+  );
+  assert.strictEqual(conversionCase.routeEvidence.actualRoute, 'AI_DEEP');
+  assert.strictEqual(conversionCase.routeEvidence.AIRequestCount, 1);
+  assert.strictEqual(conversionCase.routeEvidence.standardAIRequestCount, 0);
+  assert.strictEqual(conversionCase.routeEvidence.deepAIRequestCount, 1);
+  assert.strictEqual(
+    conversionCase.routeEvidence.requestDeepReviewInvocationCount,
+    1
+  );
+  assert.strictEqual(conversionCase.routeEvidence.secondHybridInvocationCount, 1);
+  assert.strictEqual(
+    conversionCase.routeEvidence.duplicateDeepReviewInvocationCount,
+    0
+  );
+  assert.strictEqual(conversionCase.routeEvidence.duplicateDeepAIRequestCount, 0);
+  assert.strictEqual(
+    conversionCase.routeEvidence.quotationLocalEvidenceDropCount,
+    0
+  );
+  assert.strictEqual(
+    conversionCase.routeEvidence.untrustedQuotationIdPromotionCount,
+    0
+  );
   Object.values(conversionCase.businessDiff).forEach((diff) => {
     assert.deepStrictEqual(diff.created, []);
     assert.deepStrictEqual(diff.deleted, []);
@@ -787,7 +902,7 @@ async function run() {
     'state-independent=6',
     'paste-span-basis=1',
     'propagation=raw/hybrid/confirmation/preflight-input',
-    'ai-merge-guard=2',
+    'ai-merge-guard=7',
     'runner-targets=2',
     `quotation-conversion-positive=${conversionPositives.length}`,
     `quotation-conversion-negative=${conversionNegatives.length}`,

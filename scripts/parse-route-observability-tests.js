@@ -5,6 +5,8 @@ const {
   parseHybridInput,
   evaluateClearNonBusinessNoRecord,
   evaluateCompletedVoiceStandardReview,
+  evaluateExplicitQuotationConversionDeepReview,
+  getTrustedLocalUnresolvedQuotationReference,
   evaluateSafeLocalReceivableRoute,
   requestWithDeadline,
   ROUTE_AI_STANDARD,
@@ -818,6 +820,114 @@ async function main() {
     { reviewMode: 'deep' }
   )));
   assert.strictEqual(deepUsed.parse_route.decision, ROUTE_AI_DEEP, '只有用户主动点击后才允许走深度核对');
+
+  const explicitQuotationConversionTexts = [
+    '把王总那个保温杯报价再转成订单',
+    '把王总那个报价转成订单',
+    '将李姐那份报价转为订单',
+    '这张报价转成订单',
+    '那份报价转为订单'
+  ];
+  for (const text of explicitQuotationConversionTexts) {
+    const initial = await parseHybridInput(payload(text, 'typed'));
+    const qualification = evaluateExplicitQuotationConversionDeepReview(initial);
+    assert.strictEqual(qualification.eligible, true, `${text}必须同时具备转换和报价关系Evidence`);
+    assert.strictEqual(initial.parse_route.decision, ROUTE_PENDING, `${text}初次解析必须保持PENDING`);
+    assert.strictEqual(initial.parse_route.deep_review_available, true, `${text}必须开放用户主动Deep入口`);
+    assert.strictEqual(initial.parse_route.quotation_conversion_deep_review_eligible, true);
+    assert(
+      initial.parse_route.quotation_conversion_deep_review_reason_codes
+        .includes('QUOTATION_CONVERSION_DEEP_REVIEW_AVAILABLE')
+    );
+    assert.strictEqual(initial.ai_fallback.attempted, false, `${text}初次解析不得自动调用AI`);
+    assert(initial.relation_references && initial.relation_references.quotation);
+    assert.strictEqual(initial.relation_references.quotation.resolvedEntityId, null);
+
+    const deep = await withFakeWechat('success', () => parseHybridInput(Object.assign(
+      payload(text, 'typed'),
+      { reviewMode: 'deep' }
+    )));
+    assert.strictEqual(deep.parse_route.decision, ROUTE_AI_DEEP, `${text}主动点击后必须进入AI_DEEP`);
+    assert.strictEqual(deep.ai_fallback.attempted, true, `${text}主动点击后必须调用一次Deep AI`);
+    assert.deepStrictEqual(
+      deep.relation_references,
+      initial.relation_references,
+      `${text}的可信本地报价关系必须穿过AI Merge`
+    );
+    assert.strictEqual(deep.fields.quotationId, undefined, `${text}不得由AI自动生成quotationId`);
+  }
+
+  const trustedQuotationShape = (await parseHybridInput(
+    payload(explicitQuotationConversionTexts[0], 'typed')
+  )).relation_references.quotation;
+  const malformedQuotationReferences = [
+    Object.assign({}, trustedQuotationShape, { kind: 'AI_SUGGESTION' }),
+    Object.assign({}, trustedQuotationShape, { sourceField: 'STATE' }),
+    Object.assign({}, trustedQuotationShape, { sourceText: '' }),
+    Object.assign({}, trustedQuotationShape, { sourceSpan: { start: 1, end: 9 } }),
+    Object.assign({}, trustedQuotationShape, { confidence: 0 }),
+    Object.assign({}, trustedQuotationShape, { normalizedReference: '' })
+  ];
+  malformedQuotationReferences.forEach((reference, index) => {
+    assert.strictEqual(
+      getTrustedLocalUnresolvedQuotationReference(reference),
+      null,
+      `畸形quotation Evidence ${index + 1}不得取得可信资格`
+    );
+  });
+
+  const bareQuotationConversionTexts = [
+    '报价再转成订单',
+    '报价转成订单',
+    '报价转订单',
+    '从报价生成订单'
+  ];
+  for (const text of bareQuotationConversionTexts) {
+    const result = await parseHybridInput(payload(text, 'typed'));
+    assert.strictEqual(result.parse_route.decision, ROUTE_PENDING, `${text}必须保持PENDING`);
+    assert.strictEqual(Boolean(result.parse_route.deep_review_available), false, `${text}不得开放特殊Deep入口`);
+    assert.strictEqual(result.ai_fallback.attempted, false, `${text}不得自动调用AI`);
+    assert.strictEqual(result.relation_references, undefined, `${text}不得制造quotation relation Evidence`);
+    const conversionSignals = result.intent_evidence
+      && result.intent_evidence.quotationToOrderConversionSignals || [];
+    if (text !== '从报价生成订单') {
+      assert(conversionSignals.length > 0, `${text}应保留既有转换Evidence`);
+      assert.strictEqual(
+        result.parse_route.quotation_conversion_deep_review_eligible,
+        false
+      );
+      assert(
+        result.parse_route.quotation_conversion_deep_review_exclusion_codes
+          .includes('EXPLICIT_QUOTATION_REFERENCE_MISSING')
+      );
+    }
+  }
+
+  const quotationConversionNegativeTexts = [
+    '王总要保温杯',
+    '给王总做个保温杯报价',
+    '报价已经转成订单了',
+    '报价转成订单了吗',
+    '不要把这个报价转成订单',
+    '报价还没转成订单',
+    '报价转订单失败了',
+    '把订单转成报价'
+  ];
+  for (const text of quotationConversionNegativeTexts) {
+    const result = await parseHybridInput(payload(text, 'typed'));
+    assert.notStrictEqual(
+      result.parse_route.quotation_conversion_deep_review_eligible,
+      true,
+      `${text}不得取得报价转订单特殊Deep资格`
+    );
+    assert.strictEqual(result.parse_route.decision, ROUTE_PENDING, `${text}必须保持PENDING`);
+    assert.strictEqual(
+      Boolean(result.parse_route.deep_review_available),
+      false,
+      `${text}不得开放特殊Deep入口`
+    );
+    assert.strictEqual(result.ai_fallback.attempted, false, `${text}不得因本轮规则自动调用AI`);
+  }
 
   const failedButComplete = Object.assign({}, failed, {
     intent: 'order',

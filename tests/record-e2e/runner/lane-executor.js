@@ -142,6 +142,54 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
     event && event.path === '/api/ai/parse/deep'
   )).length;
   const observedAiRequestCount = standardAiRequestCount + deepAiRequestCount;
+  const initialHybrid = hybridInvocations[0] || {};
+  const initialHybridSummary = initialHybrid.resultSummary || {};
+  const deepReviewHybridInvocations = hybridInvocations.filter((item) => (
+    item && item.phase === 'DEEP_REVIEW'
+  ));
+  const pageMethodCalls = observation && observation.driver
+    && observation.driver.evidence
+    && observation.driver.evidence.pageMethodCalls || {};
+  const requestDeepReviewInvocationCount = Number(
+    pageMethodCalls.requestDeepReview || 0
+  );
+  const rawLocalQuotationReferences = hybridInvocations.flatMap((hybrid) => (
+    (hybrid.rawInvocations || []).map((raw) => (
+      raw.resultSummary
+      && raw.resultSummary.relationReferences
+      && raw.resultSummary.relationReferences.quotation
+    )).filter((reference) => (
+      reference
+      && reference.evidenceSource === 'LOCAL_PARSER'
+      && reference.resolvedEntityId === null
+    ))
+  ));
+  const quotationLocalEvidenceDropCount = hybridInvocations.reduce((count, hybrid) => {
+    const localReference = (hybrid.rawInvocations || []).map((raw) => (
+      raw.resultSummary
+      && raw.resultSummary.relationReferences
+      && raw.resultSummary.relationReferences.quotation
+    )).find((reference) => (
+      reference
+      && reference.evidenceSource === 'LOCAL_PARSER'
+      && reference.resolvedEntityId === null
+    ));
+    if (!localReference) return count;
+    const hybridReference = hybrid.resultSummary
+      && hybrid.resultSummary.relationReferences
+      && hybrid.resultSummary.relationReferences.quotation;
+    if (!hybridReference) return count + 1;
+    return stableHash(localReference, 'quotation-local-evidence-v1')
+      === stableHash(hybridReference, 'quotation-local-evidence-v1')
+      ? count
+      : count + 1;
+  }, 0);
+  const finalFields = parseResult.fields || {};
+  const untrustedQuotationIdPromotionCount = rawLocalQuotationReferences.length
+    && finalFields.quotationId
+    && finalFields.quotationSelectionConfirmed !== true
+    ? 1
+    : 0;
   const parserCollectionCompleted = Boolean(
     rawParser
     && rawParser.collectionCompleted === true
@@ -210,6 +258,11 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
       : (aiFallback.attempted === true ? 1 : 0),
     standardAIRequestCount: standardAiRequestCount,
     deepAIRequestCount: deepAiRequestCount,
+    duplicateDeepAIRequestCount: Math.max(0, deepAiRequestCount - 1),
+    duplicateDeepReviewInvocationCount: Math.max(
+      0,
+      requestDeepReviewInvocationCount - 1
+    ),
     duplicateVoiceStandardAIRequestCount: voiceEvidencePresent
       ? Math.max(0, standardAiRequestCount - 1)
       : 0,
@@ -222,9 +275,23 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
     postAINormalizedResult: safeClone(parseTrace.aiDraft || null),
     postAIMergedSemanticResult: safeClone(parseTrace.finalDraft || null),
     deepReviewAvailable: route.deep_review_available === true,
+    initialDeepReviewAvailable: initialHybridSummary.deepReviewAvailable === true,
+    initialRoute: String(initialHybridSummary.route || '').toUpperCase() || null,
+    quotationConversionDeepReviewEligible:
+      initialHybridSummary.quotationConversionDeepReviewEligible === true,
+    quotationConversionDeepReviewExclusionCodes: safeClone(
+      initialHybridSummary.quotationConversionDeepReviewExclusionCodes || []
+    ),
+    quotationConversionDeepReviewReasonCodes: safeClone(
+      initialHybridSummary.quotationConversionDeepReviewReasonCodes || []
+    ),
     deepReviewRequested: hybridInvocations.some((item) => (
       item && item.phase === 'DEEP_REVIEW'
     )),
+    requestDeepReviewInvocationCount,
+    secondHybridInvocationCount: deepReviewHybridInvocations.length,
+    quotationLocalEvidenceDropCount,
+    untrustedQuotationIdPromotionCount,
     inputChannel: firstVoiceEvidence.inputChannel || null,
     parseHybridReceivedVoiceEvidence: voiceEvidencePresent,
     voiceCompletionEvidencePresent: voiceEvidencePresent,

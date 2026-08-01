@@ -65,7 +65,7 @@ function summarizeRawResult(result) {
 
 function summarizeHybridResult(result) {
   const route = result && result.parse_route || {};
-  return {
+  const summary = {
     businessType: String(result && result.intent || 'unknown'),
     operation: result && result.operation || null,
     relationReferences: compactRelationReferences(
@@ -89,6 +89,21 @@ function summarizeHybridResult(result) {
     ),
     source: result && result.source || ''
   };
+  if (Object.prototype.hasOwnProperty.call(
+    route,
+    'quotation_conversion_deep_review_eligible'
+  )) {
+    summary.deepReviewAvailable = route.deep_review_available === true;
+    summary.quotationConversionDeepReviewEligible =
+      route.quotation_conversion_deep_review_eligible === true;
+    summary.quotationConversionDeepReviewExclusionCodes = safeClone(
+      route.quotation_conversion_deep_review_exclusion_codes || []
+    );
+    summary.quotationConversionDeepReviewReasonCodes = safeClone(
+      route.quotation_conversion_deep_review_reason_codes || []
+    );
+  }
+  return summary;
 }
 
 function summarizeVoiceInputEvidence(payload = {}) {

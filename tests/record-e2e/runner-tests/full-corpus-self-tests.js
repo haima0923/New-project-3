@@ -290,6 +290,61 @@ const tests = [
     }
   },
   {
+    name: 'full-attempt-rejects-quotation-deep-and-trust-boundary-counter-regressions',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      [
+        ['duplicateDeepReviewInvocationCount', 'DUPLICATE_DEEP_REVIEW_INVOCATION'],
+        ['duplicateDeepAIRequestCount', 'DUPLICATE_DEEP_AI_REQUEST'],
+        ['quotationLocalEvidenceDropCount', 'QUOTATION_LOCAL_EVIDENCE_DROPPED'],
+        ['untrustedQuotationIdPromotionCount', 'UNTRUSTED_QUOTATION_ID_PROMOTED']
+      ].forEach(([field, code]) => {
+        const result = cleanResult('CASE-A');
+        result.routeEvidence = { [field]: 1 };
+        expectThrow(
+          () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+          code
+        );
+      });
+    }
+  },
+  {
+    name: 'full-attempt-requires-one-user-initiated-deep-for-explicit-quotation-conversion',
+    run() {
+      const plans = [{
+        testCase: {
+          caseId: 'CASE-A',
+          execution: { lanes: ['PAGE_PRODUCTION_OBSERVATION'] }
+        }
+      }];
+      const result = cleanResult('CASE-A');
+      result.routeEvidence = {
+        actualRoute: 'PENDING',
+        AIRequestCount: 0,
+        deepAIRequestCount: 0,
+        duplicateDeepAIRequestCount: 0,
+        duplicateDeepReviewInvocationCount: 0,
+        initialDeepReviewAvailable: true,
+        initialRoute: 'PENDING',
+        quotationConversionDeepReviewEligible: true,
+        quotationLocalEvidenceDropCount: 0,
+        requestDeepReviewInvocationCount: 1,
+        secondHybridInvocationCount: 1,
+        standardAIRequestCount: 0,
+        untrustedQuotationIdPromotionCount: 0
+      };
+      expectThrow(
+        () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
+        'QUOTATION_CONVERSION_DEEP_REVIEW_COUNT_MISMATCH'
+      );
+    }
+  },
+  {
     name: 'full-attempt-reports-zero-payment-balance-integrity-counts',
     run() {
       const plans = [{
@@ -314,9 +369,13 @@ const tests = [
         paymentKindBalanceMismatchCount: 0
       });
       const audit = assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans);
+      assert.strictEqual(audit.duplicateDeepAIRequestCount, 0);
+      assert.strictEqual(audit.duplicateDeepReviewInvocationCount, 0);
       assert.strictEqual(audit.duplicatePaymentCommitCount, 0);
       assert.strictEqual(audit.paymentKindBalanceMismatchCount, 0);
+      assert.strictEqual(audit.quotationLocalEvidenceDropCount, 0);
       assert.strictEqual(audit.overpaymentCommitCount, 0);
+      assert.strictEqual(audit.untrustedQuotationIdPromotionCount, 0);
     }
   },
   {

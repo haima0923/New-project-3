@@ -243,6 +243,45 @@ function assertRuntimeIsolation(result) {
     'VOICE_STALE_SESSION_ACCEPTED'
   );
 
+  const routeEvidence = result.routeEvidence || {};
+  assertAuditZero(
+    Number(routeEvidence.duplicateDeepReviewInvocationCount || 0),
+    `${result.caseId}.duplicateDeepReviewInvocationCount`,
+    'DUPLICATE_DEEP_REVIEW_INVOCATION'
+  );
+  assertAuditZero(
+    Number(routeEvidence.duplicateDeepAIRequestCount || 0),
+    `${result.caseId}.duplicateDeepAIRequestCount`,
+    'DUPLICATE_DEEP_AI_REQUEST'
+  );
+  assertAuditZero(
+    Number(routeEvidence.quotationLocalEvidenceDropCount || 0),
+    `${result.caseId}.quotationLocalEvidenceDropCount`,
+    'QUOTATION_LOCAL_EVIDENCE_DROPPED'
+  );
+  assertAuditZero(
+    Number(routeEvidence.untrustedQuotationIdPromotionCount || 0),
+    `${result.caseId}.untrustedQuotationIdPromotionCount`,
+    'UNTRUSTED_QUOTATION_ID_PROMOTED'
+  );
+  if (routeEvidence.quotationConversionDeepReviewEligible === true) {
+    const route = String(routeEvidence.actualRoute || '').toUpperCase();
+    if (routeEvidence.initialRoute !== 'PENDING'
+      || routeEvidence.initialDeepReviewAvailable !== true
+      || Number(routeEvidence.requestDeepReviewInvocationCount || 0) !== 1
+      || Number(routeEvidence.secondHybridInvocationCount || 0) !== 1
+      || route !== 'AI_DEEP'
+      || Number(routeEvidence.AIRequestCount || 0) !== 1
+      || Number(routeEvidence.deepAIRequestCount || 0) !== 1
+      || Number(routeEvidence.standardAIRequestCount || 0) !== 0) {
+      throw integrityError(
+        'QUOTATION_CONVERSION_DEEP_REVIEW_COUNT_MISMATCH',
+        `${result.caseId} explicit quotation conversion must use one user-initiated Deep request`,
+        { routeEvidence }
+      );
+    }
+  }
+
   const paymentAudit = auditPaymentCommits(result);
   assertAuditZero(
     paymentAudit.duplicatePaymentCommitCount,
@@ -431,6 +470,20 @@ function assertFullAttemptIntegrity(attempt, plans) {
     duplicatePaymentCommitCount: paymentAudits.reduce((sum, audit) => (
       sum + audit.duplicatePaymentCommitCount
     ), 0),
+    duplicateDeepAIRequestCount: attempt.results.reduce((sum, result) => (
+      sum + Number(
+        result.routeEvidence
+        && result.routeEvidence.duplicateDeepAIRequestCount
+        || 0
+      )
+    ), 0),
+    duplicateDeepReviewInvocationCount: attempt.results.reduce((sum, result) => (
+      sum + Number(
+        result.routeEvidence
+        && result.routeEvidence.duplicateDeepReviewInvocationCount
+        || 0
+      )
+    ), 0),
     duplicateVoiceStandardAIRequestCount: attempt.results.reduce((sum, result) => (
       sum + Number(
         result.voiceCompletionEvidence
@@ -459,10 +512,24 @@ function assertFullAttemptIntegrity(attempt, plans) {
     paymentKindBalanceMismatchCount: paymentAudits.reduce((sum, audit) => (
       sum + audit.paymentKindBalanceMismatchCount
     ), 0),
+    quotationLocalEvidenceDropCount: attempt.results.reduce((sum, result) => (
+      sum + Number(
+        result.routeEvidence
+        && result.routeEvidence.quotationLocalEvidenceDropCount
+        || 0
+      )
+    ), 0),
     realNetworkRequests: 0,
     realWxStorageCalls: 0,
     shadowParserInvocationCount: 0,
     uncorrelatedInvocationCount: 0,
+    untrustedQuotationIdPromotionCount: attempt.results.reduce((sum, result) => (
+      sum + Number(
+        result.routeEvidence
+        && result.routeEvidence.untrustedQuotationIdPromotionCount
+        || 0
+      )
+    ), 0),
     unknownFakeRouteRequests: 0,
     voiceEvidenceMissingCount: 0,
     voiceFingerprintMismatchCount: 0,

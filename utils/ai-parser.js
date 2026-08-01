@@ -1898,28 +1898,34 @@ function normalizeObject(value, fallback = {}) {
 function cloneLocalRelationReferences(value) {
   const references = normalizeObject(value, null);
   if (!references) return null;
+  const cloneReference = (reference) => ({
+    entityType: String(reference.entityType || ''),
+    kind: String(reference.kind || ''),
+    explicit: reference.explicit === true,
+    requiresResolution: reference.requiresResolution === true,
+    sourceText: String(reference.sourceText || ''),
+    sourceSpan: {
+      start: Number(reference.sourceSpan && reference.sourceSpan.start),
+      end: Number(reference.sourceSpan && reference.sourceSpan.end)
+    },
+    confidence: Number(reference.confidence),
+    normalizedReference: String(reference.normalizedReference || ''),
+    resolvedEntityId: reference.resolvedEntityId === null
+      ? null
+      : String(reference.resolvedEntityId || ''),
+    evidenceSource: String(reference.evidenceSource || ''),
+    sourceField: String(reference.sourceField || '')
+  });
+  const output = {};
   const order = normalizeObject(references.order, null);
-  if (!order) return null;
-  return {
-    order: {
-      entityType: String(order.entityType || ''),
-      kind: String(order.kind || ''),
-      explicit: order.explicit === true,
-      requiresResolution: order.requiresResolution === true,
-      sourceText: String(order.sourceText || ''),
-      sourceSpan: {
-        start: Number(order.sourceSpan && order.sourceSpan.start),
-        end: Number(order.sourceSpan && order.sourceSpan.end)
-      },
-      confidence: Number(order.confidence),
-      normalizedReference: String(order.normalizedReference || ''),
-      resolvedEntityId: order.resolvedEntityId === null
-        ? null
-        : String(order.resolvedEntityId || ''),
-      evidenceSource: String(order.evidenceSource || ''),
-      sourceField: String(order.sourceField || '')
-    }
-  };
+  if (order) output.order = cloneReference(order);
+  const quotation = getTrustedLocalUnresolvedQuotationReference(
+    references.quotation
+  );
+  if (quotation) {
+    output.quotation = cloneReference(quotation);
+  }
+  return Object.keys(output).length ? output : null;
 }
 
 function mergeRemarkItems(localItems, aiItems) {
@@ -2451,6 +2457,11 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
   merged.source = localResult.source;
   merged.original_text = localResult.original_text;
   merged.fields = protectLocalFacts(localResult, itemStructure.fields);
+  if (localRelationReferences
+    && localRelationReferences.quotation
+    && localRelationReferences.quotation.resolvedEntityId === null) {
+    delete merged.fields.quotationId;
+  }
   merged.missing_fields = uniqueStrings([].concat(
     aiMissingFields.filter((field) => !hasFieldValue(merged.fields, field)),
     toStringArray(localResult.missing_fields || []).filter((field) => {
