@@ -1,4 +1,4 @@
-<view class="page records-page">
+<view class="page records-page" bindtap="closeSwipe">
   <view class="page-title">记录</view>
   <view class="page-subtitle">报价、订单、收款、提醒都在这里，想细看就点进去。</view>
 
@@ -23,18 +23,40 @@
   </view>
 
   <view wx:for="{{records}}" wx:key="id" class="record-swipe-shell">
-    <view class="record-swipe-actions">
+    <block wx:if="{{item.type === 'quotation'}}">
+      <view wx:if="{{item.hasQuotationSwipeActions}}" class="record-swipe-actions record-swipe-actions-quotation">
+        <button
+          wx:if="{{item.canCancelQuotation}}"
+          class="record-swipe-quotation-cancel"
+          data-id="{{item.sourceId || item.id}}"
+          catchtap="requestCancelQuotation"
+        >取消报价</button>
+        <button
+          wx:if="{{item.canConvertToOrder}}"
+          class="record-swipe-quotation-convert"
+          data-id="{{item.sourceId || item.id}}"
+          catchtap="openQuotationConversion"
+        >转订单</button>
+        <button
+          wx:if="{{item.canViewConvertedOrder}}"
+          class="record-swipe-quotation-view"
+          data-id="{{item.sourceId || item.id}}"
+          catchtap="openQuotationOrder"
+        >查看订单</button>
+      </view>
+    </block>
+    <view wx:else class="record-swipe-actions">
       <button class="record-swipe-cancel" catchtap="closeSwipe">取消</button>
       <button class="record-swipe-delete" data-type="{{item.type}}" data-id="{{item.sourceId || item.id}}" catchtap="deleteRecord">删除</button>
     </view>
     <view
-      class="card record-card record-card-{{item.type}} {{openSwipeKey === item.swipeKey ? 'record-card-swiped' : ''}}"
+      class="card record-card record-card-{{item.type}} {{openSwipeKey === item.swipeKey && item.type === 'quotation' ? 'record-card-swiped-quotation' : ''}} {{openSwipeKey === item.swipeKey && item.type !== 'quotation' ? 'record-card-swiped' : ''}}"
       data-key="{{item.swipeKey}}"
       data-type="{{item.type}}"
       data-id="{{item.sourceId || item.id}}"
       bindtouchstart="recordTouchStart"
       bindtouchend="recordTouchEnd"
-      bindtap="openRecord"
+      catchtap="openRecord"
     >
       <view class="row-between">
         <view class="record-type record-type-{{item.type}}">
@@ -45,6 +67,7 @@
       </view>
       <view class="record-title">{{item.title}}</view>
       <view class="record-summary">{{item.summary}}</view>
+      <view wx:if="{{item.quotationRelationMessage}}" class="record-quotation-conflict">{{item.quotationRelationMessage}}</view>
     </view>
   </view>
 </view>

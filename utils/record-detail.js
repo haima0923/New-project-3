@@ -1,4 +1,7 @@
 const {
+  QUOTATION_TO_ORDER_ACTIONS,
+  assessQuotationCancellation,
+  assessQuotationToOrder,
   decorateRecords,
   getItemsSummary,
   getOrderDepositAmount,
@@ -105,12 +108,52 @@ function buildItems(record) {
   }));
 }
 
-function buildQuotationDetail(state, record) {
+function getQuotationConversionView(state, record) {
+  const assessment = assessQuotationToOrder(state, record.id);
+  const cancellationAssessment = assessQuotationCancellation(state, record.id);
+  const canCancelQuotation = cancellationAssessment.ok === true;
+  if (assessment.action === QUOTATION_TO_ORDER_ACTIONS.CREATE) {
+    return {
+      canCancelQuotation,
+      canConvertToOrder: true,
+      canViewConvertedOrder: false,
+      hasQuotationOrderConflict: false,
+      quotationConversionAction: assessment.action,
+      quotationConversionMessage: '',
+      relatedOrderId: ''
+    };
+  }
+  if (assessment.action === QUOTATION_TO_ORDER_ACTIONS.RETURN_EXISTING) {
+    return {
+      canCancelQuotation: false,
+      canConvertToOrder: false,
+      canViewConvertedOrder: true,
+      hasQuotationOrderConflict: false,
+      quotationConversionAction: assessment.action,
+      quotationConversionMessage: '',
+      relatedOrderId: assessment.order && assessment.order.id || ''
+    };
+  }
+  const hasQuotationOrderConflict = assessment.action === QUOTATION_TO_ORDER_ACTIONS.DATA_CONFLICT;
   return {
+    canCancelQuotation,
+    canConvertToOrder: false,
+    canViewConvertedOrder: false,
+    hasQuotationOrderConflict,
+    quotationConversionAction: assessment.action,
+    quotationConversionMessage: hasQuotationOrderConflict
+      ? '报价与订单关系异常，暂不能转换'
+      : '该报价暂不能转为订单',
+    relatedOrderId: ''
+  };
+}
+
+function buildQuotationDetail(state, record) {
+  const conversionView = getQuotationConversionView(state, record);
+  return Object.assign({
     title: getItemsSummary(record) || '报价',
-    status: record.status || '状态未知',
+    status: conversionView.hasQuotationOrderConflict ? '关系异常' : (record.status || '状态未知'),
     customerId: getExistingCustomerId(state, record),
-    relatedOrderId: record.convertedOrderId || '',
     fields: [
       field('客户', getCustomerName(state, record)),
       field('报价日期', record.quoteDate),
@@ -120,7 +163,7 @@ function buildQuotationDetail(state, record) {
       field('备注', record.remark, { fallback: '无' })
     ],
     items: buildItems(record)
-  };
+  }, conversionView);
 }
 
 function buildOrderDetail(state, record) {
@@ -261,8 +304,15 @@ function getRecordDetailUrl(type, id) {
   return `/pages/record-detail/record-detail?type=${encodeURIComponent(type)}&id=${encodeURIComponent(id)}`;
 }
 
+function getQuotationConversionUrl(id) {
+  if (!id) return '';
+  return `/pages/quotations/quotations?quotationId=${encodeURIComponent(id)}&action=convert`;
+}
+
 module.exports = {
   buildRecordDetail,
+  getQuotationConversionUrl,
   getRecord,
-  getRecordDetailUrl
+  getRecordDetailUrl,
+  getQuotationConversionView
 };

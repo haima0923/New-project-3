@@ -54,11 +54,47 @@
   margin-bottom: 12rpx;
 }
 
-.convert-date-input {
-  background: #ffffff;
+.conversion-date-options {
+  margin: 0 -18rpx;
+  white-space: nowrap;
+  width: auto;
+}
+
+.conversion-date-option-row {
+  display: inline-flex;
+  gap: 12rpx;
+  padding: 0 18rpx 8rpx;
+}
+
+.conversion-date-option {
+  background: #FFFFFF;
   border: 1rpx solid #D0D5DD;
-  border-radius: 12rpx;
-  color: #3B4E5B;
-  font-size: 28rpx;
-  padding: 20rpx;
+  border-radius: 14rpx;
+  color: #475467;
+  min-width: 120rpx;
+  padding: 14rpx 12rpx;
+  text-align: center;
+}
+
+.conversion-date-option-active {
+  background: #EAF2FF;
+  border-color: #1677FF;
+  color: #0F5DB8;
+}
+
+.conversion-date-weekday {
+  font-size: 22rpx;
+  line-height: 1.4;
+}
+
+.conversion-date-day {
+  font-size: 25rpx;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.conversion-date-selected {
+  color: #344054;
+  font-size: 25rpx;
+  margin-top: 10rpx;
 }

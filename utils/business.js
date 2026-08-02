@@ -1339,6 +1339,82 @@ function isQuotationDeleted(state, quotation = {}) {
   ));
 }
 
+function assessQuotationCancellation(state = {}, quotationId = '') {
+  const quotations = (state.quotations || []).filter((item) => item && item.id === quotationId);
+  if (!quotationId || quotations.length === 0) {
+    return { ok: false, code: 'QUOTATION_NOT_FOUND', noMutation: true };
+  }
+  if (quotations.length !== 1) {
+    return { ok: false, code: 'QUOTATION_ID_CONFLICT', noMutation: true };
+  }
+  const quotation = quotations[0];
+  if ((quotation.recordType && quotation.recordType !== 'quotation')
+    || isQuotationDeleted(state, quotation)) {
+    return {
+      ok: false,
+      code: 'QUOTATION_STATUS_INELIGIBLE',
+      noMutation: true,
+      quotation
+    };
+  }
+  const relation = assessQuotationOrderRelation(state, quotation);
+  if (relation.state === QUOTATION_ORDER_RELATION_STATES.CLEAN_EXISTING) {
+    return {
+      ok: false,
+      code: 'QUOTATION_ALREADY_CONVERTED',
+      noMutation: true,
+      order: relation.order,
+      quotation
+    };
+  }
+  if (relation.state === QUOTATION_ORDER_RELATION_STATES.DATA_CONFLICT) {
+    return {
+      ok: false,
+      code: 'QUOTATION_ORDER_RELATION_CONFLICT',
+      noMutation: true,
+      quotation
+    };
+  }
+  if (String(quotation.status || '') === '已取消') {
+    return {
+      ok: false,
+      code: 'QUOTATION_ALREADY_CANCELLED',
+      noMutation: true,
+      quotation
+    };
+  }
+  if (String(quotation.status || '') !== '待确认') {
+    return {
+      ok: false,
+      code: 'QUOTATION_STATUS_INELIGIBLE',
+      noMutation: true,
+      quotation
+    };
+  }
+  return {
+    ok: true,
+    code: 'QUOTATION_READY_TO_CANCEL',
+    noMutation: true,
+    quotation
+  };
+}
+
+function cancelQuotation(state = {}, quotationId = '') {
+  const assessment = assessQuotationCancellation(state, quotationId);
+  if (!assessment.ok) return assessment;
+  const quotation = assessment.quotation;
+  const now = new Date().toISOString();
+  quotation.status = '已取消';
+  quotation.cancelledAt = now;
+  quotation.updatedAt = now;
+  return {
+    ok: true,
+    code: 'QUOTATION_CANCELLED',
+    noMutation: false,
+    quotation
+  };
+}
+
 function getQuotationItemsValidation(quotation = {}) {
   const items = getRecordItems(quotation);
   if (!items.length) {
@@ -1766,10 +1842,12 @@ module.exports = {
   QUOTATION_TO_ORDER_ACTIONS,
   activeOrderStatuses,
   activeReceivableStatuses,
+  assessQuotationCancellation,
   assessQuotationToOrder,
   assertPendingPersistenceAllowed,
   appendOperationLog,
   buildOrderEditDraft,
+  cancelQuotation,
   completeTodo,
   convertQuotationToOrder,
   decorateRecords,

@@ -45,7 +45,13 @@
     <view class="record-detail-actions">
       <button wx:if="{{detail.customerId}}" class="secondary-button" bindtap="openCustomer">看客户</button>
       <button wx:if="{{detail.type === 'order'}}" class="primary-button" bindtap="editOrder">修改订单</button>
-      <button wx:if="{{detail.relatedOrderId}}" class="primary-button" bindtap="openOrder">看订单</button>
+      <button wx:if="{{detail.type === 'quotation' && detail.canConvertToOrder}}" class="primary-button" bindtap="openQuotationConversion">转为订单</button>
+      <button wx:elif="{{detail.type === 'quotation' && detail.canViewConvertedOrder}}" class="primary-button" bindtap="openOrder">查看订单</button>
+      <button wx:elif="{{detail.relatedOrderId}}" class="primary-button" bindtap="openOrder">看订单</button>
     </view>
+    <view
+      wx:if="{{detail.type === 'quotation' && detail.quotationConversionMessage}}"
+      class="record-detail-conversion-message {{detail.hasQuotationOrderConflict ? 'record-detail-conversion-message-conflict' : ''}}"
+    >{{detail.quotationConversionMessage}}</view>
   </block>
 </view>

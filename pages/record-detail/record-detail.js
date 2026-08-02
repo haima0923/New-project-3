@@ -1,4 +1,8 @@
-const { buildRecordDetail, getRecordDetailUrl } = require('../../utils/record-detail');
+const {
+  buildRecordDetail,
+  getQuotationConversionUrl,
+  getRecordDetailUrl
+} = require('../../utils/record-detail');
 const { getState } = require('../../utils/storage');
 
 Page({
@@ -35,6 +39,13 @@ Page({
   openOrder() {
     const orderId = this.data.detail && this.data.detail.relatedOrderId;
     const url = getRecordDetailUrl('order', orderId);
+    if (url) wx.navigateTo({ url });
+  },
+
+  openQuotationConversion() {
+    const detail = this.data.detail;
+    if (!detail || detail.type !== 'quotation' || !detail.canConvertToOrder || !detail.id) return;
+    const url = getQuotationConversionUrl(detail.id);
     if (url) wx.navigateTo({ url });
   },
 

@@ -6,7 +6,7 @@ const {
   getItemsSummary,
   getRecordItems
 } = require('../../utils/business');
-const { diffDays, today } = require('../../utils/date');
+const { addDays, diffDays, today } = require('../../utils/date');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { getState, saveState } = require('../../utils/storage');
 
@@ -98,6 +98,22 @@ function isQuotationDueForFollowup(item) {
   return diffDays(today(), item.quoteDate) >= 3;
 }
 
+function buildConversionDateOptions() {
+  const weekdayLabels = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+  const startDate = today();
+  return Array.from({ length: 120 }, (_, index) => {
+    const value = addDays(startDate, index);
+    const parts = value.split('-').map(Number);
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    return {
+      dayLabel: `${parts[1]}月${parts[2]}日`,
+      key: value,
+      value,
+      weekdayLabel: weekdayLabels[date.getDay()]
+    };
+  });
+}
+
 Page({
   data: {
     allQuotations: [],
@@ -111,12 +127,45 @@ Page({
     hasAdvancedFilters: false,
     showFilters: false,
     convertingQuotationId: '',
-    conversionDeliveryDate: ''
+    conversionDeliveryDate: '',
+    conversionDateOptions: []
+  },
+
+  onLoad(options = {}) {
+    this._conversionEntry = {
+      action: String(options.action || ''),
+      quotationId: String(options.quotationId || '').trim()
+    };
+    this._conversionEntryHandled = false;
   },
 
   onShow() {
     requestOrderFilterReset();
     this.load();
+    this.openRequestedConversion();
+  },
+
+  openRequestedConversion() {
+    if (this._conversionEntryHandled) return null;
+    this._conversionEntryHandled = true;
+    const entry = this._conversionEntry || {};
+    if (entry.action !== 'convert' || !entry.quotationId) return null;
+    const assessment = this.startConvert({
+      currentTarget: { dataset: { id: entry.quotationId } }
+    });
+    if (assessment && assessment.action === QUOTATION_TO_ORDER_ACTIONS.CREATE) {
+      this.focusActiveConversion();
+    }
+    return assessment;
+  },
+
+  focusActiveConversion() {
+    const entry = this._conversionEntry || {};
+    if (entry.action !== 'convert'
+      || !entry.quotationId
+      || this.data.convertingQuotationId !== entry.quotationId) return;
+    const target = this.data.allQuotations.find((item) => item.id === entry.quotationId);
+    if (target) this.setData({ quotations: [target] });
   },
 
   load() {
@@ -129,6 +178,7 @@ Page({
     }));
     this.setData({ allQuotations });
     this.applyFilters(allQuotations);
+    this.focusActiveConversion();
     return state;
   },
 
@@ -204,7 +254,8 @@ Page({
     }
     this.setData({
       convertingQuotationId: id,
-      conversionDeliveryDate: ''
+      conversionDeliveryDate: '',
+      conversionDateOptions: buildConversionDateOptions()
     });
     return assessment;
   },
@@ -213,11 +264,30 @@ Page({
     this.setData({ conversionDeliveryDate: event.detail.value });
   },
 
+  selectConversionDeliveryDate(event) {
+    const value = String(
+      event.currentTarget.dataset.date
+      || event.currentTarget.dataset.id
+      || ''
+    );
+    if (!value) return;
+    this.setData({ conversionDeliveryDate: value });
+  },
+
   cancelConvert() {
     this.setData({
       convertingQuotationId: '',
-      conversionDeliveryDate: ''
+      conversionDeliveryDate: '',
+      conversionDateOptions: []
     });
+  },
+
+  cancelConversionFlow() {
+    const entry = this._conversionEntry || {};
+    this.cancelConvert();
+    if (entry.action === 'convert' && entry.quotationId) {
+      wx.navigateBack({ delta: 1 });
+    }
   },
 
   confirmConvert(event) {
@@ -271,7 +341,13 @@ Page({
       title: relationSaved ? '已转订单' : '保存后核对失败，请重新打开页面检查',
       icon: relationSaved ? 'success' : 'none'
     });
-    if (relationSaved) this.cancelConvert();
+    if (relationSaved) {
+      const entry = this._conversionEntry || {};
+      this.cancelConvert();
+      if (entry.action === 'convert' && entry.quotationId === id) {
+        wx.navigateBack({ delta: 1 });
+      }
+    }
     return relationSaved ? persistedOrder : null;
   }
 });

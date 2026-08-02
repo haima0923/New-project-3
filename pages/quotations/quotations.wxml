@@ -95,17 +95,31 @@
     <view wx:if="{{item.needFollowup}}" class="followup-box">这个报价该跟一下了。</view>
     <view wx:if="{{convertingQuotationId === item.id}}" class="convert-order-panel">
       <view class="convert-order-title">客户确认下单后，先补订单交期</view>
-      <picker mode="date" value="{{conversionDeliveryDate}}" bindchange="changeConversionDeliveryDate">
-        <view class="convert-date-input">{{conversionDeliveryDate || '选择交期'}}</view>
-      </picker>
+      <scroll-view scroll-x="true" class="conversion-date-options">
+        <view class="conversion-date-option-row">
+          <view
+            wx:for="{{conversionDateOptions}}"
+            wx:key="key"
+            class="conversion-date-option {{conversionDeliveryDate === item.value ? 'conversion-date-option-active' : ''}}"
+            data-date="{{item.value}}"
+            bindtap="selectConversionDeliveryDate"
+          >
+            <view class="conversion-date-weekday">{{item.weekdayLabel}}</view>
+            <view class="conversion-date-day">{{item.dayLabel}}</view>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="conversion-date-selected">
+        {{conversionDeliveryDate ? '已选交期：' + conversionDeliveryDate : '请直接点选订单交期'}}
+      </view>
       <view class="button-row">
-        <button class="secondary-button" bindtap="cancelConvert">取消</button>
+        <button class="secondary-button" bindtap="cancelConversionFlow">取消选交期</button>
         <button class="primary-button" data-id="{{item.id}}" bindtap="confirmConvert">确认转订单</button>
       </view>
     </view>
-    <view class="button-row">
+    <view wx:if="{{convertingQuotationId !== item.id}}" class="button-row">
       <button class="secondary-button" data-id="{{item.id}}" bindtap="copyFollowup">复制跟进话术</button>
-      <button wx:if="{{!item.isConverted && convertingQuotationId !== item.id}}" class="primary-button" data-id="{{item.id}}" bindtap="startConvert">转订单</button>
+      <button wx:if="{{!item.isConverted}}" class="primary-button" data-id="{{item.id}}" bindtap="startConvert">转订单</button>
       <button wx:else class="secondary-button converted-button" disabled>{{item.convertedText}}</button>
     </view>
   </view>
