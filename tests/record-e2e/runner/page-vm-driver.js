@@ -96,7 +96,9 @@ function instantiatePage(definition, evidence, surface) {
       const registeredActions = Object.values(PAGE_ACTION_REGISTRY)
         .filter((entry) => entry.methodName === key)
         .map((entry) => entry.semanticAction);
-      if (registeredActions.length && page.data && page.data.parseResult) {
+      if (registeredActions.length && page.data && (
+        page.data.parseResult || surface === 'QUOTATION_LIST'
+      )) {
         evidence.pagePrimaryActionCalls.byMethod[key]
           = (evidence.pagePrimaryActionCalls.byMethod[key] || 0) + 1;
         if (registeredActions.some((action) => (
@@ -106,6 +108,9 @@ function instantiatePage(definition, evidence, surface) {
         }
         if (registeredActions.includes('SAVE_PENDING')) {
           evidence.pagePrimaryActionCalls.savePending += 1;
+        }
+        if (registeredActions.includes('CONVERT_QUOTATION_TO_ORDER')) {
+          evidence.pagePrimaryActionCalls.convertQuotationToOrder += 1;
         }
       }
       return runWithPageMethodContext({
@@ -146,15 +151,22 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     pagePrimaryActionCalls: {
       byMethod: {},
       saveFormal: 0,
-      savePending: 0
+      savePending: 0,
+      convertQuotationToOrder: 0
     },
     productionBusinessCalls: {
+      convertQuotationToOrder: 0,
       saveConfirmedDraft: 0,
       savePendingNote: 0
     },
     productionStorageCalls: {
       saveState: 0
     },
+    productionStorageReads: {
+      getState: 0
+    },
+    conversionCallLog: [],
+    storageCallLog: [],
     transportIdentityAdaptations: []
   };
   const aiParser = loadObservedAiParser();
@@ -164,10 +176,12 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
   const originalHybrid = aiParser.parseHybridInput;
   const originalSaveConfirmed = business.saveConfirmedDraft;
   const originalSavePending = business.savePendingNote;
+  const originalConvertQuotationToOrder = business.convertQuotationToOrder;
+  const originalGetState = storage.getState;
   const originalSaveState = storage.saveState;
   aiParser.parseHybridInput = createTransportIdentityAdapter(
     originalHybrid,
-    spec.ai.profile,
+    spec.ai && spec.ai.profile || 'LOCAL_ONLY',
     evidence
   );
   business.saveConfirmedDraft = (...args) => {
@@ -178,9 +192,78 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     evidence.productionBusinessCalls.savePendingNote += 1;
     return originalSavePending(...args);
   };
+  business.convertQuotationToOrder = (...args) => {
+    evidence.productionBusinessCalls.convertQuotationToOrder += 1;
+    const entry = {
+      quotationId: String(args[1] || ''),
+      options: safeClone(args[2] || {}),
+      stateFingerprintBefore: stableHash(args[0] || {}, 'quotation-convert-before-v1')
+    };
+    evidence.conversionCallLog.push(entry);
+    try {
+      if (options.quotationInstrumentation
+        && typeof options.quotationInstrumentation.beforeConvert === 'function') {
+        options.quotationInstrumentation.beforeConvert(args, entry);
+      }
+      const result = originalConvertQuotationToOrder(...args);
+      entry.result = safeClone(result);
+      entry.resultOrderId = result && result.id || '';
+      entry.stateFingerprintAfter = stableHash(args[0] || {}, 'quotation-convert-after-v1');
+      if (options.quotationInstrumentation
+        && typeof options.quotationInstrumentation.afterConvert === 'function') {
+        options.quotationInstrumentation.afterConvert(args, result, entry);
+      }
+      return result;
+    } catch (error) {
+      entry.error = {
+        code: error.code || 'QUOTATION_CONVERT_ERROR',
+        message: error.message
+      };
+      entry.transientStateOnError = safeClone(args[0] || {});
+      throw error;
+    }
+  };
+  storage.getState = (...args) => {
+    evidence.productionStorageReads.getState += 1;
+    const entry = { method: 'getState', options: safeClone(args[0] || {}) };
+    evidence.storageCallLog.push(entry);
+    try {
+      const result = originalGetState(...args);
+      entry.resultFingerprint = stableHash(result || {}, 'storage-read-v1');
+      if (options.quotationInstrumentation
+        && typeof options.quotationInstrumentation.afterGetState === 'function') {
+        options.quotationInstrumentation.afterGetState(
+          result,
+          evidence.productionStorageReads.getState,
+          entry
+        );
+      }
+      return result;
+    } catch (error) {
+      entry.error = { code: error.code || 'STORAGE_READ_ERROR', message: error.message };
+      throw error;
+    }
+  };
   storage.saveState = (...args) => {
     evidence.productionStorageCalls.saveState += 1;
-    return originalSaveState(...args);
+    const entry = {
+      method: 'saveState',
+      options: safeClone(args[1] || {}),
+      stateFingerprint: stableHash(args[0] || {}, 'storage-save-input-v1')
+    };
+    evidence.storageCallLog.push(entry);
+    try {
+      if (options.quotationInstrumentation
+        && typeof options.quotationInstrumentation.beforeSaveState === 'function') {
+        options.quotationInstrumentation.beforeSaveState(args, entry);
+      }
+      const result = originalSaveState(...args);
+      entry.result = safeClone(result);
+      return result;
+    } catch (error) {
+      entry.error = { code: error.code || 'STORAGE_SAVE_ERROR', message: error.message };
+      throw error;
+    }
   };
   let definition = null;
   try {
@@ -212,6 +295,8 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     aiParser.parseHybridInput = originalHybrid;
     business.saveConfirmedDraft = originalSaveConfirmed;
     business.savePendingNote = originalSavePending;
+    business.convertQuotationToOrder = originalConvertQuotationToOrder;
+    storage.getState = originalGetState;
     storage.saveState = originalSaveState;
   }
   const page = instantiatePage(definition, evidence, surface);

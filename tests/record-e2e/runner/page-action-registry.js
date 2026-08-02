@@ -28,6 +28,10 @@ const PAGE_ACTION_REGISTRY = Object.freeze({
   'HOME_QUICK|CREATE|SAVE_PENDING': Object.freeze({
     methodName: 'savePendingFromConfirm',
     semanticAction: 'SAVE_PENDING'
+  }),
+  'QUOTATION_LIST|CREATE|CONVERT_QUOTATION_TO_ORDER': Object.freeze({
+    methodName: 'confirmConvert',
+    semanticAction: 'CONVERT_QUOTATION_TO_ORDER'
   })
 });
 
@@ -189,7 +193,8 @@ function invokeResolvedPageAction(page, resolution, options = {}) {
   if (typeof options.readMethodCount === 'function') {
     invocationEvidence.methodInvocationCountBefore = Number(options.readMethodCount() || 0);
   }
-  const returnValue = page[resolution.resolvedMethodName]();
+  const args = Array.isArray(options.args) ? options.args : [];
+  const returnValue = page[resolution.resolvedMethodName](...args);
   invocationEvidence.completed = true;
   if (typeof options.readMethodCount === 'function') {
     invocationEvidence.methodInvocationCountAfter = Number(options.readMethodCount() || 0);

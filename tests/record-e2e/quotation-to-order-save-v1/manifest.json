@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "quotation-to-order-save-manifest-v1",
+  "clusterId": "quotation-to-order-save-v1",
+  "includeInCoreCount": false,
+  "exactActiveCaseCount": 28,
+  "caseFile": "cases.json",
+  "fixtureFile": "fixtures.json",
+  "caseIds": [
+    "REC-E2E-Q2O-001", "REC-E2E-Q2O-002", "REC-E2E-Q2O-003", "REC-E2E-Q2O-004",
+    "REC-E2E-Q2O-005", "REC-E2E-Q2O-006", "REC-E2E-Q2O-007", "REC-E2E-Q2O-008",
+    "REC-E2E-Q2O-009", "REC-E2E-Q2O-010", "REC-E2E-Q2O-011", "REC-E2E-Q2O-012",
+    "REC-E2E-Q2O-013", "REC-E2E-Q2O-014", "REC-E2E-Q2O-015", "REC-E2E-Q2O-016",
+    "REC-E2E-Q2O-017", "REC-E2E-Q2O-018", "REC-E2E-Q2O-019", "REC-E2E-Q2O-020",
+    "REC-E2E-Q2O-021", "REC-E2E-Q2O-022", "REC-E2E-Q2O-023", "REC-E2E-Q2O-024",
+    "REC-E2E-Q2O-025", "REC-E2E-Q2O-026", "REC-E2E-Q2O-027", "REC-E2E-Q2O-028"
+  ]
+}

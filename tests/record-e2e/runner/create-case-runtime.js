@@ -70,7 +70,13 @@ function createCaseRuntime(spec, options = {}) {
   const clipboardText = spec.input.clipboardText || spec.input.originalText;
   const voiceText = spec.input.voiceTranscript || spec.input.originalText;
   const voice = createFakeVoice(voiceText);
-  const fakeWx = createFakeWx({ clipboardText, initialEntries, network });
+  const fakeWx = createFakeWx({
+    clipboardText,
+    failureSchedule: options.storageFailureSchedule || [],
+    initialEntries,
+    modalResponse: options.modalResponse,
+    network
+  });
   assertFakeWxApi(fakeWx.wx);
   const app = {
     globalData: {

@@ -30,7 +30,8 @@ const FORMAL_COLLECTIONS = Object.freeze([
 ]);
 const PAGE_PATHS = Object.freeze({
   HOME_QUICK: 'pages/dashboard/dashboard.js',
-  FULL_PAGE: 'pages/input/input.js'
+  FULL_PAGE: 'pages/input/input.js',
+  QUOTATION_LIST: 'pages/quotations/quotations.js'
 });
 const OBSERVATION_LANES = Object.freeze([
   'PAGE_PRODUCTION_OBSERVATION',

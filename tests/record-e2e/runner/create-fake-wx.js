@@ -28,12 +28,40 @@ function createFakeWx(options = {}) {
   const uiEvents = [];
   const navigationEvents = [];
   const logicalKeyCalls = {};
+  const faultEvents = [];
+  const operationKeyCalls = {};
+  const failureSchedule = safeClone(options.failureSchedule || []);
   let storageAuditPerformed = false;
 
   function recordStorage(operation, key) {
     const normalized = String(key || '');
     auditEvents.push({ operation, key: normalized });
     logicalKeyCalls[normalized] = (logicalKeyCalls[normalized] || 0) + 1;
+    const operationKey = `${operation}|${normalized}`;
+    operationKeyCalls[operationKey] = (operationKeyCalls[operationKey] || 0) + 1;
+    const occurrence = operationKeyCalls[operationKey];
+    const fault = failureSchedule.find((entry) => (
+      entry
+      && entry.triggered !== true
+      && entry.operation === operation
+      && String(entry.key || '') === normalized
+      && Number(entry.occurrence || 1) === occurrence
+      && String(entry.mode || 'THROW_BEFORE') === 'THROW_BEFORE'
+    ));
+    if (fault) {
+      fault.triggered = true;
+      const event = {
+        code: String(fault.errorCode || 'TEST_STORAGE_FAULT'),
+        key: normalized,
+        mode: 'THROW_BEFORE',
+        occurrence,
+        operation
+      };
+      faultEvents.push(event);
+      const error = new Error(String(fault.message || `Injected ${operation} failure for ${normalized}`));
+      error.code = event.code;
+      throw error;
+    }
   }
 
   const wx = {
@@ -84,8 +112,16 @@ function createFakeWx(options = {}) {
       uiEvents.push({ type: 'TOAST', title: String(payload.title || ''), icon: payload.icon || '' });
     },
     showModal(payload = {}) {
-      uiEvents.push({ type: 'MODAL', title: String(payload.title || '') });
-      if (typeof payload.success === 'function') payload.success({ confirm: true, cancel: false });
+      const response = options.modalResponse || { confirm: true, cancel: false };
+      uiEvents.push({
+        type: 'MODAL',
+        cancelText: String(payload.cancelText || ''),
+        confirmText: String(payload.confirmText || ''),
+        content: String(payload.content || ''),
+        showCancel: payload.showCancel !== false,
+        title: String(payload.title || '')
+      });
+      if (typeof payload.success === 'function') payload.success(safeClone(response));
     },
     switchTab(payload = {}) {
       navigationEvents.push({ type: 'SWITCH_TAB', url: payload.url || '' });
@@ -121,6 +157,7 @@ function createFakeWx(options = {}) {
         remainingKeys: Object.keys(storage).sort(),
         journalPresent: Object.prototype.hasOwnProperty.call(storage, RECORD_STORAGE_JOURNAL_KEY),
         backupPresent: Object.prototype.hasOwnProperty.call(storage, RECORD_STORAGE_BACKUP_KEY),
+        faultEvents: safeClone(faultEvents),
         storageEvents: safeClone(auditEvents),
         uiEvents: safeClone(uiEvents),
         navigationEvents: safeClone(navigationEvents)
@@ -134,6 +171,9 @@ function createFakeWx(options = {}) {
     },
     setClipboardText(value) {
       clipboardText = String(value || '');
+    },
+    setFailureSchedule(nextSchedule) {
+      failureSchedule.splice(0, failureSchedule.length, ...safeClone(nextSchedule || []));
     },
     wx
   };

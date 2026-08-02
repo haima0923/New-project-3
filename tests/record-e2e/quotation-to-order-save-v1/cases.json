@@ -1,0 +1,538 @@
+{
+  "schemaVersion": "quotation-to-order-save-cases-v1",
+  "cases": [
+    {
+      "caseId": "REC-E2E-Q2O-001",
+      "title": "合法单商品报价成功转订单",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "CLEAN_SINGLE",
+      "contract": {
+        "initialPersistentState": "一个真实客户和一张未转换的合法单商品报价，订单为空。",
+        "userAction": "报价列表点击该报价转订单，选择交期并确认。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "新增且只新增一张来源为该报价的订单，报价已回写。",
+        "mustNotExist": ["第二张来源订单", "范围外业务记录"],
+        "productionGap": "若失败，生产链尚不能完整保存一张合法单商品报价。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-002",
+      "title": "合法多商品报价成功转订单",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-multi-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-multi",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "CLEAN_MULTI",
+      "contract": {
+        "initialPersistentState": "一张含两项商品且总金额可解释的合法报价。",
+        "userAction": "报价列表转订单并确认交期。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "一张订单保留两项商品且顺序不变。",
+        "mustNotExist": ["丢失商品的订单", "第二张来源订单"],
+        "productionGap": "若失败，生产链尚不能完整保存多商品报价。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-003",
+      "title": "商品字段、顺序、数量、单价和小计保持",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-multi-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-multi",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "ITEMS_EXACT",
+      "contract": {
+        "initialPersistentState": "两项商品分别带规格、数量、单位、单价、小计、单项交期和备注。",
+        "userAction": "转换并从真实存储重读订单。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "订单 items 数量、顺序和所有商品字段与来源报价完全一致，顶层兼容字段等于第一项。",
+        "mustNotExist": ["字段缺失", "顺序变化", "静默重算金额"],
+        "productionGap": "若失败，商品明细或兼容字段在转单时丢失或改变。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-004",
+      "title": "用户选择的订单交期正确保存",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "DELIVERY",
+      "contract": {
+        "initialPersistentState": "合法报价尚无订单。",
+        "userAction": "选择 2026-08-08 作为订单交期后确认。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "订单 requiredDeliveryDate 与 expectedShipDate 均为用户选择值。",
+        "mustNotExist": ["空交期订单", "来源报价交期覆盖用户选择值"],
+        "productionGap": "若失败，页面选择交期没有完整持久化。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-005",
+      "title": "订单保留原报价 originalText",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "ORIGINAL_TEXT",
+      "contract": {
+        "initialPersistentState": "报价含固定原始输入文字。",
+        "userAction": "从报价列表转订单。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "order.originalText 严格等于 sourceQuotation.originalText。",
+        "mustNotExist": ["把转单指令写成订单 originalText"],
+        "productionGap": "若失败，来源原文在转单时被覆盖。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-006",
+      "title": "报价保存 convertedOrderId",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "QUOTE_LINK",
+      "contract": {
+        "initialPersistentState": "报价没有 convertedOrderId。",
+        "userAction": "确认转订单。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "报价 convertedOrderId 指向新订单并有转换状态和时间。",
+        "mustNotExist": ["空 convertedOrderId", "指向不存在订单的关系"],
+        "productionGap": "若失败，报价侧关系回写不完整。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-007",
+      "title": "订单保存 quotationId",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "ORDER_LINK",
+      "contract": {
+        "initialPersistentState": "合法报价尚无来源订单。",
+        "userAction": "确认转订单。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "新订单 quotationId 严格指向来源报价。",
+        "mustNotExist": ["无来源 quotationId 的订单"],
+        "productionGap": "若失败，订单侧反向追溯字段缺失。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-008",
+      "title": "报价和订单双向关系完全一致",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "BIDIRECTIONAL",
+      "contract": {
+        "initialPersistentState": "合法报价与空订单集合。",
+        "userAction": "确认转订单并重读。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "quotation.convertedOrderId 与 order.id 相等，order.quotationId 与 quotation.id 相等。",
+        "mustNotExist": ["单向关系", "第二个关系目标"],
+        "productionGap": "若失败，双向关系不是同一次完整提交。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-009",
+      "title": "保存后从真实存储重新读取仍然正确",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-multi-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-multi",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "READBACK",
+      "contract": {
+        "initialPersistentState": "合法多商品报价。",
+        "userAction": "转换后丢弃函数返回值，调用真实 getState 重读。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "重读状态仍含完整订单、报价回写和双向关系。",
+        "mustNotExist": ["只存在于内存返回值的订单"],
+        "productionGap": "若失败，保存结果未真实落入隔离存储。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-010",
+      "title": "应用重启后数据仍然正确",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "RESTART_READ",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "RESTART_PERSISTENCE",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "转换成功后启动新的子进程，执行真实 app.onLaunch 和 getState。",
+        "expectedPageResult": "首次页面显示成功，重启读取成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "新进程读到同一订单和同一双向关系。",
+        "mustNotExist": ["重启后丢单", "重启恢复产生第二订单"],
+        "productionGap": "若失败，跨应用实例恢复不完整。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-011",
+      "title": "旧顶层单商品报价转换成一个 items[0]",
+      "riskLevel": "P1",
+      "fixtureRef": "q2o-valid-legacy-single-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-legacy",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "LEGACY_SINGLE",
+      "contract": {
+        "initialPersistentState": "旧报价只有顶层商品字段，没有 items 数组。",
+        "userAction": "报价列表转订单。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "订单有且只有 items[0]，字段等于旧顶层字段。",
+        "mustNotExist": ["空 items", "重复商品项"],
+        "productionGap": "若失败，旧数据兼容转换不完整。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-012",
+      "title": "普通转单不修改范围外集合",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-multi-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-multi",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "SCOPE_BOUNDARY",
+      "contract": {
+        "initialPersistentState": "范围外集合均为空。",
+        "userAction": "执行普通报价转订单。",
+        "expectedPageResult": "显示转换成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "只允许报价、订单、转换进度和商品目录产生精确变化。",
+        "mustNotExist": ["待收款", "收款", "定金", "待办", "待整理", "新增客户"],
+        "productionGap": "若失败，普通转单越界修改其他业务集合。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-013",
+      "title": "报价不存在时明确失败且不正式保存",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "MISSING_QUOTATION",
+      "quotationId": "q2o-quote-missing",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "REJECT_NOT_FOUND",
+      "contract": {
+        "initialPersistentState": "存储中不存在事件携带的报价 ID。",
+        "userAction": "确认不存在的报价 ID。",
+        "expectedPageResult": "明确提示报价不存在或转换失败。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "业务状态、版本和收据完全不变。",
+        "mustNotExist": ["新订单", "正式提交", "成功提示"],
+        "productionGap": "当前页面即使转换返回空仍无条件调用 saveState。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-014",
+      "title": "开始报价 A、确认事件携带报价 B 时拒绝",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-two-valid-v1",
+      "scenario": "EVENT_ID_SWAP",
+      "quotationId": "q2o-quote-a",
+      "confirmQuotationId": "q2o-quote-b",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "REJECT_ID_SWAP",
+      "contract": {
+        "initialPersistentState": "同一客户有报价 A 和报价 B。",
+        "userAction": "页面先点 A，确认事件被替换为 B。",
+        "expectedPageResult": "明确拒绝事件与页面选择不一致。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "两张报价和订单集合均不变。",
+        "mustNotExist": ["A 的订单", "B 的订单", "正式提交"],
+        "productionGap": "当前 confirmConvert 不比较事件 ID 与 convertingQuotationId。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-015",
+      "title": "客户不存在或关系错误时拒绝",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-missing-customer-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "REJECT_CUSTOMER",
+      "contract": {
+        "initialPersistentState": "报价 customerId 指向不存在的客户。",
+        "userAction": "报价列表确认转订单。",
+        "expectedPageResult": "明确提示客户关系错误。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "保持原状态。",
+        "mustNotExist": ["无真实客户的订单", "正式提交"],
+        "productionGap": "当前转换不校验客户存在、用户归属和关系。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-016",
+      "title": "已删除、作废或不可转换报价拒绝",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-ineligible-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "REJECT_INELIGIBLE",
+      "contract": {
+        "initialPersistentState": "报价状态为已作废且存在删除墓碑。",
+        "userAction": "尝试转订单。",
+        "expectedPageResult": "明确提示不可转换。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "保持原状态。",
+        "mustNotExist": ["作废报价生成的订单", "正式提交"],
+        "productionGap": "当前页面与转换函数没有严格限定可转换状态或删除墓碑。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-017",
+      "title": "已完整转换的报价重放返回已有订单且零新增零提交",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-converted-clean-v1",
+      "scenario": "FORCED_REPLAY",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "REPLAY_IDEMPOTENT",
+      "contract": {
+        "initialPersistentState": "报价与已有订单双向关系完整，已有交期。",
+        "userAction": "重放同一确认动作。",
+        "expectedPageResult": "返回或显示已有订单，不产生新业务成功。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "订单、进度、版本、收据和所有时间字段均不变。",
+        "mustNotExist": ["第二订单", "第二进度", "第二次正式提交", "无意义版本变化"],
+        "productionGap": "当前页面无条件保存，转换还会刷新报价更新时间。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-018",
+      "title": "convertedOrderId 指向不存在订单时明确数据冲突",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-dangling-v1",
+      "scenario": "NORMAL_EXISTING_CLICK",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "DIRTY_DANGLING",
+      "contract": {
+        "initialPersistentState": "报价 convertedOrderId 指向不存在的订单。",
+        "userAction": "点击转订单。",
+        "expectedPageResult": "明确显示数据冲突，不得当作已成功转换。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "原脏数据原样保持。",
+        "mustNotExist": ["新订单", "正式提交", "静默成功"],
+        "productionGap": "当前列表仅依据 convertedOrderId 显示已转订单，不能识别悬空关系。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-019",
+      "title": "convertedOrderId 指向错误订单时明确数据冲突",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-wrong-target-v1",
+      "scenario": "NORMAL_EXISTING_CLICK",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "DIRTY_WRONG_TARGET",
+      "contract": {
+        "initialPersistentState": "目标订单客户错误且没有反向指向当前报价。",
+        "userAction": "点击转订单。",
+        "expectedPageResult": "明确显示关系数据冲突。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "原脏数据原样保持。",
+        "mustNotExist": ["新订单", "关系自动修复", "静默成功"],
+        "productionGap": "当前页面不校验目标订单客户和反向引用。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-020",
+      "title": "只有订单反向指向报价或同报价多订单时不得再创建",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-reverse-multiple-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "DIRTY_REVERSE_ONLY",
+      "contract": {
+        "initialPersistentState": "报价未回写，但已有两张订单反向指向该报价。",
+        "userAction": "点击并确认转订单。",
+        "expectedPageResult": "明确数据冲突。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "原数据不变。",
+        "mustNotExist": ["第三张来源订单", "自动修复", "正式提交"],
+        "productionGap": "当前 isQuotationConverted 忽略订单反向关系，会继续创建订单。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-021",
+      "title": "多商品或金额存在未解释冲突时明确阻断",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-amount-conflict-v1",
+      "scenario": "FIRST_CONVERT",
+      "quotationId": "q2o-quote-multi",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "REJECT_AMOUNT_CONFLICT",
+      "contract": {
+        "initialPersistentState": "两项明细合计 3200，但报价总金额为 9999。",
+        "userAction": "尝试转订单。",
+        "expectedPageResult": "明确提示商品或金额冲突。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "原报价不变、订单为空。",
+        "mustNotExist": ["金额冲突订单", "静默重算订单", "正式提交"],
+        "productionGap": "当前转换前没有商品完整性和金额一致性检查。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-022",
+      "title": "连续双击不得创建第二个订单",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "DOUBLE_CONFIRM",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "DOUBLE_CLICK",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "同一页面连续触发两次确认事件。",
+        "expectedPageResult": "第一次成功，第二次不再提交。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "只有一张订单、一条转换进度和一次正式提交。",
+        "mustNotExist": ["第二订单", "第二进度", "第二收据"],
+        "productionGap": "若失败，页面缺少同步双击幂等保护。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-023",
+      "title": "页面重开后再次点击不得创建第二个订单",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "PAGE_RELOAD_RETRY",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "PAGE_RELOAD_IDEMPOTENT",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "首次转换后创建新页面实例，从存储重读并再次点击。",
+        "expectedPageResult": "新页面显示已转订单且不再确认。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "仍只有一张订单和一次正式提交。",
+        "mustNotExist": ["第二订单", "第二次保存"],
+        "productionGap": "若失败，页面重开后的幂等展示或阻断失效。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-024",
+      "title": "应用重启后再次执行不得创建第二个订单",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "APP_RESTART_RETRY",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "APP_RESTART_IDEMPOTENT",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "首次转换后在新进程启动应用、加载报价页并再次点击。",
+        "expectedPageResult": "重启页面显示已转订单，不进入确认。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "跨进程仍只有一个订单和一次正式提交。",
+        "mustNotExist": ["重启后第二订单", "重启后第二收据"],
+        "productionGap": "若失败，跨应用实例的用户动作不幂等。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-025",
+      "title": "两个旧快照近同时提交时最多一个成功",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "CONCURRENT_SNAPSHOTS",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "CONCURRENT_ONE_COMMIT",
+      "contract": {
+        "initialPersistentState": "两个执行者从同一存储版本读取同一合法报价。",
+        "userAction": "两个旧快照都真实构造订单，再依次尝试真实 saveState。",
+        "expectedPageResult": "一个提交成功，另一个以旧版本冲突失败。",
+        "expectedSaveCalls": 2,
+        "finalPersistentState": "最多一张订单、一条进度、一次版本和收据变化。",
+        "mustNotExist": ["第二订单", "第二成功提交", "第二收据"],
+        "productionGap": "若失败，旧快照并发保护不能保证最多一次提交。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-026",
+      "title": "主数据写入前故障最终保持完整旧状态",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "PRIMARY_WRITE_FAULT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "PRIMARY_WRITE_ROLLBACK",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "确认转单，并在业务主键首次 SET 写入前注入一次测试故障。",
+        "expectedPageResult": "不显示业务成功，保存异常可观测。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "旧业务状态完整恢复，日志和备份清理，版本收据不变。",
+        "mustNotExist": ["半张订单", "已转报价", "成功提示", "残留日志或备份"],
+        "productionGap": "若失败，真实存储事务的主写前回滚合同不完整。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-027",
+      "title": "构造订单后、报价回写前异常不得调用正式保存",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "BACKWRITE_BOUNDARY_FAULT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "BACKWRITE_BOUNDARY_ATOMICITY",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "要求在订单已构造、报价尚未回写的真实内部边界注入异常。",
+        "expectedPageResult": "转换失败且正式保存调用为零。",
+        "expectedSaveCalls": 0,
+        "finalPersistentState": "真实存储保持完整旧状态。",
+        "mustNotExist": ["孤立订单", "已转报价", "正式提交", "成功提示"],
+        "productionGap": "当前生产转换函数没有可观测的订单构造后/报价回写前边界；测试不得用假转换器伪造通过。"
+      }
+    },
+    {
+      "caseId": "REC-E2E-Q2O-028",
+      "title": "保存失败后页面不得记录业务成功",
+      "riskLevel": "P0",
+      "fixtureRef": "q2o-valid-single-v1",
+      "scenario": "SAVE_CALL_FAULT",
+      "quotationId": "q2o-quote-single",
+      "deliveryDate": "2026-08-08",
+      "expectedProfile": "SAVE_FAILURE_NO_SUCCESS",
+      "contract": {
+        "initialPersistentState": "合法报价尚未转换。",
+        "userAction": "真实转换完成后，在页面真实 saveState 调用边界抛出测试故障。",
+        "expectedPageResult": "不显示已转订单成功，不记录页面业务成功。",
+        "expectedSaveCalls": 1,
+        "finalPersistentState": "真实存储保持旧状态。",
+        "mustNotExist": ["持久化订单", "已转报价", "成功提示"],
+        "productionGap": "若失败，页面把保存异常误记为业务成功。"
+      }
+    }
+  ]
+}

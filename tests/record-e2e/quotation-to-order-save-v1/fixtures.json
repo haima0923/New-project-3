@@ -1,0 +1,351 @@
+{
+  "schemaVersion": "quotation-to-order-save-fixtures-v1",
+  "fixtures": [
+    {
+      "fixtureId": "q2o-empty-v1",
+      "state": {
+        "meta": {
+          "onboarded": true,
+          "industry": "日用百货",
+          "userId": "e2e-user",
+          "createdAt": "2026-07-01T02:00:00.000Z"
+        },
+        "customers": [],
+        "quotations": [],
+        "orders": [],
+        "receivables": [],
+        "paymentRecords": [],
+        "dunningRecords": [],
+        "todos": [],
+        "orderProgress": [],
+        "pendingNotes": [],
+        "aiParseLogs": [],
+        "operationLogs": [],
+        "productCatalog": [],
+        "deletedRecords": [],
+        "dunningTemplates": []
+      }
+    },
+    {
+      "fixtureId": "q2o-valid-single-v1",
+      "extends": "q2o-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "q2o-customer-a",
+            "userId": "e2e-user",
+            "name": "王总",
+            "company": "玲珑日用品厂",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z"
+          }
+        ],
+        "quotations": [
+          {
+            "id": "q2o-quote-single",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "304保温杯",
+            "spec": "304不锈钢",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "priceUnit": "个",
+            "totalAmount": 5400,
+            "items": [
+              {
+                "productName": "304保温杯",
+                "spec": "304不锈钢",
+                "quantity": 300,
+                "unit": "个",
+                "unitPrice": 18,
+                "priceUnit": "个",
+                "totalAmount": 5400,
+                "itemDeliveryDate": "2026-08-01",
+                "itemRemark": "白盒包装"
+              }
+            ],
+            "quoteDate": "2026-07-10",
+            "deliveryDate": "2026-08-01",
+            "status": "待确认",
+            "paymentMethod": "出货前付清",
+            "originalText": "给王总报304保温杯300个，18元一个，白盒包装",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-10T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "q2o-valid-multi-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-multi",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "帆布袋",
+            "spec": "米白色",
+            "quantity": 100,
+            "unit": "个",
+            "unitPrice": 12,
+            "priceUnit": "个",
+            "totalAmount": 3200,
+            "items": [
+              {
+                "productName": "帆布袋",
+                "spec": "米白色",
+                "quantity": 100,
+                "unit": "个",
+                "unitPrice": 12,
+                "priceUnit": "个",
+                "totalAmount": 1200,
+                "itemDeliveryDate": "2026-08-02",
+                "itemRemark": "单个OPP袋"
+              },
+              {
+                "productName": "礼品盒",
+                "spec": "红色20×15cm",
+                "quantity": 80,
+                "unit": "套",
+                "unitPrice": 25,
+                "priceUnit": "套",
+                "totalAmount": 2000,
+                "itemDeliveryDate": "2026-08-04",
+                "itemRemark": "烫金"
+              }
+            ],
+            "quoteDate": "2026-07-11",
+            "deliveryDate": "2026-08-04",
+            "status": "待确认",
+            "paymentMethod": "月结",
+            "originalText": "给王总报帆布袋100个12元，礼品盒80套25元，按顺序出货",
+            "createdAt": "2026-07-11T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "q2o-valid-legacy-single-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-legacy",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "旧款搪瓷杯",
+            "spec": "白色12cm",
+            "quantity": 60,
+            "unit": "个",
+            "unitPrice": 20,
+            "priceUnit": "个",
+            "totalAmount": 1200,
+            "quoteDate": "2026-06-20",
+            "status": "待确认",
+            "originalText": "老报价：搪瓷杯60个，每个20元",
+            "createdAt": "2026-06-20T02:00:00.000Z",
+            "updatedAt": "2026-06-20T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "q2o-two-valid-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-a",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "报价A水杯",
+            "quantity": 10,
+            "unit": "个",
+            "unitPrice": 10,
+            "priceUnit": "个",
+            "totalAmount": 100,
+            "items": [{ "productName": "报价A水杯", "quantity": 10, "unit": "个", "unitPrice": 10, "priceUnit": "个", "totalAmount": 100 }],
+            "quoteDate": "2026-07-10",
+            "status": "待确认",
+            "originalText": "报价A原文",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-10T02:00:00.000Z"
+          },
+          {
+            "id": "q2o-quote-b",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "报价B饭盒",
+            "quantity": 20,
+            "unit": "套",
+            "unitPrice": 15,
+            "priceUnit": "套",
+            "totalAmount": 300,
+            "items": [{ "productName": "报价B饭盒", "quantity": 20, "unit": "套", "unitPrice": 15, "priceUnit": "套", "totalAmount": 300 }],
+            "quoteDate": "2026-07-11",
+            "status": "待确认",
+            "originalText": "报价B原文",
+            "createdAt": "2026-07-11T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "q2o-missing-customer-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": { "customers": [] }
+    },
+    {
+      "fixtureId": "q2o-foreign-customer-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "customers": [{ "id": "q2o-customer-a", "userId": "foreign-user", "name": "外部客户" }]
+      }
+    },
+    {
+      "fixtureId": "q2o-ineligible-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-single",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "已作废杯子",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [{ "productName": "已作废杯子", "quantity": 300, "unit": "个", "unitPrice": 18, "totalAmount": 5400 }],
+            "quoteDate": "2026-07-10",
+            "status": "已作废",
+            "originalText": "这张报价已经作废",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ],
+        "deletedRecords": [{ "id": "q2o-del-quote", "recordType": "quotation", "recordId": "q2o-quote-single", "deletedAt": "2026-07-12T02:00:00.000Z" }]
+      }
+    },
+    {
+      "fixtureId": "q2o-converted-clean-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-single",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "304保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [{ "productName": "304保温杯", "quantity": 300, "unit": "个", "unitPrice": 18, "totalAmount": 5400 }],
+            "quoteDate": "2026-07-10",
+            "status": "已转订单",
+            "convertedOrderId": "q2o-order-existing",
+            "convertedAt": "2026-07-12T02:00:00.000Z",
+            "originalText": "给王总报304保温杯300个，18元一个，白盒包装",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ],
+        "orders": [
+          {
+            "id": "q2o-order-existing",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "quotationId": "q2o-quote-single",
+            "productName": "304保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [{ "productName": "304保温杯", "quantity": 300, "unit": "个", "unitPrice": 18, "totalAmount": 5400 }],
+            "requiredDeliveryDate": "2026-08-08",
+            "expectedShipDate": "2026-08-08",
+            "status": "待生产",
+            "originalText": "给王总报304保温杯300个，18元一个，白盒包装",
+            "createdAt": "2026-07-12T02:00:00.000Z",
+            "updatedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ],
+        "orderProgress": [{ "id": "q2o-progress-existing", "orderId": "q2o-order-existing", "status": "待生产", "note": "报价转订单", "createdAt": "2026-07-12T02:00:00.000Z" }]
+      }
+    },
+    {
+      "fixtureId": "q2o-dangling-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-single",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "304保温杯",
+            "quantity": 300,
+            "unit": "个",
+            "unitPrice": 18,
+            "totalAmount": 5400,
+            "items": [{ "productName": "304保温杯", "quantity": 300, "unit": "个", "unitPrice": 18, "totalAmount": 5400 }],
+            "quoteDate": "2026-07-10",
+            "status": "已转订单",
+            "convertedOrderId": "q2o-order-missing",
+            "originalText": "给王总报304保温杯300个，18元一个，白盒包装",
+            "createdAt": "2026-07-10T02:00:00.000Z",
+            "updatedAt": "2026-07-12T02:00:00.000Z"
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "q2o-wrong-target-v1",
+      "extends": "q2o-dangling-v1",
+      "patch": {
+        "orders": [{ "id": "q2o-order-missing", "userId": "e2e-user", "customerId": "q2o-customer-b", "quotationId": "another-quote", "status": "待生产", "originalText": "无关订单" }]
+      }
+    },
+    {
+      "fixtureId": "q2o-reverse-multiple-v1",
+      "extends": "q2o-valid-single-v1",
+      "patch": {
+        "orders": [
+          { "id": "q2o-reverse-order-a", "userId": "e2e-user", "customerId": "q2o-customer-a", "quotationId": "q2o-quote-single", "status": "待生产", "originalText": "反向关系A" },
+          { "id": "q2o-reverse-order-b", "userId": "e2e-user", "customerId": "q2o-customer-a", "quotationId": "q2o-quote-single", "status": "待生产", "originalText": "反向关系B" }
+        ]
+      }
+    },
+    {
+      "fixtureId": "q2o-amount-conflict-v1",
+      "extends": "q2o-valid-multi-v1",
+      "patch": {
+        "quotations": [
+          {
+            "id": "q2o-quote-multi",
+            "userId": "e2e-user",
+            "customerId": "q2o-customer-a",
+            "productName": "帆布袋",
+            "quantity": 100,
+            "unit": "个",
+            "unitPrice": 12,
+            "totalAmount": 9999,
+            "items": [
+              { "productName": "帆布袋", "quantity": 100, "unit": "个", "unitPrice": 12, "totalAmount": 1200 },
+              { "productName": "礼品盒", "quantity": 80, "unit": "套", "unitPrice": 25, "totalAmount": 2000 }
+            ],
+            "quoteDate": "2026-07-11",
+            "status": "待确认",
+            "originalText": "明细合计3200但顶层写成9999",
+            "createdAt": "2026-07-11T02:00:00.000Z",
+            "updatedAt": "2026-07-11T02:00:00.000Z"
+          }
+        ]
+      }
+    }
+  ]
+}
