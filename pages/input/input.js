@@ -930,6 +930,8 @@ function buildGenericQuotationSelectionState(fields, operation, domainPreflight)
   const quotationSelectionRequired = requiredSelections.includes('quotationId');
   const quotationActionRequired = blockingIssues
     .some((item) => item.requiredAction === 'SELECT_QUOTATION');
+  const quotationRelationConflict = blockingIssues
+    .some((item) => item.code === 'QUOTATION_ORDER_RELATION_CONFLICT');
   const operationSupportsQuotation = ['update_quotation', 'create_order'].includes(operation);
   const showGenericQuotationSelection = operationSupportsQuotation && (
     quotationSelectionRequired
@@ -937,7 +939,9 @@ function buildGenericQuotationSelectionState(fields, operation, domainPreflight)
     || Boolean(selectedQuotationId)
   );
   let quotationSelectionReason = '';
-  if (quotationSelectionRequired) {
+  if (quotationRelationConflict) {
+    quotationSelectionReason = '报价与订单关系存在数据冲突，请先核对原记录。';
+  } else if (quotationSelectionRequired) {
     quotationSelectionReason = quotationCandidates.length > 1
       ? '找到多张可用报价，请选择原话指的是哪一张。'
       : '请确认这次业务关联哪一张报价。';
@@ -3082,16 +3086,23 @@ Page({
       return rejection;
     }
     if (confirmationState.disableFormalSave) {
+      const quotationConflictText = (confirmationState.preflightBlockingReasons || [])
+        .includes('QUOTATION_ORDER_RELATION_CONFLICT')
+        ? confirmationState.quotationSelectionReason
+        : '';
       const missingText = confirmationState.customerMatchWarningText
+        || quotationConflictText
         || (confirmationState.showFieldConflicts ? '先确认聊天里的冲突信息' : '')
         || confirmationState.warningMissingText
         || confirmationState.warningLowText
         || '关键信息';
       this.setData(confirmationState);
       wx.showToast({
-        title: missingText.startsWith('系统里') || missingText.startsWith('如果这是') || missingText.startsWith('这个客户')
+        title: quotationConflictText
+          ? quotationConflictText
+          : (missingText.startsWith('系统里') || missingText.startsWith('如果这是') || missingText.startsWith('这个客户')
           ? missingText
-          : `请先补齐${missingText}`,
+          : `请先补齐${missingText}`),
         icon: 'none'
       });
       return;

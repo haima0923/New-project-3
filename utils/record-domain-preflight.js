@@ -30,6 +30,11 @@ const ACTIVE_RECEIVABLE_STATUSES = Object.freeze(['待收', '部分收款']);
 const ACTIVE_QUOTATION_STATUS = '待确认';
 const CONVERTED_QUOTATION_STATUSES = Object.freeze(['converted', 'ordered', '已转订单', '已下单']);
 const INACTIVE_QUOTATION_STATUSES = Object.freeze(['cancelled', 'canceled', 'void', '已作废', '已取消', '已失效']);
+const QUOTATION_ORDER_RELATION_STATES = Object.freeze({
+  CLEAN_EXISTING: 'CLEAN_EXISTING',
+  DATA_CONFLICT: 'DATA_CONFLICT',
+  NONE: 'NONE'
+});
 
 function safeClone(value) {
   if (value === undefined) return undefined;
@@ -355,10 +360,75 @@ function getReceivablePaymentIssue(receivable, amount) {
   return '先填本次收款金额';
 }
 
+function isDeletedOrder(state = {}, order = {}) {
+  if (!order) return false;
+  if (order.deleted === true || order.isDeleted === true || order.deletedAt) return true;
+  return (state.deletedRecords || []).some((item) => (
+    item && item.recordType === 'order' && item.recordId === order.id
+  ));
+}
+
+function assessQuotationOrderRelation(state = {}, quotation = {}) {
+  const orders = state.orders || [];
+  const rawForwardId = quotation && quotation.convertedOrderId;
+  const hasForwardId = rawForwardId !== undefined
+    && rawForwardId !== null
+    && rawForwardId !== '';
+  const forwardIdIsValid = !hasForwardId || typeof rawForwardId === 'string';
+  const forwardOrders = hasForwardId && forwardIdIsValid
+    ? orders.filter((item) => item && item.id === rawForwardId)
+    : [];
+  const reverseOrders = quotation && quotation.id
+    ? orders.filter((item) => item && item.quotationId === quotation.id)
+    : [];
+  const convertedStatus = CONVERTED_QUOTATION_STATUSES.includes(String(
+    quotation && quotation.status || ''
+  ));
+  const forwardOrder = forwardOrders.length === 1 ? forwardOrders[0] : null;
+  const orderTypeValid = Boolean(
+    forwardOrder && (!forwardOrder.recordType || forwardOrder.recordType === 'order')
+  );
+  const cleanExisting = Boolean(
+    convertedStatus
+    && hasForwardId
+    && forwardIdIsValid
+    && forwardOrders.length === 1
+    && reverseOrders.length === 1
+    && reverseOrders[0] === forwardOrder
+    && orderTypeValid
+    && !isDeletedOrder(state, forwardOrder)
+    && forwardOrder.customerId === quotation.customerId
+    && (!quotation.userId || !forwardOrder.userId || forwardOrder.userId === quotation.userId)
+  );
+  if (cleanExisting) {
+    return {
+      state: QUOTATION_ORDER_RELATION_STATES.CLEAN_EXISTING,
+      code: 'QUOTATION_ALREADY_CONVERTED',
+      order: forwardOrder,
+      reason: 'BIDIRECTIONAL_RELATION_VALID'
+    };
+  }
+  if (convertedStatus || hasForwardId || forwardOrders.length || reverseOrders.length) {
+    return {
+      state: QUOTATION_ORDER_RELATION_STATES.DATA_CONFLICT,
+      code: 'QUOTATION_ORDER_RELATION_CONFLICT',
+      order: null,
+      reason: convertedStatus && !hasForwardId && reverseOrders.length === 0
+        ? 'LEGACY_CONVERTED_STATUS_WITHOUT_RELATION'
+        : 'RELATION_NOT_BIDIRECTIONAL_OR_TARGET_INVALID'
+    };
+  }
+  return {
+    state: QUOTATION_ORDER_RELATION_STATES.NONE,
+    code: '',
+    order: null,
+    reason: 'NO_CONVERSION_RELATION'
+  };
+}
+
 function isQuotationConverted(state = {}, quotation = {}) {
-  if (!quotation) return false;
-  if (quotation.convertedOrderId || CONVERTED_QUOTATION_STATUSES.includes(String(quotation.status || ''))) return true;
-  return (state.orders || []).some((order) => order.quotationId === quotation.id);
+  return assessQuotationOrderRelation(state, quotation).state
+    !== QUOTATION_ORDER_RELATION_STATES.NONE;
 }
 
 function compareStableIds(left, right) {
@@ -533,8 +603,12 @@ function getQuotationSelectionBlockingCodes(state, quotation, operation, custome
       codes.push('QUOTATION_TARGET_NOT_UPDATABLE');
     }
   } else if (operation === 'create_order') {
-    if (isQuotationConverted(state, quotation)) {
+    const relation = assessQuotationOrderRelation(state, quotation);
+    if (relation.state === QUOTATION_ORDER_RELATION_STATES.CLEAN_EXISTING
+      || relation.reason === 'LEGACY_CONVERTED_STATUS_WITHOUT_RELATION') {
       codes.push('QUOTATION_ALREADY_CONVERTED');
+    } else if (relation.state === QUOTATION_ORDER_RELATION_STATES.DATA_CONFLICT) {
+      codes.push('QUOTATION_ORDER_RELATION_CONFLICT');
     } else if (String(quotation.status || '') !== ACTIVE_QUOTATION_STATUS) {
       codes.push('QUOTATION_TARGET_NOT_ACTIVE');
     }
@@ -1914,6 +1988,8 @@ module.exports = {
   EXPLICIT_ORDER_REFERENCE_KINDS,
   ORDER_REFERENCE_SOURCE_FIELDS,
   PREFLIGHT_SCHEMA_VERSION,
+  QUOTATION_ORDER_RELATION_STATES,
+  assessQuotationOrderRelation,
   calculateOrderDepositAmount,
   calculateOrderRemainingSettlement,
   customerNameMatches,

@@ -1,4 +1,11 @@
-const { convertQuotationToOrder, decorateRecords, getItemsSummary, getRecordItems } = require('../../utils/business');
+const {
+  QUOTATION_TO_ORDER_ACTIONS,
+  assessQuotationToOrder,
+  convertQuotationToOrder,
+  decorateRecords,
+  getItemsSummary,
+  getRecordItems
+} = require('../../utils/business');
 const { diffDays, today } = require('../../utils/date');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const { getState, saveState } = require('../../utils/storage');
@@ -21,19 +28,40 @@ function hasAdvancedQuotationFilters(filters) {
   return Boolean(filters.customer || filters.product || filters.quoteDate || filters.dueDate);
 }
 
-function withDisplayItems(item) {
+function withDisplayItems(state, item) {
   const displayItems = getRecordItems(item).map((lineItem, index) => Object.assign({}, lineItem, {
     itemKey: `${item.id || 'quotation'}-${index}`
   }));
-  const isConverted = Boolean(item.convertedOrderId)
-    || ['converted', 'ordered', '已转订单', '已下单'].includes(String(item.status || ''));
+  const conversionAssessment = assessQuotationToOrder(state, item.id);
+  const isConverted = conversionAssessment.action === QUOTATION_TO_ORDER_ACTIONS.RETURN_EXISTING;
+  const hasConversionConflict = conversionAssessment.action === QUOTATION_TO_ORDER_ACTIONS.DATA_CONFLICT;
   return Object.assign({}, item, {
     displayItems,
     hasMultipleItems: displayItems.length > 1,
     itemsSummary: getItemsSummary(item),
     isConverted,
-    statusLabel: isConverted ? '已转订单' : item.status,
-    convertedText: '已转订单'
+    statusLabel: hasConversionConflict ? '数据冲突' : (isConverted ? '已转订单' : item.status),
+    convertedText: isConverted ? '已转订单' : '转订单',
+    conversionAction: conversionAssessment.action,
+    conversionMessage: conversionAssessment.message
+  });
+}
+
+function showConversionIssue(assessment = {}) {
+  const title = assessment.action === QUOTATION_TO_ORDER_ACTIONS.DATA_CONFLICT
+    ? '数据冲突'
+    : '不能转订单';
+  if (assessment.action === QUOTATION_TO_ORDER_ACTIONS.DATA_CONFLICT) {
+    wx.showModal({
+      title,
+      content: assessment.message || '报价与订单关系存在数据冲突，请先核对。',
+      showCancel: false
+    });
+    return;
+  }
+  wx.showToast({
+    title: assessment.message || '当前报价不能转订单',
+    icon: 'none'
   });
 }
 
@@ -93,13 +121,15 @@ Page({
 
   load() {
     const state = getState();
+    this._loadedState = state;
     const allQuotations = decorateRecords(state, state.quotations).map((item) => ({
-      ...withDisplayItems(item),
+      ...withDisplayItems(state, item),
       followupDate: item.deliveryDate || '',
       needFollowup: isQuotationDueForFollowup(item)
     }));
     this.setData({ allQuotations });
     this.applyFilters(allQuotations);
+    return state;
   },
 
   getFilters() {
@@ -164,16 +194,19 @@ Page({
   },
 
   startConvert(event) {
-    const id = event.currentTarget.dataset.id;
-    const quotation = this.data.quotations.find((item) => item.id === id);
-    if (quotation && quotation.isConverted) {
-      wx.showToast({ title: '已转订单', icon: 'none' });
-      return;
+    const id = String(event.currentTarget.dataset.id || '');
+    const state = this._loadedState || getState();
+    const assessment = assessQuotationToOrder(state, id);
+    if (assessment.action !== QUOTATION_TO_ORDER_ACTIONS.CREATE) {
+      this.cancelConvert();
+      showConversionIssue(assessment);
+      return assessment;
     }
     this.setData({
       convertingQuotationId: id,
       conversionDeliveryDate: ''
     });
+    return assessment;
   },
 
   changeConversionDeliveryDate(event) {
@@ -188,21 +221,57 @@ Page({
   },
 
   confirmConvert(event) {
-    const id = event.currentTarget.dataset.id;
+    const id = String(event.currentTarget.dataset.id || '');
+    const selectedId = String(this.data.convertingQuotationId || '');
+    if (!id || !selectedId || id !== selectedId) {
+      wx.showToast({ title: '确认报价与当前选择不一致，请重新操作', icon: 'none' });
+      return null;
+    }
     if (!this.data.conversionDeliveryDate) {
       wx.showToast({ title: '转订单前请先选交期', icon: 'none' });
-      return;
+      return null;
     }
     const state = getState();
+    const assessment = assessQuotationToOrder(state, id);
+    if (assessment.action === QUOTATION_TO_ORDER_ACTIONS.RETURN_EXISTING) {
+      const existingOrder = convertQuotationToOrder(state, id, {
+        requiredDeliveryDate: this.data.conversionDeliveryDate
+      });
+      wx.showToast({ title: '已存在对应订单', icon: 'none' });
+      this.cancelConvert();
+      this.load();
+      return existingOrder;
+    }
+    if (assessment.action !== QUOTATION_TO_ORDER_ACTIONS.CREATE) {
+      showConversionIssue(assessment);
+      this.cancelConvert();
+      this.load();
+      return null;
+    }
     const order = convertQuotationToOrder(state, id, {
       requiredDeliveryDate: this.data.conversionDeliveryDate
     });
+    if (!order) {
+      wx.showToast({ title: '转换失败，请刷新后重试', icon: 'none' });
+      this.load();
+      return null;
+    }
     saveState(state, { writerSource: 'QUOTATION_CONVERT' });
+    const persistedState = this.load();
+    const persistedQuotation = (persistedState.quotations || []).find((item) => item.id === id);
+    const persistedOrder = (persistedState.orders || []).find((item) => item.id === order.id);
+    const relationSaved = Boolean(
+      persistedQuotation
+      && persistedOrder
+      && persistedQuotation.convertedOrderId === persistedOrder.id
+      && persistedOrder.quotationId === persistedQuotation.id
+      && persistedOrder.customerId === persistedQuotation.customerId
+    );
     wx.showToast({
-      title: order ? '已转订单' : '转换失败',
-      icon: order ? 'success' : 'none'
+      title: relationSaved ? '已转订单' : '保存后核对失败，请重新打开页面检查',
+      icon: relationSaved ? 'success' : 'none'
     });
-    if (order) this.cancelConvert();
-    this.load();
+    if (relationSaved) this.cancelConvert();
+    return relationSaved ? persistedOrder : null;
   }
 });

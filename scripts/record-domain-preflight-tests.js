@@ -224,7 +224,7 @@ test('28类决策矩阵覆盖客户、历史、关联、金额、目标和安全
     ['同名客户需要选择', orderResult(), stateWith({ customers: [customer('c1', '王总'), customer('c2', '王总')] }), false, 'CUSTOMER_SELECTION_REQUIRED'],
     ['同一客户多个活动订单的定金不能静默选择', depositResult({ customerId: 'cus_wang' }), twoOrders, false, 'MULTIPLE_ORDER_SELECTION_REQUIRED'],
     ['订单关联其他客户报价', orderResult({ customerId: 'cus_wang', quotationId: 'quo_li' }), stateWith({ customers: [wang, li], quotations: [quotation('quo_li', 'cus_li')] }), false, 'QUOTATION_CUSTOMER_MISMATCH'],
-    ['报价已转订单', orderResult({ customerId: 'cus_wang', quotationId: 'quo_1' }), stateWith({ customers: [wang], quotations: [quotation('quo_1', 'cus_wang', { convertedOrderId: 'ord_old' })], orders: [order('ord_old', 'cus_wang')] }), false, 'QUOTATION_ALREADY_CONVERTED'],
+    ['报价正向关系缺少订单反向引用', orderResult({ customerId: 'cus_wang', quotationId: 'quo_1' }), stateWith({ customers: [wang], quotations: [quotation('quo_1', 'cus_wang', { convertedOrderId: 'ord_old' })], orders: [order('ord_old', 'cus_wang')] }), false, 'QUOTATION_ORDER_RELATION_CONFLICT'],
     ['待收款与订单客户一致', result('receivable', 'create_receivable', { customerName: '王总', customerId: 'cus_wang', orderId: 'ord_1', amount: '800', dueDate: '2026-08-01' }), withOrder, true, ''],
     ['待收款与订单客户不一致', result('receivable', 'create_receivable', { customerName: '王总', customerId: 'cus_wang', orderId: 'ord_li', amount: '800', dueDate: '2026-08-01' }), stateWith({ customers: [wang, li], orders: [order('ord_li', 'cus_li')] }), false, 'ORDER_CUSTOMER_MISMATCH'],
     ['唯一待收款必须显式选择', paymentResult({ customerId: 'cus_wang' }), stateWith({ customers: [wang], receivables: [activeReceivable] }), false, 'RECEIVABLE_SELECTION_REQUIRED'],
@@ -249,6 +249,32 @@ test('28类决策矩阵覆盖客户、历史、关联、金额、目标和安全
   ];
   assert.strictEqual(matrix.length, 28);
   matrix.forEach(([name, draft, state, allowed, code]) => assertDecision(name, preflight(draft, state), allowed, code));
+
+  const relationConflictState = stateWith({
+    customers: [wang],
+    quotations: [quotation('quo_1', 'cus_wang', { convertedOrderId: 'ord_old' })],
+    orders: [order('ord_old', 'cus_wang')]
+  });
+  const relationConflictBefore = clone(relationConflictState);
+  const relationConflict = preflight(
+    orderResult({
+      customerId: 'cus_wang',
+      quotationId: 'quo_1',
+      quotationSelectionConfirmed: true
+    }),
+    relationConflictState
+  );
+  assertDecision(
+    '报价正向关系缺少订单反向引用必须明确冲突',
+    relationConflict,
+    false,
+    'QUOTATION_ORDER_RELATION_CONFLICT'
+  );
+  assert.strictEqual(relationConflict.domainCanSaveFormal, false);
+  assert.deepStrictEqual(relationConflictState, relationConflictBefore);
+  assert.strictEqual(relationConflictState.orders.length, 1);
+  assert.strictEqual(relationConflictState.orderProgress.length, 0);
+  assert.strictEqual(relationConflictState.quotations[0].status, '待确认');
 });
 
 test('明确订单指代的待收款在唯一、多候选及三种Evidence类型下必须选择订单', () => {
@@ -1132,7 +1158,7 @@ test('business允许场景保存类型、客户、originalText和多商品正确
   assert.strictEqual(saved.record.customerId, state.customers[0].id);
 });
 
-test('正常报价转订单保存后双向关系一致', () => {
+test('不完整来源报价转订单明确拒绝且零业务变化', () => {
   const createState = () => stateWith({
     customers: [customer('cus_wang', '王总')], quotations: [quotation('quo_1', 'cus_wang')]
   });
@@ -1147,15 +1173,17 @@ test('正常报价转订单保存后双向关系一致', () => {
       'productName', 'quantity', 'unitPrice', 'amount', 'dueDate'
     ]
   });
-  [saveConfirmedDraft, saveConfirmedDraftServer].forEach((save, index) => {
-    const state = createState();
-    const saved = save(state, clone(draft));
-    assert.strictEqual(saved.type, 'order', `mirror ${index}: ${JSON.stringify(saved.preflight && saved.preflight.blockingIssues)}`);
-    assert.strictEqual(saved.record.quotationId, 'quo_1');
-    assert.strictEqual(state.quotations[0].status, '已转订单');
-    assert.strictEqual(state.quotations[0].convertedOrderId, saved.record.id);
-    assert.strictEqual(state.orders.length, 1);
-  });
+  const state = createState();
+  const before = clone(state);
+  const saved = saveConfirmedDraft(state, clone(draft));
+  assert.strictEqual(saved.type, 'error');
+  assert.strictEqual(saved.code, 'QUOTATION_ITEMS_INCOMPLETE');
+  assert.strictEqual(saved.noMutation, true);
+  assert.deepStrictEqual(state, before);
+  assert.strictEqual(state.orders.length, 0);
+  assert.strictEqual(state.orderProgress.length, 0);
+  assert.strictEqual(state.quotations[0].status, '待确认');
+  assert.strictEqual(Boolean(state.quotations[0].convertedOrderId), false);
 });
 
 test('business正常部分收款和正好结清均按选中关系更新，不创建错误客户', () => {

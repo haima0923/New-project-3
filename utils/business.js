@@ -12,14 +12,17 @@ const {
   getReceivableRemainingAmount,
   getTrustedRecordFlowContext,
   isNoRecordPersistenceForbidden,
-  orderMatchesProduct
+  orderMatchesProduct,
+  QUOTATION_ORDER_RELATION_STATES,
+  assessQuotationOrderRelation
 } = require('./record-domain-preflight');
 const { generateId, getCustomerDisplay, normalizeCustomer } = require('./storage');
 const { normalizeUnit, unitsMatch } = require('./units');
 const {
   RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS,
   deriveReceivablePaymentKind,
-  getReceivableRemainingBalance
+  getReceivableRemainingBalance,
+  normalizeMoneyToCents
 } = require('./payment-kind');
 
 const depositKinds = ['deposit'];
@@ -34,6 +37,13 @@ const recordCollections = {
 };
 const NO_RECORD_FORMAL_SAVE_FORBIDDEN = 'NO_RECORD_FORMAL_SAVE_FORBIDDEN';
 const NO_RECORD_PENDING_SAVE_FORBIDDEN = 'NO_RECORD_PENDING_SAVE_FORBIDDEN';
+const QUOTATION_TO_ORDER_ACTIONS = Object.freeze({
+  CREATE: 'CREATE',
+  DATA_CONFLICT: 'DATA_CONFLICT',
+  INVALID_DATA: 'INVALID_DATA',
+  REJECT: 'REJECT',
+  RETURN_EXISTING: 'RETURN_EXISTING'
+});
 
 function cloneRecord(value) {
   if (!value || typeof value !== 'object') return value;
@@ -756,12 +766,38 @@ function updateQuotationFromDraft(state, parseResult) {
 }
 
 function saveOrder(state, parseResult) {
-  ensureProductCatalog(state);
   const fields = parseResult.fields || {};
+  const quotationAssessment = fields.quotationId
+    ? assessQuotationToOrder(state, fields.quotationId)
+    : null;
+  if (quotationAssessment && quotationAssessment.action !== QUOTATION_TO_ORDER_ACTIONS.CREATE) {
+    return {
+      error: quotationAssessment.message,
+      field: 'quotationId',
+      code: quotationAssessment.code,
+      noMutation: true
+    };
+  }
   const quotationLinkError = getOrderQuotationLinkError(state, fields);
-  if (quotationLinkError) return quotationLinkError;
+  if (quotationLinkError) {
+    return Object.assign({}, quotationLinkError, { noMutation: true });
+  }
   const items = normalizeLineItemsFromFields(fields);
   const draftTotalAmount = getDraftTotalAmount(fields, items);
+  if (quotationAssessment) {
+    const draftValidation = getQuotationItemsValidation({
+      items,
+      totalAmount: draftTotalAmount
+    });
+    if (!draftValidation.ok) {
+      return {
+        error: getQuotationItemsValidationMessage(draftValidation.code),
+        field: 'amount',
+        code: draftValidation.code,
+        noMutation: true
+      };
+    }
+  }
   const totalAmount = toMoney(draftTotalAmount);
   const depositAmount = toMoney(fields.depositAmount || fields.paymentAmount);
   if (depositAmount > 0 && totalAmount <= 0) {
@@ -773,18 +809,26 @@ function saveOrder(state, parseResult) {
       field: 'depositAmount'
     };
   }
-  const customer = findOrCreateCustomer(state, fields);
+  const customer = quotationAssessment
+    ? quotationAssessment.customer
+    : findOrCreateCustomer(state, fields);
   if (!customer) return null;
   if (fields.quotationId) {
-    const quotation = (state.quotations || []).find((item) => item.id === fields.quotationId);
+    const quotation = quotationAssessment.quotation;
     if (!quotation || quotation.customerId !== customer.id) {
-      return { error: '选择的报价不属于当前客户，请重新选择。', field: 'quotationId' };
+      return {
+        error: '选择的报价不属于当前客户，请重新选择。',
+        field: 'quotationId',
+        noMutation: true
+      };
     }
   }
+  ensureProductCatalog(state);
   const legacyFields = buildLegacyFieldsFromFirstItem(items, fields);
+  const sourceQuotation = quotationAssessment && quotationAssessment.quotation;
   const order = {
     id: generateId('ord'),
-    userId: 'local-user',
+    userId: sourceQuotation ? sourceQuotation.userId : 'local-user',
     customerId: customer.id,
     quotationId: fields.quotationId || '',
     productName: legacyFields.productName,
@@ -795,7 +839,9 @@ function saveOrder(state, parseResult) {
     priceUnit: legacyFields.priceUnit,
     totalAmount: draftTotalAmount,
     items,
-    originalText: getOriginalTextFromDraft(parseResult),
+    originalText: sourceQuotation
+      ? (sourceQuotation.originalText || '')
+      : getOriginalTextFromDraft(parseResult),
     paymentMethod: fields.paymentMethod || '',
     orderDate: today(),
     requiredDeliveryDate: fields.dueDate || '',
@@ -809,8 +855,7 @@ function saveOrder(state, parseResult) {
   };
   state.orders.unshift(order);
   if (fields.quotationId) {
-    const quotation = (state.quotations || []).find((item) => item.id === fields.quotationId);
-    markQuotationConverted(quotation, order, order.createdAt);
+    markQuotationConverted(sourceQuotation, order, order.createdAt);
   }
   learnProductCatalogFromRecord(state, order, 'order', { skipEnsure: true });
   state.orderProgress.unshift({
@@ -1170,6 +1215,15 @@ function saveConfirmedDraft(state, parseResult) {
     const record = saveOrder(state, parseResult);
     if (record && !record.error) return { type: 'order', record };
     if (record && record.error) {
+      if (record.noMutation) {
+        return {
+          type: 'error',
+          error: record.error,
+          field: record.field || '',
+          code: record.code || '',
+          noMutation: true
+        };
+      }
       const nextResult = Object.assign({}, parseResult, {
         low_confidence_fields: Array.from(new Set(
           (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
@@ -1274,17 +1328,154 @@ function saveConfirmedDraft(state, parseResult) {
   return Object.assign({}, saveResult, { preflight });
 }
 
-function isQuotationConverted(quotation = {}) {
-  return Boolean(quotation.convertedOrderId)
-    || ['converted', 'ordered', '已转订单', '已下单'].includes(String(quotation.status || ''));
+function quotationToOrderAssessment(action, code, message, details = {}) {
+  return Object.assign({ action, code, message }, details);
 }
 
-function findConvertedOrder(state, quotation = {}) {
-  if (!quotation) return null;
-  return (state.orders || []).find((item) => (
-    (quotation.convertedOrderId && item.id === quotation.convertedOrderId)
-    || item.quotationId === quotation.id
-  )) || null;
+function isQuotationDeleted(state, quotation = {}) {
+  if (quotation.deleted === true || quotation.isDeleted === true || quotation.deletedAt) return true;
+  return (state.deletedRecords || []).some((item) => (
+    item.recordType === 'quotation' && item.recordId === quotation.id
+  ));
+}
+
+function getQuotationItemsValidation(quotation = {}) {
+  const items = getRecordItems(quotation);
+  if (!items.length) {
+    return { ok: false, code: 'QUOTATION_ITEMS_INCOMPLETE', items };
+  }
+  let itemTotalCents = 0;
+  for (const item of items) {
+    const quantity = Number(item.quantity);
+    const unitPrice = Number(item.unitPrice);
+    const lineTotal = normalizeMoneyToCents(item.totalAmount);
+    const calculated = normalizeMoneyToCents(quantity * unitPrice);
+    const unit = normalizeUnit(item.unit || '');
+    const priceUnit = normalizeUnit(item.priceUnit || '');
+    const canCalculateLineTotal = !priceUnit || unitsMatch(unit, priceUnit);
+    if (!String(item.productName || '').trim()
+      || !Number.isFinite(quantity)
+      || quantity <= 0
+      || !unit
+      || !Number.isFinite(unitPrice)
+      || unitPrice <= 0
+      || !lineTotal.valid
+      || lineTotal.cents <= 0) {
+      return { ok: false, code: 'QUOTATION_ITEMS_INCOMPLETE', items };
+    }
+    if (canCalculateLineTotal
+      && (!calculated.valid || calculated.cents !== lineTotal.cents)) {
+      return { ok: false, code: 'QUOTATION_AMOUNT_CONFLICT', items };
+    }
+    itemTotalCents += lineTotal.cents;
+  }
+  const quotationTotal = normalizeMoneyToCents(quotation.totalAmount);
+  if (!hasMoneyValue(quotation.totalAmount) || !quotationTotal.valid || quotationTotal.cents <= 0) {
+    return { ok: false, code: 'QUOTATION_ITEMS_INCOMPLETE', items };
+  }
+  if (quotationTotal.cents !== itemTotalCents) {
+    return { ok: false, code: 'QUOTATION_AMOUNT_CONFLICT', items };
+  }
+  return { ok: true, code: '', items };
+}
+
+function getQuotationItemsValidationMessage(code) {
+  return code === 'QUOTATION_AMOUNT_CONFLICT'
+    ? '报价商品金额与总金额存在冲突，请先核对。'
+    : '报价商品信息不完整，不能转订单。';
+}
+
+function assessQuotationToOrder(state = {}, quotationId = '') {
+  const quotations = (state.quotations || []).filter((item) => item && item.id === quotationId);
+  if (!quotationId || quotations.length === 0) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.REJECT,
+      'QUOTATION_NOT_FOUND',
+      '报价不存在，请刷新后重试。'
+    );
+  }
+  if (quotations.length !== 1) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.DATA_CONFLICT,
+      'QUOTATION_ID_CONFLICT',
+      '报价编号存在数据冲突，请先核对。'
+    );
+  }
+  const quotation = quotations[0];
+  if (quotation.recordType && quotation.recordType !== 'quotation') {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.REJECT,
+      'QUOTATION_TYPE_INVALID',
+      '当前记录不是报价，不能转订单。',
+      { quotation }
+    );
+  }
+  if (isQuotationDeleted(state, quotation)) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.REJECT,
+      'QUOTATION_DELETED',
+      '报价已删除或作废，不能转订单。',
+      { quotation }
+    );
+  }
+  const customer = getCustomerById(state, quotation.customerId);
+  if (!customer) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.REJECT,
+      'QUOTATION_CUSTOMER_NOT_FOUND',
+      '报价关联客户不存在，请先核对客户。',
+      { quotation }
+    );
+  }
+  if (quotation.userId && customer.userId && quotation.userId !== customer.userId) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.REJECT,
+      'QUOTATION_CUSTOMER_RELATION_INVALID',
+      '报价与客户的归属关系不一致，请先核对。',
+      { customer, quotation }
+    );
+  }
+
+  const relation = assessQuotationOrderRelation(state, quotation);
+  if (relation.state === QUOTATION_ORDER_RELATION_STATES.CLEAN_EXISTING) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.RETURN_EXISTING,
+      'QUOTATION_ALREADY_CONVERTED',
+      '该报价已存在对应订单。',
+      { customer, order: relation.order, quotation }
+    );
+  }
+  if (relation.state === QUOTATION_ORDER_RELATION_STATES.DATA_CONFLICT) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.DATA_CONFLICT,
+      relation.code,
+      '报价与订单关系存在数据冲突，请先核对。',
+      { customer, quotation }
+    );
+  }
+  if (String(quotation.status || '') !== '待确认') {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.REJECT,
+      'QUOTATION_STATUS_INELIGIBLE',
+      '当前报价状态不能转订单。',
+      { customer, quotation }
+    );
+  }
+  const itemsValidation = getQuotationItemsValidation(quotation);
+  if (!itemsValidation.ok) {
+    return quotationToOrderAssessment(
+      QUOTATION_TO_ORDER_ACTIONS.INVALID_DATA,
+      itemsValidation.code,
+      getQuotationItemsValidationMessage(itemsValidation.code),
+      { customer, items: itemsValidation.items, quotation }
+    );
+  }
+  return quotationToOrderAssessment(
+    QUOTATION_TO_ORDER_ACTIONS.CREATE,
+    'QUOTATION_READY_TO_CONVERT',
+    '报价可以转订单。',
+    { customer, items: itemsValidation.items, quotation }
+  );
 }
 
 function markQuotationConverted(quotation, order, convertedAt) {
@@ -1296,29 +1487,16 @@ function markQuotationConverted(quotation, order, convertedAt) {
 }
 
 function convertQuotationToOrder(state, quotationId, options = {}) {
+  const assessment = assessQuotationToOrder(state, quotationId);
+  if (assessment.action === QUOTATION_TO_ORDER_ACTIONS.RETURN_EXISTING) {
+    return assessment.order;
+  }
+  if (assessment.action !== QUOTATION_TO_ORDER_ACTIONS.CREATE) return null;
   ensureProductCatalog(state);
-  const quotation = state.quotations.find((item) => item.id === quotationId);
-  if (!quotation) return null;
-  const existingOrder = findConvertedOrder(state, quotation);
+  const quotation = assessment.quotation;
   const now = new Date().toISOString();
   const requiredDeliveryDate = String(options.requiredDeliveryDate || '').trim();
-  if (isQuotationConverted(quotation)) {
-    if (existingOrder && requiredDeliveryDate && !existingOrder.requiredDeliveryDate) {
-      existingOrder.requiredDeliveryDate = requiredDeliveryDate;
-      existingOrder.expectedShipDate = requiredDeliveryDate;
-      existingOrder.updatedAt = now;
-      state.orderProgress.unshift({
-        id: generateId('prog'),
-        orderId: existingOrder.id,
-        status: existingOrder.status,
-        note: `补充交期：${requiredDeliveryDate}`,
-        createdAt: now
-      });
-    }
-    if (existingOrder) markQuotationConverted(quotation, existingOrder, now);
-    return existingOrder;
-  }
-  const items = getRecordItems(quotation);
+  const items = assessment.items;
   const legacyFields = buildLegacyFieldsFromFirstItem(items, quotation);
   const order = {
     id: generateId('ord'),
@@ -1585,8 +1763,10 @@ function decorateRecords(state, records) {
 module.exports = {
   NO_RECORD_FORMAL_SAVE_FORBIDDEN,
   NO_RECORD_PENDING_SAVE_FORBIDDEN,
+  QUOTATION_TO_ORDER_ACTIONS,
   activeOrderStatuses,
   activeReceivableStatuses,
+  assessQuotationToOrder,
   assertPendingPersistenceAllowed,
   appendOperationLog,
   buildOrderEditDraft,
