@@ -1,0 +1,10 @@
+{
+  "name": "huoxiaoling-wechat-runtime-tests",
+  "private": true,
+  "scripts": {
+    "test:wechat-order-date": "node tests/wechat-runtime/order-delivery-date-wxml-v1/run.js"
+  },
+  "devDependencies": {
+    "miniprogram-automator": "0.12.1"
+  }
+}
