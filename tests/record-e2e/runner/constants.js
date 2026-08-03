@@ -31,6 +31,8 @@ const FORMAL_COLLECTIONS = Object.freeze([
 const PAGE_PATHS = Object.freeze({
   HOME_QUICK: 'pages/dashboard/dashboard.js',
   FULL_PAGE: 'pages/input/input.js',
+  ORDER_LIST: 'pages/orders/orders.js',
+  RECORD_DETAIL: 'pages/record-detail/record-detail.js',
   QUOTATION_LIST: 'pages/quotations/quotations.js'
 });
 const OBSERVATION_LANES = Object.freeze([

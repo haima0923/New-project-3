@@ -1,0 +1,104 @@
+{
+  "schemaVersion": "single-item-order-complete-save-fixtures-v1",
+  "fixtures": [
+    {
+      "fixtureId": "sio-empty-v1",
+      "state": {
+        "meta": {
+          "onboarded": true,
+          "industry": "日用百货",
+          "userId": "e2e-user",
+          "createdAt": "2026-07-01T02:00:00.000Z"
+        },
+        "customers": [],
+        "quotations": [],
+        "orders": [],
+        "receivables": [],
+        "paymentRecords": [],
+        "dunningRecords": [],
+        "todos": [],
+        "orderProgress": [],
+        "pendingNotes": [],
+        "aiParseLogs": [],
+        "operationLogs": [],
+        "productCatalog": [],
+        "deletedRecords": [],
+        "dunningTemplates": []
+      }
+    },
+    {
+      "fixtureId": "sio-existing-customer-v1",
+      "extends": "sio-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "sio-customer-li",
+            "userId": "e2e-user",
+            "name": "李姐",
+            "company": "义乌文件用品厂",
+            "wechatRemark": "义乌李姐",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z",
+            "lastTradeAt": ""
+          }
+        ]
+      }
+    },
+    {
+      "fixtureId": "sio-unrelated-business-v1",
+      "extends": "sio-empty-v1",
+      "patch": {
+        "customers": [
+          {
+            "id": "sio-unrelated-customer",
+            "userId": "e2e-user",
+            "name": "孙总",
+            "company": "无关客户公司",
+            "createdAt": "2026-07-01T02:00:00.000Z",
+            "updatedAt": "2026-07-01T02:00:00.000Z",
+            "lastTradeAt": "2026-07-02"
+          }
+        ],
+        "orders": [
+          {
+            "id": "sio-unrelated-order",
+            "userId": "e2e-user",
+            "customerId": "sio-unrelated-customer",
+            "productName": "旧雨伞",
+            "quantity": "10",
+            "unit": "把",
+            "unitPrice": "20",
+            "priceUnit": "把",
+            "totalAmount": "200",
+            "items": [
+              {
+                "productName": "旧雨伞",
+                "quantity": "10",
+                "unit": "把",
+                "unitPrice": "20",
+                "priceUnit": "把",
+                "totalAmount": "200"
+              }
+            ],
+            "orderDate": "2026-07-02",
+            "requiredDeliveryDate": "2026-07-20",
+            "expectedShipDate": "2026-07-20",
+            "status": "待生产",
+            "originalText": "孙总订10把旧雨伞，每把20元",
+            "createdAt": "2026-07-02T02:00:00.000Z",
+            "updatedAt": "2026-07-02T02:00:00.000Z"
+          }
+        ],
+        "orderProgress": [
+          {
+            "id": "sio-unrelated-progress",
+            "orderId": "sio-unrelated-order",
+            "status": "待生产",
+            "note": "创建订单",
+            "createdAt": "2026-07-02T02:00:00.000Z"
+          }
+        ]
+      }
+    }
+  ]
+}

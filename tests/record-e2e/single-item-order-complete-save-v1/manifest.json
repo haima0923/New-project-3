@@ -1,0 +1,18 @@
+{
+  "schemaVersion": "single-item-order-complete-save-manifest-v1",
+  "clusterId": "single-item-order-complete-save-v1",
+  "includeInCoreCount": false,
+  "exactActiveCaseCount": 56,
+  "fixtureFile": "fixtures.json",
+  "caseModule": "contract-cases.js",
+  "groups": {
+    "HOME_QUICK": 9,
+    "FULL_PAGE": 6,
+    "FIELD_INTEGRITY": 11,
+    "SCOPE_BOUNDARY": 7,
+    "LIST_AND_DETAIL": 6,
+    "RESTART_AND_IDEMPOTENCY": 7,
+    "FAILURE_AND_ROLLBACK": 7,
+    "NO_SILENT_BYPASS": 3
+  }
+}

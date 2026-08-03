@@ -51,9 +51,13 @@ function rawMessageCount(payload = {}) {
 
 function summarizeRawResult(result) {
   const compact = compactRawParser(result || {});
+  const fields = result && result.fields || {};
   return {
     businessType: compact.businessType,
     confidence: compact.confidence,
+    dateDetail: safeClone(result && result.date_detail || null),
+    dueDate: fields.dueDate || '',
+    dueDateSource: result && result.field_sources && result.field_sources.dueDate || '',
     intent: compact.intent,
     intentEvidence: compact.intentEvidence,
     missingFields: compact.missingFields,
@@ -65,8 +69,12 @@ function summarizeRawResult(result) {
 
 function summarizeHybridResult(result) {
   const route = result && result.parse_route || {};
+  const fields = result && result.fields || {};
   const summary = {
     businessType: String(result && result.intent || 'unknown'),
+    dateDetail: safeClone(result && result.date_detail || null),
+    dueDate: fields.dueDate || '',
+    dueDateSource: result && result.field_sources && result.field_sources.dueDate || '',
     operation: result && result.operation || null,
     relationReferences: compactRelationReferences(
       result && result.relation_references

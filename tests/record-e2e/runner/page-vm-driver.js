@@ -159,6 +159,7 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
       saveConfirmedDraft: 0,
       savePendingNote: 0
     },
+    businessCallLog: [],
     productionStorageCalls: {
       saveState: 0
     },
@@ -179,6 +180,7 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
   const originalConvertQuotationToOrder = business.convertQuotationToOrder;
   const originalGetState = storage.getState;
   const originalSaveState = storage.saveState;
+  const instrumentation = options.instrumentation || options.quotationInstrumentation || null;
   aiParser.parseHybridInput = createTransportIdentityAdapter(
     originalHybrid,
     spec.ai && spec.ai.profile || 'LOCAL_ONLY',
@@ -186,7 +188,31 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
   );
   business.saveConfirmedDraft = (...args) => {
     evidence.productionBusinessCalls.saveConfirmedDraft += 1;
-    return originalSaveConfirmed(...args);
+    const entry = {
+      method: 'saveConfirmedDraft',
+      parseResult: safeClone(args[1] || {}),
+      stateFingerprintBefore: stableHash(args[0] || {}, 'save-confirmed-before-v1')
+    };
+    evidence.businessCallLog.push(entry);
+    try {
+      if (instrumentation && typeof instrumentation.beforeSaveConfirmedDraft === 'function') {
+        instrumentation.beforeSaveConfirmedDraft(args, entry);
+      }
+      const result = instrumentation
+        && typeof instrumentation.invokeSaveConfirmedDraft === 'function'
+        ? instrumentation.invokeSaveConfirmedDraft(args, originalSaveConfirmed, entry)
+        : originalSaveConfirmed(...args);
+      entry.result = safeClone(result);
+      entry.stateFingerprintAfter = stableHash(args[0] || {}, 'save-confirmed-after-v1');
+      if (instrumentation && typeof instrumentation.afterSaveConfirmedDraft === 'function') {
+        instrumentation.afterSaveConfirmedDraft(args, result, entry);
+      }
+      return result;
+    } catch (error) {
+      entry.error = { code: error.code || 'BUSINESS_SAVE_ERROR', message: error.message };
+      entry.transientStateOnError = safeClone(args[0] || {});
+      throw error;
+    }
   };
   business.savePendingNote = (...args) => {
     evidence.productionBusinessCalls.savePendingNote += 1;
@@ -201,17 +227,17 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     };
     evidence.conversionCallLog.push(entry);
     try {
-      if (options.quotationInstrumentation
-        && typeof options.quotationInstrumentation.beforeConvert === 'function') {
-        options.quotationInstrumentation.beforeConvert(args, entry);
+      if (instrumentation
+        && typeof instrumentation.beforeConvert === 'function') {
+        instrumentation.beforeConvert(args, entry);
       }
       const result = originalConvertQuotationToOrder(...args);
       entry.result = safeClone(result);
       entry.resultOrderId = result && result.id || '';
       entry.stateFingerprintAfter = stableHash(args[0] || {}, 'quotation-convert-after-v1');
-      if (options.quotationInstrumentation
-        && typeof options.quotationInstrumentation.afterConvert === 'function') {
-        options.quotationInstrumentation.afterConvert(args, result, entry);
+      if (instrumentation
+        && typeof instrumentation.afterConvert === 'function') {
+        instrumentation.afterConvert(args, result, entry);
       }
       return result;
     } catch (error) {
@@ -230,9 +256,9 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     try {
       const result = originalGetState(...args);
       entry.resultFingerprint = stableHash(result || {}, 'storage-read-v1');
-      if (options.quotationInstrumentation
-        && typeof options.quotationInstrumentation.afterGetState === 'function') {
-        options.quotationInstrumentation.afterGetState(
+      if (instrumentation
+        && typeof instrumentation.afterGetState === 'function') {
+        instrumentation.afterGetState(
           result,
           evidence.productionStorageReads.getState,
           entry
@@ -253,9 +279,9 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     };
     evidence.storageCallLog.push(entry);
     try {
-      if (options.quotationInstrumentation
-        && typeof options.quotationInstrumentation.beforeSaveState === 'function') {
-        options.quotationInstrumentation.beforeSaveState(args, entry);
+      if (instrumentation
+        && typeof instrumentation.beforeSaveState === 'function') {
+        instrumentation.beforeSaveState(args, entry);
       }
       const result = originalSaveState(...args);
       entry.result = safeClone(result);
@@ -316,7 +342,7 @@ function loadProductionPage(surface, runtime, spec, options = {}) {
     if (typeof page.onLoad === 'function') {
       // PENDING_EDIT deliberately enters through the production hand-off key and
       // onShow() path. Passing pendingId here as well would load it twice.
-      page.onLoad({});
+      page.onLoad(safeClone(options.onLoadOptions || {}));
     }
     if (typeof page.onShow === 'function') page.onShow();
   }

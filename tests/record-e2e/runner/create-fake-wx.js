@@ -33,6 +33,38 @@ function createFakeWx(options = {}) {
   const failureSchedule = safeClone(options.failureSchedule || []);
   let storageAuditPerformed = false;
 
+  function findFault(operation, key, occurrence, mode) {
+    return failureSchedule.find((entry) => (
+      entry
+      && entry.triggered !== true
+      && entry.operation === operation
+      && String(entry.key || '') === String(key || '')
+      && Number(entry.occurrence || 1) === occurrence
+      && String(entry.mode || 'THROW_BEFORE') === mode
+    ));
+  }
+
+  function activateFault(fault, operation, key, occurrence, mode) {
+    if (!fault) return null;
+    fault.triggered = true;
+    const event = {
+      code: String(fault.errorCode || 'TEST_STORAGE_FAULT'),
+      key: String(key || ''),
+      mode,
+      occurrence,
+      operation
+    };
+    faultEvents.push(event);
+    return event;
+  }
+
+  function throwFault(fault, operation, key, occurrence, mode) {
+    const event = activateFault(fault, operation, key, occurrence, mode);
+    const error = new Error(String(fault.message || `Injected ${operation} failure for ${key}`));
+    error.code = event.code;
+    throw error;
+  }
+
   function recordStorage(operation, key) {
     const normalized = String(key || '');
     auditEvents.push({ operation, key: normalized });
@@ -40,43 +72,58 @@ function createFakeWx(options = {}) {
     const operationKey = `${operation}|${normalized}`;
     operationKeyCalls[operationKey] = (operationKeyCalls[operationKey] || 0) + 1;
     const occurrence = operationKeyCalls[operationKey];
-    const fault = failureSchedule.find((entry) => (
-      entry
-      && entry.triggered !== true
-      && entry.operation === operation
-      && String(entry.key || '') === normalized
-      && Number(entry.occurrence || 1) === occurrence
-      && String(entry.mode || 'THROW_BEFORE') === 'THROW_BEFORE'
-    ));
-    if (fault) {
-      fault.triggered = true;
-      const event = {
-        code: String(fault.errorCode || 'TEST_STORAGE_FAULT'),
-        key: normalized,
-        mode: 'THROW_BEFORE',
-        occurrence,
-        operation
-      };
-      faultEvents.push(event);
-      const error = new Error(String(fault.message || `Injected ${operation} failure for ${normalized}`));
-      error.code = event.code;
-      throw error;
-    }
+    const fault = findFault(operation, normalized, occurrence, 'THROW_BEFORE');
+    if (fault) throwFault(fault, operation, normalized, occurrence, 'THROW_BEFORE');
+    return occurrence;
   }
 
   const wx = {
     [FAKE_WX_BRAND]: true,
     getStorageSync(key) {
-      recordStorage('GET', key);
+      const occurrence = recordStorage('GET', key);
+      const afterSetFault = failureSchedule.find((entry) => (
+        entry
+        && entry.triggered !== true
+        && entry.armed === true
+        && entry.operation === 'GET'
+        && String(entry.key || '') === String(key || '')
+        && String(entry.mode || '') === 'RETURN_CORRUPT_AFTER_NEXT_SET'
+      ));
+      if (afterSetFault) {
+        activateFault(afterSetFault, 'GET', key, occurrence, 'RETURN_CORRUPT_AFTER_NEXT_SET');
+        return '{corrupt-read';
+      }
+      const corruptFault = findFault('GET', key, occurrence, 'RETURN_CORRUPT');
+      if (corruptFault) {
+        activateFault(corruptFault, 'GET', key, occurrence, 'RETURN_CORRUPT');
+        return '{corrupt-read';
+      }
+      const undefinedFault = findFault('GET', key, occurrence, 'RETURN_UNDEFINED');
+      if (undefinedFault) {
+        activateFault(undefinedFault, 'GET', key, occurrence, 'RETURN_UNDEFINED');
+        return undefined;
+      }
       return safeClone(storage[key]);
     },
     setStorageSync(key, value) {
-      recordStorage('SET', key);
+      const occurrence = recordStorage('SET', key);
       storage[key] = safeClone(value);
+      failureSchedule.forEach((entry) => {
+        if (entry && entry.triggered !== true
+          && entry.operation === 'GET'
+          && String(entry.key || '') === String(key || '')
+          && String(entry.mode || '') === 'RETURN_CORRUPT_AFTER_NEXT_SET') {
+          entry.armed = true;
+        }
+      });
+      const fault = findFault('SET', key, occurrence, 'APPLY_THEN_THROW');
+      if (fault) throwFault(fault, 'SET', key, occurrence, 'APPLY_THEN_THROW');
     },
     removeStorageSync(key) {
-      recordStorage('REMOVE', key);
+      const occurrence = recordStorage('REMOVE', key);
       delete storage[key];
+      const fault = findFault('REMOVE', key, occurrence, 'APPLY_THEN_THROW');
+      if (fault) throwFault(fault, 'REMOVE', key, occurrence, 'APPLY_THEN_THROW');
     },
     getStorageInfoSync() {
       const keys = Object.keys(storage);
@@ -133,6 +180,14 @@ function createFakeWx(options = {}) {
     },
     redirectTo(payload = {}) {
       navigationEvents.push({ type: 'REDIRECT_TO', url: payload.url || '' });
+      if (typeof payload.success === 'function') payload.success({});
+    },
+    navigateBack(payload = {}) {
+      navigationEvents.push({ type: 'NAVIGATE_BACK', delta: Number(payload.delta || 1) });
+      if (typeof payload.success === 'function') payload.success({});
+    },
+    setNavigationBarTitle(payload = {}) {
+      uiEvents.push({ type: 'NAVIGATION_TITLE', title: String(payload.title || '') });
       if (typeof payload.success === 'function') payload.success({});
     },
     vibrateShort() {},
