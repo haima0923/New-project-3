@@ -45,6 +45,98 @@
       {
         "value": "node_modules",
         "type": "folder"
+      },
+      {
+        "value": "tests",
+        "type": "folder"
+      },
+      {
+        "value": "output",
+        "type": "folder"
+      },
+      {
+        "value": "test-fixtures",
+        "type": "folder"
+      },
+      {
+        "value": "AGENTS.md",
+        "type": "file"
+      },
+      {
+        "value": "README.md",
+        "type": "file"
+      },
+      {
+        "value": "design-qa.md",
+        "type": "file"
+      },
+      {
+        "value": "package.json",
+        "type": "file"
+      },
+      {
+        "value": "pnpm-lock.yaml",
+        "type": "file"
+      },
+      {
+        "value": "Launcher.d.ts",
+        "type": "file"
+      },
+      {
+        "value": "index.d.ts",
+        "type": "file"
+      },
+      {
+        "value": "project.private.config.json",
+        "type": "file"
+      },
+      {
+        "value": ".gitignore",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条测试报告.html",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条测试报告-修复后.html",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条高难度测试报告.html",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条高难度测试报告-修复后.html",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条高难度测试报告-修复后.md",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条升级难度测试报告.html",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条升级难度测试报告.md",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条升级难度测试报告.txt",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条升级难度测试报告-修复后.html",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条升级难度测试报告-修复后.md",
+        "type": "file"
+      },
+      {
+        "value": "微信本地规则100条升级难度测试报告-修复后.txt",
+        "type": "file"
       }
     ],
     "include": []
