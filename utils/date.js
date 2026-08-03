@@ -132,19 +132,22 @@ function parseChineseDateDetail(text, baseDate = new Date()) {
     return result(date, nextMonthDayMatch[0], 'day', { invalid: !date });
   }
 
-  const fullMatch = source.match(/(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?/);
+  // 老板从微信里粘贴的日期经常在数字、年月日或分隔符两侧带空白。
+  // 只在明确的数字日期结构内接受这些空白，不做全句去空格，避免把
+  // “下 周 五”一类被拆开的自然语言日期误当成合法日期。
+  const fullMatch = source.match(/(\d{4})\s*[年/-]\s*(\d{1,2})\s*[月/-]\s*(\d{1,2})\s*日?/);
   if (fullMatch) {
     const date = strictDate(Number(fullMatch[1]), Number(fullMatch[2]), Number(fullMatch[3]));
     return result(date, fullMatch[0], 'day', { invalid: !date });
   }
 
-  const slashMonthDayMatch = source.match(/(\d{1,2})[/-](\d{1,2})(?:号|日)?/);
+  const slashMonthDayMatch = source.match(/(\d{1,2})\s*[/-]\s*(\d{1,2})\s*(?:号|日)?/);
   if (slashMonthDayMatch) {
     const date = strictDate(now.getFullYear(), Number(slashMonthDayMatch[1]), Number(slashMonthDayMatch[2]));
     return result(date, slashMonthDayMatch[0], 'day', { invalid: !date });
   }
 
-  const monthDayMatch = source.match(/(\d{1,2})月(\d{1,2})日?/);
+  const monthDayMatch = source.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*日?/);
   if (monthDayMatch) {
     const date = strictDate(now.getFullYear(), Number(monthDayMatch[1]), Number(monthDayMatch[2]));
     return result(date, monthDayMatch[0], 'day', { invalid: !date });
