@@ -1,0 +1,13 @@
+{
+  "schemaVersion": "multi-item-order-complete-save-contract-v1",
+  "clusterId": "multi-item-order-complete-save-v1",
+  "includeInCoreCount": false,
+  "exactActiveCaseCount": 10,
+  "expectedBaselineRedCount": 7,
+  "greenControlCount": 3,
+  "clock": {
+    "businessDate": "2026-08-04",
+    "nowInstant": "2026-08-04T02:30:00.000Z",
+    "timezone": "Asia/Shanghai"
+  }
+}
