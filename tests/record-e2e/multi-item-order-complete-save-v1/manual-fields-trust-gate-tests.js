@@ -250,6 +250,68 @@ test('MF-006', '其他控制面元数据不能伪造人工确认或生产路由'
   assertFormalZeroMutation(reviewed);
 });
 
+test('MF-007', '单项手工编辑不能为其他 item 的 AI 编造字段背书', () => {
+  const text = '宏达包装厂下单：礼品盒100套，每套3.8元；饭盒每个8.5元；8月15日交货。';
+  const local = parseText(text);
+  assert.strictEqual(local.fields.items.length, 1);
+  assert(!text.includes('319'));
+
+  const aiFields = Object.assign({}, safeClone(local.fields), {
+    items: [
+      {
+        productName: '礼品盒',
+        quantity: '100',
+        unit: '套',
+        unitPrice: '3.8',
+        priceUnit: '套',
+        totalAmount: '380'
+      },
+      {
+        productName: '饭盒',
+        quantity: '319',
+        unit: '个',
+        unitPrice: '8.5',
+        priceUnit: '个',
+        totalAmount: '2711.5'
+      }
+    ]
+  });
+  const merged = normalizeAiResult(local, {
+    provider: 'controlled-fixture',
+    intent: 'order',
+    fields: aiFields,
+    missing_fields: [],
+    low_confidence_fields: [],
+    field_conflicts: [],
+    confidence: 0.99,
+    confirm_message: '受控 REAL 路由 Fixture：只验证现行 merge/safety 信任边界，不代表真实 AI 输出。'
+  }, {
+    // 该反例需要走已解析的 REAL-provider 生产分支，否则 provider 身份门禁会先行阻断。
+    providerKind: 'REAL',
+    businessDate: BUSINESS_DATE,
+    businessTimezone: TIMEZONE,
+    nowInstant: NOW_INSTANT
+  });
+
+  assert.strictEqual(merged.fields.items[1].quantity, '319');
+  const beforeManual = review(merged);
+  assert(hasFieldRisk(beforeManual, 'productName'));
+
+  // 精确模拟 input 页编辑第一个 item.productName 后写入的现行全局手工字段信号。
+  const afterFirstItemEdit = review(Object.assign({}, merged, {
+    manual_fields: ['productName']
+  }));
+  assert.deepStrictEqual(manualFields(afterFirstItemEdit), ['productName']);
+
+  const domain = preflight(afterFirstItemEdit);
+  assert.strictEqual(
+    domain.domainCanSaveFormal,
+    false,
+    '只确认第一个商品名时，第二个商品的 AI 编造数量不得进入正式订单'
+  );
+  assertFormalZeroMutation(afterFirstItemEdit);
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
