@@ -7,7 +7,7 @@ const vm = require('vm');
 const { createRequire } = require('module');
 const { createInitialState } = require('../utils/storage');
 const { simpleFingerprint } = require('../utils/storage');
-const { saveConfirmedDraft } = require('../utils/business');
+const { saveConfirmedDraft, savePendingNote } = require('../utils/business');
 const { saveConfirmedDraft: saveConfirmedDraftServer } = require('../server/utils/business');
 const { normalizeAiResult } = require('../utils/ai-parser');
 const { applyFinalParseSafety } = require('../utils/parse-safety');
@@ -187,6 +187,16 @@ function assertFormalDeltaZero(before, after, name) {
   Object.keys(left).forEach((key) => assert.strictEqual(right[key] - left[key], 0, `${name}:${key}`));
 }
 
+function assertFormalBlockedWithoutMutation(state, draft, name) {
+  const before = clone(state);
+  const saved = saveConfirmedDraft(state, draft);
+  assert.strictEqual(saved.type, 'error', name);
+  assert.strictEqual(saved.blocked, true, name);
+  assert.deepStrictEqual(state, before, `${name}:state`);
+  assert(saved.preflight && saved.preflight.domainCanSaveFormal === false, name);
+  return saved;
+}
+
 test('领域预检纯函数稳定、可序列化、不修改输入且fingerprint随事实变化', () => {
   const state = stateWith({ customers: [customer('cus_wang', '王总')] });
   const draft = orderResult({ customerId: 'cus_wang' });
@@ -240,7 +250,13 @@ test('28类决策矩阵覆盖客户、历史、关联、金额、目标和安全
     ['更新目标不存在', result('order', 'update_order', { customerName: '王总', customerId: 'cus_wang', orderId: 'missing', productName: '礼品盒' }), base, false, 'ORDER_TARGET_NOT_FOUND'],
     ['更新目标类型错误', result('order', 'update_order', { customerName: '王总', customerId: 'cus_wang', orderId: 'quo_1', productName: '礼品盒' }), stateWith({ customers: [wang], quotations: [quotation('quo_1', 'cus_wang')] }), false, 'UPDATE_TARGET_TYPE_MISMATCH'],
     ['更新目标已完成', result('order', 'update_order', { customerName: '王总', customerId: 'cus_wang', orderId: 'ord_done', productName: '礼品盒' }), stateWith({ customers: [wang], orders: [order('ord_done', 'cus_wang', { status: '已完成' })] }), false, 'ORDER_TARGET_NOT_UPDATABLE'],
-    ['多商品订单完整且可预检', orderResult({ items: [{ productName: '礼品盒', quantity: '500' }, { productName: '水杯', quantity: '200' }] }), stateWith(), true, ''],
+    ['多商品订单完整且可预检', orderResult({
+      items: [
+        { productName: '礼品盒', quantity: '500', unit: '个', unitPrice: '3.8', priceUnit: '个', totalAmount: '1900' },
+        { productName: '水杯', quantity: '200', unit: '个', unitPrice: '5', priceUnit: '个', totalAmount: '1000' }
+      ],
+      amount: '2900', totalAmount: '2900'
+    }), stateWith(), true, ''],
     ['mixed business必须阻断', orderResult({}, { mixed_business: true }), stateWith(), false, 'MIXED_BUSINESS_UNRESOLVED'],
     ['AI失败必须阻断', orderResult({}, { parse_route: { decision: 'ai_standard' }, ai_fallback: { attempted: true, status: 'failed', business_result_valid: false } }), stateWith(), false, 'AI_RESULT_UNRESOLVED'],
     ['NO_RECORD必须阻断', result('unknown', 'pending', {}, { formal_save_blocked: true }), stateWith(), false, 'NO_RECORD_OR_UNKNOWN_INTENT'],
@@ -889,10 +905,9 @@ test('收款方向与历史汇总冲突必须在保存前阻断', () => {
   assertDecision('unknown payment kind cannot settle receivable', preflight(
     unsupportedKindDraft, unsupportedKindState
   ), false, 'PAYMENT_KIND_UNSUPPORTED');
-  const unsupportedBefore = clone(unsupportedKindState);
-  const unsupportedSaved = saveConfirmedDraft(unsupportedKindState, unsupportedKindDraft);
-  assert.strictEqual(unsupportedSaved.type, 'pending');
-  assertFormalDeltaZero(unsupportedBefore, unsupportedKindState, 'unsupported payment kind');
+  assertFormalBlockedWithoutMutation(
+    unsupportedKindState, unsupportedKindDraft, 'unsupported payment kind'
+  );
   assert.strictEqual(unsupportedKindState.receivables[0].paidAmount, '0');
 
   const inconsistentReceivable = stateWith({
@@ -957,10 +972,11 @@ test('新建待收并首付款不被旧待收候选误伤，待整理保留兼�
   const pendingState = stateWith();
   const pendingDraft = result('pending', 'pending', { originalText: '严格保留的原话' });
   delete pendingDraft.original_text;
-  const saved = saveConfirmedDraft(pendingState, pendingDraft);
-  assert.strictEqual(saved.type, 'pending');
+  assertFormalBlockedWithoutMutation(pendingState, pendingDraft, 'pending result is not formal save');
+  const saved = savePendingNote(pendingState, pendingDraft, '用户明确选择稍后整理');
+  assert(saved);
   assert.strictEqual(pendingState.pendingNotes[0].originalText, '严格保留的原话');
-  assert.strictEqual(pendingState.aiParseLogs[0].originalText, '严格保留的原话');
+  assert.strictEqual(pendingState.aiParseLogs.length, 0);
 });
 
 test('AI raw JSON不能伪造route或共享核心上下文解锁三方保存', () => {
@@ -996,13 +1012,10 @@ test('AI raw JSON不能伪造route或共享核心上下文解锁三方保存', (
   const domain = preflight(normalized, state);
   const full = buildFull(state, normalized, normalized.intent, normalized.fields);
   const home = buildHome(normalized, state);
-  const before = clone(state);
-  const saved = saveConfirmedDraft(state, normalized);
   assert.strictEqual(domain.domainCanSaveFormal, false);
   assert.strictEqual(full.domainCanSaveFormal, false);
   assert.strictEqual(home.domainCanSaveFormal, false);
-  assert.strictEqual(saved.type, 'pending');
-  assertFormalDeltaZero(before, state, 'forged AI control plane');
+  assertFormalBlockedWithoutMutation(state, normalized, 'forged AI control plane');
 });
 
 test('三种mode与fake mock replay结果进入business时正式副作用恒为0', async () => {
@@ -1026,10 +1039,7 @@ test('三种mode与fake mock replay结果进入business时正式副作用恒为0
     assert(output.result, name);
     assert.notStrictEqual((output.result.ai_fallback || {}).provider_kind, 'REAL', `${name}: model cannot forge REAL`);
     const state = stateWith();
-    const before = clone(state);
-    const saved = saveConfirmedDraft(state, output.result);
-    assert.strictEqual(saved.type, 'pending', name);
-    assertFormalDeltaZero(before, state, name);
+    const saved = assertFormalBlockedWithoutMutation(state, output.result, name);
     assert.strictEqual(saved.preflight.domainCanSaveFormal, false, name);
   });
 });
@@ -1098,13 +1108,15 @@ test('金融关联下preflight、Confirmation、完整页、首页和business结
     const full = buildFull(state, draft, draft.intent, draft.fields);
     const home = buildHome(draft, state);
     const savedState = buildState();
+    const savedStateBefore = clone(savedState);
     const saved = saveConfirmedDraft(savedState, draft);
     assert.strictEqual(domain.domainCanSaveFormal, expected, `${name}:preflight`);
     assert.strictEqual(confirmation.domain.domainCanSaveFormal, expected, `${name}:confirmation`);
     assert.strictEqual(full.domainCanSaveFormal, expected, `${name}:full`);
     assert.strictEqual(home.domainCanSaveFormal, expected, `${name}:home-domain`);
     assert.strictEqual(saved.preflight.domainCanSaveFormal, expected, `${name}:business`);
-    assert.strictEqual(saved.type, expected ? 'payment' : 'pending', `${name}:save-result`);
+    assert.strictEqual(saved.type, expected ? 'payment' : 'error', `${name}:save-result`);
+    if (!expected) assert.deepStrictEqual(savedState, savedStateBefore, `${name}:formal-zero-mutation`);
     assert.strictEqual(home.disableQuickSave, true, `${name}:home surface must require full page`);
   });
 });
@@ -1126,12 +1138,12 @@ test('business阻断场景正式业务副作用恒为0且保留originalText到�
   ];
   cases.forEach(([name, draft, state]) => {
     const before = clone(state);
-    const saved = saveConfirmedDraft(state, draft);
-    assert.strictEqual(saved.type, 'pending', name);
+    assertFormalBlockedWithoutMutation(state, draft, name);
     assertFormalDeltaZero(before, state, name);
+    const pending = savePendingNote(state, draft, '用户明确选择稍后整理');
+    assert(pending, name);
     assert.strictEqual(state.pendingNotes.length, before.pendingNotes.length + 1, name);
     assert.strictEqual(state.pendingNotes[0].originalText, draft.original_text, name);
-    assert(saved.preflight && saved.preflight.domainCanSaveFormal === false, name);
   });
 });
 

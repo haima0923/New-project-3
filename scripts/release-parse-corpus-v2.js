@@ -12,7 +12,7 @@ const path = require('path');
 const { parseInput } = require('../utils/parser');
 const { parseHybridInput } = require('../utils/ai-parser');
 const { applyLocalParseSafety, applyFinalParseSafety, SAFE_LOCAL, NO_RECORD } = require('../utils/parse-safety');
-const { saveConfirmedDraft } = require('../utils/business');
+const { saveConfirmedDraft, savePendingNote } = require('../utils/business');
 const { createInitialState } = require('../utils/storage');
 const { corpus } = require('../test-fixtures/release-parse-corpus-v2');
 
@@ -220,15 +220,19 @@ function evaluateCase(testCase, local, hybrid, safety) {
     check((local.low_confidence_fields || []).includes('productName'), '商品名称建议必须明确标为待确认');
     check(Boolean((hybrid.field_suggestions || {}).productName), '确认卡必须展示商品名称建议');
     const beforeConfirmState = buildEmptySaveState();
+    const beforeConfirmSnapshot = JSON.stringify(beforeConfirmState);
     const beforeConfirmSaved = saveConfirmedDraft(beforeConfirmState, hybrid);
-    check(beforeConfirmSaved.type === 'pending', `未确认商品名称前不能正式保存，实际是“${beforeConfirmSaved.type}”`);
+    check(beforeConfirmSaved.type === 'error', `未确认商品名称前正式保存必须阻断，实际是“${beforeConfirmSaved.type}”`);
+    check(JSON.stringify(beforeConfirmState) === beforeConfirmSnapshot, '未确认商品名称时正式保存必须零 mutation');
+    const explicitPending = savePendingNote(beforeConfirmState, hybrid, beforeConfirmSaved.error || '用户明确选择稍后整理');
+    check(Boolean(explicitPending) && beforeConfirmState.pendingNotes.length === 1, '只有显式保存待整理才新增 pending');
     const manuallyConfirmed = applyFinalParseSafety(
       Object.assign({}, hybrid, { manual_fields: ['productName'] }),
       { businessDate: testCase.businessDate }
     );
     const afterConfirmState = buildEmptySaveState();
     const afterConfirmSaved = saveConfirmedDraft(afterConfirmState, manuallyConfirmed);
-    check(afterConfirmSaved.type !== 'pending', '老板确认商品名称后应能正常保存，不能永远卡在待整理');
+    check(afterConfirmSaved.type === hybrid.intent, `老板确认商品名称后应保存为“${hybrid.intent}”，实际是“${afterConfirmSaved.type}”`);
   }
   if (expected.requiresDeepReview) {
     check(Boolean((hybrid.parse_route || {}).deep_review_available), '高风险内容首次必须显示“深度核对”入口，不能自动等待慢模型');
@@ -240,8 +244,10 @@ function evaluateCase(testCase, local, hybrid, safety) {
     check(aiStatus === 'failed', `AI 模拟失败时必须明确标记失败，实际状态是“${aiStatus || '空'}”`);
     check(safety.status !== SAFE_LOCAL, 'AI 没有成功返回时，本地安全判断不能把这条内容当成可直接整理');
     const state = buildEmptySaveState();
+    const stateBefore = JSON.stringify(state);
     const saved = saveConfirmedDraft(state, hybrid);
-    check(saved.type === 'pending', `AI 模拟失败后点击保存必须只进入待整理，实际是“${saved.type}”`);
+    check(saved.type === 'error', `AI 模拟失败后正式保存必须阻断，实际是“${saved.type}”`);
+    check(JSON.stringify(state) === stateBefore, 'AI 模拟失败后正式保存必须零 mutation');
     check(state.orders.length === 0 && state.quotations.length === 0 && state.receivables.length === 0 && state.paymentRecords.length === 0, 'AI 模拟失败后不能生成任何正式业务记录');
   }
   check(compact(local.original_text) === compact(testCase.originalText), '原始输入没有被完整保留');
@@ -301,7 +307,7 @@ function renderHtml(results, generatedAt) {
     return `<details class="case ${item.pass ? 'pass' : 'fail'}"><summary><b>${esc(item.id)}</b> · ${esc(item.category)} · <span>${outcome}</span> · ${esc(item.input)}</summary><dl><dt>老板输入</dt><dd>${esc(item.input)}</dd><dt>正确应该怎样</dt><dd>${esc(expectedSummary(item.expected))}</dd><dt>本地实际识别</dt><dd>${esc(actualText)}</dd><dt>本次是否该请求 AI</dt><dd>应当：${esc(routeLabel(item.expected.route))}；当前本地判断：${esc(routeLabel(item.actualRoute))}。<br>本次报告没有请求线上 AI；当前状态：${esc(item.aiStatus)}${item.aiReason ? `（${esc(item.aiReason)}）` : ''}</dd><dt>结论</dt><dd>${esc(reason)}</dd></dl></details>`;
   }).join('\n');
   const groupRows = groups.map((group) => `<tr><td>${esc(group.category)}</td><td>${group.total}</td><td>${group.passed}</td><td>${group.failed}</td><td>${group.criticalFailed}</td></tr>`).join('');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>货小玲 1,490 题本地与路由测试结果</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;background:#f5f7fb;color:#1f2d3d;line-height:1.6}main{max-width:1100px;margin:auto;padding:28px 18px 50px}h1{font-size:26px;line-height:1.3}.note{background:#fff4de;border-left:4px solid #ef9f20;padding:14px 16px;border-radius:8px}.stats{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}.stat{background:#fff;border-radius:12px;padding:14px 18px;min-width:130px;box-shadow:0 2px 8px #243b5312}.stat b{display:block;font-size:25px}.bad{color:#c23a2b}table{width:100%;border-collapse:collapse;background:#fff;margin:20px 0}td,th{padding:9px;border:1px solid #e2e8f0;text-align:left}th{background:#eef5ff}details{background:#fff;border:1px solid #e5eaf2;border-radius:10px;padding:12px 14px;margin:10px 0}details.fail{border-left:5px solid #d84b40}details.pass{border-left:5px solid #38a169}summary{cursor:pointer}summary span{font-weight:700}dl{margin:12px 0 0}dt{font-weight:700;color:#346aa5;margin-top:9px}dd{margin:2px 0;white-space:pre-wrap;word-break:break-word}.filter{position:sticky;top:0;padding:10px 0;background:#f5f7fb}.filter input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:11px;font-size:15px}</style></head><body><main><h1>货小玲：1,490 道“记一笔”本地识别与路由测试</h1><p>生成时间：${esc(generatedAt)}</p><div class="note"><b>这份结果逐题验证本地识别、三种处理路线，以及 AI 模拟失败后是否真的只能存到待整理。</b><br>没有调用线上 AI，因此绝不把这里的通过数说成“AI 已通过”。后续真实 AI 测试必须单独显示 AI 的实际回答、最终确认卡、保存结果和等待时间。</div><section class="stats"><div class="stat"><b>${total}</b>总题数</div><div class="stat"><b>${passed}</b>本地/路由通过</div><div class="stat"><b class="bad">${failed}</b>本地/路由不通过</div><div class="stat"><b class="bad">${critical}</b>严重不通过</div></section><h2>分类汇总</h2><table><thead><tr><th>分类</th><th>题数</th><th>通过</th><th>不通过</th><th>严重不通过</th></tr></thead><tbody>${groupRows}</tbody></table><h2>逐题对照</h2><div class="filter"><input id="query" placeholder="输入编号、分类、题目或结果关键词，例如：老板今、块钱、错别字"></div><div id="cases">${rows}</div></main><script>document.getElementById('query').addEventListener('input',function(e){var q=e.target.value.toLowerCase();document.querySelectorAll('.case').forEach(function(x){x.style.display=x.innerText.toLowerCase().includes(q)?'block':'none'})})</script></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>货小玲 1,490 题本地与路由测试结果</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;margin:0;background:#f5f7fb;color:#1f2d3d;line-height:1.6}main{max-width:1100px;margin:auto;padding:28px 18px 50px}h1{font-size:26px;line-height:1.3}.note{background:#fff4de;border-left:4px solid #ef9f20;padding:14px 16px;border-radius:8px}.stats{display:flex;gap:12px;flex-wrap:wrap;margin:18px 0}.stat{background:#fff;border-radius:12px;padding:14px 18px;min-width:130px;box-shadow:0 2px 8px #243b5312}.stat b{display:block;font-size:25px}.bad{color:#c23a2b}table{width:100%;border-collapse:collapse;background:#fff;margin:20px 0}td,th{padding:9px;border:1px solid #e2e8f0;text-align:left}th{background:#eef5ff}details{background:#fff;border:1px solid #e5eaf2;border-radius:10px;padding:12px 14px;margin:10px 0}details.fail{border-left:5px solid #d84b40}details.pass{border-left:5px solid #38a169}summary{cursor:pointer}summary span{font-weight:700}dl{margin:12px 0 0}dt{font-weight:700;color:#346aa5;margin-top:9px}dd{margin:2px 0;white-space:pre-wrap;word-break:break-word}.filter{position:sticky;top:0;padding:10px 0;background:#f5f7fb}.filter input{width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:8px;padding:11px;font-size:15px}</style></head><body><main><h1>货小玲：1,490 道“记一笔”本地识别与路由测试</h1><p>生成时间：${esc(generatedAt)}</p><div class="note"><b>这份结果逐题验证本地识别、三种处理路线，以及 AI 模拟失败后正式保存是否阻断、是否只有用户明确选择才保存为待整理。</b><br>没有调用线上 AI，因此绝不把这里的通过数说成“AI 已通过”。后续真实 AI 测试必须单独显示 AI 的实际回答、最终确认卡、保存结果和等待时间。</div><section class="stats"><div class="stat"><b>${total}</b>总题数</div><div class="stat"><b>${passed}</b>本地/路由通过</div><div class="stat"><b class="bad">${failed}</b>本地/路由不通过</div><div class="stat"><b class="bad">${critical}</b>严重不通过</div></section><h2>分类汇总</h2><table><thead><tr><th>分类</th><th>题数</th><th>通过</th><th>不通过</th><th>严重不通过</th></tr></thead><tbody>${groupRows}</tbody></table><h2>逐题对照</h2><div class="filter"><input id="query" placeholder="输入编号、分类、题目或结果关键词，例如：老板今、块钱、错别字"></div><div id="cases">${rows}</div></main><script>document.getElementById('query').addEventListener('input',function(e){var q=e.target.value.toLowerCase();document.querySelectorAll('.case').forEach(function(x){x.style.display=x.innerText.toLowerCase().includes(q)?'block':'none'})})</script></body></html>`;
 }
 
 async function main() {

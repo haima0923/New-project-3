@@ -6,6 +6,7 @@ const { applyFinalParseSafety } = require('../utils/parse-safety');
 const {
   generateReceivableFromOrder,
   saveConfirmedDraft,
+  savePendingNote,
   updateOrderStatus
 } = require('../utils/business');
 
@@ -29,6 +30,15 @@ function customer(id, name) {
 
 function parse(text, state = emptyState()) {
   return parseInput({ text, source: 'typed', context: 'home', state });
+}
+
+function expectFormalBlocked(state, save) {
+  const before = JSON.stringify(state);
+  const saved = save();
+  assert.equal(saved.type, 'error');
+  assert.equal(saved.blocked, true);
+  assert.equal(JSON.stringify(state), before);
+  return saved;
 }
 
 const results = [];
@@ -81,9 +91,8 @@ check('日期：义乌常见说法“明朝”识别为明天', () => {
 check('日期：新订单交期早于今天时必须确认，不能直接保存', () => {
   const state = emptyState();
   const result = parse('王总订水杯100个，5元一个，2020年1月1日交', state);
-  const saved = saveConfirmedDraft(state, result);
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, result));
   assert(result.low_confidence_fields.includes('dueDate'));
-  assert.equal(saved.type, 'pending');
   assert.equal(state.orders.length, 0);
 });
 
@@ -105,8 +114,7 @@ check('金额：原话总价90，机器计算100，两份数据都保留', () =>
 
 check('金额：未人工确认矛盾前，不能生成正式订单', () => {
   const state = emptyState();
-  const saved = saveConfirmedDraft(state, parse('陈总订杯垫10个，10元一个，总价90元，后天交', state));
-  assert.equal(saved.type, 'pending');
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, parse('陈总订杯垫10个，10元一个，总价90元，后天交', state)));
   assert.equal(state.orders.length, 0);
 });
 
@@ -156,30 +164,27 @@ check('取消：一句“取消订单”不能新建或修改正式记录', () =
   const state = emptyState([customer('cus_chen', '陈总')]);
   state.orders.push({ id: 'ord_1', customerId: 'cus_chen', status: '待生产', totalAmount: '100' });
   const result = parse('取消陈总刚才的杯垫订单', state);
-  const saved = saveConfirmedDraft(state, result);
   assert.equal(result.formal_save_blocked, true);
   assert.equal(result.ai_fallback.needed, false);
-  assert.equal(saved.type, 'pending');
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, result));
   assert.equal(state.orders[0].status, '待生产');
 });
 
 check('取消：“不用做”即使带齐订单字段也不能新建订单', () => {
   const state = emptyState();
   const result = parse('王总水杯500个20元一个不用做，下周五交', state);
-  const saved = saveConfirmedDraft(state, result);
   assert.equal(result.formal_save_blocked, true);
   assert.equal(result.ai_fallback.needed, false);
-  assert.equal(saved.type, 'pending');
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, result));
   assert.equal(state.orders.length, 0);
 });
 
 check('多业务：订单和另一客户收款混在一句里，必须拆开', () => {
   const state = emptyState();
   const result = parse('陈总杯垫10个10元一个后天交，另外收到王总3000元', state);
-  const saved = saveConfirmedDraft(state, result);
   assert.equal(result.mixed_business, true);
   assert.equal(result.formal_save_blocked, true);
-  assert.equal(saved.type, 'pending');
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, result));
   assert.equal(state.orders.length, 0);
   assert.equal(state.paymentRecords.length, 0);
 });
@@ -194,10 +199,9 @@ check('多业务：没有“另外”二字的订单加收款也必须拆开', (
     missing_fields: [],
     low_confidence_fields: []
   });
-  const saved = saveConfirmedDraft(state, aiMerged);
   assert.equal(local.mixed_business, true);
   assert.equal(aiMerged.formal_save_blocked, true);
-  assert.equal(saved.type, 'pending');
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, aiMerged));
   assert.equal(state.orders.length, 0);
   assert.equal(state.paymentRecords.length, 0);
 });
@@ -207,15 +211,14 @@ check('深度核对：还没完成时，不能绕过页面直接保存', () => {
   const result = parse('陈总订杯垫10个，10元一个，后天交', state);
   result.parse_route = { decision: 'pending', deep_review_available: true };
   result.ai_fallback = { status: 'not_requested' };
-  const saved = saveConfirmedDraft(state, result);
-  assert.equal(saved.type, 'pending');
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, result));
   assert.equal(state.orders.length, 0);
 });
 
 check('跨客户：王总的待收款不能关联到陈总的订单', () => {
   const state = emptyState([customer('cus_chen', '陈总'), customer('cus_wang', '王总')]);
   state.orders.push({ id: 'ord_chen', customerId: 'cus_chen', status: '待生产', totalAmount: '1000' });
-  const saved = saveConfirmedDraft(state, {
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, {
     intent: 'receivable',
     operation: 'create_receivable',
     source: 'typed',
@@ -224,8 +227,7 @@ check('跨客户：王总的待收款不能关联到陈总的订单', () => {
     missing_fields: [],
     low_confidence_fields: [],
     manual_fields: ['customerName', 'amount', 'orderId']
-  });
-  assert.equal(saved.type, 'pending');
+  }));
   assert.equal(state.receivables.length, 0);
 });
 
@@ -235,7 +237,7 @@ check('跨客户：不能用一句更新把陈总订单改到王总名下', () =
     id: 'ord_chen', customerId: 'cus_chen', productName: '杯垫', quantity: '10', unit: '个',
     unitPrice: '10', totalAmount: '100', requiredDeliveryDate: '2026-07-21', status: '待生产'
   });
-  const saved = saveConfirmedDraft(state, {
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, {
     intent: 'order',
     operation: 'update_order',
     source: 'typed',
@@ -247,15 +249,14 @@ check('跨客户：不能用一句更新把陈总订单改到王总名下', () =
     missing_fields: [],
     low_confidence_fields: [],
     manual_fields: ['customerName', 'productName', 'quantity', 'unitPrice', 'amount', 'dueDate']
-  });
-  assert.equal(saved.type, 'pending');
+  }));
   assert.equal(state.orders[0].customerId, 'cus_chen');
 });
 
 check('跨客户：王总订单不能挂到陈总报价', () => {
   const state = emptyState([customer('cus_chen', '陈总'), customer('cus_wang', '王总')]);
   state.quotations.push({ id: 'quo_chen', customerId: 'cus_chen', status: '待确认' });
-  const saved = saveConfirmedDraft(state, {
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, {
     intent: 'order',
     operation: 'create_order',
     source: 'typed',
@@ -267,8 +268,7 @@ check('跨客户：王总订单不能挂到陈总报价', () => {
     missing_fields: [],
     low_confidence_fields: [],
     manual_fields: ['customerName', 'productName', 'quantity', 'unitPrice', 'amount', 'dueDate', 'quotationId']
-  });
-  assert.equal(saved.type, 'pending');
+  }));
   assert.equal(state.orders.length, 0);
 });
 
@@ -276,7 +276,7 @@ check('待收：同一订单已经有待收时不能重复新建第二笔', () =
   const state = emptyState([customer('cus_chen', '陈总')]);
   state.orders.push({ id: 'ord_chen', customerId: 'cus_chen', status: '待生产', totalAmount: '1000' });
   state.receivables.push({ id: 'rec_old', orderId: 'ord_chen', customerId: 'cus_chen', amount: '1000', paidAmount: '0', status: '待收' });
-  const saved = saveConfirmedDraft(state, {
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, {
     intent: 'receivable',
     operation: 'create_receivable',
     source: 'typed',
@@ -285,8 +285,7 @@ check('待收：同一订单已经有待收时不能重复新建第二笔', () =
     missing_fields: [],
     low_confidence_fields: [],
     manual_fields: ['customerName', 'orderId', 'amount']
-  });
-  assert.equal(saved.type, 'pending');
+  }));
   assert.equal(state.receivables.length, 1);
 });
 
@@ -294,7 +293,7 @@ check('定金：旧数据里订单与待收客户错挂时必须阻止继续核�
   const state = emptyState([customer('cus_chen', '陈总'), customer('cus_wang', '王总')]);
   state.orders.push({ id: 'ord_chen', customerId: 'cus_chen', status: '待生产', totalAmount: '1000', productName: '杯垫' });
   state.receivables.push({ id: 'rec_dirty', orderId: 'ord_chen', customerId: 'cus_wang', amount: '1000', paidAmount: '0', status: '待收' });
-  const saved = saveConfirmedDraft(state, {
+  expectFormalBlocked(state, () => saveConfirmedDraft(state, {
     intent: 'payment',
     operation: 'record_order_deposit',
     source: 'typed',
@@ -306,8 +305,7 @@ check('定金：旧数据里订单与待收客户错挂时必须阻止继续核�
     missing_fields: [],
     low_confidence_fields: [],
     manual_fields: ['customerName', 'orderId', 'productName', 'paymentAmount']
-  });
-  assert.equal(saved.type, 'pending');
+  }));
   assert.equal(state.paymentRecords.length, 0);
   assert.equal(state.receivables[0].paidAmount, '0');
 });
@@ -332,6 +330,16 @@ check('已取消订单：不能再生成待收款', () => {
   state.orders.push({ id: 'ord_cancelled', customerId: 'cus_chen', status: '已取消', totalAmount: '1000' });
   assert.equal(generateReceivableFromOrder(state, 'ord_cancelled'), null);
   assert.equal(state.receivables.length, 0);
+});
+
+check('待整理：只有用户明确执行保存待整理才新增 pending', () => {
+  const state = emptyState();
+  const draft = parse('王总订水杯100个，5元一个', state);
+  const saved = savePendingNote(state, draft, '用户明确选择稍后整理');
+  assert(saved);
+  assert.equal(state.pendingNotes.length, 1);
+  assert.equal(state.orders.length, 0);
+  assert.equal(state.aiParseLogs.length, 0);
 });
 
 console.log(JSON.stringify({

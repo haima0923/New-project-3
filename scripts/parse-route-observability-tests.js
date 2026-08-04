@@ -1,6 +1,6 @@
 const assert = require('assert');
 const { parseInput } = require('../utils/parser');
-const { saveConfirmedDraft } = require('../utils/business');
+const { saveConfirmedDraft, savePendingNote } = require('../utils/business');
 const {
   parseHybridInput,
   evaluateClearNonBusinessNoRecord,
@@ -937,10 +937,16 @@ async function main() {
     field_conflicts: []
   });
   const blockedState = buildEmptyState();
+  const blockedStateBefore = JSON.stringify(blockedState);
   const blockedSave = saveConfirmedDraft(blockedState, failedButComplete);
-  assert.strictEqual(blockedSave.type, 'pending', 'AI 失败后，即使字段看起来齐全，也不能直接正式保存');
+  assert.strictEqual(blockedSave.type, 'error', 'AI 失败后，即使字段看起来齐全，正式保存也必须明确阻断');
+  assert.strictEqual(blockedSave.blocked, true, '正式保存阻断必须返回机器可识别状态');
+  assert.strictEqual(JSON.stringify(blockedState), blockedStateBefore, '正式保存阻断必须零 mutation');
   assert.strictEqual(blockedState.orders.length, 0, 'AI 失败后不能生成正式订单');
-  assert(blockedSave.record.reason.includes('联网整理等待超时'), '待整理原因必须明确告诉老板本次联网整理已超时');
+  assert(String(blockedSave.error || '').includes('联网整理等待超时'), '正式阻断原因必须明确告诉老板本次联网整理已超时');
+  const pending = savePendingNote(blockedState, failedButComplete, blockedSave.error);
+  assert(pending && blockedState.pendingNotes.length === 1, '只有显式保存待整理才新增 pending');
+  assert(pending.reason.includes('联网整理等待超时'), '显式待整理必须保留本次联网超时原因');
 
   let deadlineError = null;
   const deadlineStartedAt = Date.now();

@@ -15,6 +15,7 @@ const {
   mergeCustomer,
   recordPayment,
   saveConfirmedDraft,
+  savePendingNote,
   softDeleteRecord,
   setOrderDeliveryDate,
   updateOrderStatus
@@ -315,6 +316,15 @@ function buildEmptyBusinessState(customers = []) {
     pendingNotes: [],
     aiParseLogs: []
   };
+}
+
+function expectFormalBlocked(state, draft, message) {
+  const before = JSON.stringify(state);
+  const saved = saveConfirmedDraft(state, draft);
+  assert(saved.type === 'error', `${message}, got ${saved.type}`);
+  assert(saved.blocked === true, `${message} must return blocked`);
+  assert(JSON.stringify(state) === before, `${message} must keep full state unchanged`);
+  return saved;
 }
 
 function buildOrderDraft(fields = {}) {
@@ -1097,8 +1107,7 @@ function runSafeBusinessSaveTests() {
   });
   assert(wrongAiResult.low_confidence_fields.includes('customerName'), 'AI customer absent from original text must be marked low confidence');
   assert(!wrongAiResult.fields.customerId, 'AI customer id absent from original text must be removed');
-  const wrongAiSaved = saveConfirmedDraft(wrongAiState, wrongAiResult);
-  assert(wrongAiSaved.type === 'pending', `wrong AI customer must not save formally, got ${wrongAiSaved.type}`);
+  expectFormalBlocked(wrongAiState, wrongAiResult, 'wrong AI customer must not save formally');
   assert(wrongAiState.orders.length === 0, 'wrong AI customer must not create an order');
   assert(!wrongAiState.customers.some((item) => item.name === '老王'), 'wrong AI customer must not create a customer');
 
@@ -1140,7 +1149,7 @@ function runSafeBusinessSaveTests() {
     { id: 'rec_ambiguous_1', customerId: 'cus_ambiguous_payment', amount: '1000', paidAmount: '0', status: '待收' },
     { id: 'rec_ambiguous_2', customerId: 'cus_ambiguous_payment', amount: '2000', paidAmount: '0', status: '待收' }
   );
-  const blockedAmbiguousPayment = saveConfirmedDraft(ambiguousPaymentState, {
+  expectFormalBlocked(ambiguousPaymentState, {
     intent: 'payment',
     operation: 'record_payment',
     source: 'typed',
@@ -1148,8 +1157,7 @@ function runSafeBusinessSaveTests() {
     fields: { customerName: '赵总', customerId: 'cus_ambiguous_payment', paymentAmount: '500' },
     missing_fields: [],
     low_confidence_fields: []
-  });
-  assert(blockedAmbiguousPayment.type === 'pending', `ambiguous payment should stay pending, got ${blockedAmbiguousPayment.type}`);
+  }, 'ambiguous payment should block formal save');
   assert(ambiguousPaymentState.paymentRecords.length === 0, 'ambiguous payment must not become an unlinked payment by default');
   const explicitUnlinkedPayment = saveConfirmedDraft(ambiguousPaymentState, {
     intent: 'payment',
@@ -1168,15 +1176,14 @@ function runSafeBusinessSaveTests() {
   });
   assert(explicitUnlinkedPayment.type === 'payment', `explicit unlinked payment should save, got ${explicitUnlinkedPayment.type}`);
   assert(ambiguousPaymentState.paymentRecords[0].kind === 'unlinked_payment', 'explicit unlinked payment should be labelled clearly');
-  const staleUnlinkedPaymentAuthorization = saveConfirmedDraft(ambiguousPaymentState, {
+  expectFormalBlocked(ambiguousPaymentState, {
     intent: 'payment', operation: 'record_payment', source: 'typed', original_text: '赵总又转了500元',
     fields: {
       customerName: '赵总', customerId: 'cus_ambiguous_payment', paymentAmount: '500',
       allowUnlinkedPayment: true, unlinkedPaymentCustomerId: 'cus_other_customer'
     },
     missing_fields: [], low_confidence_fields: []
-  });
-  assert(staleUnlinkedPaymentAuthorization.type === 'pending', 'unlinked payment authorization for another customer must be rejected');
+  }, 'unlinked payment authorization for another customer must be rejected');
 
   const mismatchedPaymentState = buildEmptyBusinessState([
     { id: 'cus_mismatch_wang', name: '王总' },
@@ -1185,12 +1192,11 @@ function runSafeBusinessSaveTests() {
   mismatchedPaymentState.receivables.push({
     id: 'rec_mismatch_wang', customerId: 'cus_mismatch_wang', amount: '1000', paidAmount: '0', status: '待收'
   });
-  const mismatchedPayment = saveConfirmedDraft(mismatchedPaymentState, {
+  expectFormalBlocked(mismatchedPaymentState, {
     intent: 'payment', operation: 'record_payment', source: 'typed', original_text: '李总转了500元',
     fields: { customerName: '李总', receivableId: 'rec_mismatch_wang', paymentAmount: '500' },
     missing_fields: [], low_confidence_fields: []
-  });
-  assert(mismatchedPayment.type === 'pending', `mismatched payment customer should stay pending, got ${mismatchedPayment.type}`);
+  }, 'mismatched payment customer must block formal save');
   assertNumber(mismatchedPaymentState.receivables[0].paidAmount, 0, 'mismatched payment must not write off another customer receivable');
 
   const ambiguousDepositState = buildEmptyBusinessState([{ id: 'cus_ambiguous_deposit', name: '钱总' }]);
@@ -1198,7 +1204,7 @@ function runSafeBusinessSaveTests() {
     { id: 'ord_ambiguous_1', customerId: 'cus_ambiguous_deposit', productName: '礼品盒', totalAmount: '1000', status: '待生产' },
     { id: 'ord_ambiguous_2', customerId: 'cus_ambiguous_deposit', productName: '水杯', totalAmount: '2000', status: '生产中' }
   );
-  const blockedAmbiguousDeposit = saveConfirmedDraft(ambiguousDepositState, {
+  expectFormalBlocked(ambiguousDepositState, {
     intent: 'payment',
     operation: 'record_order_deposit',
     source: 'typed',
@@ -1212,8 +1218,7 @@ function runSafeBusinessSaveTests() {
     },
     missing_fields: [],
     low_confidence_fields: []
-  });
-  assert(blockedAmbiguousDeposit.type === 'pending', `ambiguous deposit should stay pending, got ${blockedAmbiguousDeposit.type}`);
+  }, 'ambiguous deposit should block formal save');
   assert(ambiguousDepositState.paymentRecords.length === 0, 'ambiguous deposit must not become an unlinked deposit by default');
   const explicitUnlinkedDeposit = saveConfirmedDraft(ambiguousDepositState, {
     intent: 'payment',
@@ -1236,7 +1241,7 @@ function runSafeBusinessSaveTests() {
   assert(ambiguousDepositState.paymentRecords[0].kind === 'unlinked_deposit', 'explicit unlinked deposit should be labelled clearly');
 
   const excessOrderState = buildEmptyBusinessState([{ id: 'cus_excess_order', name: '孙总' }]);
-  const excessOrder = saveConfirmedDraft(excessOrderState, {
+  expectFormalBlocked(excessOrderState, {
     intent: 'order',
     operation: 'create_order',
     source: 'typed',
@@ -1252,8 +1257,7 @@ function runSafeBusinessSaveTests() {
     },
     missing_fields: [],
     low_confidence_fields: []
-  });
-  assert(excessOrder.type === 'pending', `excess order deposit should stay pending, got ${excessOrder.type}`);
+  }, 'excess order deposit should block formal save');
   assert(excessOrderState.orders.length === 0, 'excess order deposit must not save the order alone');
   assert(excessOrderState.paymentRecords.length === 0, 'excess order deposit must not create a payment record');
 
@@ -1361,6 +1365,11 @@ function runSafeBusinessSaveTests() {
   assert(dunningState.todos[0].todoType === 'dunning', `dunning todo should retain its type, got ${dunningState.todos[0].todoType}`);
   assert(dunningState.todos[0].remindDate, 'dunning todo should retain the reminder date');
   assert(dunningState.todos[0].originalText === '王总欠5000明天催款', 'dunning todo must retain the original text');
+  const explicitPendingState = buildEmptyBusinessState();
+  const explicitPendingDraft = buildOrderDraft({ dueDate: '' });
+  const explicitPending = savePendingNote(explicitPendingState, explicitPendingDraft, '用户明确选择稍后整理');
+  assert(explicitPending && explicitPendingState.pendingNotes.length === 1, 'explicit pending action should add one pending note');
+  assert(explicitPendingState.orders.length === 0, 'explicit pending action must not create an order');
   console.log('安全保存与催款提醒测试通过：53 条');
 }
 
@@ -1377,8 +1386,7 @@ function runCustomerIdentityTests() {
     { id: 'cus_wang_a', name: '王总', isTemporary: true },
     { id: 'cus_wang_b', name: '王总', isTemporary: true }
   ]);
-  const pending = saveConfirmedDraft(duplicateState, buildOrderDraft());
-  assert(pending.type === 'pending', `duplicate names without selected customer should become pending, got ${pending.type}`);
+  expectFormalBlocked(duplicateState, buildOrderDraft(), 'duplicate names without selected customer must block formal save');
   assert(duplicateState.orders.length === 0, 'duplicate names without selected customer should not save an order');
 
   const selected = saveConfirmedDraft(duplicateState, buildOrderDraft({
@@ -1963,7 +1971,7 @@ function runFinanceTests() {
   assertNumber(lateReceivable.paidAmount, 200, 'late deposit should write off its linked receivable');
   assert(lateDepositState.paymentRecords[0].receivableId === lateReceivable.id, 'late deposit should link to the existing receivable');
   const lateDepositCount = lateDepositState.paymentRecords.length;
-  const excessiveLateDeposit = saveConfirmedDraft(lateDepositState, {
+  expectFormalBlocked(lateDepositState, {
     intent: 'payment',
     operation: 'record_order_deposit',
     source: 'typed',
@@ -1980,8 +1988,7 @@ function runFinanceTests() {
     missing_fields: [],
     low_confidence_fields: [],
     field_conflicts: []
-  });
-  assert(excessiveLateDeposit.type === 'pending', `excessive late deposit should stay pending, got ${excessiveLateDeposit.type}`);
+  }, 'excessive late deposit should block formal save');
   assert(lateDepositState.paymentRecords.length === lateDepositCount, 'excessive late deposit must not create a payment record');
 
   const newReceivablePaymentState = buildEmptyBusinessState([{ id: 'cus_new_receivable_payment', name: '老王' }]);

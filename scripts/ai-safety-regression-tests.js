@@ -7,7 +7,7 @@ const {
 } = require('../utils/ai-parser');
 const { applyFinalParseSafety } = require('../utils/parse-safety');
 const { buildParseEvidence } = require('../utils/parse-evidence');
-const { saveConfirmedDraft } = require('../utils/business');
+const { saveConfirmedDraft, savePendingNote } = require('../utils/business');
 const { saveConfirmedDraft: saveServerConfirmedDraft } = require('../server/utils/business');
 const {
   getAiBusinessResultValidity: getServerAiBusinessResultValidity,
@@ -46,6 +46,15 @@ function buildAiRequiredOrder(route = 'ai_standard') {
 function formalRecordCount(state) {
   return ['customers', 'quotations', 'orders', 'receivables', 'paymentRecords', 'todos']
     .reduce((count, key) => count + (state[key] || []).length, 0);
+}
+
+function expectClientFormalBlocked(state, draft, label) {
+  const before = JSON.stringify(state);
+  const saved = saveConfirmedDraft(state, draft);
+  assert.strictEqual(saved.type, 'error', `${label} 正式保存必须明确阻断`);
+  assert.strictEqual(saved.blocked, true, `${label} 必须返回 blocked`);
+  assert.strictEqual(JSON.stringify(state), before, `${label} 正式保存阻断必须零 mutation`);
+  return saved;
 }
 
 function testAiBusinessResultValidityContract() {
@@ -221,11 +230,15 @@ function testClientAndBusinessDefenseInDepth() {
         if (validityFlag !== undefined) forged.ai_fallback.business_result_valid = validityFlag;
         [saveConfirmedDraft, saveServerConfirmedDraft].forEach((save, saveIndex) => {
           const state = emptyState();
-          const saved = save(state, forged);
           const saveLabel = saveIndex === 0 ? '客户端business' : '服务端business镜像';
-          assert.strictEqual(saved.type, 'pending', `${saveLabel}/${intent}/${route} used但无有效证明时必须进入待整理`);
+          const saved = saveIndex === 0
+            ? expectClientFormalBlocked(state, forged, `${saveLabel}/${intent}/${route}`)
+            : save(state, forged);
+          if (saveIndex === 1) {
+            assert.strictEqual(saved.type, 'pending', `${saveLabel}/${intent}/${route} 仍记录离线镜像旧语义`);
+            assert.strictEqual(saved.record.originalText, forged.original_text, `${saveLabel}/${intent}/${route} 镜像待整理保留原文`);
+          }
           assert.strictEqual(formalRecordCount(state), 0, `${saveLabel}/${intent}/${route} 不能产生任何正式记录`);
-          assert.strictEqual(saved.record.originalText, forged.original_text, `${saveLabel}/${intent}/${route} 阻断后必须保留原文`);
         });
       });
     });
@@ -254,7 +267,7 @@ function testClientAndBusinessDefenseInDepth() {
   });
   assert.strictEqual(mock.ai_fallback.status, 'mock_used', 'mock 必须保持 mock_used');
   const mockState = emptyState();
-  assert.strictEqual(saveConfirmedDraft(mockState, mock).type, 'pending', 'mock 不能正式保存');
+  expectClientFormalBlocked(mockState, mock, 'mock');
   assert.strictEqual(formalRecordCount(mockState), 0, 'mock 不能产生正式业务副作用');
 
   const wrappedMock = normalizeAiResult(buildAiRequiredOrder('ai_standard'), {
@@ -263,7 +276,7 @@ function testClientAndBusinessDefenseInDepth() {
   });
   assert.strictEqual(wrappedMock.ai_fallback.status, 'mock_used', '包装在data外层的mock标记不能在解包时丢失');
   const wrappedMockState = emptyState();
-  assert.strictEqual(saveConfirmedDraft(wrappedMockState, wrappedMock).type, 'pending', '包装mock不能正式保存');
+  expectClientFormalBlocked(wrappedMockState, wrappedMock, '包装mock');
   assert.strictEqual(formalRecordCount(wrappedMockState), 0, '包装mock不能产生正式业务副作用');
 
   const uncertain = normalizeAiResult(buildAiRequiredOrder('ai_deep'), {
@@ -272,7 +285,7 @@ function testClientAndBusinessDefenseInDepth() {
   assert.strictEqual(uncertain.ai_fallback.status, 'returned_uncertain', '有效安全拒绝应记录为 returned_uncertain');
   assert.strictEqual(uncertain.ai_fallback.business_result_valid, true, '有效安全拒绝不是空业务结果');
   const uncertainState = emptyState();
-  assert.strictEqual(saveConfirmedDraft(uncertainState, uncertain).type, 'pending', '有效不确定结论仍不能正式保存');
+  expectClientFormalBlocked(uncertainState, uncertain, '有效不确定结论');
 
   [
     { intent: 'order', no_record: true },
@@ -283,9 +296,16 @@ function testClientAndBusinessDefenseInDepth() {
     const safeResult = normalizeAiResult(buildAiRequiredOrder('ai_deep'), aiResult);
     assert.strictEqual(safeResult.ai_fallback.status, 'returned_uncertain', `显式安全结论 ${index + 1} 不能标成used`);
     const state = emptyState();
-    assert.strictEqual(saveConfirmedDraft(state, safeResult).type, 'pending', `显式安全结论 ${index + 1} 不能正式保存`);
+    expectClientFormalBlocked(state, safeResult, `显式安全结论 ${index + 1}`);
     assert.strictEqual(formalRecordCount(state), 0, `显式安全结论 ${index + 1} 不能产生正式业务副作用`);
   });
+
+  const explicitPendingState = emptyState();
+  const explicitPendingDraft = buildAiRequiredDraft('order', 'ai_deep');
+  const pending = savePendingNote(explicitPendingState, explicitPendingDraft, '用户明确选择稍后整理');
+  assert(pending, '显式保存待整理必须返回记录');
+  assert.strictEqual(explicitPendingState.pendingNotes.length, 1, '显式保存待整理新增一条 pending');
+  assert.strictEqual(formalRecordCount(explicitPendingState), 0, '显式保存待整理不能创建正式记录');
 
   const multiLocal = buildAiRequiredOrder('ai_deep');
   multiLocal.original_text = '王总订水杯100个5块5一个，礼品盒20套8元一套，2026年8月1日交';
@@ -573,8 +593,8 @@ async function testMixedBusinessCannotBeDowngraded() {
   assert(merged.field_conflicts.some((item) => item.field === 'intent'), '多笔业务必须明确提示拆开记录');
   assert(merged.low_confidence_fields.includes('intent'), '多业务必须保持为不确定状态');
   assert(merged.missing_fields.includes('intent'), '多业务不能伪装成一笔完整记录');
-  const saved = saveConfirmedDraft(emptyState(), merged);
-  assert.strictEqual(saved.type, 'pending', '多业务 AI 结果不能直接保存为报价/订单/收款');
+  const blockedState = emptyState();
+  expectClientFormalBlocked(blockedState, merged, '多业务 AI 结果');
 }
 
 function testAiMustShowResolutionEvidence() {
