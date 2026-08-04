@@ -20,6 +20,7 @@ const PRODUCT_BAD_PATTERN = /(?:价格|单价|报价|报架|多少钱|贵了|便
 const OPTIONAL_CONFIRM_FIELDS = ['phone'];
 const FINAL_RECHECK_CLEARABLE_LOW_FIELDS = ['customerName', 'productName', 'quantity', 'unitPrice', 'priceUnit', 'dueDate'];
 const SEMANTIC_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回)/i;
+const PACKAGING_REQUIREMENT_PATTERN = /(?:需要|要求|改成|改为|换成|每个|逐个|单独|独立|重新)[^，,。；;\n]{0,8}包装|包装[^，,。；;\n]{0,8}(?:加厚|改成|改为|换成|单独|独立|不要|不能|需要|要求)|(?:外箱|内盒)[^，,。；;\n]{0,12}(?:不要|不能|需要|要求|加厚|印字|印|贴|装)|每\s*(?:\d+|[零〇一二两三四五六七八九十百千万]+)\s*(?:个|件|套|只|盒|袋)?\s*(?:(?:装|打)\s*(?:一\s*)?|一\s*)包/i;
 const FINANCIAL_RISK_PATTERN = /(?:定金|订金|预付|尾款|欠款|货款|收款|到账|转账|打款|刚打|刚转|还差|催.*(?:款|尾款|货款))/;
 const QUANTITY_WITH_UNIT_PATTERN = new RegExp(`(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千万]+)\\s*${UNIT_PATTERN}`);
 const UNIT_PRICE_PATTERN = new RegExp(`(?:单价|价格|价钱)\\s*(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千万]+)|(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千万]+)\\s*(?:块|元|毛|角|分|钱)(?:\\s*(?:[零〇一二两三四五六七八九十百千万]|\\d+))?(?:\\s*(?:一|每|/))?|(?:\\d+(?:\\.\\d+)?|[零〇一二两三四五六七八九十百千万]+)\\s*(?:一|每|/)\\s*${RAW_UNIT_PATTERN}`);
@@ -43,6 +44,24 @@ function getItems(fields) {
   return Array.isArray(fields.items)
     ? fields.items.filter((item) => item && typeof item === 'object')
     : [];
+}
+
+function buildSemanticScopeText(sourceText, fields = {}) {
+  const entityNames = uniqueStrings([].concat(
+    fields.customerName || '',
+    fields.productName || '',
+    getItems(fields).map((item) => item.productName || '')
+  ))
+    .map(compact)
+    .filter((value) => value.length >= 2)
+    .sort((left, right) => right.length - left.length);
+
+  return entityNames.reduce(
+    // 只移除一次已识别的实体提及。后文若再次出现同名词，可能属于独立要求，
+    // 必须继续留给语义规则判断，不能把整段同名文本全部抹掉。
+    (text, value) => text.replace(value, ' '),
+    String(sourceText || '')
+  );
 }
 
 function addIssue(issues, field, message, type = 'invalid') {
@@ -181,7 +200,8 @@ function inferSemanticFields(text, fields) {
   if (/改成|改为|换成|替换|不是|不对|写错|算了/.test(text)) {
     low.push('productName', 'quantity', 'unitPrice', 'dueDate');
   }
-  if (/颜色|色差|包装|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太/.test(text)) {
+  if (/颜色|色差|包装|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太/.test(text)
+    || PACKAGING_REQUIREMENT_PATTERN.test(text)) {
     if (!String(fields.remark || '').includes('要求')) low.push('remark');
   }
   return uniqueStrings(low);
@@ -260,7 +280,10 @@ function evaluateLocalParseSafety(result, options = {}) {
   const lowFields = uniqueStrings(result.low_confidence_fields || []);
   const conflictFields = uniqueStrings((result.field_conflicts || []).map((item) => item && item.field));
   const lineCount = String(sourceText || '').split(/\n/).filter(Boolean).length;
-  const hasSemanticComplexity = SEMANTIC_AI_PATTERN.test(sourceText) || lineCount >= 2;
+  const semanticScopeText = buildSemanticScopeText(sourceText, fields);
+  const hasSemanticComplexity = SEMANTIC_AI_PATTERN.test(semanticScopeText)
+    || PACKAGING_REQUIREMENT_PATTERN.test(semanticScopeText)
+    || lineCount >= 2;
   const hasBusinessSignals = ['customerName', 'productName', 'quantity', 'unitPrice', 'amount', 'paymentAmount', 'dueDate']
     .some((field) => hasFieldValue(fields, field));
 
@@ -300,7 +323,7 @@ function evaluateLocalParseSafety(result, options = {}) {
 
   const invalidFields = uniqueStrings(issues.filter((item) => item.type === 'invalid').map((item) => item.field));
   const validationLowFields = uniqueStrings(issues.filter((item) => item.type === 'low_confidence').map((item) => item.field));
-  const semanticLowFields = hasSemanticComplexity ? inferSemanticFields(sourceText, fields) : [];
+  const semanticLowFields = hasSemanticComplexity ? inferSemanticFields(semanticScopeText, fields) : [];
   const hasMissing = missingFields.length || issues.some((item) => item.type === 'missing');
   const hasLow = lowFields.length || validationLowFields.length || semanticLowFields.length;
   const hasConflicts = conflictFields.length > 0;

@@ -2049,32 +2049,248 @@ function hasJoinedMultiItemValue(fields = {}) {
     .some((field) => typeof fields[field] === 'string' && /[，,、；;]/.test(fields[field]));
 }
 
+const ITEM_FACT_FIELDS = [
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+  'totalAmount', 'itemDeliveryDate', 'itemRemark'
+];
+const ITEM_NUMERIC_FACT_FIELDS = ['quantity', 'unitPrice', 'totalAmount'];
+const LEGACY_FIRST_ITEM_FIELDS = ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'];
+
+function normalizeItemIdentityText(value) {
+  return normalizeProductText(value)
+    .toLowerCase()
+    .replace(/[，,、。；;：:（）()[\]【】《》"'“”‘’\-—_]/g, '');
+}
+
+function hasItemFactValue(item, field) {
+  const value = item && item[field];
+  return value !== undefined && value !== null && (typeof value !== 'string' || value.trim() !== '');
+}
+
+function itemFactValuesEqual(field, left, right) {
+  if (ITEM_NUMERIC_FACT_FIELDS.includes(field)) {
+    const leftNumber = Number(left);
+    const rightNumber = Number(right);
+    if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+      return Math.abs(leftNumber - rightNumber) < 0.0001;
+    }
+  }
+  if (['unit', 'priceUnit'].includes(field)) {
+    return normalizeUnit(left) === normalizeUnit(right);
+  }
+  return normalizeItemIdentityText(left) === normalizeItemIdentityText(right);
+}
+
+function areItemIdentitiesCompatible(localItem = {}, aiItem = {}) {
+  const localProduct = normalizeItemIdentityText(localItem.productName);
+  const aiProduct = normalizeItemIdentityText(aiItem.productName);
+  if (!localProduct || !aiProduct || localProduct !== aiProduct) return false;
+  const localSpec = normalizeItemIdentityText(localItem.spec);
+  const aiSpec = normalizeItemIdentityText(aiItem.spec);
+  return !(localSpec && aiSpec && localSpec !== aiSpec);
+}
+
+function escapeItemEvidencePattern(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildLocalItemEvidenceScopes(localResult, localItems) {
+  const sourceText = normalizeBusinessText(
+    localResult.original_text || localResult.originalText || ''
+  );
+  let cursor = 0;
+  const starts = localItems.map((item) => {
+    const productName = String(item && item.productName || '').trim();
+    if (!productName) return -1;
+    const start = sourceText.indexOf(productName, cursor);
+    if (start >= 0) cursor = start + productName.length;
+    return start;
+  });
+  return starts.map((start, index) => {
+    if (start < 0) return '';
+    const nextStart = starts.slice(index + 1).find((value) => value >= 0);
+    return sourceText.slice(start, nextStart === undefined ? sourceText.length : nextStart);
+  });
+}
+
+function isAiItemSupplementSupported(field, value, aiItem, evidenceText) {
+  const source = String(evidenceText || '');
+  const normalizedValue = String(value === undefined || value === null ? '' : value).trim();
+  if (!source || !normalizedValue) return false;
+  if (['spec', 'itemRemark'].includes(field)) return source.includes(normalizedValue);
+
+  const escapedValue = escapeItemEvidencePattern(normalizedValue);
+  const moneyUnit = '(?:元|块|块钱|毛|角|分|钱)';
+  const itemUnit = String(aiItem && (aiItem.priceUnit || aiItem.unit) || '').trim();
+  const escapedUnit = escapeItemEvidencePattern(itemUnit);
+  if (field === 'quantity') {
+    const unit = String(aiItem && aiItem.unit || '').trim();
+    return Boolean(unit) && new RegExp(`${escapedValue}\\s*${escapeItemEvidencePattern(unit)}`).test(source);
+  }
+  if (field === 'unit') {
+    const quantity = String(aiItem && aiItem.quantity || '').trim();
+    return Boolean(quantity) && new RegExp(`${escapeItemEvidencePattern(quantity)}\\s*${escapedValue}`).test(source);
+  }
+  if (field === 'unitPrice') {
+    const beforePrice = escapedUnit
+      ? new RegExp(`(?:单价|价格|每\\s*${escapedUnit})\\s*${escapedValue}\\s*${moneyUnit}`).test(source)
+      : new RegExp(`(?:单价|价格)\\s*${escapedValue}\\s*${moneyUnit}`).test(source);
+    const afterPrice = escapedUnit
+      ? new RegExp(`${escapedValue}\\s*${moneyUnit}\\s*(?:(?:一|每|/)\\s*)?${escapedUnit}`).test(source)
+      : false;
+    return beforePrice || afterPrice;
+  }
+  if (field === 'priceUnit') {
+    const unitPrice = String(aiItem && aiItem.unitPrice || '').trim();
+    if (!unitPrice) return false;
+    const escapedPrice = escapeItemEvidencePattern(unitPrice);
+    return new RegExp(`每\\s*${escapedValue}\\s*${escapedPrice}\\s*${moneyUnit}`).test(source)
+      || new RegExp(`${escapedPrice}\\s*${moneyUnit}\\s*(?:(?:一|每|/)\\s*)?${escapedValue}`).test(source);
+  }
+  // item total 只由可信数量×单价推导。末项文本范围可能包含整单“合计/共计”，
+  // 不能把它当作该 item 的原文小计证据。
+  if (field === 'totalAmount') return false;
+  return false;
+}
+
+function matchItemsByUniqueIdentity(localItems, aiItems) {
+  const localCandidates = localItems.map((localItem) => aiItems
+    .map((aiItem, aiIndex) => (areItemIdentitiesCompatible(localItem, aiItem) ? aiIndex : -1))
+    .filter((aiIndex) => aiIndex >= 0));
+  const aiCandidates = aiItems.map((aiItem) => localItems
+    .map((localItem, localIndex) => (areItemIdentitiesCompatible(localItem, aiItem) ? localIndex : -1))
+    .filter((localIndex) => localIndex >= 0));
+  const matches = localCandidates.map((candidates, localIndex) => {
+    if (candidates.length !== 1) return -1;
+    const aiIndex = candidates[0];
+    return aiCandidates[aiIndex].length === 1 && aiCandidates[aiIndex][0] === localIndex
+      ? aiIndex
+      : -1;
+  });
+  return matches.every((aiIndex) => aiIndex >= 0)
+    && new Set(matches).size === localItems.length
+    ? matches
+    : null;
+}
+
+function mergeMatchedItemFacts(localItem, aiItem, itemIndex, conflictValues, evidenceText) {
+  const merged = Object.assign({}, aiItem, localItem);
+  let unsupportedAiTotalAmount = false;
+  ITEM_FACT_FIELDS.forEach((field) => {
+    const localHasValue = hasItemFactValue(localItem, field);
+    const aiHasValue = hasItemFactValue(aiItem, field);
+    if (!localHasValue && aiHasValue) {
+      if (isAiItemSupplementSupported(field, aiItem[field], aiItem, evidenceText)) {
+        merged[field] = aiItem[field];
+      } else {
+        delete merged[field];
+        if (field === 'totalAmount') unsupportedAiTotalAmount = true;
+        else conflictValues.push(`items[${itemIndex}].${field}: AI supplement lacks original-text evidence`);
+      }
+      return;
+    }
+    if (!localHasValue) {
+      delete merged[field];
+      return;
+    }
+    merged[field] = localItem[field];
+    if (aiHasValue && !itemFactValuesEqual(field, localItem[field], aiItem[field])) {
+      conflictValues.push(`items[${itemIndex}].${field}: local=${localItem[field]} ai=${aiItem[field]}`);
+    }
+  });
+
+  const calculatedAmount = calculateAmount(
+    merged.quantity,
+    merged.unitPrice,
+    merged.unit,
+    merged.priceUnit
+  );
+  if (calculatedAmount) {
+    if (!hasItemFactValue(localItem, 'totalAmount')
+      && hasItemFactValue(aiItem, 'totalAmount')
+      && !itemFactValuesEqual('totalAmount', calculatedAmount, aiItem.totalAmount)) {
+      conflictValues.push(`items[${itemIndex}].totalAmount: calculated=${calculatedAmount} ai=${aiItem.totalAmount}`);
+    }
+    merged.totalAmount = hasItemFactValue(localItem, 'totalAmount')
+      ? localItem.totalAmount
+      : calculatedAmount;
+  } else if (unsupportedAiTotalAmount) {
+    conflictValues.push(`items[${itemIndex}].totalAmount: AI supplement lacks original-text evidence`);
+  }
+  return merged;
+}
+
+function projectFirstItemToLegacyFields(fields, items) {
+  const projected = Object.assign({}, fields, { items });
+  const first = items[0] || {};
+  LEGACY_FIRST_ITEM_FIELDS.forEach((field) => {
+    if (hasItemFactValue(first, field)) projected[field] = first[field];
+    else delete projected[field];
+  });
+  return projected;
+}
+
+function createItemIntegrityConflict(values, message) {
+  return {
+    field: 'items',
+    values: uniqueStrings(values || []),
+    message
+  };
+}
+
 function applyAiItemStructureGuard(localResult = {}, aiFields = {}) {
   const localFields = localResult.fields || {};
   const localItems = normalizeAiItems(localFields.items || []);
   const aiItems = normalizeAiItems(aiFields.items || []);
   const joined = hasJoinedMultiItemValue(aiFields);
   const malformed = joined && aiItems.length < 2;
-  const fields = Object.assign({}, localFields, aiFields);
+  let fields = Object.assign({}, localFields, aiFields);
+  const conflicts = [];
 
-  if (localItems.length > 1 && aiItems.length < 2) {
-    // 本地已经按条目拆开时，AI 的单条/逗号拼接输出不能反过来把它覆盖掉。
-    fields.items = localItems;
-    const first = localItems[0] || {};
-    ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'].forEach((field) => {
-      if (first[field] !== undefined && first[field] !== null && first[field] !== '') fields[field] = localFields[field] || first[field];
-    });
+  if (malformed) {
+    conflicts.push(createItemIntegrityConflict(
+      [],
+      'AI 没有逐项返回多件商品，不能把多件商品合并成一条保存。'
+    ));
+  }
+
+  if (localItems.length > 1) {
+    const matches = aiItems.length === localItems.length
+      ? matchItemsByUniqueIdentity(localItems, aiItems)
+      : null;
+    if (!matches) {
+      fields = projectFirstItemToLegacyFields(fields, localItems);
+      if (!malformed) {
+        conflicts.push(createItemIntegrityConflict(
+          [`localCount=${localItems.length}`, `aiCount=${aiItems.length}`],
+          'AI 商品无法与本地商品逐项唯一对应，已保留本地明细并要求确认。'
+        ));
+      }
+    } else {
+      const factConflicts = [];
+      const evidenceScopes = buildLocalItemEvidenceScopes(localResult, localItems);
+      const mergedItems = matches.map((aiIndex, localIndex) => mergeMatchedItemFacts(
+        localItems[localIndex],
+        aiItems[aiIndex],
+        localIndex,
+        factConflicts,
+        evidenceScopes[localIndex]
+      ));
+      fields = projectFirstItemToLegacyFields(fields, mergedItems);
+      if (factConflicts.length) {
+        conflicts.push(createItemIntegrityConflict(
+          factConflicts,
+          'AI 返回的逐项商品事实与本地原文提取结果冲突，已保留本地明确事实并要求确认。'
+        ));
+      }
+    }
   }
 
   return {
     fields,
-    malformed: malformed || (localItems.length > 1 && aiItems.length < 2),
-    conflict: (malformed || (localItems.length > 1 && aiItems.length < 2))
-      ? {
-        field: 'items',
-        message: 'AI 没有逐项返回多件商品，不能把多件商品合并成一条保存。'
-      }
-      : null
+    malformed: conflicts.length > 0,
+    conflict: conflicts[0] || null,
+    conflicts
   };
 }
 
@@ -2417,7 +2633,7 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
       message: '这一句话里包含多笔不同业务，请拆成多条后分别确认。'
     });
   }
-  if (itemStructure.conflict) hardSafetyConflicts.push(itemStructure.conflict);
+  hardSafetyConflicts.push(...(itemStructure.conflicts || []));
   let merged = Object.assign({}, localResult, normalized, {
     intent,
     formal_save_blocked: Boolean(localResult.formal_save_blocked),

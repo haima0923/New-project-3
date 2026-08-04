@@ -46,6 +46,12 @@ const KNOWN_PRODUCTS = [
   '笔'
 ];
 const CUSTOMER_ACTION_PATTERN = '那边|这边|说|问|欠|欠款|尾款|货款|定金|订金|预付|预付款|还差|还我|还了|还|付|付款|转|打款|到账|先打|下单|先下|下|要|要发|问|报|报架|订|定|定了|买|拿|补|返单|做|收';
+const CUSTOMER_ORGANIZATION_SUFFIX_PATTERN = '工厂|厂|公司|商行|经营部|工作室|合作社';
+const CUSTOMER_ORGANIZATION_DATE_PATTERN = '(?:今天|昨天|明天|后天|刚才|刚刚|现在|这会儿|\\d{1,2}月\\d{1,2}[日号]?)';
+const CUSTOMER_ORGANIZATION_REPORT_PATTERN = '(?:说|表示|确认|来|又)';
+const CUSTOMER_ORGANIZATION_BRIDGE_PATTERN = `(?:(?:${CUSTOMER_ORGANIZATION_DATE_PATTERN})?(?:${CUSTOMER_ORGANIZATION_REPORT_PATTERN})?|(?:${CUSTOMER_ORGANIZATION_REPORT_PATTERN})(?:${CUSTOMER_ORGANIZATION_DATE_PATTERN})?)`;
+const CUSTOMER_ORGANIZATION_ACTION_PATTERN = `${CUSTOMER_ORGANIZATION_BRIDGE_PATTERN}(?:下单|订货|订购|要货|返单|补单|采购|买|要|订|定|拿|做)`;
+const CUSTOMER_ORGANIZATION_LEADING_TOKEN_PATTERN = `(?:请|麻烦|${CUSTOMER_ORGANIZATION_DATE_PATTERN})`;
 const TODO_ACTION_WORDS = '回|回复|答复|跟进|问|催|联系|提醒|确认|发对账单';
 const DEPOSIT_PATTERN = /定金|订金|预付|预付款/;
 const DEPOSIT_PAYMENT_PATTERN = /定金|订金|预付|预付款|先付|先打|先转/;
@@ -55,7 +61,7 @@ const ITEM_EXACT_BAD_PRODUCT_PATTERN = /^(?:块|块钱|元|元钱|毛|毛钱|角
 const EXPLICIT_NON_RECORD_PATTERN = /(?:电话你有吗|等会儿看看仓库|还有没有位置|价格以后再谈|样品找出来|先不要做|先别做|暂时别做|等(?:明天|后天|下周|周[一二三四五六日天]|通知)|(?:另外|还有).{0,24}(?:刚(?:微信)?打了|刚转了|打了|转了|收了|付了|还差))/;
 const TERMINATION_PATTERN = /(?:取消(?:了|掉)?|客户取消|不要做了?|不用做了?|不做了?|不要了|别做了?|先别做|先不要做|先停(?:一下)?|停一下|停止|暂停|作废|撤销|撤回|先别发|暂时别发|等通知|等(?:他|她|客户)?重新确认)/;
 const REPLACEMENT_AFTER_TERMINATION_PATTERN = /(?:取消|不要|别做|先别做|撤回)[^。；;\n]{0,30}(?:改成|改为|换成|变成)|(?:改成|改为|换成|变成)[^。；;\n]{0,30}(?:取消|不要|别做|撤回)/;
-const SPEC_TOKEN_PATTERN = '(?:紫色|红色|蓝色|绿色|黄色|橙色|粉色|黑色|白色|灰色|金色|银色|透明|本色|米色|咖色|棕色|藏青|酒红|玫红|大号|中号|小号|加大|加小|长款|短款|圆形|方形|新款|老款|[A-Za-zＡ-Ｚａ-ｚ0-9０-９]{1,6}款|(?:XS|S|M|L|XL|XXL|XXXL)码?)';
+const SPEC_TOKEN_PATTERN = '(?:紫色|红色|蓝色|绿色|黄色|橙色|粉色|黑色|白色|灰色|金色|银色|透明|本色|米色|咖色|棕色|藏青|酒红|玫红|大号|中号|小号|加大|加小|长款|短款|圆形|方形|新款|老款|带盖|无盖|磁吸|欧规|美规|英规|日规|国标|非标|[A-Za-zＡ-Ｚａ-ｚ0-9０-９]{1,6}款|(?:XS|S|M|L|XL|XXL|XXXL)码?)';
 
 function normalizeText(text) {
   return normalizeBusinessText(text)
@@ -408,6 +414,92 @@ function extractShortCustomerName(text) {
   return value ? { value, source: 'rule:customer_short_name' } : { value: '', source: '' };
 }
 
+function stripCustomerLeadingTokens(value) {
+  const leadingTokenPattern = new RegExp(`^${CUSTOMER_ORGANIZATION_LEADING_TOKEN_PATTERN}\\s*`);
+  let result = String(value || '').trim();
+  let next = result.replace(leadingTokenPattern, '');
+  while (next !== result) {
+    result = next;
+    next = result.replace(leadingTokenPattern, '');
+  }
+  return result;
+}
+
+function isGenericOrganizationCustomerName(value) {
+  return /^(?:我们厂|咱们厂|自己厂|本厂|厂家|工厂|公司|本公司|我司)$/.test(String(value || ''));
+}
+
+function stripOrganizationCustomerLeadingTokens(value) {
+  let result = String(value || '').trim();
+  const numericDatePattern = /^\d{1,2}月\d{1,2}[日号]?\s*/;
+  const relativeDatePattern = /^(?:今天|昨天|明天|后天|刚才|刚刚|现在|这会儿)\s*/;
+  result = result.replace(numericDatePattern, '');
+  result = result.replace(/^(?:今天|昨天|明天|后天|刚才|刚刚|现在|这会儿)\s*(?:请|麻烦)\s*/, '');
+
+  const courtesy = result.match(/^(?:请|麻烦)\s*(.*)$/);
+  if (!courtesy) return result;
+  const remainder = String(courtesy[1] || '')
+    .replace(numericDatePattern, '')
+    .replace(relativeDatePattern, '');
+  const organization = remainder.match(new RegExp(
+    `^([\\u4e00-\\u9fa5A-Za-z0-9]{0,16}?(?:${CUSTOMER_ORGANIZATION_SUFFIX_PATTERN}))(?=${CUSTOMER_ORGANIZATION_ACTION_PATTERN})`
+  ));
+  if (!organization) return result;
+  const candidate = cleanCustomerName(organization[1]);
+  return candidate && (candidate.length >= 4 || isGenericOrganizationCustomerName(candidate))
+    ? remainder
+    : result;
+}
+
+function hasAmbiguousOrganizationLeadingToken(value) {
+  const source = String(value || '').trim();
+  const relativeDate = source.match(/^(?:今天|昨天|明天|后天|刚才|刚刚|现在|这会儿)\s*(.*)$/);
+  if (relativeDate && !/^(?:请|麻烦)/.test(relativeDate[1])) {
+    return new RegExp(
+      `^[\\u4e00-\\u9fa5A-Za-z0-9]{0,16}?(?:${CUSTOMER_ORGANIZATION_SUFFIX_PATTERN})(?=${CUSTOMER_ORGANIZATION_ACTION_PATTERN})`
+    ).test(relativeDate[1]);
+  }
+
+  const courtesy = source.match(/^(?:请|麻烦)\s*(.*)$/);
+  if (!courtesy) return false;
+  const remainder = String(courtesy[1] || '')
+    .replace(/^\d{1,2}月\d{1,2}[日号]?\s*/, '')
+    .replace(/^(?:今天|昨天|明天|后天|刚才|刚刚|现在|这会儿)\s*/, '');
+  const organization = remainder.match(new RegExp(
+    `^([\\u4e00-\\u9fa5A-Za-z0-9]{0,16}?(?:${CUSTOMER_ORGANIZATION_SUFFIX_PATTERN}))(?=${CUSTOMER_ORGANIZATION_ACTION_PATTERN})`
+  ));
+  if (!organization) return false;
+  const candidate = cleanCustomerName(organization[1]);
+  return Boolean(candidate && candidate.length < 4 && !isGenericOrganizationCustomerName(candidate));
+}
+
+function extractOrganizationCustomerName(text) {
+  const source = String(text || '');
+  const organizationPattern = new RegExp(
+    `^([\\u4e00-\\u9fa5A-Za-z0-9]{0,16}?(?:${CUSTOMER_ORGANIZATION_SUFFIX_PATTERN}))(?=${CUSTOMER_ORGANIZATION_ACTION_PATTERN})`
+  );
+  const clauses = source.split(/[，,。；;\n]/);
+
+  for (let index = 0; index < clauses.length; index += 1) {
+    const rawClause = String(clauses[index] || '').trim();
+    if (hasAmbiguousOrganizationLeadingToken(rawClause)) {
+      return { value: '', source: '', matched: true };
+    }
+    const clause = stripOrganizationCustomerLeadingTokens(rawClause);
+    const match = clause.match(organizationPattern);
+    if (!match) continue;
+    const value = clause === rawClause
+      && /^(?:今天|昨天|明天|后天|刚才|刚刚|现在|这会儿)/.test(match[1])
+      ? String(match[1]).trim()
+      : cleanCustomerName(match[1]);
+    if (!value || isGenericOrganizationCustomerName(value)) {
+      return { value: '', source: '', matched: true };
+    }
+    return { value, source: 'rule:customer_organization_action', matched: true };
+  }
+  return { value: '', source: '', matched: false };
+}
+
 function extractCustomerName(text) {
   if (/^(?:刚才|刚刚)?(?:那单|那笔|上一笔|上次)/.test(text)) {
     return { value: '', source: '' };
@@ -432,11 +524,13 @@ function extractCustomerName(text) {
     const name = cleanCustomerName(directed[1]);
     if (name) return { value: name, source: 'rule:customer_directed_title' };
   }
-  const direct = text.match(/([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
+  const direct = stripCustomerLeadingTokens(text).match(/([\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士))/);
   if (direct) {
     const name = cleanCustomerName(direct[1]);
     if (name) return { value: name, source: 'rule:customer_title' };
   }
+  const organization = extractOrganizationCustomerName(text);
+  if (organization.matched) return organization;
   const oldName = text.match(new RegExp(`(老(?!板)[\\u4e00-\\u9fa5]{1,2}?)(?:${CUSTOMER_ACTION_PATTERN})`));
   if (oldName) {
     const name = cleanCustomerName(oldName[1]);
@@ -903,7 +997,7 @@ function extractRemainingAmount(text) {
   };
 }
 
-function extractProduct(text) {
+function extractProduct(text, customerName = '') {
   const changedProduct = KNOWN_PRODUCTS
     .slice()
     .sort((left, right) => right.length - left.length)
@@ -919,14 +1013,22 @@ function extractProduct(text) {
     .sort((left, right) => left.index - right.index || right.item.length - left.item.length)[0];
   if (known) return { value: known.item, source: 'rule:known_product' };
 
-  const beforeQuantity = text.match(new RegExp(`(?:报价给|报给|发给|卖给|转给|给|帮|找|问|报|报架|要|订|定|定了|补|做|发)?([\\u4e00-\\u9fa5A-Za-z]{2,18}?)\\s*(${numberPattern()})\\s*${UNIT_PATTERN}`));
+  const beforeQuantity = text.match(new RegExp(`(?:报价给|报给|发给|卖给|转给|给|帮|找|问|报架|下单|订货|订购|要货|返单|补单|采购|报|要|订|定了|定|补|做|发)?([\\u4e00-\\u9fa5A-Za-z]{2,18}?)\\s*(${numberPattern()})\\s*${UNIT_PATTERN}`));
   if (beforeQuantity) {
-    const product = beforeQuantity[1]
+    const productContext = beforeQuantity[1];
+    const productWithoutCustomer = customerName
+      ? productContext.replace(new RegExp(`^.*?${escapeRegExp(customerName)}`), '')
+      : productContext;
+    const product = productWithoutCustomer
       .replace(/.*(?:总|老板|经理|姐|哥|先生|女士)/, '')
-      .replace(/^(先下|先做|下|做|要|订|定了|定|补|发|给|帮|找|问|报|报价)/, '')
+      .replace(new RegExp(`^${CUSTOMER_ORGANIZATION_ACTION_PATTERN}`), '')
+      .replace(/^(下单|订货|订购|要货|返单|补单|采购|先下|先做|下|做|要|订|定了|定|补|发|给|帮|找|问|报|报价)/, '')
       .replace(PRODUCT_STOP_WORDS, '')
       .replace(/^的|^，/, '');
-    if (product && !/\d/.test(product)) return { value: product, source: 'rule:before_quantity_product' };
+    const cleanedProduct = cleanItemProductName(product);
+    if (cleanedProduct && !/\d/.test(cleanedProduct)) {
+      return { value: cleanedProduct, source: 'rule:before_quantity_product' };
+    }
   }
 
   const afterQuantity = text.match(new RegExp(`(?:${numberPattern()})\\s*${UNIT_PATTERN}\\s*([\\u4e00-\\u9fa5A-Za-z0-9]{1,18})`));
@@ -1003,9 +1105,10 @@ function cleanItemProductName(value, customerName = '') {
     const customer = escapeRegExp(customerName);
     const shortCustomer = escapeRegExp(customerName.replace(/(?:总|老板|经理|姐|哥|先生|女士)$/, ''));
     cleaned = cleaned
-      .replace(new RegExp(`^${customer}`), '')
+      .replace(new RegExp(`^.*?${customer}`), '')
       .replace(new RegExp(`^${shortCustomer}`), '');
   }
+  cleaned = cleaned.replace(new RegExp(`^${CUSTOMER_ORGANIZATION_ACTION_PATTERN}`), '');
 
   const originalKnown = KNOWN_PRODUCTS
     .slice()
@@ -1015,7 +1118,7 @@ function cleanItemProductName(value, customerName = '') {
 
   const hadTrailingAction = /(?:那边|这边|说|问|要|订|定|定了|下单|先下|先做|做|补|发|出|拿)$/.test(cleaned);
   cleaned = cleaned
-    .replace(/^(?:给|帮|找|问|报给|报价给|发给|卖给|转给|先问|再问|另外|还有|先下|先做|下单|下|做|要|订|定了|定|买|补|追加|发|出|拿|记一下|记下|客户|那个|这个|这边|那边)+/, '')
+    .replace(/^(?:给|帮|找|问|报给|报价给|发给|卖给|转给|先问|再问|另外|还有|先下|先做|下单|订货|订购|要货|返单|补单|采购|下|做|要|订|定了|定|买|补|追加|发|出|拿|记一下|记下|客户|那个|这个|这边|那边)+/, '')
     .replace(/(?:那边|这边|说|问|要|订|定|定了|下单|先下|先做|做|补|发|出|拿)$/, '')
     .trim();
   if (customerName) {
@@ -1037,6 +1140,8 @@ function cleanItemProductName(value, customerName = '') {
   if (hadTrailingAction && cleaned.length <= 4) return '';
   if (!cleaned || cleaned.length > 12) return '';
   if (ITEM_EXACT_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
+  if (new RegExp(`^(?:${SPEC_TOKEN_PATTERN})$`).test(cleaned)) return '';
+  if (/^(?:加厚|加薄|加硬|变厚|变薄|单独|独立|外箱|内盒|包装要求)$/.test(cleaned)) return '';
   if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天)/.test(cleaned)) return '';
   if (/^(?:这?周(?:[一二三四五六日天]|拿|交|发|出)|下周(?:[一二三四五六日天]|拿|交|发|出)|(?:明天|后天|今天|月底|月末|礼拜|星期).*(?:交|拿|发|出)?)$/.test(cleaned)) return '';
   // “20块钱一个”会被商品+数量规则误切成“块钱 + 1个”；这是一段价格，不是一件商品。
@@ -1191,8 +1296,6 @@ function extractItemCandidates(text, customerName = '') {
         productText = productText.slice(0, -splitQuantity[1].length);
         quantityText = `${splitQuantity[1]}${quantityText}`;
       }
-      const hasKnownProduct = KNOWN_PRODUCTS.some((product) => productText.includes(product));
-      if (!hasKnownProduct && /(?:今天|明天|后天|要|订|下单|先整|先来|说|给|问|客户|老板|总|姐|哥)/.test(productText)) return;
     }
     const productName = cleanItemProductName(productText, customerName);
     const quantity = parseQuantityWithUnit(quantityText, rawUnit);
@@ -1350,6 +1453,9 @@ function extractCustomerNameCandidates(text) {
     .filter(Boolean)
     .filter((name, index, array) => array.indexOf(name) === index);
   if (cleanTitledNames.length) return cleanTitledNames;
+
+  const organization = extractOrganizationCustomerName(source);
+  if (organization.matched) return organization.value ? [organization.value] : [];
 
   const names = [];
   const actionPattern = new RegExp(`([\\u4e00-\\u9fa5]{1,4})(?:${CUSTOMER_ACTION_PATTERN})`, 'g');
@@ -2058,7 +2164,7 @@ function parseInput({
   const explicitReceivableAmount = extractReceivableAmount(normalized);
   const depositAmount = extractDepositAmount(normalized);
   const remainingAmount = extractRemainingAmount(normalized);
-  const product = extractProduct(normalized);
+  const product = extractProduct(normalized, customerName);
   const itemDrafts = repairItemDrafts(rawItemDrafts, normalized, product.value);
   const useItems = ['quotation', 'order'].includes(intent);
   const singleItemDraft = useItems && itemDrafts.length ? itemDrafts[0] : null;
