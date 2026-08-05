@@ -94,8 +94,8 @@ function uncertainOrder(options = {}) {
       provider_kind: options.providerKind || 'REAL'
     },
     fields: {
-      customerName: options.customerName || '王总',
-      dueDate: options.dueDate || '2026-08-05',
+      customerName: options.customerName === undefined ? '王总' : options.customerName,
+      dueDate: options.dueDate === undefined ? '2026-08-05' : options.dueDate,
       productName: items[0] && items[0].productName || '',
       quantity: items[0] && items[0].quantity || '',
       unit: items[0] && items[0].unit || '',
@@ -496,6 +496,103 @@ test('URAI-012', '声明或重放用户解决状态不能绕过可信proof重算
   assert.strictEqual(domain.domainCanSaveFormal, false);
   assert(hasIssue(domain, 'AI_RESULT_UNRESOLVED'));
   assertZeroMutation(reviewed);
+});
+
+test('URAI-013', '真实proof不能跨原文和客户草稿重放', () => {
+  const conflict = {
+    code: 'AI_MATCHED_ITEM_FIELD_UNSUPPORTED',
+    field: 'items',
+    itemKey: 'urai-item-1',
+    itemIndex: 0,
+    itemField: 'productName',
+    fieldPath: 'items[0].productName',
+    values: ['候选商品'],
+    message: '商品名称待用户确认。'
+  };
+  let signedEdits;
+  withInputPage(({ page }) => {
+    installDraft(page, uncertainOrder({ conflicts: [conflict] }));
+    const edited = editItem(page, 0, 'productName', '水杯');
+    assert.strictEqual(resolutionStatus(edited), 'MANUAL_RESOLUTION_COMPLETE');
+    signedEdits = safeClone(edited.user_manual_edits);
+  });
+
+  const replayed = uncertainOrder({
+    originalText: '李总要候选商品500个，每个5元，8月5日交。',
+    customerName: '李总',
+    items: [{
+      confirmationItemKey: 'urai-item-1',
+      productName: '水杯',
+      spec: '',
+      quantity: '500',
+      unit: '个',
+      unitPrice: '5',
+      priceUnit: '个',
+      totalAmount: '2500'
+    }],
+    conflicts: [conflict]
+  });
+  replayed.user_manual_edits = signedEdits;
+  const reviewed = review(replayed);
+  assert.strictEqual((reviewed.user_manual_edits || []).length, 0);
+  assert.notStrictEqual(resolutionStatus(reviewed), 'MANUAL_RESOLUTION_COMPLETE');
+  assert.strictEqual(preflight(reviewed).domainCanSaveFormal, false);
+  assertZeroMutation(reviewed);
+});
+
+test('URAI-014', '新USED AI周期不能信任旧裸manual字段', () => {
+  const used = uncertainOrder({
+    dueDate: '2026-09-01',
+    low: ['dueDate']
+  });
+  used.ai_fallback.status = 'used';
+  used.ai_resolution_revision = 2;
+  used.manual_fields = ['dueDate'];
+  used.user_manual_edits = [];
+  assert.strictEqual((used.user_manual_edits || []).length, 0);
+  const reviewedTop = review(used);
+  assert((reviewedTop.low_confidence_fields || []).includes('dueDate'));
+  assert.strictEqual(preflight(reviewedTop).domainCanSaveFormal, false);
+
+  const itemDraft = uncertainOrder({
+    conflicts: [{
+      code: 'AI_MATCHED_ITEM_FIELD_CONFLICT',
+      field: 'items',
+      itemKey: 'urai-item-1',
+      itemIndex: 0,
+      itemField: 'productName',
+      fieldPath: 'items[0].productName',
+      values: ['旧商品', '候选商品'],
+      message: '新 AI 周期产生了商品名冲突。'
+    }]
+  });
+  itemDraft.ai_fallback.status = 'used';
+  itemDraft.ai_resolution_revision = 2;
+  itemDraft.manual_item_fields = [{ itemKey: 'urai-item-1', field: 'productName' }];
+  const reviewedItem = review(itemDraft);
+  assert((reviewedItem.field_conflicts || []).some((item) => (
+    item.code === 'AI_MATCHED_ITEM_FIELD_CONFLICT'
+  )));
+  assert.strictEqual(preflight(reviewedItem).domainCanSaveFormal, false);
+});
+
+test('URAI-015', '编辑一个顶层字段不能清除其他未解决字段', () => {
+  const draft = uncertainOrder({
+    customerName: '',
+    dueDate: '',
+    missing: ['customerName', 'dueDate']
+  });
+  withInputPage(({ page, driver }) => {
+    installDraft(page, draft);
+    const edited = editField(page, 'customerName', '王总');
+    assert(!(edited.missing_fields || []).includes('customerName'));
+    assert((edited.missing_fields || []).includes('dueDate'));
+    assert.notStrictEqual(resolutionStatus(edited), 'MANUAL_RESOLUTION_COMPLETE');
+    assert.strictEqual(page.data.disableFormalSave, true);
+    page.saveFormal();
+    assert.strictEqual(driver.evidence.productionBusinessCalls.saveConfirmedDraft, 0);
+    assert.strictEqual(driver.evidence.productionStorageCalls.saveState, 0);
+  });
 });
 
 function main() {
