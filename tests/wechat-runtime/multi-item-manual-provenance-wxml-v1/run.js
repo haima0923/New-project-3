@@ -69,7 +69,7 @@ async function main() {
     const warningText = await warning.text();
     assert(/商品2/.test(warningText) && /数量/.test(warningText));
     const saveButton = await waitFor(page, '.formal-save-button');
-    assert.strictEqual(await saveButton.attribute('disabled'), true);
+    assert.strictEqual(String(await saveButton.attribute('disabled')), 'true');
 
     const quantityInputs = await page.$$('input[data-field="quantity"]');
     assert(quantityInputs.length >= 2);
