@@ -78,6 +78,54 @@ function reviewAndPreflight(text) {
   return { reviewed, domain, state };
 }
 
+function reviewAiAddedSpec(text, spec) {
+  const parsed = parseText(text);
+  const first = safeClone((parsed.fields.items || [])[0] || {});
+  assert(first.productName, '规格控制样例必须先识别第一件商品');
+  const local = Object.assign({}, parsed, {
+    fields: Object.assign({}, safeClone(parsed.fields), {
+      items: [first],
+      productName: first.productName,
+      quantity: first.quantity,
+      unit: first.unit,
+      unitPrice: first.unitPrice,
+      priceUnit: first.priceUnit,
+      amount: first.totalAmount,
+      totalAmount: first.totalAmount,
+      calculatedAmount: first.totalAmount
+    })
+  });
+  const second = {
+    productName: '饭盒',
+    spec,
+    quantity: '20',
+    unit: '个',
+    unitPrice: '4',
+    priceUnit: '个',
+    totalAmount: '80'
+  };
+  const merged = normalizeAiResult(local, {
+    provider: 'controlled-real-fixture',
+    intent: 'order',
+    fields: Object.assign({}, safeClone(local.fields), {
+      items: [first, second],
+      amount: '110',
+      totalAmount: '110',
+      calculatedAmount: '110'
+    }),
+    missing_fields: [],
+    low_confidence_fields: [],
+    field_conflicts: [],
+    confidence: 0.99
+  }, {
+    providerKind: 'REAL',
+    businessDate: BUSINESS_DATE,
+    businessTimezone: TIMEZONE,
+    nowInstant: NOW_INSTANT
+  });
+  return applyFinalParseSafety(merged, { businessDate: BUSINESS_DATE });
+}
+
 function assertUncoveredItemBlocked(text, expectedProduct) {
   const { reviewed, domain, state } = reviewAndPreflight(text);
   const conflict = (reviewed.field_conflicts || []).find((entry) => (
@@ -91,6 +139,13 @@ function assertUncoveredItemBlocked(text, expectedProduct) {
   assert.strictEqual(saved.type, 'error');
   assert.strictEqual(saved.blocked, true);
   assert.strictEqual(JSON.stringify(state), before);
+}
+
+function assertNoSourceCoverageConflict(text) {
+  const { reviewed } = reviewAndPreflight(text);
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
 }
 
 test('SCOV-001', '未知第二商品逗号加数量晚点确认必须阻断', () => {
@@ -154,9 +209,42 @@ test('SCOV-007', '贴防伪标是加工要求而不是第二商品', () => {
   ['SCOV-010', '逗号分隔共计数量不是第二商品', '王总下单：水杯，共10个，3元一个；8月15日交货。']
 ].forEach(([caseId, title, text]) => {
   test(caseId, title, () => {
-    const { reviewed } = reviewAndPreflight(text);
+    assertNoSourceCoverageConflict(text);
+  });
+});
+
+[
+  ['SCOV-011', '显式另加包装盒不能被当成包装要求', '王总下单：水杯10个，每个3元；另加包装盒；8月15日交货。', '包装盒'],
+  ['SCOV-012', '显式另加标签纸不能被当成贴标要求', '王总下单：水杯10个，每个3元；另加标签纸；8月15日交货。', '标签纸'],
+  ['SCOV-013', '水杯不能用子串覆盖水杯盖', '王总下单：水杯10个，每个3元；另加水杯盖；8月15日交货。', '水杯盖'],
+  ['SCOV-014', '饭盒不能用子串覆盖饭盒盖', '王总下单：饭盒10个，每个3元；另加饭盒盖；8月15日交货。', '饭盒盖'],
+  ['SCOV-015', '礼品盒不能用子串覆盖礼品盒内衬', '王总下单：礼品盒10个，每个3元；另加礼品盒内衬；8月15日交货。', '礼品盒内衬']
+].forEach(([caseId, title, text, product]) => {
+  test(caseId, title, () => assertUncoveredItemBlocked(text, product));
+});
+
+[
+  ['SCOV-016', '单价为小数是价格片段', '王总下单：水杯100个，单价为3.8元；8月15日交货。'],
+  ['SCOV-017', '食品级是商品规格片段', '王总下单：水杯，食品级，100个，每个3元；8月15日交货。'],
+  ['SCOV-018', '304不锈钢是商品规格片段', '王总下单：水杯，304不锈钢，100个，每个3元；8月15日交货。'],
+  ['SCOV-019', '每箱换算数量不是第二商品', '王总下单：水杯120个，每箱12个，每个3元；8月15日交货。'],
+  ['SCOV-020', '每盒换算数量不是第二商品', '王总下单：水杯100个，每盒10个，每个3元；8月15日交货。']
+].forEach(([caseId, title, text]) => {
+  test(caseId, title, () => assertNoSourceCoverageConflict(text));
+});
+
+[
+  ['SCOV-021', 'AI新增商品的食品级规格有逐项原文证据时可用', '食品级'],
+  ['SCOV-022', 'AI新增商品的304不锈钢规格有逐项原文证据时可用', '304不锈钢']
+].forEach(([caseId, title, spec]) => {
+  test(caseId, title, () => {
+    const reviewed = reviewAiAddedSpec(
+      `王总下单：水杯10个，每个3元；饭盒${spec}20个，每个4元；8月15日交货。`,
+      spec
+    );
+    assert.strictEqual(reviewed.fields.items.length, 2);
     assert(!(reviewed.field_conflicts || []).some((entry) => (
-      entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+      entry.field === 'items' && entry.itemIndex === 1
     )));
   });
 });
