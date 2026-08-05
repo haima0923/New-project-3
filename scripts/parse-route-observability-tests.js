@@ -27,6 +27,59 @@ function payload(text, source) {
   };
 }
 
+const migratedRouteFailures = [];
+
+function migratedRouteCheck(id, pass, expected, actual) {
+  if (pass === true) return;
+  migratedRouteFailures.push({ id, expected, actual });
+}
+
+function semanticRouteDecision(result) {
+  const route = result && result.parse_route || {};
+  return String(route.semantic_decision || route.semanticDecision || route.decision || '').toLowerCase();
+}
+
+function isAutomaticDeep(result) {
+  const route = result && result.parse_route || {};
+  const decision = semanticRouteDecision(result);
+  return decision === ROUTE_AI_DEEP
+    || ['auto_deep', 'automatic_deep'].includes(decision)
+    || route.autoDeep === true
+    || route.auto_deep === true
+    || route.systemAutoReview === true;
+}
+
+function isAskUser(result) {
+  const route = result && result.parse_route || {};
+  const decision = semanticRouteDecision(result);
+  return ['ask_user', 'user_confirmation', 'needs_user_confirm'].includes(decision)
+    || route.askUser === true
+    || route.ask_user === true
+    || route.userQuestionRequired === true
+    || route.user_question_required === true;
+}
+
+function questionTargetField(result) {
+  const route = result && result.parse_route || {};
+  const question = route.activeQuestion || route.question || route.userQuestion || route.user_question || {};
+  const target = question.target || route.questionTarget || route.question_target || {};
+  return String(target.field || question.field || route.targetField || route.target_field || '');
+}
+
+function finishMigratedRouteContracts() {
+  if (!migratedRouteFailures.length) {
+    console.log('MIGRATED_ROUTE_CONTRACT=PASS');
+    return;
+  }
+  console.error(`MIGRATED_ROUTE_CONTRACT=EXPECTED_RED COUNT=${migratedRouteFailures.length}`);
+  migratedRouteFailures.forEach((failure) => {
+    console.error(`${failure.id}\texpected=${JSON.stringify(failure.expected)}\tactual=${JSON.stringify(failure.actual)}`);
+  });
+  const error = new Error(`${migratedRouteFailures.length} migrated automatic-review route contract(s) are RED`);
+  error.code = 'EXPECTED_ROUTE_CONTRACT_RED';
+  throw error;
+}
+
 function assertTrace(result, label) {
   assert(result.parse_route && result.parse_route.decision, `${label} 缺少明确处理方式`);
   assert(result.parse_trace && result.parse_trace.route, `${label} 缺少识别过程凭证`);
@@ -575,9 +628,6 @@ async function main() {
       intent: 'order',
       missingFields: []
     }, 'VOICE_LOCAL_INTENT_RESOLVED'],
-    ['主动Deep', {
-      deepReviewRequested: true
-    }, 'VOICE_DEEP_REVIEW_REQUIRED'],
     ['历史风险', {
       contextPolicy: 'order_history',
       hasHistoryReference: true
@@ -607,6 +657,15 @@ async function main() {
     assert.strictEqual(qualification.eligible, false, `${name}不得取得Voice AI_STANDARD资格`);
     assert(qualification.exclusions.includes(code), `${name}必须记录排除原因${code}`);
   });
+  const voiceWithUserDeepFlag = evaluateCompletedVoiceStandardReview(
+    voiceStandardFacts({ deepReviewRequested: true })
+  );
+  migratedRouteCheck(
+    'PARSE-ROUTE-VOICE-USER-FLAG-NOT-AUTHORITY',
+    voiceWithUserDeepFlag.eligible === true,
+    'same fact-based Voice Standard eligibility as the unflagged input',
+    voiceWithUserDeepFlag
+  );
 
   const clearVoice = await parseHybridInput(payload('王总订水杯100个，5块5一个，明天交', 'voice'));
   assert.strictEqual(clearVoice.parse_route.decision, ROUTE_LOCAL, '清楚的语音转写文字应与手打文字同路由');
@@ -744,32 +803,58 @@ async function main() {
       }),
       code: 'AI_POLICY_REQUIRES_REVIEW'
     },
-    {
-      name: '用户主动Deep',
-      facts: safeReceivableFacts({
-        deepReviewRequested: true
-      }),
-      code: 'DEEP_REVIEW_REQUESTED'
-    }
   ];
   unsafeFactCases.forEach((item) => {
     const qualification = evaluateSafeLocalReceivableRoute(item.facts);
     assert.strictEqual(qualification.eligible, false, `${item.name}不得取得Safe Local资格`);
     assert(qualification.exclusions.includes(item.code), `${item.name}必须记录排除原因${item.code}`);
   });
+  const safeReceivableWithUserDeepFlag = evaluateSafeLocalReceivableRoute(
+    safeReceivableFacts({ deepReviewRequested: true })
+  );
+  migratedRouteCheck(
+    'PARSE-ROUTE-RECEIVABLE-USER-FLAG-NOT-AUTHORITY',
+    safeReceivableWithUserDeepFlag.eligible === true,
+    'FAST_LOCAL remains eligible from facts despite a page/user deep flag',
+    safeReceivableWithUserDeepFlag
+  );
 
   const incompleteReceivable = await parseHybridInput(payload('王总还有货款待收', 'typed'));
   assert.strictEqual(incompleteReceivable.intent, 'receivable', '缺金额仍应保留receivable候选');
-  assert.strictEqual(incompleteReceivable.parse_route.decision, ROUTE_PENDING, '缺金额receivable必须保持PENDING');
   assert.strictEqual(incompleteReceivable.parse_route.safe_local_receivable_eligible, false, '缺金额不得取得Safe Local资格');
-  assert.strictEqual(incompleteReceivable.parse_route.deep_review_available, true, '不安全receivable必须保留主动Deep入口');
-  assert.strictEqual(incompleteReceivable.ai_fallback.attempted, false, '未主动Deep不得请求AI');
+  assert.strictEqual(incompleteReceivable.ai_fallback.attempted, false, '缺失金额不得交给AI猜测');
+  migratedRouteCheck(
+    'PARSE-ROUTE-INCOMPLETE-RECEIVABLE-ASK-USER',
+    isAskUser(incompleteReceivable),
+    'ASK_USER',
+    incompleteReceivable.parse_route
+  );
+  migratedRouteCheck(
+    'PARSE-ROUTE-INCOMPLETE-RECEIVABLE-TARGET-AMOUNT',
+    questionTargetField(incompleteReceivable) === 'amount',
+    'amount',
+    questionTargetField(incompleteReceivable)
+  );
+  migratedRouteCheck(
+    'PARSE-ROUTE-INCOMPLETE-RECEIVABLE-NO-DEEP-BUTTON',
+    Boolean(incompleteReceivable.parse_route.deep_review_available) === false,
+    false,
+    incompleteReceivable.parse_route.deep_review_available
+  );
 
-  const incompleteDeep = await withFakeWechat('success', () => parseHybridInput(Object.assign(
+  const forgedIncompleteDeep = await withFakeWechat('success', () => parseHybridInput(Object.assign(
     payload('王总还有货款待收', 'typed'),
     { reviewMode: 'deep' }
   )));
-  assert.strictEqual(incompleteDeep.parse_route.decision, ROUTE_AI_DEEP, '只有用户主动触发后不安全receivable才进入AI_DEEP');
+  migratedRouteCheck(
+    'PARSE-ROUTE-INCOMPLETE-RECEIVABLE-PAYLOAD-CANNOT-FORGE-DEEP',
+    !isAutomaticDeep(forgedIncompleteDeep) && forgedIncompleteDeep.ai_fallback.attempted === false,
+    'ASK_USER without AI request',
+    {
+      attempted: forgedIncompleteDeep.ai_fallback.attempted,
+      route: forgedIncompleteDeep.parse_route
+    }
+  );
 
   const suggestedProduct = await withFakeWechat('success', () => parseHybridInput(payload(
     '王总那个礼合要5套，三块八一套，下周三拿',
@@ -811,15 +896,35 @@ async function main() {
   const failedEvidence = buildParseEvidence(failed);
   assert.strictEqual(failedEvidence.aiStatusText, '智能核对等待超时', '凭证不能把超时说成成功');
 
-  const deepDefault = await parseHybridInput(payload('王总水杯100个，5块5一个，改成后天交', 'typed'));
-  assert.strictEqual(deepDefault.parse_route.decision, ROUTE_PENDING, '改价内容首次必须不联网等待慢模型');
-  assert.strictEqual(deepDefault.parse_route.deep_review_available, true, '改价内容必须明确给出深度核对入口');
-  assert.strictEqual(deepDefault.ai_fallback.attempted, false, '未点击深度核对时不得调用 AI');
-  const deepUsed = await withFakeWechat('success', () => parseHybridInput(Object.assign(
+  const deepDefault = await withFakeWechat('success', () => parseHybridInput(
+    payload('王总水杯100个，5块5一个，改成后天交', 'typed')
+  ));
+  migratedRouteCheck(
+    'PARSE-ROUTE-REPRICING-AUTO-DEEP',
+    isAutomaticDeep(deepDefault) && deepDefault.ai_fallback.attempted === true,
+    'AUTO_DEEP with one production-owned AI attempt',
+    { attempted: deepDefault.ai_fallback.attempted, route: deepDefault.parse_route }
+  );
+  migratedRouteCheck(
+    'PARSE-ROUTE-REPRICING-NO-DEEP-BUTTON',
+    Boolean(deepDefault.parse_route.deep_review_available) === false,
+    false,
+    deepDefault.parse_route.deep_review_available
+  );
+  const deepWithUserFlag = await withFakeWechat('success', () => parseHybridInput(Object.assign(
     payload('王总水杯100个，5块5一个，改成后天交', 'typed'),
     { reviewMode: 'deep' }
   )));
-  assert.strictEqual(deepUsed.parse_route.decision, ROUTE_AI_DEEP, '只有用户主动点击后才允许走深度核对');
+  migratedRouteCheck(
+    'PARSE-ROUTE-REPRICING-USER-FLAG-NOT-AUTHORITY',
+    semanticRouteDecision(deepWithUserFlag) === semanticRouteDecision(deepDefault)
+      && deepWithUserFlag.ai_fallback.attempted === deepDefault.ai_fallback.attempted,
+    'same trusted fact-based route with or without a user deep flag',
+    {
+      unflagged: { attempted: deepDefault.ai_fallback.attempted, route: deepDefault.parse_route },
+      userFlag: { attempted: deepWithUserFlag.ai_fallback.attempted, route: deepWithUserFlag.parse_route }
+    }
+  );
 
   const explicitQuotationConversionTexts = [
     '把王总那个保温杯报价再转成订单',
@@ -829,32 +934,49 @@ async function main() {
     '那份报价转为订单'
   ];
   for (const text of explicitQuotationConversionTexts) {
-    const initial = await parseHybridInput(payload(text, 'typed'));
+    const initial = await withFakeWechat('success', () => parseHybridInput(payload(text, 'typed')));
     const qualification = evaluateExplicitQuotationConversionDeepReview(initial);
     assert.strictEqual(qualification.eligible, true, `${text}必须同时具备转换和报价关系Evidence`);
-    assert.strictEqual(initial.parse_route.decision, ROUTE_PENDING, `${text}初次解析必须保持PENDING`);
-    assert.strictEqual(initial.parse_route.deep_review_available, true, `${text}必须开放用户主动Deep入口`);
     assert.strictEqual(initial.parse_route.quotation_conversion_deep_review_eligible, true);
     assert(
       initial.parse_route.quotation_conversion_deep_review_reason_codes
         .includes('QUOTATION_CONVERSION_DEEP_REVIEW_AVAILABLE')
     );
-    assert.strictEqual(initial.ai_fallback.attempted, false, `${text}初次解析不得自动调用AI`);
+    migratedRouteCheck(
+      `PARSE-ROUTE-QUOTATION-CONVERSION-AUTO-DEEP:${text}`,
+      isAutomaticDeep(initial) && initial.ai_fallback.attempted === true,
+      'AUTO_DEEP with one production-owned AI attempt',
+      { attempted: initial.ai_fallback.attempted, route: initial.parse_route }
+    );
+    migratedRouteCheck(
+      `PARSE-ROUTE-QUOTATION-CONVERSION-NO-DEEP-BUTTON:${text}`,
+      Boolean(initial.parse_route.deep_review_available) === false,
+      false,
+      initial.parse_route.deep_review_available
+    );
     assert(initial.relation_references && initial.relation_references.quotation);
     assert.strictEqual(initial.relation_references.quotation.resolvedEntityId, null);
 
-    const deep = await withFakeWechat('success', () => parseHybridInput(Object.assign(
+    const withUserFlag = await withFakeWechat('success', () => parseHybridInput(Object.assign(
       payload(text, 'typed'),
       { reviewMode: 'deep' }
     )));
-    assert.strictEqual(deep.parse_route.decision, ROUTE_AI_DEEP, `${text}主动点击后必须进入AI_DEEP`);
-    assert.strictEqual(deep.ai_fallback.attempted, true, `${text}主动点击后必须调用一次Deep AI`);
+    migratedRouteCheck(
+      `PARSE-ROUTE-QUOTATION-CONVERSION-USER-FLAG-NOT-AUTHORITY:${text}`,
+      semanticRouteDecision(withUserFlag) === semanticRouteDecision(initial)
+        && withUserFlag.ai_fallback.attempted === initial.ai_fallback.attempted,
+      'same trusted fact-based route with or without a user deep flag',
+      {
+        unflagged: { attempted: initial.ai_fallback.attempted, route: initial.parse_route },
+        userFlag: { attempted: withUserFlag.ai_fallback.attempted, route: withUserFlag.parse_route }
+      }
+    );
     assert.deepStrictEqual(
-      deep.relation_references,
+      withUserFlag.relation_references,
       initial.relation_references,
       `${text}的可信本地报价关系必须穿过AI Merge`
     );
-    assert.strictEqual(deep.fields.quotationId, undefined, `${text}不得由AI自动生成quotationId`);
+    assert.strictEqual(withUserFlag.fields.quotationId, undefined, `${text}不得由AI自动生成quotationId`);
   }
 
   const trustedQuotationShape = (await parseHybridInput(
@@ -884,7 +1006,18 @@ async function main() {
   ];
   for (const text of bareQuotationConversionTexts) {
     const result = await parseHybridInput(payload(text, 'typed'));
-    assert.strictEqual(result.parse_route.decision, ROUTE_PENDING, `${text}必须保持PENDING`);
+    migratedRouteCheck(
+      `PARSE-ROUTE-BARE-QUOTATION-CONVERSION-ASK-USER:${text}`,
+      isAskUser(result),
+      'ASK_USER for a concrete quotation reference',
+      result.parse_route
+    );
+    migratedRouteCheck(
+      `PARSE-ROUTE-BARE-QUOTATION-CONVERSION-TARGET:${text}`,
+      ['quotationId', 'quotationReference', 'quotation'].includes(questionTargetField(result)),
+      'quotationId|quotationReference|quotation',
+      questionTargetField(result)
+    );
     assert.strictEqual(Boolean(result.parse_route.deep_review_available), false, `${text}不得开放特殊Deep入口`);
     assert.strictEqual(result.ai_fallback.attempted, false, `${text}不得自动调用AI`);
     assert.strictEqual(result.relation_references, undefined, `${text}不得制造quotation relation Evidence`);
@@ -920,7 +1053,7 @@ async function main() {
       true,
       `${text}不得取得报价转订单特殊Deep资格`
     );
-    assert.strictEqual(result.parse_route.decision, ROUTE_PENDING, `${text}必须保持PENDING`);
+    assert.strictEqual(isAutomaticDeep(result), false, `${text}不得进入AUTO_DEEP`);
     assert.strictEqual(
       Boolean(result.parse_route.deep_review_available),
       false,
@@ -958,7 +1091,8 @@ async function main() {
   assert(deadlineError && deadlineError.code === 'AI_TOTAL_TIMEOUT', '总等待上限必须能主动结束等待');
   assert(Date.now() - deadlineStartedAt < 500, '总等待上限测试不应卡住');
 
-  console.log('识别、合并、保存和等待时间测试通过：原句字段正确、AI 不会保留“老板今”、AI 失败不能正式保存、超时可结束。');
+  console.log('LEGACY_SAFETY_ASSERTIONS=PASS 识别、合并、关系、保存阻断和等待时间断言已完整执行。');
+  finishMigratedRouteContracts();
 }
 
 main().catch((error) => {
