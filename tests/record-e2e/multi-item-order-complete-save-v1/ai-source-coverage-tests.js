@@ -148,6 +148,19 @@ test('SCOV-007', '贴防伪标是加工要求而不是第二商品', () => {
   )));
 });
 
+[
+  ['SCOV-008', '逗号分隔裸数量不是第二商品', '王总下单：水杯，10个，每个3元；8月15日交货。'],
+  ['SCOV-009', '逗号分隔数量字段不是第二商品', '王总下单：水杯，数量10个，单价3元；8月15日交货。'],
+  ['SCOV-010', '逗号分隔共计数量不是第二商品', '王总下单：水杯，共10个，3元一个；8月15日交货。']
+].forEach(([caseId, title, text]) => {
+  test(caseId, title, () => {
+    const { reviewed } = reviewAndPreflight(text);
+    assert(!(reviewed.field_conflicts || []).some((entry) => (
+      entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+    )));
+  });
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
