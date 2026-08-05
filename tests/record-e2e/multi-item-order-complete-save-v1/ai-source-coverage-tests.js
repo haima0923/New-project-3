@@ -123,6 +123,31 @@ test('SCOV-004', '单商品加交期控制不产生虚假第二商品', () => {
   )));
 });
 
+test('SCOV-005', '同一语句内已覆盖商品不能掩盖未知第二商品', () => {
+  assertUncoveredItemBlocked(
+    '王总下单：水杯10个，每个3元，星云棒数量待定；8月15日交货。',
+    '星云棒'
+  );
+});
+
+test('SCOV-006', '包装加厚是商品要求而不是第二商品', () => {
+  const { reviewed } = reviewAndPreflight(
+    '王总下单：水杯10个，每个3元；包装加厚；8月15日交货。'
+  );
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
+});
+
+test('SCOV-007', '贴防伪标是加工要求而不是第二商品', () => {
+  const { reviewed } = reviewAndPreflight(
+    '王总下单：水杯10个，每个3元；贴防伪标；8月15日交货。'
+  );
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
