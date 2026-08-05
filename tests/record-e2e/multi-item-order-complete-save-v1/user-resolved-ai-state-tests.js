@@ -640,6 +640,27 @@ test('URAI-017', '多商品聚合低置信逐项解决后不再过度阻断', ()
   });
 });
 
+test('URAI-018', '合法新增商品不能让已解决AI风险进入不可恢复死锁', () => {
+  withInputPage(({ page }) => {
+    installDraft(page, manualFixProductDraft());
+    editItem(page, 0, 'productName', '水杯');
+    assert.strictEqual(resolutionStatus(page.data.parseResult), 'MANUAL_RESOLUTION_COMPLETE');
+    assert.strictEqual((page.data.parseResult.user_manual_edits || []).length, 1);
+
+    page.addConfirmItem();
+    const added = page.data.fields.items[1];
+    assert(added && added.confirmationItemKey);
+    assert.strictEqual((page.data.parseResult.user_manual_edits || []).length, 1);
+    assert.strictEqual(resolutionStatus(page.data.parseResult), 'MANUAL_RESOLUTION_COMPLETE');
+    assert.strictEqual(page.data.disableFormalSave, true);
+
+    editItem(page, 1, 'quantity', '20', added.confirmationItemKey);
+    assert.strictEqual((page.data.parseResult.user_manual_edits || []).length, 1);
+    assert.strictEqual(resolutionStatus(page.data.parseResult), 'MANUAL_RESOLUTION_COMPLETE');
+    assert.strictEqual(page.data.disableFormalSave, false);
+  });
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
