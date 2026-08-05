@@ -20,7 +20,10 @@
 
 - `record-flow-gate --live-ai` 现在不再注入受控 stub，并会等待页面解析真正结束后再取证。401、403、超时、断网、500、空响应、非 JSON、空业务 JSON 和 mock 的回归场景已经写入测试源码。
 - `{}`、`{"fields":{}}`、只有 provider/model 等元数据、空商品数组和没有理由的空状态，会使用 `AI_RESPONSE_EMPTY_BUSINESS` 拒绝。服务端返回 422；客户端不会标成 `used`；完整页、首页和最终保存闸门都继续阻止正式保存。
-- AI 明确回答“信息不足、不能记录或需要确认”属于有效安全结论，但状态是 `returned_uncertain`，不能因此解锁正式保存。mock 始终是 `mock_used`。
+- AI 明确回答“信息不足、不能记录或需要确认”属于有效安全结论，原始状态是 `returned_uncertain`，默认不能解锁正式保存。只有用户在真实确认页精确解决全部可人工解决风险、没有任何不可覆盖阻断，并重新通过 final safety 与 domain preflight 后，才可派生独立的用户解决状态；原 AI 状态仍保留。mock 始终是 `mock_used`。
+- 用户解决不能由字段已非空、普通 `manual_fields`、AI/fixture 注入、确认卡打开或伪造 `USER_RESOLVED` 声明触发。多商品证据必须绑定稳定 `itemKey + field`、当前风险版本和当前值；旧解析或新 AI merge 后的陈旧确认必须失效。
+- 用户可以在确认卡补充原文没有的真实事实，该字段来源记为用户手工修正，不能记作 AI 识别；保存的 `originalText` 仍必须严格等于最初输入。不可定位的商品身份冲突、关系/付款冲突、Fake/Replay/未知 provider、系统和 storage/transaction 异常继续阻断。
+- 用户解决后仍须重新点击正式保存，并重新检查必填、商品结构、逐项金额与整单总额、交期、客户和业务关系。任何阻断或保存失败都必须保持完整业务 state 零 mutation，不能自动转 pending。
 - 已完成的动态检查：使用微信开发者工具内置的 Node 22.16.0（没有安装 npm 或项目依赖）运行 `ai-safety-regression-tests.js`、`parse-route-observability-tests.js`、`five-step-user-tests.js`、`core-feature-tests.js`、`server-parse-route-tests.js`、`ai-model-routing-tests.js` 和 `auth-tests.js`，全部通过。服务端测试只连接本机 `127.0.0.1` 的合成 fake 上游。
 - 已核对的副作用：完整页和首页在 AI 失败、空业务结果或 mock 时，客户、报价、订单、待收款、收款和提醒都没有新增；有效 AI 和 local 正向用例可以按现有确认规则保存，`originalText` 与多商品 `items[]` 保留。
 - 已完成的基础检查：5 个本轮修改 JavaScript 文件语法解析、客户端/服务端有效性合同对照、模块加载、fixture JSON、敏感新增内容扫描和 `git diff --check`。

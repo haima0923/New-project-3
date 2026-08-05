@@ -228,7 +228,6 @@ state diff 与完整 trace
 
 - 复杂内容是否改为自动调用 AI；
 - “深度核对”是否长期保留；
-- AI 失败后，用户全部手工修正是否一定允许正式保存；
 - 哪些危险字段需要额外二次确认；
 - 网页测试台、微信自动化或真机录音；
 - 真实 AI 的模型质量和成本结论；
@@ -846,7 +845,26 @@ savePlan 只描述“准备怎样写”，不能修改状态：
 - 独立生成 savePlan；
 - 对同一最终字段得出不同正式保存结论。
 
-用户修改后，核心必须从编辑事件重新计算字段来源、缺失、低置信、冲突、候选关联、AI 未解决状态、confirmation 和 savePlan，并使旧 revision、旧计划和旧确认失效。当前“AI 失败后全部手工修正是否允许保存”仍待产品决定；在老板决定前，AI 路线失败仍按当前规则阻断正式保存。用户修改必须被记录和重算，但不得单凭字段已经补齐就解除 AI 未解决状态。将来若开放，必须通过版本化策略和独立回归，不得只删除一个 warning。
+用户修改后，核心必须从编辑事件重新计算字段来源、缺失、低置信、冲突、候选关联、AI 未解决状态、confirmation 和 savePlan，并使旧 revision、旧计划和旧确认失效。`returned_uncertain` 默认仍阻断正式保存；只有符合下节完整合同的真实用户解决才能解除聚合阻断。字段碰巧非空、页面曾被打开、普通 manual 字段名或 AI 声称“已确认”均不能解锁。
+
+### 14.1 `returned_uncertain` 的用户解决合同
+
+`returned_uncertain` 是原始 AI 结果，必须保留用于审计，不能被改写成 `used`。当且仅当以下事实同时成立时，核心可以派生独立的用户解决状态，例如 `MANUAL_RESOLUTION_COMPLETE`：
+
+1. AI provider 是当前生产链确认的真实 provider，且返回了业务有效但不确定的结果；
+2. 每个允许人工解决的风险都有精确字段路径；多商品风险必须精确到稳定 `itemKey + field`；
+3. 用户通过真实确认页编辑、删除或合法结构调整解决了对应风险；
+4. 用户证据绑定当前确认 revision、当前风险、当前字段值和当前商品身份，旧解析、旧值、旧商品或旧风险的确认不得复用；
+5. AI、fixture、provider payload、replay 和普通业务字段都不能创建或覆盖用户解决证据；
+6. 所有允许人工解决的风险均已解决，且不存在任何不可人工覆盖的阻断；
+7. 编辑后的完整结果重新执行 final safety、domain preflight、必填、金额与商品一致性及关系检查；
+8. 用户重新明确执行 `SAVE_FORMAL`，保存继续遵守原子性与失败零 mutation 合同。
+
+允许精确编辑解决的风险包括客户、交期、金额选择以及商品名称、规格、数量、单位、单价等字段风险。用户可以补充 `originalText` 中没有的真实事实；该值的来源是 `USER_MANUAL`，不能描述为 AI 识别正确，且 `originalText` 必须继续保存最初输入，不得改写成确认卡内容。
+
+普通字段编辑不得覆盖其他字段风险、没有精确路径的商品身份或结构冲突、报价/订单/来源关系冲突、非法付款类型、Fake/Replay/未知 provider、非生产 scope、系统异常、storage/transaction 异常和 operation replay/幂等问题。删除或重新整理商品只有在结构风险经当前数据重新计算后确实消失时才成立，不能用一个宽泛 manual 标记直接覆盖。
+
+领域层每次都必须根据可信用户证据和当前风险重新派生用户解决状态；不得信任 payload 中声明的 `USER_RESOLVED`、`allRisksResolved` 或等价布尔值。正式保存失败时，customers、orders、orderProgress、pending、parse logs、quotations、receivables、payments 和 todos 均不得产生部分写入。
 
 ## 15. 保存计划、MemoryStore 与原子性
 
