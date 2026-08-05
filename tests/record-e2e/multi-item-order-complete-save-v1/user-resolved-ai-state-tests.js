@@ -595,6 +595,51 @@ test('URAI-015', '编辑一个顶层字段不能清除其他未解决字段', ()
   });
 });
 
+test('URAI-016', '同原文proof不能为未编辑的业务字段变化背书', () => {
+  let edited;
+  withInputPage(({ page }) => {
+    installDraft(page, manualFixProductDraft());
+    edited = safeClone(editItem(page, 0, 'productName', '水杯'));
+  });
+  const replayed = safeClone(edited);
+  replayed.fields.items[0].quantity = '999';
+  replayed.fields.items[0].unitPrice = '7';
+  replayed.fields.items[0].totalAmount = '6993';
+  replayed.fields.quantity = '999';
+  replayed.fields.unitPrice = '7';
+  replayed.fields.amount = '6993';
+  replayed.fields.totalAmount = '6993';
+  replayed.fields.calculatedAmount = '6993';
+  replayed.fields.dueDate = '2026-09-01';
+  const reviewed = review(replayed);
+  assert.strictEqual((reviewed.user_manual_edits || []).length, 0);
+  assert.notStrictEqual(resolutionStatus(reviewed), 'MANUAL_RESOLUTION_COMPLETE');
+  assert.strictEqual(preflight(reviewed).domainCanSaveFormal, false);
+  assertZeroMutation(reviewed);
+});
+
+test('URAI-017', '多商品聚合低置信逐项解决后不再过度阻断', () => {
+  const draft = uncertainOrder({
+    originalText: '王总要两种商品，数量请逐项确认，8月15日交。',
+    dueDate: '2026-08-15',
+    items: [
+      { confirmationItemKey: 'urai-low-a', productName: '礼品盒', quantity: '10', unit: '个', unitPrice: '3', priceUnit: '个', totalAmount: '30' },
+      { confirmationItemKey: 'urai-low-b', productName: '饭盒', quantity: '20', unit: '个', unitPrice: '5', priceUnit: '个', totalAmount: '100' }
+    ],
+    low: ['quantity'],
+    unsafe: ['quantity']
+  });
+  withInputPage(({ page }) => {
+    installDraft(page, draft);
+    editItem(page, 0, 'quantity', '10');
+    assert.strictEqual(page.data.disableFormalSave, true);
+    editItem(page, 1, 'quantity', '20');
+    assert.strictEqual(resolutionStatus(page.data.parseResult), 'MANUAL_RESOLUTION_COMPLETE');
+    assert(!(page.data.parseResult.low_confidence_fields || []).includes('quantity'));
+    assert.strictEqual(page.data.disableFormalSave, false);
+  });
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
