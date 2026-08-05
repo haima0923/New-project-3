@@ -126,6 +126,43 @@ function reviewAiAddedSpec(text, spec) {
   return applyFinalParseSafety(merged, { businessDate: BUSINESS_DATE });
 }
 
+function reviewNamedSingleItem(text, productName) {
+  const local = parseText(text);
+  const item = {
+    productName,
+    quantity: '100',
+    unit: '套',
+    unitPrice: '3',
+    priceUnit: '套',
+    totalAmount: '300'
+  };
+  const merged = normalizeAiResult(local, {
+    provider: 'controlled-real-fixture',
+    intent: 'order',
+    fields: Object.assign({}, safeClone(local.fields), {
+      productName,
+      quantity: '100',
+      unit: '套',
+      unitPrice: '3',
+      priceUnit: '套',
+      amount: '300',
+      totalAmount: '300',
+      calculatedAmount: '300',
+      items: [item]
+    }),
+    missing_fields: [],
+    low_confidence_fields: [],
+    field_conflicts: [],
+    confidence: 0.99
+  }, {
+    providerKind: 'REAL',
+    businessDate: BUSINESS_DATE,
+    businessTimezone: TIMEZONE,
+    nowInstant: NOW_INSTANT
+  });
+  return applyFinalParseSafety(merged, { businessDate: BUSINESS_DATE });
+}
+
 function assertUncoveredItemBlocked(text, expectedProduct) {
   const { reviewed, domain, state } = reviewAndPreflight(text);
   const conflict = (reviewed.field_conflicts || []).find((entry) => (
@@ -245,6 +282,22 @@ test('SCOV-007', '贴防伪标是加工要求而不是第二商品', () => {
     assert.strictEqual(reviewed.fields.items.length, 2);
     assert(!(reviewed.field_conflicts || []).some((entry) => (
       entry.field === 'items' && entry.itemIndex === 1
+    )));
+  });
+});
+
+[
+  ['SCOV-023', '三件套商品名内的件不是独立数量', '三件套'],
+  ['SCOV-024', '四件套工具商品名内的件不是独立数量', '四件套工具'],
+  ['SCOV-025', '两件套礼盒商品名内的件不是独立数量', '两件套礼盒']
+].forEach(([caseId, title, productName]) => {
+  test(caseId, title, () => {
+    const reviewed = reviewNamedSingleItem(
+      `王总下单：${productName}100套，每套3元；8月15日交货。`,
+      productName
+    );
+    assert(!(reviewed.field_conflicts || []).some((entry) => (
+      entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
     )));
   });
 });
