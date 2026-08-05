@@ -286,6 +286,29 @@ test('SCOV-085', '显式另加数量前置未知商品仍必须阻断', () => {
   );
 });
 
+test('SCOV-086', '多商品统一交期修饰不是第二商品', () => {
+  const text = '李姐订杯垫300个1元一个，饭盒200套4元一套，7月20日一起交。';
+  const local = parseText(text);
+  const merged = normalizeAiResult(local, {
+    provider: 'controlled-real-fixture',
+    intent: 'order',
+    fields: safeClone(local.fields),
+    missing_fields: [],
+    low_confidence_fields: [],
+    field_conflicts: [],
+    confidence: 0.99
+  }, {
+    providerKind: 'REAL',
+    businessDate: BUSINESS_DATE,
+    businessTimezone: TIMEZONE,
+    nowInstant: NOW_INSTANT
+  });
+  const reviewed = applyFinalParseSafety(merged, { businessDate: BUSINESS_DATE });
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
+});
+
 [
   ['SCOV-021', 'AI新增商品的食品级规格有逐项原文证据时可用', '食品级'],
   ['SCOV-022', 'AI新增商品的304不锈钢规格有逐项原文证据时可用', '304不锈钢']
