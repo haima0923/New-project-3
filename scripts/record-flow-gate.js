@@ -743,6 +743,10 @@ function buildHybridStub(testCase) {
         missing_fields: localResult.missing_fields || [],
         low_confidence_fields: localResult.low_confidence_fields || [],
         field_conflicts: localResult.field_conflicts || []
+      }, {
+        // Controlled non-live fixture: exercise the production REAL-provider
+        // admission contract without pretending that this is a live model run.
+        providerKind: 'REAL'
       });
     };
   }
@@ -878,6 +882,30 @@ function evaluateExpectations(testCase, entry, evidence) {
   if (expect.requireFullInput && !evidence.showContinueInput) {
     failures.push('should guide this record to the complete input page before saving');
   }
+  if (expect.preEditBlocked && evidence.preEditButtonDisabled !== true) {
+    failures.push('formal save must be disabled before the user resolves the risk');
+  }
+  if (expect.preEditZeroMutation
+    && Object.values(evidence.preEditSaveDelta || {}).some((value) => Number(value) !== 0)) {
+    failures.push(`pre-edit save attempt must be zero mutation, delta=${JSON.stringify(evidence.preEditSaveDelta)}`);
+  }
+  if (expect.userResolutionStatus
+    && evidence.userResolutionStatus !== expect.userResolutionStatus) {
+    failures.push(`user resolution expected ${expect.userResolutionStatus}, got ${evidence.userResolutionStatus || ''}`);
+  }
+  if (expect.manualItemField) {
+    const itemKey = String((((evidence.finalFields || {}).items || [])[0] || {}).confirmationItemKey || '');
+    const manualItemFound = ((evidence.parseResult || {}).manual_item_fields || []).some((item) => (
+      item && item.itemKey === itemKey && item.field === expect.manualItemField
+    ));
+    const trustedEditFound = ((evidence.parseResult || {}).user_manual_edits || []).some((item) => (
+      item && item.itemKey === itemKey && item.field === expect.manualItemField
+        && item.source === 'USER_PAGE_EDIT'
+    ));
+    if (!manualItemFound || !trustedEditFound) {
+      failures.push(`expected trusted manual item source for ${expect.manualItemField}`);
+    }
+  }
 
   return failures.map((message) => `${ENTRY_CONFIG[entry].label}: ${message}`);
 }
@@ -897,6 +925,9 @@ function evidenceSummary(evidence) {
     missingFields: parseResult.missing_fields || [],
     lowConfidenceFields: parseResult.low_confidence_fields || [],
     fieldConflicts: parseResult.field_conflicts || [],
+    preEditButtonDisabled: evidence.preEditButtonDisabled,
+    preEditSaveDelta: evidence.preEditSaveDelta,
+    userResolutionStatus: evidence.userResolutionStatus || '',
     buttonDisabled: evidence.buttonDisabled,
     warningText: evidence.warningText || '',
     saveDelta: evidence.saveDelta,
@@ -927,6 +958,16 @@ async function runOneFlow(testCase, entry, options = {}) {
   runPageParse(entry, page, testCase);
   await waitForParseCompletion(page, options);
 
+  const saveMethod = ENTRY_CONFIG[entry].saveMethod;
+  const preEditButtonDisabled = getButtonDisabled(entry, page);
+  let preEditSaveDelta = {};
+  if (testCase.probeBeforeEditFormalSave && typeof page[saveMethod] === 'function') {
+    const beforePreEditSaveCounts = getCounts(harness.getState());
+    page[saveMethod]();
+    await flushAsync();
+    preEditSaveDelta = diffCounts(beforePreEditSaveCounts, getCounts(harness.getState()));
+  }
+
   for (const edit of (testCase.edits || [])) {
     runEdit(entry, page, edit);
     await flushAsync();
@@ -943,7 +984,6 @@ async function runOneFlow(testCase, entry, options = {}) {
     page.continueInput();
     await flushAsync();
   }
-  const saveMethod = ENTRY_CONFIG[entry].saveMethod;
   const beforeSaveCounts = getCounts(harness.getState());
   const beforeSaveFormalIds = getFormalRecordIds(harness.getState());
   if (typeof page[saveMethod] === 'function') {
@@ -1008,6 +1048,9 @@ async function runOneFlow(testCase, entry, options = {}) {
     showContinueInput: showContinueInputBeforeAction,
     warningText: getWarningText(entry, page, harness.events),
     beforeCounts,
+    preEditButtonDisabled,
+    preEditSaveDelta,
+    userResolutionStatus: String(((parseResult.user_resolution || {}).status) || ''),
     saveDelta,
     savedRecordType: latestFormal.type,
     savedOriginalText,
@@ -1341,11 +1384,18 @@ function buildHardGateCases() {
     createOrderCase('manual-fix-product', '王总周三交500个5元', '王总', '水杯', {
       title: '被拦截后手动修商品应重新检查',
       entries: ['input'],
-      extra: { edits: [{ itemIndex: 0, field: 'productName', value: '水杯' }] },
+      extra: {
+        probeBeforeEditFormalSave: true,
+        edits: [{ itemIndex: 0, field: 'productName', value: '水杯' }]
+      },
       expect: {
         customerName: '王总',
         productIncludes: '水杯',
-        lowNotIncludes: ['productName']
+        lowNotIncludes: ['productName'],
+        preEditBlocked: true,
+        preEditZeroMutation: true,
+        userResolutionStatus: 'MANUAL_RESOLUTION_COMPLETE',
+        manualItemField: 'productName'
       }
     }),
     createOrderCase('double-click-no-duplicate', '王总订水杯100个，5.5一个，下周五交', '王总', '水杯', {
