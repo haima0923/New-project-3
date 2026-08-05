@@ -431,6 +431,46 @@ test('SCOV-067', 'AI逐项覆盖引号规格时不误报第二商品', () => {
 });
 
 [
+  ['SCOV-068', '多token英文规格的第二商品不能静默丢失', '珠子 dark red 20pcs', '珠子'],
+  ['SCOV-069', '多token中文规格的第二商品不能静默丢失', '纽扣 大号 红色 20颗', '纽扣'],
+  ['SCOV-070', '型号加编号规格的第二商品不能静默丢失', '手链 型号 A1 20sets', '手链'],
+  ['SCOV-071', '复合外贸计量token不能静默丢失', '胶带（红色）20pcs/set', '胶带']
+].forEach(([caseId, title, itemText, productName]) => {
+  test(caseId, title, () => assertUncoveredItemBlocked(
+    `王总下单：水杯10个，每个3元；${itemText}，单价4元；8月15日交货。`,
+    productName
+  ));
+});
+
+[
+  ['SCOV-072', '质保月数不是第二商品', '质保（期限）20months'],
+  ['SCOV-073', '保修年数不是第二商品', '保修（期限）2year(s)'],
+  ['SCOV-074', '有效期年数不是第二商品', '有效期（预计）2yrs']
+].forEach(([caseId, title, factText]) => {
+  test(caseId, title, () => assertNoSourceCoverageConflict(
+    `王总下单：水杯10个，每个3元；${factText}；8月15日交货。`
+  ));
+});
+
+test('SCOV-075', 'AI逐项覆盖多token规格时不误报第二商品', () => {
+  const reviewed = reviewNamedSingleItem(
+    '王总下单：珠子 dark red，100套，每套3元；8月15日交货。',
+    '珠子',
+    'dark red'
+  );
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
+});
+
+test('SCOV-076', '质保卡不能因质保前缀被当成期限说明', () => {
+  assertUncoveredItemBlocked(
+    '王总下单：水杯10个，每个3元；质保卡（期限）20张，单价4元；8月15日交货。',
+    '质保卡'
+  );
+});
+
+[
   ['SCOV-036', '刻字数量是加工说明而非第二商品', '刻字（英文）20字'],
   ['SCOV-037', '激光刻字数量是加工说明而非第二商品', '激光刻字（英文）20字'],
   ['SCOV-038', '说明字数不是第二商品', '说明（包装）20字'],
