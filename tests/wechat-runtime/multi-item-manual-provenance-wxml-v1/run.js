@@ -39,6 +39,13 @@ function git(...args) {
   }).trim();
 }
 
+function gitRaw(...args) {
+  return childProcess.execFileSync('/usr/bin/git', args, {
+    cwd: PROJECT_PATH,
+    encoding: 'utf8'
+  });
+}
+
 function sha256(relativePath) {
   return crypto.createHash('sha256')
     .update(fs.readFileSync(path.join(PROJECT_PATH, relativePath)))
@@ -49,7 +56,7 @@ function getCandidateIdentity() {
   assert(EXPECTED_HEAD, 'WECHAT_EXPECTED_HEAD 必须显式指定当前候选完整 HEAD');
   const branch = git('branch', '--show-current');
   const head = git('rev-parse', 'HEAD');
-  const worktreeStatus = git('status', '--short').split('\n').filter(Boolean);
+  const worktreeStatus = gitRaw('status', '--short').split('\n').filter(Boolean);
   const stagedFiles = git('diff', '--cached', '--name-only').split('\n').filter(Boolean);
   const worktreeFiles = worktreeStatus.map((line) => line.slice(3).trim());
   assert.strictEqual(branch, EXPECTED_BRANCH, '微信 runner 分支身份不一致');

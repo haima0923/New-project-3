@@ -12,6 +12,7 @@ const { withFrozenClock } = require('../../record-e2e/multi-item-order-complete-
 
 const ROOT = path.resolve(__dirname, '../../..');
 const WXML = fs.readFileSync(path.join(ROOT, 'pages/input/input.wxml'), 'utf8');
+const REAL_WXML_RUNNER = fs.readFileSync(path.join(__dirname, 'run.js'), 'utf8');
 const tests = [];
 const corpus = loadCorpus();
 const pageCase = corpus.byId.get('REC-E2E-MULTI-001');
@@ -276,6 +277,12 @@ test('WXML-009', '删除重排后阻断提示使用当前商品序号', () => {
     assert(!(page.data.domainBlockingLines || []).some((line) => /商品2/.test(line)));
     assert.strictEqual(page.data.disableFormalSave, true);
   });
+});
+
+test('WXML-010', '真实WXML runner保留porcelain首列身份', () => {
+  assert(/function gitRaw\(\.\.\.args\)/.test(REAL_WXML_RUNNER));
+  assert(/const worktreeStatus = gitRaw\('status', '--short'\)/.test(REAL_WXML_RUNNER));
+  assert(!/const worktreeStatus = git\('status', '--short'\)/.test(REAL_WXML_RUNNER));
 });
 
 function main() {
