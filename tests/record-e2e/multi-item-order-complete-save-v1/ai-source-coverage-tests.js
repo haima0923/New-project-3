@@ -351,6 +351,79 @@ test('SCOV-030', 'AI 有证据的前置材质规格与商品名是同一商品',
   ));
 });
 
+[
+  ['SCOV-051', '英文货币token不是第二商品单位', '报价（含税）20USD'],
+  ['SCOV-052', '英文工时token不是第二商品单位', '工时（预计）20hours']
+].forEach(([caseId, title, factText]) => {
+  test(caseId, title, () => assertNoSourceCoverageConflict(
+    `王总下单：水杯10个，每个3元；${factText}；8月15日交货。`
+  ));
+});
+
+[
+  ['SCOV-053', '中文方括号规格的第二商品不能静默丢失', '珠子【红色】20颗', '珠子'],
+  ['SCOV-054', '英文方括号规格的第二商品不能静默丢失', '纽扣[红色]20粒', '纽扣'],
+  ['SCOV-055', '书名号规格的第二商品不能静默丢失', '手链《红色》20串', '手链']
+].forEach(([caseId, title, itemText, productName]) => {
+  test(caseId, title, () => assertUncoveredItemBlocked(
+    `王总下单：水杯10个，每个3元；${itemText}，单价4元；8月15日交货。`,
+    productName
+  ));
+});
+
+test('SCOV-056', 'AI逐项覆盖方括号规格时不误报第二商品', () => {
+  const reviewed = reviewNamedSingleItem(
+    '王总下单：珠子【红色】，100套，每套3元；8月15日交货。',
+    '珠子',
+    '红色'
+  );
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
+});
+
+[
+  ['SCOV-036', '刻字数量是加工说明而非第二商品', '刻字（英文）20字'],
+  ['SCOV-037', '激光刻字数量是加工说明而非第二商品', '激光刻字（英文）20字'],
+  ['SCOV-038', '说明字数不是第二商品', '说明（包装）20字'],
+  ['SCOV-039', '折扣档位不是第二商品', '折扣（已确认）8折'],
+  ['SCOV-040', '优惠档位不是第二商品', '优惠（已确认）8折'],
+  ['SCOV-041', '检验批次是质量要求而非第二商品', '检验（抽检）2批'],
+  ['SCOV-042', '开槽数量是加工说明而非第二商品', '开槽（V型）20处'],
+  ['SCOV-043', '缝线数量是加工说明而非第二商品', '缝线（红色）20道'],
+  ['SCOV-044', '班次数量是排产说明而非第二商品', '班次（夜班）2班']
+].forEach(([caseId, title, factText]) => {
+  test(caseId, title, () => assertNoSourceCoverageConflict(
+    `王总下单：水杯10个，每个3元；${factText}；8月15日交货。`
+  ));
+});
+
+test('SCOV-045', '检验机不能因检验前缀被当成加工说明', () => {
+  assertUncoveredItemBlocked(
+    '王总下单：水杯10个，每个3元；检验机（抽检）2台，单价400元；8月15日交货。',
+    '检验机'
+  );
+});
+
+test('SCOV-046', '显式另加的刻字服务仍是未覆盖业务项', () => {
+  assertUncoveredItemBlocked(
+    '王总下单：水杯10个，每个3元；另加刻字服务（英文）20份；8月15日交货。',
+    '刻字服务'
+  );
+});
+
+[
+  ['SCOV-047', '括号规格加小写pcs的第二商品不能静默丢失', '珠子（红色）20pcs', '珠子'],
+  ['SCOV-048', '括号规格加大写PCS的第二商品不能静默丢失', '纽扣（红色）20PCS', '纽扣'],
+  ['SCOV-049', '括号规格加sets的第二商品不能静默丢失', '手链（红色）20sets', '手链'],
+  ['SCOV-050', '括号规格加rolls的第二商品不能静默丢失', '胶带（红色）20rolls', '胶带']
+].forEach(([caseId, title, itemText, productName]) => {
+  test(caseId, title, () => assertUncoveredItemBlocked(
+    `王总下单：水杯10个，每个3元；${itemText}，单价4元；8月15日交货。`,
+    productName
+  ));
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
