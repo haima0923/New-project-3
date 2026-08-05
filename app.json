@@ -28,11 +28,6 @@
       "provider": "wx069ba97219f66d99"
     }
   },
-  "permission": {
-    "scope.record": {
-      "desc": "用于把老板说的话转成文字，生成记一笔确认内容。"
-    }
-  },
   "tabBar": {
     "custom": true,
     "color": "#667085",
