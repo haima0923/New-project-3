@@ -14,9 +14,10 @@ node tests/wechat-runtime/multi-item-manual-provenance-wxml-v1/contract-tests.js
 运行真实微信开发者工具：
 
 ```bash
-node tests/wechat-runtime/multi-item-manual-provenance-wxml-v1/run.js
+WECHAT_EXPECTED_HEAD="$(git rev-parse HEAD)" \
+  node tests/wechat-runtime/multi-item-manual-provenance-wxml-v1/run.js
 ```
 
-前置条件：微信开发者工具已安装并开启服务端口。可用 `WECHAT_CLI_PATH` 和 `WECHAT_AUTOMATION_PORT` 覆盖默认 CLI 路径和端口。
+前置条件：微信开发者工具已安装并开启服务端口。必须用 `WECHAT_EXPECTED_HEAD` 显式绑定候选完整 HEAD；可用 `WECHAT_EXPECTED_BRANCH`、`WECHAT_CLI_PATH` 和 `WECHAT_AUTOMATION_PORT` 覆盖默认分支、CLI 路径和端口。runner 会拒绝暂存区内容、白名单外工作树文件或错误页面路由，并输出候选源码 SHA-256 与元素真实尺寸。
 
 专项覆盖：稳定 `confirmationItemKey`、同名不同规格、编辑隔离、新增、删除、合法重排、阻断原因可见、补齐后提示消失以及按钮状态同步。精确 business/saveState 调用数只能由 Page VM 观测；DevTools 只证明真实渲染与最终页面状态。
