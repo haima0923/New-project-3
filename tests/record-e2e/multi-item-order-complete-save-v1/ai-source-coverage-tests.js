@@ -271,6 +271,21 @@ test('SCOV-007', '贴防伪标是加工要求而不是第二商品', () => {
   test(caseId, title, () => assertNoSourceCoverageConflict(text));
 });
 
+test('SCOV-083', '要订加数量前置商品仍由同一AI商品覆盖', () => {
+  assertNoSourceCoverageConflict('李姐要订5个椅子，20元一个，周日交。');
+});
+
+test('SCOV-084', '星期交期不是第二商品', () => {
+  assertNoSourceCoverageConflict('李姐订椅子5个，20元一个，周日交。');
+});
+
+test('SCOV-085', '显式另加数量前置未知商品仍必须阻断', () => {
+  assertUncoveredItemBlocked(
+    '李姐订椅子5个，20元一个；另加20个星云棒；周日交。',
+    '星云棒'
+  );
+});
+
 [
   ['SCOV-021', 'AI新增商品的食品级规格有逐项原文证据时可用', '食品级'],
   ['SCOV-022', 'AI新增商品的304不锈钢规格有逐项原文证据时可用', '304不锈钢']
@@ -485,6 +500,13 @@ test('SCOV-080', '显式另加定金箱商品不能被财务词过滤', () => {
     '孙老板订1000个卡套，5元一个；另加定金箱20个，单价4元；7月28日交。',
     '定金箱'
   );
+});
+
+[
+  ['SCOV-081', '五块五口语价格不是第二商品', '王总订水杯100个，5块5一个，2026年8月1日交。'],
+  ['SCOV-082', '带年份的明确交期不是第二商品', '王总订水杯100个，每个5.5元，2026年8月1日交。']
+].forEach(([caseId, title, text]) => {
+  test(caseId, title, () => assertNoSourceCoverageConflict(text));
 });
 
 [
