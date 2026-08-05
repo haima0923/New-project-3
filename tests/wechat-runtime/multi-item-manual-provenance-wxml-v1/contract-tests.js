@@ -251,6 +251,33 @@ test('WXML-008', '补齐对应字段后提示消失且按钮恢复', () => {
   });
 });
 
+test('WXML-009', '删除重排后阻断提示使用当前商品序号', () => {
+  withPage(({ page }) => {
+    install(page, orderDraft([
+      item('warning-a', '礼品盒', '大号', 10, 3),
+      item('warning-b', '候选饭盒', '小号', 20, 5)
+    ], {
+      conflicts: [{
+        code: 'AI_MATCHED_ITEM_FIELD_UNSUPPORTED',
+        field: 'items',
+        itemKey: 'warning-b',
+        itemIndex: 1,
+        itemField: 'productName',
+        fieldPath: 'items[1].productName',
+        values: ['候选饭盒'],
+        message: '商品2名称待确认。'
+      }]
+    }));
+    remove(page, 0, 'warning-a');
+    assert.deepStrictEqual(keys(page), ['warning-b']);
+    assert((page.data.domainBlockingLines || []).some((line) => (
+      /商品1/.test(line) && /产品\/规格/.test(line) && /名称待确认/.test(line)
+    )));
+    assert(!(page.data.domainBlockingLines || []).some((line) => /商品2/.test(line)));
+    assert.strictEqual(page.data.disableFormalSave, true);
+  });
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
