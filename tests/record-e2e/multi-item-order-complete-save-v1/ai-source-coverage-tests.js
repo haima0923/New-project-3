@@ -126,10 +126,11 @@ function reviewAiAddedSpec(text, spec) {
   return applyFinalParseSafety(merged, { businessDate: BUSINESS_DATE });
 }
 
-function reviewNamedSingleItem(text, productName) {
+function reviewNamedSingleItem(text, productName, spec = '') {
   const local = parseText(text);
   const item = {
     productName,
+    spec,
     quantity: '100',
     unit: '套',
     unitPrice: '3',
@@ -300,6 +301,41 @@ test('SCOV-007', '贴防伪标是加工要求而不是第二商品', () => {
       entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
     )));
   });
+});
+
+[
+  [
+    'SCOV-026',
+    '括号规格加片单位的第二商品不能静默丢失',
+    '王总下单：水杯10个，每个3元；钢板（大号）20片，单价4元；8月15日交货。',
+    '钢板'
+  ],
+  [
+    'SCOV-027',
+    '括号规格加枚单位的第二商品不能静默丢失',
+    '王总下单：水杯10个，每个3元；螺丝（M8）20枚，单价4元；8月15日交货。',
+    '螺丝'
+  ]
+].forEach(([caseId, title, text, productName]) => {
+  test(caseId, title, () => assertUncoveredItemBlocked(text, productName));
+});
+
+[
+  ['SCOV-028', '前置大号规格与商品名是同一商品', '王总下单：大号水杯，10个，每个3元；8月15日交货。'],
+  ['SCOV-029', '前置颜色规格与商品名是同一商品', '王总下单：红色水杯，10个，每个3元；8月15日交货。']
+].forEach(([caseId, title, text]) => {
+  test(caseId, title, () => assertNoSourceCoverageConflict(text));
+});
+
+test('SCOV-030', 'AI 有证据的前置材质规格与商品名是同一商品', () => {
+  const reviewed = reviewNamedSingleItem(
+    '王总下单：食品级饭盒，100套，每套3元；8月15日交货。',
+    '饭盒',
+    '食品级'
+  );
+  assert(!(reviewed.field_conflicts || []).some((entry) => (
+    entry.code === 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE'
+  )));
 });
 
 function main() {
