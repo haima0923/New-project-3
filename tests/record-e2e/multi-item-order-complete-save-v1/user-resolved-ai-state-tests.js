@@ -631,9 +631,9 @@ test('URAI-017', '多商品聚合低置信逐项解决后不再过度阻断', ()
   });
   withInputPage(({ page }) => {
     installDraft(page, draft);
-    editItem(page, 0, 'quantity', '10');
+    editItem(page, 0, 'quantity', '11');
     assert.strictEqual(page.data.disableFormalSave, true);
-    editItem(page, 1, 'quantity', '20');
+    editItem(page, 1, 'quantity', '21');
     assert.strictEqual(resolutionStatus(page.data.parseResult), 'MANUAL_RESOLUTION_COMPLETE');
     assert(!(page.data.parseResult.low_confidence_fields || []).includes('quantity'));
     assert.strictEqual(page.data.disableFormalSave, false);

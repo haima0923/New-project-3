@@ -435,29 +435,81 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
       title: 'live模式结果完整性',
       input: '李姐要订5个椅孑，20元一个，周日交',
       source: 'voice',
-      edits: [{ field: 'productName', value: '椅子' }],
       clock: AI_SAFETY_FIXED_CLOCK,
       expect: { intent: 'order' }
     };
     for (const entry of ['input', 'dashboard']) {
-      const success = await runOneFlow(baseCase, entry, {
-      liveAi: true,
-      apiBaseUrl: 'https://fake-live.test',
-      requestHandler: makeLiveRequestHandler('success')
+      const noEdit = await runOneFlow(Object.assign({}, baseCase, {
+        id: `p0-live-no-edit-${entry}`,
+        edits: []
+      }), entry, {
+        liveAi: true,
+        apiBaseUrl: 'https://fake-live.test',
+        requestHandler: makeLiveRequestHandler('success')
+      });
+      const sameValue = await runOneFlow(Object.assign({}, baseCase, {
+        id: `p0-live-same-value-${entry}`,
+        edits: [{ itemIndex: 0, field: 'productName', value: '椅子' }]
+      }), entry, {
+        liveAi: true,
+        apiBaseUrl: 'https://fake-live.test',
+        requestHandler: makeLiveRequestHandler('success')
+      });
+      assert.strictEqual(sameValue.buttonDisabled, true, `${entry} 相同商品名不能获得新的保存资格`);
+      assert.strictEqual(getFormalDelta(sameValue), 0, `${entry} 相同商品名确认必须零正式mutation`);
+      assert.deepStrictEqual(sameValue.parseResult.user_manual_edits || [], [], `${entry} 相同商品名不能生成可信proof`);
+      assert((sameValue.parseResult.low_confidence_fields || []).includes('productName'), `${entry} 相同商品名不能解除productName风险`);
+      assert.deepStrictEqual(
+        ((sameValue.parseResult.user_resolution || {}).unresolvedRiskIds || []),
+        ((noEdit.parseResult.user_resolution || {}).unresolvedRiskIds || []),
+        `${entry} 相同商品名不能改变未解决风险集合`
+      );
+      assert.notStrictEqual(
+        ((sameValue.parseResult.user_resolution || {}).status),
+        'MANUAL_RESOLUTION_COMPLETE',
+        `${entry} 相同商品名不能进入用户解决状态`
+      );
+      assert.strictEqual(
+        Number(sameValue.parseResult.ai_resolution_revision || 0),
+        Number(noEdit.parseResult.ai_resolution_revision || 0),
+        `${entry} 相同商品名不能改变AI风险revision`
+      );
+    }
+
+    const confirmedCase = Object.assign({}, baseCase, {
+      id: 'p0-live-real-value-change',
+      edits: [{ itemIndex: 0, field: 'productName', value: '办公椅' }]
     });
+    const entry = 'input';
+    {
+      const success = await runOneFlow(confirmedCase, entry, {
+        liveAi: true,
+        apiBaseUrl: 'https://fake-live.test',
+        requestHandler: makeLiveRequestHandler('success')
+      });
     assert.strictEqual(success.hybridStubInjected, false, `${entry} live模式不得注入stub`);
     assert.strictEqual(success.requestCount, 1, `${entry} live成功应只请求一次`);
     assert.strictEqual(success.aiStatus, 'used', `${entry} live成功必须记录used`);
     assert.strictEqual(success.aiProvider, 'live-fake-provider', `${entry} 必须保留真实响应provider`);
     assert.strictEqual(success.aiBusinessResultValid, true, `${entry} live成功必须通过业务有效性检查`);
     assert.strictEqual(success.finalFields.remark, 'LIVE_RESPONSE_SENTINEL', `${entry} 真实响应字段不能被本地stub覆盖`);
+    assert.strictEqual(success.finalFields.items[0].productName, '办公椅', `${entry} 必须保留真实修改后的商品名`);
+    assert.strictEqual(success.finalFields.items.length, 1, `${entry} 商品名修改不能扩散成额外商品`);
+    assert((success.parseResult.user_manual_edits || []).some((proof) => (
+      proof.source === 'USER_PAGE_EDIT'
+        && proof.itemKey === success.finalFields.items[0].confirmationItemKey
+        && proof.field === 'productName'
+        && Boolean(proof.valueFingerprint)
+        && Boolean(proof.itemIdentityFingerprint)
+    )), `${entry} 真实值变化必须生成当前item+field可信proof`);
+    assert(!(success.parseResult.low_confidence_fields || []).includes('productName'), `${entry} 精确商品风险必须消失`);
     assert.strictEqual(success.buttonDisabled, false, `${entry} 有效live结果经现有商品确认后必须解锁保存`);
     assert.strictEqual(success.savedRecordType, 'order', `${entry} 有效live结果必须保存为订单`);
-    assert.strictEqual(success.savedOriginalText, baseCase.input, `${entry} 有效live保存必须保留原文`);
+    assert.strictEqual(success.savedOriginalText, confirmedCase.input, `${entry} 有效live保存必须保留原文`);
     assert((success.saveDelta.orders || 0) > 0, `${entry} 有效live结果必须产生订单`);
     assert.deepStrictEqual(success.failures, [], `${entry} live成功证据不能隐藏失败expectation`);
 
-    const delayed = await runOneFlow(baseCase, entry, {
+    const delayed = await runOneFlow(confirmedCase, entry, {
       liveAi: true,
       apiBaseUrl: 'https://fake-live.test',
       requestHandler: makeLiveRequestHandler('delayed_success'),
@@ -471,7 +523,7 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
     assert.strictEqual(delayed.finalFields.remark, 'DELAYED_LIVE_RESPONSE_SENTINEL', `${entry} 不能在live响应前提前取证`);
     assert.strictEqual(delayed.buttonDisabled, false, `${entry} 延迟有效live结果经现有商品确认后必须解锁保存`);
     assert((delayed.saveDelta.orders || 0) > 0, `${entry} 延迟有效live结果必须产生订单`);
-    assert.strictEqual(delayed.savedOriginalText, baseCase.input, `${entry} 延迟live保存必须保留原文`);
+    assert.strictEqual(delayed.savedOriginalText, confirmedCase.input, `${entry} 延迟live保存必须保留原文`);
     assert.deepStrictEqual(delayed.failures, [], `${entry} 延迟live成功证据不能隐藏失败expectation`);
   }
 
