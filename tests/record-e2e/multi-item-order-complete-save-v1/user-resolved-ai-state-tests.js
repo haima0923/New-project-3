@@ -661,6 +661,53 @@ test('URAI-018', '合法新增商品不能让已解决AI风险进入不可恢复
   });
 });
 
+test('URAI-019', '页面fields与签名parseResult分裂时正式保存零调用', () => {
+  withInputPage(({ page, driver, runtime }) => {
+    installDraft(page, manualFixProductDraft());
+    editItem(page, 0, 'productName', '水杯');
+    assert.strictEqual(resolutionStatus(page.data.parseResult), 'MANUAL_RESOLUTION_COMPLETE');
+    const before = safeClone(runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY));
+    const tamperedFields = safeClone(page.data.fields);
+    tamperedFields.items[0].quantity = '999';
+    tamperedFields.items[0].unitPrice = '7';
+    tamperedFields.items[0].totalAmount = '6993';
+    tamperedFields.quantity = '999';
+    tamperedFields.unitPrice = '7';
+    tamperedFields.amount = '6993';
+    tamperedFields.totalAmount = '6993';
+    tamperedFields.calculatedAmount = '6993';
+    tamperedFields.dueDate = '2026-09-01';
+    page.setData({ fields: tamperedFields });
+    page.saveFormal();
+    assert.strictEqual(driver.evidence.productionBusinessCalls.saveConfirmedDraft, 0);
+    assert.strictEqual(driver.evidence.productionStorageCalls.saveState, 0);
+    assert.deepStrictEqual(runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY), before);
+  });
+});
+
+test('URAI-020', '篡改其他字段后真实编辑一个字段不能扩大背书', () => {
+  withInputPage(({ page, driver, runtime }) => {
+    installDraft(page, manualFixProductDraft());
+    editItem(page, 0, 'productName', '水杯');
+    const before = safeClone(runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY));
+    const tamperedFields = safeClone(page.data.fields);
+    tamperedFields.items[0].quantity = '999';
+    tamperedFields.items[0].unitPrice = '7';
+    tamperedFields.items[0].totalAmount = '6993';
+    tamperedFields.quantity = '999';
+    tamperedFields.unitPrice = '7';
+    tamperedFields.amount = '6993';
+    tamperedFields.totalAmount = '6993';
+    tamperedFields.calculatedAmount = '6993';
+    page.setData({ fields: tamperedFields });
+    editField(page, 'dueDate', '2026-09-01');
+    page.saveFormal();
+    assert.strictEqual(driver.evidence.productionBusinessCalls.saveConfirmedDraft, 0);
+    assert.strictEqual(driver.evidence.productionStorageCalls.saveState, 0);
+    assert.deepStrictEqual(runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY), before);
+  });
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
