@@ -6,7 +6,12 @@ const { buildParseEvidence } = require('../../utils/parse-evidence');
 const { addDays, diffDays, today } = require('../../utils/date');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
-const { applyFinalParseSafety } = require('../../utils/parse-safety');
+const {
+  applyFinalParseSafety,
+  createTrustedUserManualEdit,
+  evaluateUserResolvedAiState,
+  reconcileTrustedUserManualEditState
+} = require('../../utils/parse-safety');
 const {
   evaluateRecordDomainPreflight,
   getCustomerNameMatchKind,
@@ -172,12 +177,122 @@ function getMissing(intent, fields, operation) {
 }
 
 function uniqueFields(fields) {
-  return (fields || []).filter((field, index, array) => field && array.indexOf(field) === index);
+  return (Array.isArray(fields) ? fields : [])
+    .filter((field) => typeof field === 'string' && field)
+    .filter((field, index, array) => array.indexOf(field) === index);
 }
 
-function markManualField(parseResult, field) {
+function markManualField(parseResult, field, fields) {
+  const marked = Object.assign({}, parseResult, {
+    manual_fields: uniqueFields([].concat(
+      Array.isArray(parseResult.manual_fields) ? parseResult.manual_fields : [],
+      field
+    ))
+  });
+  return createTrustedUserManualEdit(marked, {
+    field,
+    fields: fields || parseResult.fields || {}
+  });
+}
+
+const MANUAL_ITEM_FIELDS = [
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+  'totalAmount', 'itemDeliveryDate', 'itemRemark'
+];
+
+function itemKeyHash(value) {
+  const text = String(value || 'item');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+function createConfirmationItemKey(item, index, usedKeys) {
+  const identity = [index, item.productName || '', item.spec || ''].join('|');
+  const base = `mip_page_${itemKeyHash(identity)}`;
+  let itemKey = base;
+  let suffix = 1;
+  while (usedKeys.has(itemKey)) {
+    itemKey = `${base}_${suffix}`;
+    suffix += 1;
+  }
+  return itemKey;
+}
+
+function normalizeManualItemFields(value, items) {
+  if (!Array.isArray(value)) return [];
+  const allowedKeys = new Set(items
+    .map((item) => String(item && item.confirmationItemKey || '').trim())
+    .filter(Boolean));
+  const seen = new Set();
+  return value.reduce((output, entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return output;
+    const itemKey = String(entry.itemKey || '').trim();
+    const field = String(entry.field || '').trim();
+    if (!allowedKeys.has(itemKey) || !MANUAL_ITEM_FIELDS.includes(field)) return output;
+    const identity = `${itemKey}:${field}`;
+    if (seen.has(identity)) return output;
+    seen.add(identity);
+    output.push({ itemKey, field });
+    return output;
+  }, []);
+}
+
+function markManualItemField(parseResult, fields, itemKey, field) {
+  if (!MANUAL_ITEM_FIELDS.includes(field)) return parseResult;
+  const items = Array.isArray(fields && fields.items) ? fields.items : [];
+  const marked = Object.assign({}, parseResult, {
+    manual_item_fields: normalizeManualItemFields([].concat(
+      Array.isArray(parseResult.manual_item_fields) ? parseResult.manual_item_fields : [],
+      { itemKey, field }
+    ), items)
+  });
+  return createTrustedUserManualEdit(marked, {
+    field,
+    itemKey,
+    fields: fields || parseResult.fields || {}
+  });
+}
+
+function resolveConfirmationItemIndex(items, dataset = {}) {
+  const itemKey = String(dataset.itemKey || '').trim();
+  if (itemKey) return items.findIndex((item) => (
+    String(item.confirmationItemKey || '').trim() === itemKey
+  ));
+  const index = Number(dataset.index || 0);
+  return Number.isInteger(index) ? index : -1;
+}
+
+function pruneItemProvenance(parseResult, items) {
+  const itemIndexByKey = new Map(items.map((item, index) => [
+    String(item.confirmationItemKey || ''),
+    index
+  ]));
+  const fieldConflicts = (Array.isArray(parseResult.field_conflicts)
+    ? parseResult.field_conflicts
+    : []).reduce((output, conflict) => {
+    if (!conflict || conflict.field !== 'items' || !conflict.itemKey) {
+      output.push(conflict);
+      return output;
+    }
+    const itemKey = String(conflict.itemKey);
+    if (!itemIndexByKey.has(itemKey)) return output;
+    const itemIndex = itemIndexByKey.get(itemKey);
+    const itemField = String(conflict.itemField || '').trim();
+    output.push(Object.assign({}, conflict, {
+      itemIndex,
+      fieldPath: itemField && itemField !== 'identity'
+        ? `items[${itemIndex}].${itemField}`
+        : (conflict.fieldPath || 'items')
+    }));
+    return output;
+  }, []);
   return Object.assign({}, parseResult, {
-    manual_fields: uniqueFields([].concat(parseResult.manual_fields || [], field))
+    manual_item_fields: normalizeManualItemFields(parseResult.manual_item_fields, items),
+    field_conflicts: fieldConflicts
   });
 }
 
@@ -258,9 +373,11 @@ function getFormalSaveSafetyBlockText(parseResult = {}) {
   const aiFallback = parseResult.ai_fallback || {};
   const aiStatus = aiFallback.status || 'not_requested';
   const route = parseResult.parse_route || {};
-  if (route.deep_review_available) return '这条内容需要深度核对；未核对前不能直接保存。';
+  const userResolved = evaluateUserResolvedAiState(parseResult).status === 'MANUAL_RESOLUTION_COMPLETE';
+  if (route.deep_review_available && !userResolved) return '这条内容需要深度核对；未核对前不能直接保存。';
   if ((safety.status === 'NEEDS_AI' || ['ai_standard', 'ai_deep'].includes(route.decision))
-    && !hasResolvedAiFallback(parseResult)) {
+    && !hasResolvedAiFallback(parseResult)
+    && !userResolved) {
     if (aiStatus === 'timed_out') return '智能核对等待超时，这条先放待整理。';
     if (aiStatus === 'returned_uncertain') return '智能核对没有给出可采用的业务结果，这条先放待整理。';
     if (aiStatus === 'failed') return '智能快速核对没有完成，这条先放待整理。';
@@ -314,6 +431,8 @@ function hasConfirmItemValue(item) {
 
 function normalizeConfirmItem(item = {}) {
   return {
+    confirmationItemKey: String(item.confirmationItemKey || '').trim(),
+    confirmationItemOrigin: String(item.confirmationItemOrigin || '').trim(),
     productName: item.productName || item.product_name || item.name || '',
     spec: item.spec || '',
     quantity: item.quantity || '',
@@ -343,6 +462,14 @@ function buildItemFromLegacyFields(fields = {}) {
 
 function normalizeConfirmItems(fields = {}, options = {}) {
   const sourceItems = Array.isArray(fields.items) ? fields.items : [];
+  const keyCounts = sourceItems.reduce((counts, item) => {
+    const itemKey = String(item && item.confirmationItemKey || '').trim();
+    if (itemKey) counts.set(itemKey, (counts.get(itemKey) || 0) + 1);
+    return counts;
+  }, new Map());
+  const duplicatedKeys = new Set(Array.from(keyCounts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0]));
   const items = sourceItems
     .map(normalizeConfirmItem)
     .filter(hasConfirmItemValue);
@@ -351,7 +478,47 @@ function normalizeConfirmItems(fields = {}, options = {}) {
     if (legacyItem) items.push(legacyItem);
   }
   if (!items.length && options.ensureFirst) items.push(normalizeConfirmItem());
+  const usedKeys = new Set();
+  items.forEach((item, index) => {
+    let itemKey = String(item.confirmationItemKey || '').trim();
+    if (duplicatedKeys.has(itemKey)) itemKey = '';
+    if (!itemKey || usedKeys.has(itemKey)) {
+      itemKey = createConfirmationItemKey(item, index, usedKeys);
+    }
+    usedKeys.add(itemKey);
+    item.confirmationItemKey = itemKey;
+  });
   return items;
+}
+
+function formatDomainBlockingIssues(issues) {
+  const messages = {
+    AI_RESULT_UNRESOLVED: '智能核对仍有未逐项解决的内容。',
+    UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION: '本次智能结果来源不可用于正式保存。',
+    AI_PROVIDER_IDENTITY_UNRESOLVED: '本次智能结果来源尚未确认，不能正式保存。',
+    MISSING_REQUIRED_FIELD: '仍缺少必填信息。',
+    LOW_CONFIDENCE_FIELD: '这个字段仍需要你亲手确认。',
+    FIELD_CONFLICT: '这个字段仍有冲突，请改成最终内容。',
+    ORDER_TOTAL_ITEMS_MISMATCH: '订单总额与商品明细合计不一致。',
+    ORDER_ITEM_QUANTITY_REQUIRED: '数量必须填写有效正数。',
+    MULTI_ITEM_LOSS: '商品明细数量不完整，请重新核对。',
+    FORMAL_SAVE_BLOCKED: '这条内容当前不能保存为正式记录。',
+    MIXED_BUSINESS_UNRESOLVED: '原话包含多笔不同业务，请拆开记录。'
+  };
+  return (Array.isArray(issues) ? issues : []).map((item) => {
+    const itemLabel = Number.isInteger(item.itemIndex) ? `商品${item.itemIndex + 1}` : '';
+    const field = item.itemField || item.field || '';
+    const fieldLabel = field && field !== 'items' ? getFieldLabel(field) : '';
+    const rawConflictMessage = item.messageParams && item.messageParams.conflictMessage;
+    const conflictMessage = itemLabel && rawConflictMessage
+      ? String(rawConflictMessage).replace(
+        /^(?:商品\s*\d+|第\s*\d+\s*个商品)\s*[：:·、，,]?\s*/,
+        ''
+      )
+      : rawConflictMessage;
+    const detail = conflictMessage || messages[item.code] || '还有信息未满足正式保存条件。';
+    return [itemLabel, fieldLabel, detail].filter(Boolean).join(' · ');
+  }).filter((line, index, array) => line && array.indexOf(line) === index);
 }
 
 function hasMoneyValue(value) {
@@ -407,7 +574,7 @@ function buildConfirmItemCards(fields = {}, intent, state = {}) {
       ? getSpecSuggestions(state, item.productName, '', 8)
       : [];
     return Object.assign({}, item, {
-      itemKey: `${index}-${item.productName || 'item'}`,
+      itemKey: item.confirmationItemKey,
       indexLabel: `商品${index + 1}`,
       canRemove: items.length > 1,
       showItemDeliveryDate: intent === 'order' && Boolean(item.itemDeliveryDate),
@@ -1384,7 +1551,8 @@ function buildConfirmationState(state, parseResult, intent, fields) {
 
   if (['quotation', 'order'].includes(intent)) {
     nextFields = syncFirstItemToLegacyFields(nextFields, {
-      preserveConfirmedAmount: (parseResult.manual_fields || []).includes('amount')
+      preserveConfirmedAmount: Array.isArray(parseResult.manual_fields)
+        && parseResult.manual_fields.includes('amount')
     });
   }
 
@@ -1501,6 +1669,9 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   const noRecordPersistenceForbidden = domainPreflight.noRecordPersistenceForbidden === true;
   const canPendingSave = domainPreflight.domainCanSavePending === true
     && !noRecordPersistenceForbidden;
+  const domainBlockingLines = formatDomainBlockingIssues(domainPreflight.blockingIssues);
+  const userResolution = evaluateUserResolvedAiState(normalizedParseResult);
+  const isReturnedUncertain = ((normalizedParseResult.ai_fallback || {}).status) === 'returned_uncertain';
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
 
   return Object.assign({
@@ -1533,8 +1704,16 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     isNoRecord: noRecordPersistenceForbidden,
     noRecordMessage: noRecordPersistenceForbidden ? '没有识别到需要记录的生意事项' : '',
     domainPreflight,
+    userResolution,
     preflightFingerprint: domainPreflight.preflightFingerprint,
     preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
+    domainBlockingLines,
+    showDomainBlocking: Boolean(domainBlockingLines.length),
+    parseAssistText: userResolution.status === 'MANUAL_RESOLUTION_COMPLETE'
+      ? '你已逐项补齐不确定内容，请再次确认后保存。'
+      : (isReturnedUncertain
+        ? '智能核对仍有未确认内容，请按下方阻断原因逐项修改。'
+        : ''),
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
     orderAmountSummaryLines,
@@ -1606,6 +1785,7 @@ function getEmptyConfirmationData() {
     showFieldConflicts: false,
     showOrderAmountSummary: false,
     showLocalParseSafety: false,
+    showDomainBlocking: false,
     showSupersededFacts: false,
     showRemarkItems: false,
     showWarning: false,
@@ -1633,6 +1813,7 @@ function getEmptyConfirmationData() {
     fieldConflictLines: [],
     orderAmountSummaryLines: [],
     localParseSafetyLines: [],
+    domainBlockingLines: [],
     supersededFactLines: [],
     remarkItemLines: [],
     historyWarningText: '',
@@ -2366,7 +2547,8 @@ Page({
       operation: intentChanged
         ? (operationByIntent[intent] || 'pending')
         : this.data.parseResult.operation,
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((item) => item !== 'intent'),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const fields = this.data.quotationSelectionRootFields
@@ -2432,8 +2614,9 @@ Page({
         delete nextFields.unlinkedOrderDepositCustomerId;
         delete nextFields.orderSelectionConfirmed;
       }
-      const baseResult = Object.assign({}, markManualField(this.data.parseResult, field), {
-        missing_fields: [],
+      const baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
+        missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+          .filter((item) => item !== field),
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
           .filter((item) => item !== field)
       });
@@ -2464,26 +2647,38 @@ Page({
 
   updateItemField(event) {
     if (!this.data.parseResult) return;
-    const index = Number(event.currentTarget.dataset.index || 0);
+    const displayedItems = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    const index = resolveConfirmationItemIndex(displayedItems, event.currentTarget.dataset || {});
     const field = event.currentTarget.dataset.field;
     const hasQuotationSelection = Boolean(
       this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
     );
-    const displayedItems = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
     if (!displayedItems[index] || !field) return;
     const value = ['unit', 'priceUnit'].includes(field) ? normalizeUnit(event.detail.value) : event.detail.value;
-    const manualFields = this.data.parseResult.manual_fields || [];
+    const manualFields = Array.isArray(this.data.parseResult.manual_fields)
+      ? this.data.parseResult.manual_fields
+      : [];
+    const currentItemKey = displayedItems[index].confirmationItemKey;
+    const manualItemFields = normalizeManualItemFields(
+      this.data.parseResult.manual_item_fields,
+      displayedItems
+    );
+    const hasManualItemTotal = manualItemFields.some((entry) => (
+      entry.itemKey === currentItemKey && entry.field === 'totalAmount'
+    ));
     const nextDisplayedItem = Object.assign({}, displayedItems[index], {
       [field]: value
     });
     if (['quantity', 'unit', 'unitPrice', 'priceUnit'].includes(field)
-      && !manualFields.includes('totalAmount')
+      && !hasManualItemTotal
       && hasMoneyValue(nextDisplayedItem.quantity)
       && hasMoneyValue(nextDisplayedItem.unitPrice)) {
       nextDisplayedItem.totalAmount = unitsMatch(nextDisplayedItem.unit, nextDisplayedItem.priceUnit)
         ? formatMoneyValue(Number(nextDisplayedItem.quantity) * Number(nextDisplayedItem.unitPrice))
         : '';
     }
+    const nextConfirmationItems = displayedItems.slice();
+    nextConfirmationItems[index] = nextDisplayedItem;
     let fields;
     if (hasQuotationSelection) {
       fields = copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields);
@@ -2495,6 +2690,7 @@ Page({
         ? {}
         : itemPatches[index];
       itemPatches[index] = Object.assign({}, existingPatch, {
+        confirmationItemKey: currentItemKey,
         [field]: value
       });
       if (Object.prototype.hasOwnProperty.call(nextDisplayedItem, 'totalAmount')) {
@@ -2502,10 +2698,8 @@ Page({
       }
       fields.items = itemPatches;
     } else {
-      const items = displayedItems.slice();
-      items[index] = nextDisplayedItem;
       fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, {
-        items
+        items: nextConfirmationItems
       }), {
         preserveConfirmedAmount: manualFields.includes('amount')
       });
@@ -2515,20 +2709,14 @@ Page({
       delete fields.allowUnlinkedOrderDeposit;
       delete fields.orderSelectionConfirmed;
     }
-    let manualResult = markManualField(this.data.parseResult, field);
-    if (['unit', 'priceUnit'].includes(field)) manualResult = markManualField(manualResult, 'priceUnit');
-    // 数量单位和计价单位不同的时候不自动换算；如果老板手工填写了该规格小计，
-    // 这表示他已经确认了金额，可以解除单位不一致的阻断提示。
-    if (field === 'totalAmount' && hasMoneyValue(value)) {
-      manualResult = markManualField(manualResult, 'priceUnit');
-    }
-    const baseResult = Object.assign({}, manualResult, {
-      missing_fields: [],
-      low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
-        .filter((item) => item !== field && !(['unit', 'totalAmount'].includes(field) && item === 'priceUnit')),
-      field_conflicts: (this.data.parseResult.field_conflicts || [])
-        .filter((item) => !(item && item.field === 'priceUnit' && ['unit', 'priceUnit', 'totalAmount'].includes(field)))
+    const normalizedItems = normalizeConfirmItems({ items: nextConfirmationItems }, { ensureFirst: true });
+    const proofFields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, {
+      items: normalizedItems
+    }), {
+      preserveConfirmedAmount: manualFields.includes('amount')
     });
+    let baseResult = markManualItemField(this.data.parseResult, proofFields, currentItemKey, field);
+    baseResult = pruneItemProvenance(baseResult, normalizedItems);
     const state = getState();
     this.setData(
       hasQuotationSelection
@@ -2553,7 +2741,8 @@ Page({
       followupDays: String(days)
     });
     const baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((item) => !['followupDays', 'dueDate'].includes(item)),
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
         .filter((item) => !['followupDays', 'dueDate'].includes(item))
     });
@@ -2591,8 +2780,9 @@ Page({
       const nextFields = Object.assign({}, sourceFields, {
         [field]: value
       });
-      const baseResult = Object.assign({}, markManualField(this.data.parseResult, field), {
-        missing_fields: [],
+      const baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
+        missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+          .filter((item) => item !== field),
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
           .filter((item) => item !== field)
       });
@@ -2651,7 +2841,8 @@ Page({
     }
     delete fields.customerHistoryConfirmed;
     const baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((item) => !['customerName', 'customerId'].includes(item)),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const state = getState();
@@ -2664,7 +2855,7 @@ Page({
       customerHistoryConfirmed: true
     });
     const baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || []),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const state = getState();
@@ -2693,7 +2884,7 @@ Page({
     delete fields.customerSelectionConfirmed;
     fields.forceNewCustomer = true;
     const baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || []),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const state = getState();
@@ -2719,7 +2910,8 @@ Page({
       fields.receivableSelectionConfirmed = true;
     }
     const baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((item) => item !== 'receivableId'),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const state = getState();
@@ -2741,7 +2933,8 @@ Page({
       fields.orderSelectionConfirmed = true;
     }
     const baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: [],
+      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+        .filter((item) => item !== 'orderId'),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
     const state = getState();
@@ -2945,7 +3138,7 @@ Page({
     const hasQuotationSelection = Boolean(
       this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
     );
-    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    const items = normalizeConfirmItems(this.data.parseResult.fields || {}, { ensureFirst: true });
     const previous = items[items.length - 1] || {};
     const addedItem = normalizeConfirmItem({
       productName: previous.productName || '',
@@ -2953,6 +3146,10 @@ Page({
       unitPrice: previous.unitPrice || '',
       priceUnit: previous.priceUnit || previous.unit || ''
     });
+    const normalizedItems = normalizeConfirmItems({
+      items: items.concat(addedItem)
+    }, { ensureFirst: true });
+    const normalizedAddedItem = normalizedItems[normalizedItems.length - 1];
     let fields;
     if (hasQuotationSelection) {
       fields = copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields);
@@ -2960,13 +3157,18 @@ Page({
         ? fields.items.map((item) => Object.assign({}, item))
         : [];
       while (itemPatches.length < items.length) itemPatches.push({});
-      itemPatches.push(addedItem);
+      itemPatches.push(normalizedAddedItem);
       fields.items = itemPatches;
     } else {
-      items.push(addedItem);
-      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.parseResult.fields || {}, {
+        items: normalizedItems
+      }));
     }
-    const baseResult = markManualField(this.data.parseResult, 'items');
+    let baseResult = pruneItemProvenance(this.data.parseResult, normalizedItems);
+    baseResult = reconcileTrustedUserManualEditState(baseResult, fields, {
+      action: 'ADD_ITEM',
+      itemKey: normalizedAddedItem.confirmationItemKey
+    });
     this.setData(
       hasQuotationSelection
         ? rebuildAfterQuotationFieldEdit(
@@ -2982,12 +3184,13 @@ Page({
 
   removeConfirmItem(event) {
     if (!this.data.parseResult) return;
-    const index = Number(event.currentTarget.dataset.index || 0);
     const hasQuotationSelection = Boolean(
       this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
     );
-    const items = normalizeConfirmItems(this.data.fields, { ensureFirst: true });
+    const items = normalizeConfirmItems(this.data.parseResult.fields || {}, { ensureFirst: true });
+    const index = resolveConfirmationItemIndex(items, event.currentTarget.dataset || {});
     if (items.length <= 1 || !items[index]) return;
+    const remainingItems = items.filter((item, itemIndex) => itemIndex !== index);
     let fields;
     if (hasQuotationSelection) {
       fields = copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields);
@@ -3000,10 +3203,16 @@ Page({
       };
       fields.items = itemPatches;
     } else {
-      items.splice(index, 1);
-      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.fields, { items }));
+      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.parseResult.fields || {}, {
+        items: remainingItems
+      }));
     }
-    const baseResult = markManualField(this.data.parseResult, 'items');
+    const normalizedItems = normalizeConfirmItems({ items: remainingItems }, { ensureFirst: true });
+    let baseResult = pruneItemProvenance(this.data.parseResult, normalizedItems);
+    baseResult = reconcileTrustedUserManualEditState(baseResult, fields, {
+      action: 'REMOVE_ITEM',
+      itemKey: String(items[index].confirmationItemKey || '')
+    });
     this.setData(
       hasQuotationSelection
         ? rebuildAfterQuotationFieldEdit(
@@ -3036,20 +3245,22 @@ Page({
 
   applyCatalogProduct(event) {
     const index = Number(event.currentTarget.dataset.index || 0);
+    const itemKey = event.currentTarget.dataset.itemKey || '';
     const value = event.currentTarget.dataset.value;
     if (!value) return;
     this.updateItemField({
-      currentTarget: { dataset: { index, field: 'productName' } },
+      currentTarget: { dataset: { index, itemKey, field: 'productName' } },
       detail: { value }
     });
   },
 
   applyCatalogSpec(event) {
     const index = Number(event.currentTarget.dataset.index || 0);
+    const itemKey = event.currentTarget.dataset.itemKey || '';
     const value = event.currentTarget.dataset.value;
     if (!value) return;
     this.updateItemField({
-      currentTarget: { dataset: { index, field: 'spec' } },
+      currentTarget: { dataset: { index, itemKey, field: 'spec' } },
       detail: { value }
     });
   },

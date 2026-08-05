@@ -952,6 +952,45 @@ function extractAmount(text) {
   };
 }
 
+function extractOrderTotalAmount(text) {
+  const source = String(text || '');
+  const matches = Array.from(source.matchAll(new RegExp(
+    `(?:(?:最后(?:确认)?|最终(?:确认)?|优惠后)\\s*)?(?:总金额|订单金额|整单金额|这单金额|总价|总计|合计|一共|总共|金额)\\s*(?:是|为|共|改成|改为)?\\s*(${numberPattern()})\\s*(万元|元|块钱|块)?(?=$|[，,。；;\\s]|为准|后|前|交|发|出|拿|结)`,
+    'g'
+  ))).filter((item) => {
+    const prefix = source.slice(Math.max(0, Number(item.index || 0) - 12), Number(item.index || 0));
+    return !/(?:单价|价格|报价|优惠后?|折扣|运费|货款|已付|付了|付款|已收|收了|收到|收款|到账|定金|订金|预付款?|还欠|尚欠|欠款|待收|应收|尾款)\s*$/.test(prefix);
+  });
+  const parsedMatches = matches.map((item) => Object.assign(item, {
+    parsedAmount: toCleanNumber(parseChineseNumber(
+      `${item[1]}${item[2] && item[2].includes('万') && !String(item[1]).includes('万') ? '万' : ''}`
+    ))
+  }));
+  const match = parsedMatches[parsedMatches.length - 1];
+  if (!match) return { value: '', source: '' };
+  const distinctAmounts = Array.from(new Set(parsedMatches.map((item) => item.parsedAmount).filter(Boolean)));
+  const previous = parsedMatches[parsedMatches.length - 2];
+  const resolutionPrefix = previous
+    ? source.slice(Number(previous.index || 0) + previous[0].length, Number(match.index || 0))
+    : '';
+  const resolutionSuffix = source.slice(Number(match.index || 0) + match[0].length);
+  const lastMatchText = String(match[0] || '').trim();
+  const hasInlineResolution = /^(?:最后(?:确认)?|最终(?:确认)?|优惠后)/.test(lastMatchText)
+    || /(?:总金额|订单金额|整单金额|这单金额|总价|总计|合计|一共|总共|金额)\s*(?:改成|改为)/.test(lastMatchText);
+  const hasAdjacentResolution = /^(?:[，,。；;\s]*(?:不对|更正|改成|改为)[，,。；;\s]*)+$/.test(resolutionPrefix);
+  const hasBoundFinalValue = /(?:^|[，,。；;\s])以\s*$/.test(resolutionPrefix)
+    && /^\s*为准/.test(resolutionSuffix);
+  const lastAmountIsResolved = !previous
+    || hasInlineResolution
+    || hasAdjacentResolution
+    || hasBoundFinalValue;
+  return {
+    value: match.parsedAmount,
+    source: 'rule:explicit_order_total_amount',
+    conflictValues: distinctAmounts.length > 1 && !lastAmountIsResolved ? distinctAmounts : []
+  };
+}
+
 function extractPaymentAmount(text) {
   const amount = numberPattern();
   const moneyUnit = '(万元|元|块钱|块)';
@@ -2159,7 +2198,9 @@ function parseInput({
   const productNumberQuantity = quantity.quantity ? { quantity: '', unit: '', source: '' } : extractQuantityAfterKnownProduct(normalized);
   const unitPrice = extractUnitPrice(normalized);
   const priceUnit = extractPriceUnit(normalized);
-  const explicitAmount = extractAmount(normalized);
+  const explicitAmount = intent === 'order'
+    ? extractOrderTotalAmount(normalized)
+    : extractAmount(normalized);
   const explicitPaymentAmount = extractPaymentAmount(normalized);
   const explicitReceivableAmount = extractReceivableAmount(normalized);
   const depositAmount = extractDepositAmount(normalized);
@@ -2289,6 +2330,13 @@ function parseInput({
     });
   }
   const itemsTotal = getItemsTotal(fields.items || []);
+  if (explicitAmount.conflictValues && explicitAmount.conflictValues.length) {
+    fieldConflicts.push({
+      field: 'amount',
+      values: explicitAmount.conflictValues,
+      message: `原文里出现多个整单总额：${explicitAmount.conflictValues.join('、')}元，请确认最终金额。`
+    });
+  }
   if (itemsTotal && explicitAmount.value && !explicitAmountIsDeposit && !sameMoney(itemsTotal, explicitAmount.value)) {
     fieldConflicts.push({
       field: 'amount',

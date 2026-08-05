@@ -30,10 +30,575 @@ function compact(value) {
 }
 
 function uniqueStrings(values) {
-  return (values || [])
+  return (Array.isArray(values) ? values : [])
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index);
+}
+
+const MANUAL_ITEM_FIELDS = [
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+  'totalAmount', 'itemDeliveryDate', 'itemRemark'
+];
+const TRUSTED_MANUAL_EDIT_SCHEMA = 'USER_MANUAL_EDIT_V1';
+const USER_RESOLUTION_COMPLETE = 'MANUAL_RESOLUTION_COMPLETE';
+const USER_RESOLUTION_INCOMPLETE = 'MANUAL_RESOLUTION_INCOMPLETE';
+// This nonce never enters parser/AI JSON. It makes a page edit proof an
+// in-process capability instead of another forgeable field on the draft.
+const MANUAL_EDIT_SECRET = `${Date.now()}|${Math.random()}|${Math.random()}`;
+
+function normalizeManualFields(value) {
+  return Array.isArray(value)
+    ? uniqueStrings(value.filter((item) => typeof item === 'string'))
+      .filter((field) => !/^items(?:\[|\.|$)/.test(field))
+    : [];
+}
+
+function itemKeyHash(value) {
+  const text = String(value || 'item');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+function stableProofValue(value) {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return `[${value.map(stableProofValue).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableProofValue(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function proofFingerprint(value) {
+  const text = stableProofValue(value);
+  return `${itemKeyHash(text)}${itemKeyHash(text.split('').reverse().join(''))}`;
+}
+
+function getItemIdentityFingerprint(item = {}) {
+  return proofFingerprint({
+    productName: String(item.productName || ''),
+    spec: String(item.spec || '')
+  });
+}
+
+function getAiResolutionRevision(result = {}) {
+  const revision = Number(result.ai_resolution_revision || 0);
+  return Number.isFinite(revision) && revision >= 0 ? revision : 0;
+}
+
+function isAiReturnedUncertain(result = {}) {
+  const fallback = result.ai_fallback || {};
+  return fallback.status === 'returned_uncertain'
+    && fallback.attempted === true
+    && fallback.business_result_valid === true;
+}
+
+function requiresTrustedAiManualProof(result = {}) {
+  const fallback = result.ai_fallback || {};
+  return fallback.attempted === true
+    || !['', 'not_requested'].includes(String(fallback.status || ''));
+}
+
+function getUserResolutionDraftFingerprint(result = {}) {
+  const fallback = result.ai_fallback || {};
+  const route = result.parse_route || {};
+  return proofFingerprint({
+    originalText: String(result.original_text || ''),
+    rawText: String(result.raw_text || ''),
+    extractedText: String(result.extracted_text || ''),
+    intent: String(result.intent || ''),
+    source: String(result.source || ''),
+    revision: getAiResolutionRevision(result),
+    aiStatus: String(fallback.status || ''),
+    providerKind: String(fallback.provider_kind || ''),
+    routeDecision: String(route.decision || ''),
+    parseTrace: result.parse_trace || null,
+    flowContext: result.record_flow_context || null
+  });
+}
+
+function compactManualResolutionState(value, inArray = false) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => compactManualResolutionState(entry, true));
+  }
+  if (value && typeof value === 'object') {
+    return Object.keys(value).reduce((output, key) => {
+      const compacted = compactManualResolutionState(value[key], false);
+      const emptyObject = compacted && typeof compacted === 'object'
+        && !Array.isArray(compacted)
+        && Object.keys(compacted).length === 0;
+      if (compacted === undefined
+        || compacted === ''
+        || compacted === null
+        || (Array.isArray(compacted) && compacted.length === 0)
+        || emptyObject) return output;
+      output[key] = compacted;
+      return output;
+    }, {});
+  }
+  if (!inArray && (value === undefined || value === null || value === '')) return undefined;
+  return value;
+}
+
+function manualStateValuesEqual(left, right) {
+  return stableProofValue(compactManualResolutionState(left))
+    === stableProofValue(compactManualResolutionState(right));
+}
+
+function getChangedObjectFields(before = {}, after = {}) {
+  return uniqueStrings(Object.keys(before || {}).concat(Object.keys(after || [])))
+    .filter((field) => !manualStateValuesEqual(before[field], after[field]));
+}
+
+function isAllowedManualFieldTransition(result, fields, field, itemKey) {
+  const before = result.fields || {};
+  const changedRootFields = getChangedObjectFields(before, fields);
+  if (itemKey) {
+    const beforeItems = Array.isArray(before.items) ? before.items : [];
+    const afterItems = Array.isArray(fields.items) ? fields.items : [];
+    if (beforeItems.length !== afterItems.length) return false;
+    const allowedItemFields = new Set([field]);
+    if (['quantity', 'unit', 'unitPrice', 'priceUnit'].includes(field)) {
+      allowedItemFields.add('totalAmount');
+    }
+    for (let index = 0; index < beforeItems.length; index += 1) {
+      const beforeItem = beforeItems[index] || {};
+      const afterItem = afterItems[index] || {};
+      const currentKey = String(beforeItem.confirmationItemKey || '');
+      if (currentKey !== String(afterItem.confirmationItemKey || '')) return false;
+      const changedItemFields = getChangedObjectFields(beforeItem, afterItem);
+      if (currentKey === itemKey) {
+        if (changedItemFields.some((name) => !allowedItemFields.has(name))) return false;
+      } else if (changedItemFields.length) {
+        return false;
+      }
+    }
+    const allowedRootFields = new Set([
+      'items', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+      'amount', 'totalAmount', 'calculatedAmount'
+    ]);
+    if (field === 'productName') {
+      [
+        'orderId', 'allowUnlinkedOrderDeposit', 'unlinkedOrderDepositCustomerId',
+        'orderSelectionConfirmed'
+      ].forEach((name) => allowedRootFields.add(name));
+    }
+    return changedRootFields.every((name) => allowedRootFields.has(name));
+  }
+  const allowedRootFields = new Set([field]);
+  if (['customerName', 'phone'].includes(field)) {
+    [
+      'customerId', 'receivableId', 'orderId', 'allowUnlinkedPayment',
+      'allowUnlinkedOrderDeposit', 'unlinkedPaymentCustomerId',
+      'unlinkedOrderDepositCustomerId', 'receivableSelectionConfirmed',
+      'orderSelectionConfirmed', 'quotationId', 'quotationSelectionConfirmed',
+      'customerHistoryConfirmed', 'customerSelectionConfirmed', 'forceNewCustomer'
+    ].forEach((name) => allowedRootFields.add(name));
+  }
+  if (field === 'productName') {
+    [
+      'orderId', 'allowUnlinkedOrderDeposit', 'unlinkedOrderDepositCustomerId',
+      'orderSelectionConfirmed'
+    ].forEach((name) => allowedRootFields.add(name));
+  }
+  return changedRootFields.every((name) => allowedRootFields.has(name));
+}
+
+function isAllowedItemStructureTransition(result, fields, options = {}) {
+  const action = String(options.action || '');
+  if (!['ADD_ITEM', 'REMOVE_ITEM'].includes(action)) return false;
+  const before = result.fields || {};
+  const beforeItems = Array.isArray(before.items) ? before.items : [];
+  const afterItems = Array.isArray(fields.items) ? fields.items : [];
+  const itemKey = String(options.itemKey || '');
+  if (!itemKey) return false;
+  if (action === 'ADD_ITEM') {
+    if (afterItems.length !== beforeItems.length + 1) return false;
+    if (String(afterItems[afterItems.length - 1].confirmationItemKey || '') !== itemKey) return false;
+    for (let index = 0; index < beforeItems.length; index += 1) {
+      if (!manualStateValuesEqual(beforeItems[index], afterItems[index])) return false;
+    }
+  } else {
+    const beforeIndex = beforeItems.findIndex((item) => (
+      String(item && item.confirmationItemKey || '') === itemKey
+    ));
+    if (beforeIndex < 0 || afterItems.length !== beforeItems.length - 1) return false;
+    const expectedItems = beforeItems.filter((item, index) => index !== beforeIndex);
+    if (!manualStateValuesEqual(expectedItems, afterItems)) return false;
+  }
+  const allowedRootFields = new Set([
+    'items', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+    'amount', 'totalAmount', 'calculatedAmount'
+  ]);
+  return getChangedObjectFields(before, fields).every((name) => allowedRootFields.has(name));
+}
+
+function getManualResolutionStateFingerprint(result = {}, fieldsOverride) {
+  return proofFingerprint({
+    intent: String(result.intent || ''),
+    fields: compactManualResolutionState(fieldsOverride || result.fields || {}),
+    relationReferences: compactManualResolutionState(result.relation_references || null),
+    formalSaveBlocked: Boolean(result.formal_save_blocked),
+    requiresExistingRecord: Boolean(result.requires_existing_record),
+    mixedBusiness: Boolean(result.mixed_business),
+    noRecord: Boolean(result.no_record)
+  });
+}
+
+function getItemRiskDescriptors(type, field, items) {
+  if (!MANUAL_ITEM_FIELDS.includes(field) || !items.length) return [{
+    riskId: `${type}|${field}`,
+    type,
+    field,
+    itemKey: '',
+    itemField: '',
+    fieldPath: field,
+    resolvable: Boolean(field)
+  }];
+  return items.map((item, itemIndex) => {
+    const itemKey = String(item.confirmationItemKey || '').trim();
+    return {
+      riskId: `${type}|${field}|${itemKey || itemIndex}`,
+      type,
+      field: 'items',
+      itemKey,
+      itemField: field,
+      fieldPath: `items[${itemIndex}].${field}`,
+      resolvable: Boolean(itemKey)
+    };
+  });
+}
+
+function getConflictRiskDescriptor(conflict = {}) {
+  const field = String(conflict.field || '').trim();
+  const itemKey = String(conflict.itemKey || '').trim();
+  const itemField = String(conflict.itemField || '').trim();
+  const fieldPath = String(conflict.fieldPath || '').trim();
+  const code = String(conflict.code || 'FIELD_CONFLICT').trim();
+  const valuesFingerprint = proofFingerprint(Array.isArray(conflict.values) ? conflict.values : []);
+  const isItemRisk = field === 'items';
+  const resolvable = isItemRisk
+    ? Boolean(itemKey && itemField && itemField !== 'identity' && MANUAL_ITEM_FIELDS.includes(itemField))
+    : Boolean(field && !['intent', 'operation', 'businessType', 'relationId'].includes(field));
+  return {
+    riskId: [
+      'CONFLICT', code, field, itemKey, itemField,
+      itemKey ? '' : fieldPath,
+      valuesFingerprint
+    ].join('|'),
+    type: 'CONFLICT',
+    field,
+    itemKey,
+    itemField,
+    fieldPath: fieldPath || (isItemRisk ? 'items' : field),
+    resolvable
+  };
+}
+
+function collectUserResolvableAiRisks(result = {}, fieldsOverride) {
+  const fields = fieldsOverride || result.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  const risks = [];
+  uniqueStrings(result.missing_fields || []).forEach((field) => {
+    risks.push(...getItemRiskDescriptors('MISSING', field, items));
+  });
+  uniqueStrings(result.low_confidence_fields || []).forEach((field) => {
+    risks.push(...getItemRiskDescriptors('LOW', field, items));
+  });
+  (Array.isArray(result.field_conflicts) ? result.field_conflicts : []).forEach((conflict) => {
+    risks.push(getConflictRiskDescriptor(conflict));
+  });
+  const seen = new Set();
+  return risks.filter((risk) => {
+    if (seen.has(risk.riskId)) return false;
+    seen.add(risk.riskId);
+    return true;
+  });
+}
+
+function getManualEditSigningPayload(proof = {}) {
+  return {
+    schemaVersion: proof.schemaVersion,
+    source: proof.source,
+    action: proof.action,
+    revision: proof.revision,
+    field: proof.field,
+    itemKey: proof.itemKey,
+    draftFingerprint: proof.draftFingerprint,
+    stateFingerprint: proof.stateFingerprint,
+    riskSetFingerprint: proof.riskSetFingerprint,
+    valueFingerprint: proof.valueFingerprint,
+    itemIdentityFingerprint: proof.itemIdentityFingerprint,
+    riskIds: uniqueStrings(proof.riskIds || []).sort()
+  };
+}
+
+function signManualEditProof(proof) {
+  const payload = stableProofValue(getManualEditSigningPayload(proof));
+  return `${itemKeyHash(`${MANUAL_EDIT_SECRET}|${payload}`)}${itemKeyHash(`${payload}|${MANUAL_EDIT_SECRET}`)}`;
+}
+
+function findItemByKey(items, itemKey) {
+  return items.find((item) => String(item.confirmationItemKey || '') === String(itemKey || '')) || null;
+}
+
+function validateManualEditProof(proof, result, fields) {
+  if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+  if (proof.schemaVersion !== TRUSTED_MANUAL_EDIT_SCHEMA
+    || proof.source !== 'USER_PAGE_EDIT'
+    || proof.action !== 'EDIT_FIELD'
+    || Number(proof.revision) !== getAiResolutionRevision(result)
+    || proof.draftFingerprint !== getUserResolutionDraftFingerprint(result)
+    || proof.stateFingerprint !== getManualResolutionStateFingerprint(result, fields)
+    || !proof.riskSetFingerprint
+    || !proof.field
+    || !Array.isArray(proof.riskIds)
+    || !proof.riskIds.length
+    || proof.signature !== signManualEditProof(proof)) return false;
+  if (proof.itemKey) {
+    const items = Array.isArray(fields.items) ? fields.items : [];
+    const item = findItemByKey(items, proof.itemKey);
+    return Boolean(item)
+      && proof.valueFingerprint === proofFingerprint(item[proof.field])
+      && proof.itemIdentityFingerprint === getItemIdentityFingerprint(item);
+  }
+  return proof.valueFingerprint === proofFingerprint(fields[proof.field]);
+}
+
+function getManualResolutionRiskSetFingerprint(result, fields, proofs = []) {
+  const riskIds = collectUserResolvableAiRisks(result, fields).map((risk) => risk.riskId);
+  proofs.forEach((proof) => {
+    uniqueStrings(proof && proof.riskIds || []).forEach((riskId) => riskIds.push(riskId));
+  });
+  return proofFingerprint(uniqueStrings(riskIds).sort());
+}
+
+function normalizeTrustedUserManualEdits(value, result, fields) {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set();
+  const candidates = value.reduce((output, proof) => {
+    if (!validateManualEditProof(proof, result, fields)) return output;
+    if (seen.has(proof.signature)) return output;
+    seen.add(proof.signature);
+    output.push(Object.assign({}, proof, {
+      riskIds: uniqueStrings(proof.riskIds).sort()
+    }));
+    return output;
+  }, []);
+  const riskSetFingerprint = getManualResolutionRiskSetFingerprint(
+    result,
+    fields,
+    candidates
+  );
+  return candidates.filter((proof) => proof.riskSetFingerprint === riskSetFingerprint);
+}
+
+function refreshTrustedManualEditProofs(result, fields, templates) {
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  const draftFingerprint = getUserResolutionDraftFingerprint(result);
+  const stateFingerprint = getManualResolutionStateFingerprint(result, fields);
+  const riskSetFingerprint = getManualResolutionRiskSetFingerprint(result, fields, templates);
+  return templates.reduce((output, template) => {
+    const currentItem = template.itemKey ? findItemByKey(items, template.itemKey) : null;
+    if (template.itemKey && !currentItem) return output;
+    const proof = Object.assign({}, template, {
+      schemaVersion: TRUSTED_MANUAL_EDIT_SCHEMA,
+      source: 'USER_PAGE_EDIT',
+      action: 'EDIT_FIELD',
+      revision: getAiResolutionRevision(result),
+      draftFingerprint,
+      stateFingerprint,
+      riskSetFingerprint,
+      valueFingerprint: proofFingerprint(
+        template.itemKey ? currentItem[template.field] : fields[template.field]
+      ),
+      itemIdentityFingerprint: template.itemKey ? getItemIdentityFingerprint(currentItem) : '',
+      riskIds: uniqueStrings(template.riskIds || []).sort()
+    });
+    proof.signature = signManualEditProof(proof);
+    output.push(proof);
+    return output;
+  }, []);
+}
+
+function reconcileTrustedUserManualEditState(result = {}, fields = {}, options = {}) {
+  if (!requiresTrustedAiManualProof(result)
+    || !Array.isArray(result.user_manual_edits)
+    || !result.user_manual_edits.length) return result;
+  if (!isAllowedItemStructureTransition(result, fields, options)) return result;
+  const validForNextState = normalizeTrustedUserManualEdits(
+    result.user_manual_edits,
+    result,
+    fields
+  );
+  if (validForNextState.length === result.user_manual_edits.length) {
+    return Object.assign({}, result, { user_manual_edits: validForNextState });
+  }
+  const validForPreviousState = normalizeTrustedUserManualEdits(
+    result.user_manual_edits,
+    result,
+    result.fields || {}
+  );
+  return Object.assign({}, result, {
+    user_manual_edits: validForPreviousState.length
+      ? refreshTrustedManualEditProofs(result, fields, validForPreviousState)
+      : []
+  });
+}
+
+function createTrustedUserManualEdit(result = {}, options = {}) {
+  if (!requiresTrustedAiManualProof(result)) return result;
+  const previousFields = result.fields || {};
+  const fields = options.fields || result.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  const field = String(options.field || '').trim();
+  const itemKey = String(options.itemKey || '').trim();
+  const item = itemKey ? findItemByKey(items, itemKey) : null;
+  if (!field || (itemKey && !item)) return result;
+  if (itemKey) {
+    const previousItems = Array.isArray(previousFields.items) ? previousFields.items : [];
+    const previousItem = findItemByKey(previousItems, itemKey);
+    if (!previousItem || manualStateValuesEqual(previousItem[field], item[field])) return result;
+  } else if (manualStateValuesEqual(previousFields[field], fields[field])) {
+    return result;
+  }
+  if (!isAllowedManualFieldTransition(result, fields, field, itemKey)) return result;
+  const matchingRisks = collectUserResolvableAiRisks(result, fields).filter((risk) => (
+    risk.resolvable
+      && risk.itemKey === itemKey
+      && (itemKey ? risk.itemField === field : risk.field === field)
+  ));
+  const existing = normalizeTrustedUserManualEdits(
+    result.user_manual_edits,
+    result,
+    previousFields
+  );
+  const matchingRiskIds = matchingRisks.map((risk) => risk.riskId);
+  const templates = existing.map((entry) => Object.assign({}, entry));
+  const sameFieldProof = templates.find((entry) => (
+    entry.itemKey === itemKey && entry.field === field
+  ));
+  if (sameFieldProof) {
+    sameFieldProof.riskIds = uniqueStrings([].concat(
+      sameFieldProof.riskIds || [],
+      matchingRiskIds
+    )).sort();
+  } else if (matchingRiskIds.length) {
+    templates.push({
+      schemaVersion: TRUSTED_MANUAL_EDIT_SCHEMA,
+      source: 'USER_PAGE_EDIT',
+      action: 'EDIT_FIELD',
+      revision: getAiResolutionRevision(result),
+      field,
+      itemKey,
+      riskIds: uniqueStrings(matchingRiskIds).sort()
+    });
+  }
+  if (!templates.length) return result;
+  return Object.assign({}, result, {
+    user_manual_edits: refreshTrustedManualEditProofs(result, fields, templates)
+  });
+}
+
+function evaluateUserResolvedAiState(result = {}) {
+  const fields = result.fields || {};
+  const proofs = normalizeTrustedUserManualEdits(result.user_manual_edits, result, fields);
+  const risks = collectUserResolvableAiRisks(result, fields);
+  const resolvedRiskIds = new Set();
+  proofs.forEach((proof) => proof.riskIds.forEach((riskId) => resolvedRiskIds.add(riskId)));
+  const allRiskIds = new Set(resolvedRiskIds);
+  risks.forEach((risk) => allRiskIds.add(risk.riskId));
+  const unresolvedRisks = risks.filter((risk) => !risk.resolvable || !resolvedRiskIds.has(risk.riskId));
+  const fallback = result.ai_fallback || {};
+  const route = String((result.parse_route || {}).decision || '');
+  const eligibleAiOutcome = isAiReturnedUncertain(result)
+    && fallback.provider_kind === 'REAL'
+    // normalizeAiResult is also a supported boundary in the shared-core tests;
+    // it may not yet have the outer router annotation. A declared local route,
+    // however, must never be upgraded into an AI user-resolution path.
+    && (!route || ['ai_standard', 'ai_deep'].includes(route));
+  const complete = eligibleAiOutcome
+    && proofs.length > 0
+    && allRiskIds.size > 0
+    && unresolvedRisks.length === 0;
+  return {
+    status: complete ? USER_RESOLUTION_COMPLETE : USER_RESOLUTION_INCOMPLETE,
+    allRisksResolved: complete,
+    originalAiStatus: String(fallback.status || 'not_requested'),
+    revision: getAiResolutionRevision(result),
+    resolvedRiskIds: Array.from(resolvedRiskIds).sort(),
+    unresolvedRiskIds: unresolvedRisks.map((risk) => risk.riskId).sort(),
+    trustedEditCount: proofs.length
+  };
+}
+
+function normalizeConfirmationItems(value) {
+  if (!Array.isArray(value)) return [];
+  const keyCounts = value.reduce((counts, item) => {
+    const itemKey = String(item && item.confirmationItemKey || '').trim();
+    if (itemKey) counts.set(itemKey, (counts.get(itemKey) || 0) + 1);
+    return counts;
+  }, new Map());
+  const duplicatedKeys = new Set(Array.from(keyCounts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0]));
+  const usedKeys = new Set();
+  return value
+    .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+    .map((item, index) => {
+      const next = Object.assign({}, item);
+      let itemKey = String(next.confirmationItemKey || '').trim();
+      if (duplicatedKeys.has(itemKey)) itemKey = '';
+      if (!itemKey || usedKeys.has(itemKey)) {
+        const identity = [index, next.productName || '', next.spec || ''].join('|');
+        const base = `mip_item_${itemKeyHash(identity)}`;
+        itemKey = base;
+        let suffix = 1;
+        while (usedKeys.has(itemKey)) {
+          itemKey = `${base}_${suffix}`;
+          suffix += 1;
+        }
+      }
+      usedKeys.add(itemKey);
+      next.confirmationItemKey = itemKey;
+      return next;
+    });
+}
+
+function normalizeManualItemFields(value, items) {
+  if (!Array.isArray(value)) return [];
+  const allowedKeys = new Set(items
+    .map((item) => String(item && item.confirmationItemKey || '').trim())
+    .filter(Boolean));
+  const seen = new Set();
+  return value.reduce((output, entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return output;
+    const itemKey = String(entry.itemKey || '').trim();
+    const field = String(entry.field || '').trim();
+    if (!allowedKeys.has(itemKey) || !MANUAL_ITEM_FIELDS.includes(field)) return output;
+    const identity = `${itemKey}:${field}`;
+    if (seen.has(identity)) return output;
+    seen.add(identity);
+    output.push({ itemKey, field });
+    return output;
+  }, []);
+}
+
+function isItemConflictManuallyConfirmed(conflict, manualItemFields) {
+  if (!conflict || conflict.field !== 'items') return false;
+  const itemKey = String(conflict.itemKey || '').trim();
+  const itemField = String(conflict.itemField || '').trim();
+  if (!itemKey || !itemField || itemField === 'identity') return false;
+  return manualItemFields.some((entry) => (
+    entry.itemKey === itemKey && entry.field === itemField
+  ));
 }
 
 function hasFieldValue(fields, field) {
@@ -418,7 +983,7 @@ function applyLocalParseSafety(result, options = {}) {
 }
 
 function getFinalFieldSafety(result, options = {}) {
-  const manualFields = result.manual_fields || [];
+  const manualFields = normalizeManualFields(result.manual_fields);
   const shouldVerifyCustomerAgainstOriginal = !manualFields.includes('customerName');
   return evaluateLocalParseSafety(Object.assign({}, result, {
     missing_fields: [],
@@ -456,6 +1021,16 @@ function filterFinalFieldConflicts(conflicts, fields, finalMissing, finalLow) {
       && sameMoney(fields.statedAmount, fields.calculatedAmount)) {
       return false;
     }
+    if (conflict && conflict.field === 'priceUnit' && !conflict.itemKey) {
+      const conflictItems = getItems(fields);
+      const unresolvedMismatch = (conflictItems.length ? conflictItems : [fields]).some((item) => (
+        item.unit
+          && item.priceUnit
+          && !unitsMatch(item.unit, item.priceUnit)
+          && !hasFieldValue(item, 'totalAmount')
+      ));
+      if (!unresolvedMismatch) return false;
+    }
     if (!conflict || conflict.field !== 'customerName') return true;
     if (finalMissing.includes('customerName') || finalLow.includes('customerName')) return true;
     if (!hasFieldValue(fields, 'customerName')) return true;
@@ -467,9 +1042,74 @@ function filterFinalFieldConflicts(conflicts, fields, finalMissing, finalLow) {
 
 function applyFinalParseSafety(result, options = {}) {
   let fields = Object.assign({}, result.fields || {});
-  const manualFields = uniqueStrings(result.manual_fields || []);
+  const manualFields = normalizeManualFields(result.manual_fields);
+  const rawItems = Array.isArray(fields.items)
+    ? fields.items
+      .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+      .map((item) => Object.assign({}, item))
+    : [];
+  const needsItemKeys = rawItems.some((item) => String(item.confirmationItemKey || '').trim())
+    || Array.isArray(result.manual_item_fields)
+    || (rawItems.length === 1 && manualFields.some((field) => MANUAL_ITEM_FIELDS.includes(field)))
+    || (Array.isArray(result.field_conflicts) && result.field_conflicts.some((conflict) => (
+      conflict && conflict.field === 'items' && conflict.itemKey
+    )));
+  const items = needsItemKeys ? normalizeConfirmationItems(rawItems) : rawItems;
+  if (Array.isArray(fields.items)) fields.items = items;
+  const aiManualResolutionRequired = requiresTrustedAiManualProof(result);
+  const trustedUserManualEdits = normalizeTrustedUserManualEdits(
+    result.user_manual_edits,
+    result,
+    fields
+  );
+  const resolvedRiskIds = new Set();
+  trustedUserManualEdits.forEach((proof) => {
+    proof.riskIds.forEach((riskId) => resolvedRiskIds.add(riskId));
+  });
+  const initialAiRisks = collectUserResolvableAiRisks(result, fields);
+  let manualItemFields = normalizeManualItemFields(result.manual_item_fields, items);
+  if (items.length === 1) {
+    const onlyItemKey = items[0].confirmationItemKey;
+    const legacyEntries = manualFields
+      .filter((field) => MANUAL_ITEM_FIELDS.includes(field))
+      .map((field) => ({ itemKey: onlyItemKey, field }));
+    manualItemFields = normalizeManualItemFields(
+      manualItemFields.concat(legacyEntries),
+      items
+    );
+  }
+  const trustedManualItemFields = trustedUserManualEdits
+    .filter((proof) => proof.itemKey)
+    .map((proof) => ({ itemKey: proof.itemKey, field: proof.field }));
+  const trustedTopLevelFields = trustedUserManualEdits
+    .filter((proof) => !proof.itemKey)
+    .map((proof) => proof.field);
+  const trustedResolvedFields = uniqueStrings(initialAiRisks
+    .filter((risk) => risk.resolvable)
+    .map((risk) => risk.itemField || risk.field)
+    .filter((field) => {
+      const matching = initialAiRisks.filter((risk) => (
+        risk.resolvable && (risk.itemField || risk.field) === field
+      ));
+      return matching.length > 0 && matching.every((risk) => resolvedRiskIds.has(risk.riskId));
+    }));
+  const manualFieldsForSafety = aiManualResolutionRequired
+    ? uniqueStrings(trustedTopLevelFields.concat(items.length === 1 ? trustedResolvedFields : []))
+    : manualFields;
+  const manualItemFieldsForSafety = aiManualResolutionRequired
+    ? normalizeManualItemFields(trustedManualItemFields, items)
+    : manualItemFields;
+  const effectiveManualFields = uniqueStrings(manualFieldsForSafety.filter((field) => (
+    items.length === 1 || !MANUAL_ITEM_FIELDS.includes(field)
+  )).concat(
+    items.length === 1 ? manualItemFieldsForSafety.map((entry) => entry.field) : []
+  ));
+  const safetyInput = Object.assign({}, result, {
+    fields,
+    manual_fields: effectiveManualFields,
+    manual_item_fields: manualItemFieldsForSafety
+  });
   if (result.edit_mode === 'direct_order') {
-    const items = Array.isArray(fields.items) ? fields.items.filter((item) => item && typeof item === 'object') : [];
     const missingFields = [];
     if (!fields.orderId) missingFields.push('orderId');
     if (!fields.customerName) missingFields.push('customerName');
@@ -483,6 +1123,8 @@ function applyFinalParseSafety(result, options = {}) {
     const status = missingFields.length || fieldConflicts.length ? NEEDS_USER_CONFIRM : SAFE_LOCAL;
     return Object.assign({}, result, {
       fields,
+      manual_fields: manualFields,
+      manual_item_fields: manualItemFields,
       missing_fields: missingFields,
       low_confidence_fields: fieldConflicts.length ? ['priceUnit'] : [],
       field_conflicts: fieldConflicts,
@@ -494,7 +1136,7 @@ function applyFinalParseSafety(result, options = {}) {
     });
   }
   const suggestedFields = Object.keys(result.field_suggestions || {});
-  let safety = getFinalFieldSafety(Object.assign({}, result, { fields }), options);
+  let safety = getFinalFieldSafety(safetyInput, options);
   const invalidFields = (((safety.field_validations || {}).invalid_fields) || []);
   if (invalidFields.includes('customerName')) {
     delete fields.customerName;
@@ -507,40 +1149,73 @@ function applyFinalParseSafety(result, options = {}) {
     delete fields.orderId;
   }
   if (fields !== result.fields) {
-    safety = getFinalFieldSafety(Object.assign({}, result, { fields }), options);
+    safety = getFinalFieldSafety(Object.assign({}, safetyInput, { fields }), options);
   }
   const finalMissing = uniqueStrings(safety.missing_fields || []);
   const conflictFields = uniqueStrings(((safety.field_validations || {}).conflict_fields) || []);
-  const rawFinalLow = uniqueStrings(safety.low_confidence_fields || []);
+  const declaredAiRecheckFields = uniqueStrings([].concat(
+    result.missing_fields || [],
+    result.low_confidence_fields || [],
+    (result.field_conflicts || [])
+      .map((conflict) => conflict && conflict.field)
+      .filter((field) => field && field !== 'items'),
+    ((safety.field_validations || {}).invalid_fields) || []
+  ));
+  // A business-valid uncertain AI result must name the facts it could not
+  // confirm. Final safety still revalidates values and totals, but it must not
+  // silently invent additional evidence-only confirmation work after the user
+  // has resolved every precise AI risk.
+  const rawFinalLow = uniqueStrings(safety.low_confidence_fields || [])
+    .filter((field) => !isAiReturnedUncertain(result) || declaredAiRecheckFields.includes(field));
   const nonConflictFinalLow = rawFinalLow.filter((field) => !conflictFields.includes(field));
   const fieldConflicts = filterFinalFieldConflicts(result.field_conflicts || [], fields, finalMissing, nonConflictFinalLow)
-    .filter((conflict) => !manualFields.includes(conflict && conflict.field));
+    .filter((conflict) => {
+      if (!aiManualResolutionRequired) {
+        return !isItemConflictManuallyConfirmed(conflict, manualItemFields)
+          && !effectiveManualFields.includes(conflict && conflict.field);
+      }
+      return !resolvedRiskIds.has(getConflictRiskDescriptor(conflict).riskId);
+    });
   const keptConflictFields = uniqueStrings(fieldConflicts.map((conflict) => conflict && conflict.field));
   const finalLow = rawFinalLow
     .filter((field) => !conflictFields.includes(field) || keptConflictFields.includes(field))
-    .filter((field) => !manualFields.includes(field));
+    .filter((field) => !effectiveManualFields.includes(field))
+    .filter((field) => !trustedResolvedFields.includes(field));
   const missingFields = uniqueStrings([]
     .concat(result.missing_fields || [])
     .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
+    .filter((field) => !effectiveManualFields.includes(field))
+    .filter((field) => !trustedResolvedFields.includes(field))
     .concat(finalMissing.filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))));
   const lowConfidenceFields = uniqueStrings([]
     .concat(result.low_confidence_fields || [])
     .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
-    .filter((field) => !manualFields.includes(field))
+    .filter((field) => !effectiveManualFields.includes(field))
+    .filter((field) => !trustedResolvedFields.includes(field))
+    .filter((field) => field !== 'items' || keptConflictFields.includes('items'))
     // 纠错建议不是已证实的事实。用户还没有亲手确认前，不能因为字段碰巧
     // 出现在原话里就把“请确认商品名”的提醒清掉。
-    .filter((field) => !(FINAL_RECHECK_CLEARABLE_LOW_FIELDS.includes(field)
-      && !finalLow.includes(field)
-      && !(suggestedFields.includes(field) && !manualFields.includes(field))))
+    .filter((field) => (aiManualResolutionRequired && field !== 'customerName')
+      || !(FINAL_RECHECK_CLEARABLE_LOW_FIELDS.includes(field)
+        && !finalLow.includes(field)
+        && !(suggestedFields.includes(field) && !effectiveManualFields.includes(field))))
     .concat(finalLow.filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))));
 
-  return Object.assign({}, result, {
+  const next = Object.assign({}, result, {
     fields,
+    manual_fields: manualFields,
+    manual_item_fields: manualItemFields,
+    user_manual_edits: trustedUserManualEdits,
     missing_fields: missingFields,
     low_confidence_fields: lowConfidenceFields,
     field_conflicts: fieldConflicts,
     final_parse_safety: safety
   });
+  delete next.userResolution;
+  delete next.resolutionOutcome;
+  delete next.allRisksResolved;
+  next.user_resolution = evaluateUserResolvedAiState(next);
+  return next;
 }
 
 module.exports = {
@@ -550,6 +1225,9 @@ module.exports = {
   SAFE_LOCAL,
   applyFinalParseSafety,
   applyLocalParseSafety,
+  createTrustedUserManualEdit,
   evaluateLocalEvidence,
-  evaluateLocalParseSafety
+  evaluateLocalParseSafety,
+  evaluateUserResolvedAiState,
+  reconcileTrustedUserManualEditState
 };

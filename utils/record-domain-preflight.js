@@ -1,9 +1,15 @@
-const { applyFinalParseSafety } = require('./parse-safety');
+const {
+  applyFinalParseSafety,
+  evaluateUserResolvedAiState
+} = require('./parse-safety');
+const { numberPattern, parseChineseNumber } = require('./chinese-number');
 const {
   RECEIVABLE_PAYMENT_CLASSIFICATION_ERRORS,
   deriveReceivablePaymentKind,
-  getReceivableRemainingBalance
+  getReceivableRemainingBalance,
+  normalizeMoneyToCents
 } = require('./payment-kind');
+const { unitsMatch } = require('./units');
 
 const PREFLIGHT_SCHEMA_VERSION = 'record-domain-preflight-v1';
 const PRODUCTION_MODE = 'PRODUCTION_ROUTING';
@@ -84,6 +90,14 @@ function compactFingerprintValue(value) {
 
 function normalizeFieldsForFingerprint(fields = {}) {
   const normalized = compactFingerprintValue(fields);
+  if (Array.isArray(normalized.items)) {
+    normalized.items = normalized.items.map((item) => {
+      const next = Object.assign({}, item);
+      delete next.confirmationItemKey;
+      delete next.confirmationItemOrigin;
+      return next;
+    });
+  }
   const resolvedTotalAmount = resolveDraftTotalAmount(fields);
   // Relation IDs can be deterministically hydrated by a surface or by business
   // immediately before preflight.  The authoritative relation identity already
@@ -313,6 +327,161 @@ function resolveDraftTotalAmount(fields = {}) {
     || firstItemTotal
     || fields.calculatedAmount
     || '';
+}
+
+function getExplicitOrderTotalEvidenceCents(result = {}) {
+  const originalText = String(
+    result.original_text || ((result.fields || {}).originalText) || ((result.fields || {}).original_text) || ''
+  );
+  const matches = Array.from(originalText.matchAll(new RegExp(
+    `(?:(?:最后(?:确认)?|最终(?:确认)?|优惠后)\\s*)?(?:总金额|订单金额|整单金额|这单金额|总价|总计|合计|一共|总共|金额)\\s*(?:是|为|共|改成|改为)?\\s*(${numberPattern()})\\s*(万元|元|块钱|块)?(?=$|[，,。；;\\s]|为准|后|前|交|发|出|拿|结)`,
+    'g'
+  )));
+  const evidence = matches.filter((item) => {
+    const prefix = originalText.slice(Math.max(0, Number(item.index || 0) - 12), Number(item.index || 0));
+    return !/(?:单价|价格|报价|优惠后?|折扣|运费|货款|已付|付了|付款|已收|收了|收到|收款|到账|定金|订金|预付款?|还欠|尚欠|欠款|待收|应收|尾款)\s*$/.test(prefix);
+  }).map((item) => {
+    const amount = parseChineseNumber(
+      `${item[1]}${item[2] && item[2].includes('万') && !String(item[1]).includes('万') ? '万' : ''}`
+    );
+    const normalized = normalizeMoneyToCents(amount);
+    return normalized.valid ? { cents: normalized.cents, match: item } : null;
+  }).filter(Boolean);
+  const last = evidence[evidence.length - 1];
+  const previous = evidence[evidence.length - 2];
+  const resolutionPrefix = previous && last
+    ? originalText.slice(
+      Number(previous.match.index || 0) + previous.match[0].length,
+      Number(last.match.index || 0)
+    )
+    : '';
+  const resolutionSuffix = last
+    ? originalText.slice(Number(last.match.index || 0) + last.match[0].length)
+    : '';
+  const lastMatchText = last ? String(last.match[0] || '').trim() : '';
+  const hasInlineResolution = /^(?:最后(?:确认)?|最终(?:确认)?|优惠后)/.test(lastMatchText)
+    || /(?:总金额|订单金额|整单金额|这单金额|总价|总计|合计|一共|总共|金额)\s*(?:改成|改为)/.test(lastMatchText);
+  const hasAdjacentResolution = /^(?:[，,。；;\s]*(?:不对|更正|改成|改为)[，,。；;\s]*)+$/.test(resolutionPrefix);
+  const hasBoundFinalValue = /(?:^|[，,。；;\s])以\s*$/.test(resolutionPrefix)
+    && /^\s*为准/.test(resolutionSuffix);
+  const lastAmountIsResolved = !previous
+    || hasInlineResolution
+    || hasAdjacentResolution
+    || hasBoundFinalValue;
+  return {
+    cents: last ? [last.cents] : [],
+    conflict: new Set(evidence.map((item) => item.cents)).size > 1 && !lastAmountIsResolved
+  };
+}
+
+function hasManuallyConfirmedOrderTotal(result = {}, fields = {}) {
+  return Array.isArray(result.manual_fields)
+    && result.manual_fields.includes('amount')
+    && hasValue(fields.amount);
+}
+
+function calculateCanonicalOrderItemsTotal(fields = {}, result = {}) {
+  const items = Array.isArray(fields.items)
+    ? fields.items.filter((item) => item && typeof item === 'object')
+    : [];
+  const statedTotalEvidence = getExplicitOrderTotalEvidenceCents(result);
+  const statedTotalEvidenceCents = statedTotalEvidence.cents;
+  // manual_fields travels in the same draft object as parser/AI output, so it
+  // cannot authorize a multi-item total that contradicts the line facts.
+  // Keep the legacy single-item override; multi-item orders must pass the
+  // original-text evidence and canonical subtotal checks below.
+  const hasConfirmedTotal = items.length <= 1 && hasManuallyConfirmedOrderTotal(result, fields);
+  const confirmedTotal = hasConfirmedTotal ? normalizeMoneyToCents(fields.amount) : null;
+  const base = {
+    complete: false,
+    canonicalTotalCents: 0,
+    canonicalTotalAmount: '',
+    knownItemCount: 0,
+    hasStatedTotal: hasValue(fields.statedAmount) && statedTotalEvidenceCents.length > 0,
+    statedTotalEvidenceCents,
+    hasConfirmedTotal,
+    confirmedTotalAmount: confirmedTotal && confirmedTotal.valid
+      ? String(confirmedTotal.cents / 100)
+      : '',
+    mismatchedFields: []
+  };
+  if (hasConfirmedTotal && (!confirmedTotal || !confirmedTotal.valid)) base.mismatchedFields.push('amount');
+  if (!hasConfirmedTotal && statedTotalEvidence.conflict) base.mismatchedFields.push('statedAmountConflict');
+  if (!items.length) return base;
+
+  const subtotalCents = [];
+  for (const [index, item] of items.entries()) {
+    const quantity = Number(item.quantity);
+    const unitPrice = Number(item.unitPrice || item.unit_price);
+    let subtotal = null;
+    if (Number.isFinite(quantity) && quantity > 0
+      && Number.isFinite(unitPrice) && unitPrice > 0
+      && unitsMatch(item.unit || '', item.priceUnit || item.price_unit || '')) {
+      const calculated = normalizeMoneyToCents(quantity * unitPrice);
+      if (calculated.valid && calculated.cents > 0) {
+        subtotal = calculated.cents;
+        const itemTotalValue = item.totalAmount || item.total_amount || item.amount;
+        if (hasValue(itemTotalValue)) {
+          const itemTotal = normalizeMoneyToCents(itemTotalValue);
+          if (!itemTotal.valid || itemTotal.cents !== calculated.cents) {
+            base.mismatchedFields.push(`items.${index}.totalAmount`);
+          }
+        }
+      }
+    }
+    if (subtotal === null) {
+      const stated = normalizeMoneyToCents(item.totalAmount || item.total_amount || item.amount);
+      if (stated.valid && stated.cents > 0) subtotal = stated.cents;
+    }
+    if (subtotal === null) continue;
+    subtotalCents.push(subtotal);
+  }
+
+  const canonicalTotalCents = subtotalCents.reduce((sum, cents) => sum + cents, 0);
+  const complete = subtotalCents.length === items.length;
+  const mismatchedFields = base.mismatchedFields.slice();
+  if (!base.hasConfirmedTotal) {
+    let statedTotal = null;
+    if (base.hasStatedTotal) {
+      statedTotal = normalizeMoneyToCents(fields.statedAmount);
+      if (!statedTotal.valid || !base.statedTotalEvidenceCents.includes(statedTotal.cents)) {
+        mismatchedFields.push('statedAmountSource');
+      }
+    }
+    if (subtotalCents.length) {
+      if (!base.hasStatedTotal || complete) {
+        const candidateFields = base.hasStatedTotal
+          ? ['statedAmount', 'amount', 'totalAmount']
+          : ['statedAmount', 'amount', 'totalAmount', 'calculatedAmount'];
+        candidateFields.forEach((field) => {
+          if (!hasValue(fields[field])) return;
+          const candidate = normalizeMoneyToCents(fields[field]);
+          if (!candidate.valid || candidate.cents !== canonicalTotalCents) mismatchedFields.push(field);
+        });
+      } else if (statedTotal && statedTotal.valid) {
+        ['amount', 'totalAmount'].forEach((field) => {
+          if (!hasValue(fields[field])) return;
+          const candidate = normalizeMoneyToCents(fields[field]);
+          if (!candidate.valid || candidate.cents !== statedTotal.cents) mismatchedFields.push(field);
+        });
+      }
+    } else if (!base.hasStatedTotal) {
+      ['statedAmount', 'amount', 'totalAmount', 'calculatedAmount'].forEach((field) => {
+        if (hasValue(fields[field])) mismatchedFields.push(field);
+      });
+    }
+  }
+  return {
+    complete,
+    canonicalTotalCents,
+    canonicalTotalAmount: String(canonicalTotalCents / 100),
+    knownItemCount: subtotalCents.length,
+    hasStatedTotal: base.hasStatedTotal,
+    statedTotalEvidenceCents: base.statedTotalEvidenceCents.slice(),
+    hasConfirmedTotal: base.hasConfirmedTotal,
+    confirmedTotalAmount: base.confirmedTotalAmount,
+    mismatchedFields
+  };
 }
 
 function getReceivableRemainingAmount(receivable = {}) {
@@ -742,7 +911,7 @@ function findOtherCollectionType(state, id, expectedType) {
 }
 
 function issue(code, field, riskLevel, sourceRule, requiredAction, relatedRecordIds = [], options = {}) {
-  return {
+  const value = {
     code,
     field: field || '',
     riskLevel,
@@ -753,6 +922,15 @@ function issue(code, field, riskLevel, sourceRule, requiredAction, relatedRecord
     requiredAction: requiredAction || 'REVIEW_SAFETY',
     relatedRecordIds: uniqueStrings(relatedRecordIds)
   };
+  ['itemKey', 'itemField', 'fieldPath'].forEach((key) => {
+    if (options[key] !== undefined && options[key] !== null && options[key] !== '') {
+      value[key] = String(options[key]);
+    }
+  });
+  if (Number.isInteger(options.itemIndex) && options.itemIndex >= 0) {
+    value.itemIndex = options.itemIndex;
+  }
+  return value;
 }
 
 function candidate(record, displayName, matchReason, isSelected, selectionRequired) {
@@ -772,7 +950,13 @@ function createCheck() {
 }
 
 function addIssue(target, check, value) {
-  if (target.some((item) => item.code === value.code && item.field === value.field)) {
+  if (target.some((item) => (
+    item.code === value.code
+      && item.field === value.field
+      && String(item.itemKey || '') === String(value.itemKey || '')
+      && String(item.itemField || '') === String(value.itemField || '')
+      && String(item.fieldPath || '') === String(value.fieldPath || '')
+  ))) {
     check.passed = false;
     if (!check.issues.includes(value.code)) check.issues.push(value.code);
     return;
@@ -788,8 +972,11 @@ function hasUnresolvedAiResult(result = {}) {
   const aiFallback = result.ai_fallback || {};
   const aiStatus = aiFallback.status || 'not_requested';
   const hasVerifiedAiResult = aiStatus === 'used' && aiFallback.business_result_valid === true;
+  const userResolution = evaluateUserResolvedAiState(result);
+  const hasTrustedUserResolution = userResolution.status === 'MANUAL_RESOLUTION_COMPLETE';
   return (['ai_standard', 'ai_deep'].includes(route) || routeInfo.deep_review_available === true)
-    && !hasVerifiedAiResult;
+    && !hasVerifiedAiResult
+    && !hasTrustedUserResolution;
 }
 
 function isParseSafetyReady(result = {}) {
@@ -1059,7 +1246,18 @@ function evaluateRecordDomainPreflight(input = {}) {
     ));
     (Array.isArray(result.field_conflicts) ? result.field_conflicts : []).forEach((conflict) => addIssue(
       blockingIssues, targetChecks,
-      issue('FIELD_CONFLICT', conflict && conflict.field, 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'EDIT_FIELDS')
+      issue(
+        'FIELD_CONFLICT', conflict && conflict.field, 'ZERO_TOLERANCE',
+        'FINAL_PARSE_SAFETY', 'EDIT_FIELDS', [], {
+          itemKey: conflict && conflict.itemKey,
+          itemIndex: conflict && conflict.itemIndex,
+          itemField: conflict && conflict.itemField,
+          fieldPath: conflict && conflict.fieldPath,
+          messageParams: conflict && conflict.message
+            ? { conflictMessage: String(conflict.message) }
+            : {}
+        }
+      )
     ));
     if (result.formal_save_blocked) addIssue(blockingIssues, targetChecks, issue(
       'FORMAL_SAVE_BLOCKED', '', 'ZERO_TOLERANCE', 'FINAL_PARSE_SAFETY', 'REVIEW_SAFETY', [], { resolvableByUser: false }
@@ -1084,6 +1282,8 @@ function evaluateRecordDomainPreflight(input = {}) {
   }
 
   const aiFacts = resolveAiFacts(input, result);
+  const userResolution = evaluateUserResolvedAiState(result);
+  const hasTrustedUserResolution = userResolution.status === 'MANUAL_RESOLUTION_COMPLETE';
   const aiInvolved = aiFacts.attempted || !['NOT_REQUESTED', ''].includes(aiFacts.outcome);
   const verifiedUsedOutcome = aiFacts.outcome === 'USED'
     && aiFacts.attempted
@@ -1091,8 +1291,10 @@ function evaluateRecordDomainPreflight(input = {}) {
   // AI involvement is fail-closed. Only a completed, business-valid USED result
   // is resolved; requested/requesting/unknown/partial states cannot silently
   // fall back to a locally complete draft.
-  const unresolvedAi = hasUnresolvedAiResult(result)
-    || (aiInvolved && !verifiedUsedOutcome);
+  const unresolvedAi = !hasTrustedUserResolution && (
+    hasUnresolvedAiResult(result)
+      || (aiInvolved && !verifiedUsedOutcome)
+  );
   if (unresolvedAi) addIssue(blockingIssues, aiChecks, issue(
     'AI_RESULT_UNRESOLVED', '', 'ZERO_TOLERANCE', 'AI_INTEGRITY_GATE', 'RUN_DEEP_REVIEW', [], { resolvableByUser: false }
   ));
@@ -1124,6 +1326,25 @@ function evaluateRecordDomainPreflight(input = {}) {
     blockingIssues, targetChecks,
     issue('MULTI_ITEM_LOSS', 'items', 'ZERO_TOLERANCE', 'MULTI_ITEM_PRESERVATION', 'EDIT_FIELDS')
   );
+  const orderItemsTotal = calculateCanonicalOrderItemsTotal(fields, result);
+  amountChecks.orderItemsTotalComplete = orderItemsTotal.complete;
+  amountChecks.orderItemsTotalCents = orderItemsTotal.canonicalTotalCents;
+  amountChecks.orderItemsTotalConfirmed = orderItemsTotal.hasConfirmedTotal;
+  amountChecks.orderItemsTotalMismatchedFields = orderItemsTotal.mismatchedFields.slice();
+  if (businessType === 'order' && orderItemsTotal.mismatchedFields.length) {
+    const mismatchField = orderItemsTotal.mismatchedFields.some((field) => field.startsWith('items.'))
+      ? 'items'
+      : 'amount';
+    addIssue(blockingIssues, amountChecks, issue(
+      'ORDER_TOTAL_ITEMS_MISMATCH', mismatchField, 'ZERO_TOLERANCE',
+      'ORDER_ITEMS_CANONICAL_TOTAL', 'EDIT_FIELDS', [], {
+        messageParams: {
+          canonicalTotalCents: orderItemsTotal.canonicalTotalCents,
+          mismatchedFields: orderItemsTotal.mismatchedFields
+        }
+      }
+    ));
+  }
 
   ['amount', 'totalAmount', 'receivableAmount', 'paymentAmount', 'depositAmount', 'unitPrice'].forEach((field) => {
     if (!hasValue(fields[field])) return;
@@ -1876,6 +2097,26 @@ function evaluateRecordDomainPreflight(input = {}) {
     'active_receivable_for_customer', Boolean(receivable && receivable.id === item.id), receivableSelectionRequired
   ));
 
+  // This is the final structural safety net for page edits made after parsing.
+  // Do not add redundant item errors to drafts that are already blocked by a
+  // more specific parse/domain contract; once those issues are resolved, the
+  // same preflight exposes the incomplete line item precisely.
+  if (businessType === 'order' && blockingIssues.length === 0) {
+    finalItems.forEach((item, itemIndex) => {
+      const quantity = Number(item && item.quantity);
+      if (hasValue(item && item.quantity) && Number.isFinite(quantity) && quantity > 0) return;
+      addIssue(blockingIssues, targetChecks, issue(
+        'ORDER_ITEM_QUANTITY_REQUIRED', 'items', 'ZERO_TOLERANCE',
+        'ORDER_ITEM_REQUIRED_FACTS', 'EDIT_FIELDS', [], {
+          itemKey: String(item && item.confirmationItemKey || ''),
+          itemIndex,
+          itemField: 'quantity',
+          fieldPath: `items[${itemIndex}].quantity`
+        }
+      ));
+    });
+  }
+
   const baseFormalReady = isParseSafetyReady(result);
   const domainCanSaveFormal = baseFormalReady && blockingIssues.length === 0;
   const strictOriginalText = input.originalText
@@ -1931,6 +2172,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     fields: normalizeFieldsForFingerprint(fields),
     originalText: strictOriginalText,
     aiFacts,
+    userResolution,
     blockingIssues,
     warnings,
     requiredSelections: uniqueStrings(requiredSelections),
@@ -1960,6 +2202,7 @@ function evaluateRecordDomainPreflight(input = {}) {
     noRecordPersistenceFacts,
     formalSaveBlocked: !domainCanSaveFormal,
     productionEligibilityResolved: mode === PRODUCTION_MODE && resultScope === PRODUCTION_SCOPE,
+    userResolution,
     blockingIssues,
     warnings,
     requiredSelections: uniqueStrings(requiredSelections),
@@ -1990,6 +2233,7 @@ module.exports = {
   PREFLIGHT_SCHEMA_VERSION,
   QUOTATION_ORDER_RELATION_STATES,
   assessQuotationOrderRelation,
+  calculateCanonicalOrderItemsTotal,
   calculateOrderDepositAmount,
   calculateOrderRemainingSettlement,
   customerNameMatches,

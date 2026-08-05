@@ -5,7 +5,7 @@ const { normalizeBusinessText } = require('./text-normalize');
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
 const { applyLocalParseSafety, NEEDS_USER_CONFIRM } = require('./parse-safety');
 const { resolveBusinessTimeContext } = require('./record-flow-runtime');
-const { normalizeUnit, unitsMatch } = require('./units');
+const { RAW_UNIT_PATTERN, normalizeUnit, unitsMatch } = require('./units');
 const { validateVoiceCompletionEvidence } = require('./voice-recognition');
 
 // 普通 AI 只是一轮快速核对：网络层最多 6.7 秒，外层连同本地整理最多 8 秒。
@@ -21,6 +21,12 @@ const ROUTE_AI_STANDARD = 'ai_standard';
 const ROUTE_AI_DEEP = 'ai_deep';
 const ROUTE_PENDING = 'pending';
 const ROUTE_NO_RECORD = 'no_record';
+const SOURCE_EVIDENCE_UNIT_PATTERN = `(?:${RAW_UNIT_PATTERN}|片|枚|根|份)`;
+const SOURCE_ITEM_IDENTITY_TOKEN = '[\\u3400-\\u9fffA-Za-z0-9Ａ-Ｚａ-ｚ０-９.\\/\\-]';
+const SOURCE_DELIMITED_SPEC_PATTERN = '(?:[（(【\\[《“"「『‘\'][^（）()【】\\[\\]《》“”"「」『』‘’\'，,；;]{1,24}[）)】\\]》”"」』’\'])';
+const SOURCE_SPACED_SPEC_PATTERN = `(?:(?:\\s+${SOURCE_ITEM_IDENTITY_TOKEN}{1,12}){1,3})`;
+const SOURCE_SPEC_SEGMENT_PATTERN = `(?:${SOURCE_DELIMITED_SPEC_PATTERN}|${SOURCE_SPACED_SPEC_PATTERN})`;
+const SOURCE_GENERIC_MEASURE_PATTERN = '(?:[\\u3400-\\u9fff]{1,3}|[A-Za-z][A-Za-z.()/\\-]{0,15})';
 const ROUTE_LABELS = {
   [ROUTE_LOCAL]: '本地快速整理',
   [ROUTE_AI_STANDARD]: '请 AI 再核对',
@@ -2013,7 +2019,11 @@ function mergeConflictEntries(...groups) {
     const field = typeof item === 'string' ? item : (item && item.field);
     const values = item && typeof item === 'object' && Array.isArray(item.values) ? item.values.join('|') : '';
     const message = item && typeof item === 'object' ? String(item.message || '') : String(item || '');
-    const key = `${field || ''}|${values}|${message}`;
+    const itemKey = item && typeof item === 'object' ? String(item.itemKey || '') : '';
+    const itemField = item && typeof item === 'object' ? String(item.itemField || '') : '';
+    const fieldPath = item && typeof item === 'object' ? String(item.fieldPath || item.itemPath || '') : '';
+    const code = item && typeof item === 'object' ? String(item.code || '') : '';
+    const key = `${field || ''}|${itemKey}|${itemField}|${fieldPath}|${code}|${values}|${message}`;
     if (!field || seen[key]) return false;
     seen[key] = true;
     return true;
@@ -2055,6 +2065,77 @@ const ITEM_FACT_FIELDS = [
 ];
 const ITEM_NUMERIC_FACT_FIELDS = ['quantity', 'unitPrice', 'totalAmount'];
 const LEGACY_FIRST_ITEM_FIELDS = ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'];
+const MANUAL_ITEM_FIELDS = ITEM_FACT_FIELDS.slice();
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeManualItemFields(value, items = []) {
+  if (!Array.isArray(value)) return [];
+  const allowedKeys = new Set((Array.isArray(items) ? items : [])
+    .map((item) => String(item && item.confirmationItemKey || '').trim())
+    .filter(Boolean));
+  const seen = new Set();
+  return value.reduce((output, entry) => {
+    if (!isPlainObject(entry)) return output;
+    const itemKey = String(entry.itemKey || '').trim();
+    const field = String(entry.field || '').trim();
+    if (!itemKey || !MANUAL_ITEM_FIELDS.includes(field)) return output;
+    if (allowedKeys.size && !allowedKeys.has(itemKey)) return output;
+    const key = `${itemKey}:${field}`;
+    if (seen.has(key)) return output;
+    seen.add(key);
+    output.push({ itemKey, field });
+    return output;
+  }, []);
+}
+
+function normalizeManualFields(value) {
+  return Array.isArray(value)
+    ? uniqueStrings(value.filter((entry) => typeof entry === 'string'))
+      .filter((field) => !/^items(?:\[|\.|$)/.test(field))
+    : [];
+}
+
+function getDuplicatedConfirmationItemKeys(items = []) {
+  const counts = new Map();
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const itemKey = String(item && item.confirmationItemKey || '').trim();
+    if (itemKey) counts.set(itemKey, (counts.get(itemKey) || 0) + 1);
+  });
+  return new Set(Array.from(counts.entries())
+    .filter((entry) => entry[1] > 1)
+    .map((entry) => entry[0]));
+}
+
+function itemKeyHash(value) {
+  const text = String(value || 'item');
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
+
+function ensureConfirmationItemKey(item, origin, index, usedKeys) {
+  const next = Object.assign({}, item);
+  let key = String(next.confirmationItemKey || '').trim();
+  if (!key || usedKeys.has(key)) {
+    const identity = [origin, index, next.productName || '', next.spec || ''].join('|');
+    const base = `mip_${origin}_${itemKeyHash(identity)}`;
+    key = base;
+    let suffix = 1;
+    while (usedKeys.has(key)) {
+      key = `${base}_${suffix}`;
+      suffix += 1;
+    }
+  }
+  usedKeys.add(key);
+  next.confirmationItemKey = key;
+  return next;
+}
 
 function normalizeItemIdentityText(value) {
   return normalizeProductText(value)
@@ -2069,8 +2150,8 @@ function hasItemFactValue(item, field) {
 
 function itemFactValuesEqual(field, left, right) {
   if (ITEM_NUMERIC_FACT_FIELDS.includes(field)) {
-    const leftNumber = Number(left);
-    const rightNumber = Number(right);
+    const leftNumber = parseChineseNumber(left);
+    const rightNumber = parseChineseNumber(right);
     if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
       return Math.abs(leftNumber - rightNumber) < 0.0001;
     }
@@ -2094,58 +2175,316 @@ function escapeItemEvidencePattern(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildLocalItemEvidenceScopes(localResult, localItems) {
-  const sourceText = normalizeBusinessText(
-    localResult.original_text || localResult.originalText || ''
-  );
+function boundedNumberEvidencePattern(value) {
+  const escaped = escapeItemEvidencePattern(value);
+  return `(?:^|[^\\d.])${escaped}(?![\\d.])`;
+}
+
+function suffixedNumberEvidencePattern(value) {
+  return `${escapeItemEvidencePattern(value)}(?![\\d.])`;
+}
+
+function itemEvidenceNumbersEqual(left, right) {
+  const leftNumber = parseChineseNumber(left);
+  const rightNumber = Number(right);
+  return Number.isFinite(leftNumber)
+    && Number.isFinite(rightNumber)
+    && Math.abs(leftNumber - rightNumber) < 0.0001;
+}
+
+function getEquivalentNumberEvidenceMatches(sourceText, value) {
+  const source = String(sourceText || '');
+  if (!source || !String(value || '').trim()) return [];
+  return Array.from(source.matchAll(new RegExp(numberPattern(), 'g')))
+    .filter((match) => itemEvidenceNumbersEqual(match[0], value));
+}
+
+function startsWithEquivalentQuantityEvidence(sourceText, quantity, unit) {
+  const source = String(sourceText || '');
+  const normalizedUnit = String(unit || '').trim();
+  if (!source || !normalizedUnit) return false;
+  return getEquivalentNumberEvidenceMatches(source, quantity).some((match) => (
+    match.index === 0
+    && new RegExp(`^\\s*${escapeItemEvidencePattern(normalizedUnit)}`).test(
+      source.slice(match[0].length)
+    )
+  ));
+}
+
+function findPrefixedQuantityEvidenceStart(sourceText, productStart, quantity, unit) {
+  const source = String(sourceText || '');
+  const normalizedUnit = String(unit || '').trim();
+  if (!source || productStart < 0 || !normalizedUnit) return -1;
+  const match = getEquivalentNumberEvidenceMatches(source.slice(0, productStart), quantity)
+    .find((candidate) => {
+      const afterNumber = source.slice(candidate.index + candidate[0].length, productStart);
+      return new RegExp(`^\\s*${escapeItemEvidencePattern(normalizedUnit)}\\s*$`).test(afterNumber);
+    });
+  return match ? match.index : -1;
+}
+
+function hasExactItemTextEvidence(sourceText, value, options = {}) {
+  const source = String(sourceText || '');
+  const target = String(value || '').trim();
+  if (!source || !target) return false;
+  const entityCharacter = /[A-Za-z0-9\u3400-\u9fff]/;
+  const leftAdjacent = String(options.leftAdjacent || '').trim();
+  const rightAdjacent = String(options.rightAdjacent || '').trim();
+  const declaredQuantity = String(options.quantity || '').trim();
+  const declaredUnit = String(options.unit || '').trim();
+  const declaredUnitPrice = String(options.unitPrice || '').trim();
+  const declaredPriceUnit = String(options.priceUnit || options.unit || '').trim();
   let cursor = 0;
-  const starts = localItems.map((item) => {
-    const productName = String(item && item.productName || '').trim();
-    if (!productName) return -1;
-    const start = sourceText.indexOf(productName, cursor);
-    if (start >= 0) cursor = start + productName.length;
-    return start;
-  });
-  return starts.map((start, index) => {
-    if (start < 0) return '';
-    const nextStart = starts.slice(index + 1).find((value) => value >= 0);
-    return sourceText.slice(start, nextStart === undefined ? sourceText.length : nextStart);
-  });
+  while (cursor <= source.length) {
+    const index = source.indexOf(target, cursor);
+    if (index < 0) return false;
+    const leftContext = source.slice(0, index);
+    const rightContext = source.slice(index + target.length);
+    const compactLeft = leftContext.replace(/\s/g, '');
+    const previous = source[index - 1] || '';
+    const next = source[index + target.length] || '';
+    const leftMatchesAdjacent = Boolean(leftAdjacent)
+      && new RegExp(`${escapeItemEvidencePattern(leftAdjacent)}\\s*$`).test(leftContext);
+    const rightMatchesAdjacent = Boolean(rightAdjacent)
+      && new RegExp(`^\\s*${escapeItemEvidencePattern(rightAdjacent)}`).test(rightContext);
+    const quantityTail = rightContext.match(/^\\s*/);
+    const rightIsDeclaredQuantityBoundary = Boolean(declaredQuantity && declaredUnit)
+      && startsWithEquivalentQuantityEvidence(
+        rightContext.slice(quantityTail ? quantityTail[0].length : 0),
+        declaredQuantity,
+        declaredUnit
+      );
+    const rightIsDeclaredPriceBoundary = Boolean(declaredUnitPrice)
+      && findBoundedUnitPriceEvidenceIndex(
+        rightContext,
+        declaredUnitPrice,
+        declaredPriceUnit
+      ) === 0;
+    const leftIsDeclaredQuantityBoundary = Boolean(declaredQuantity && declaredUnit)
+      && findPrefixedQuantityEvidenceStart(
+        source,
+        index,
+        declaredQuantity,
+        declaredUnit
+      ) >= 0;
+    const leftIsCustomerBoundary = /(?:总|老板|经理|姐|哥|先生|女士|客户)$/.test(compactLeft);
+    const leftIsActionBoundary = /(?:下单|订货|订购|采购|买|要|订|拿|做|帮我做|另加|再加|再来|补做)$/.test(compactLeft);
+    const leftIsCorrectionBoundary = /(?:不对(?:是)?|更正(?:为|成)?|改成|改为|应该是|实际是)[^，,。；;\n]{0,12}$/.test(compactLeft);
+    const leftIsPriorItemPriceBoundary = rightIsDeclaredQuantityBoundary
+      && /(?:元|块|块钱|毛|角|分|钱)(?:一|每)?(?:个|件|箱|套|只|条|批|双|张|本|斤|公斤|米|包|盒|袋|组|把|台|块)?$/.test(compactLeft);
+    const rightIsBusinessBoundary = /^(?:\s*(?:先|要|需|共|各|每|数量|交|发|拿|做|订|下单|改|换|另加|再加|再来|补做))/.test(rightContext);
+    const leftNumericBoundary = !/^[0-9.]/.test(target) || !/[0-9.]$/.test(previous);
+    const rightNumericBoundary = !/[0-9.]$/.test(target) || !/^[0-9.]/.test(next);
+    const leftBoundary = !previous || !entityCharacter.test(previous)
+      || leftMatchesAdjacent
+      || leftIsDeclaredQuantityBoundary
+      || leftIsCustomerBoundary
+      || leftIsActionBoundary
+      || leftIsCorrectionBoundary
+      || leftIsPriorItemPriceBoundary;
+    const rightBoundary = !next || !entityCharacter.test(next)
+      || rightMatchesAdjacent
+      || rightIsDeclaredQuantityBoundary
+      || rightIsDeclaredPriceBoundary
+      || rightIsBusinessBoundary;
+    if (leftBoundary && rightBoundary && leftNumericBoundary && rightNumericBoundary) return true;
+    cursor = index + target.length;
+  }
+  return false;
+}
+
+function isTrustedAiItemSpecShape(value) {
+  const spec = String(value || '').trim();
+  if (!spec) return true;
+  if (spec.length > 24
+    || !/^[\u3400-\u9fffA-Za-z0-9Ａ-Ｚａ-ｚ０-９.\/\-×xX*（）()]{1,24}$/.test(spec)
+    || /(?:、|,|，|&|＆|\+|＋|\||｜|和|及|与|跟)/.test(spec)
+    || /(?:数量|单价|价格|总价|金额|客户|订单|付款|收款|交期|交货|发货|待确认|待定|未定)/.test(spec)) {
+    return false;
+  }
+  return /[\u3400-\u9fffA-Za-z0-9Ａ-Ｚａ-ｚ０-９]/.test(spec);
+}
+
+function findBoundedQuantityEvidenceIndex(sourceText, quantity, unit) {
+  const source = String(sourceText || '');
+  const value = String(quantity || '').trim();
+  const normalizedUnit = String(unit || '').trim();
+  if (!source || !value || !normalizedUnit) return -1;
+  const match = getEquivalentNumberEvidenceMatches(source, value).find((candidate) => (
+    new RegExp(`^\\s*${escapeItemEvidencePattern(normalizedUnit)}`).test(
+      source.slice(candidate.index + candidate[0].length)
+    )
+  ));
+  return match ? match.index : -1;
+}
+
+function findBoundedUnitPriceEvidenceIndex(sourceText, unitPrice, itemUnit) {
+  const source = String(sourceText || '');
+  const value = String(unitPrice || '').trim();
+  const unit = String(itemUnit || '').trim();
+  if (!source || !value) return -1;
+  const currencyPattern = '(?:元|块|块钱|毛|角|分|钱)';
+  const matches = getEquivalentNumberEvidenceMatches(source, value);
+  for (const match of matches) {
+    const index = match.index;
+    const before = source.slice(0, index);
+    const after = source.slice(index + match[0].length);
+    const beforeEvidence = unit
+      ? new RegExp(`(?:单价(?:是|为)?|(?:统一\\s*)?每\\s*${escapeItemEvidencePattern(unit)}(?:单价)?(?:是|为)?)\\s*$`).test(before)
+      : /单价(?:是|为)?\s*$/.test(before);
+    const hasCurrencySuffix = new RegExp(`^\\s*${currencyPattern}`).test(after);
+    const afterEvidence = unit
+      ? new RegExp(`^\\s*${currencyPattern}\\s*(?:(?:一|每|/)\\s*)?${escapeItemEvidencePattern(unit)}`).test(after)
+      : false;
+    if ((beforeEvidence && hasCurrencySuffix) || afterEvidence) return index;
+  }
+  return -1;
+}
+
+function removeEquivalentQuantityEvidence(sourceText, quantity, unit) {
+  const source = String(sourceText || '');
+  const normalizedUnit = String(unit || '').trim();
+  if (!source || !String(quantity || '').trim() || !normalizedUnit) return source;
+  const match = getEquivalentNumberEvidenceMatches(source, quantity).find((candidate) => (
+    new RegExp(`^\\s*${escapeItemEvidencePattern(normalizedUnit)}`).test(
+      source.slice(candidate.index + candidate[0].length)
+    )
+  ));
+  if (!match) return source;
+  const tail = source.slice(match.index + match[0].length);
+  const unitMatch = tail.match(new RegExp(`^\\s*${escapeItemEvidencePattern(normalizedUnit)}`));
+  if (!unitMatch) return source;
+  return source.slice(0, match.index)
+    + tail.slice(unitMatch[0].length);
+}
+
+function isItemEvidencePathClear(sourceText, aiItem, factIndex, factField = 'quantity') {
+  const source = String(sourceText || '');
+  const productName = String(aiItem && aiItem.productName || '').trim();
+  const productStart = source.indexOf(productName);
+  if (!productName || productStart < 0 || factIndex < productStart + productName.length) return false;
+  let bridge = source.slice(productStart + productName.length, factIndex);
+  const spec = String(aiItem && aiItem.spec || '').trim();
+  if (spec) {
+    bridge = bridge.replace(new RegExp(`^\\s*[\\/\\-（(【]?\\s*${escapeItemEvidencePattern(spec)}`), '');
+  }
+  bridge = bridge.replace(/^\s*(?:共|要|需|数量(?:是|为)?|订|做|另加|再加|再来|补做)\s*/, '');
+  if (['unitPrice', 'priceUnit'].includes(factField)) {
+    const quantity = String(aiItem && aiItem.quantity || '').trim();
+    const unit = String(aiItem && aiItem.unit || '').trim();
+    const priceUnit = String(aiItem && (aiItem.priceUnit || aiItem.unit) || '').trim();
+    if (quantity && unit) {
+      bridge = removeEquivalentQuantityEvidence(bridge, quantity, unit);
+      bridge = bridge.replace(/^\s*(?:共|要|需|数量(?:是|为)?|订|做|另加|再加|再来|补做)\s*/, '');
+    }
+    if (priceUnit) {
+      bridge = bridge.replace(new RegExp(
+        `(?:单价(?:是|为)?|(?:统一\\s*)?每\\s*${escapeItemEvidencePattern(priceUnit)}(?:单价)?(?:是|为)?)\\s*$`
+      ), '');
+    } else {
+      bridge = bridge.replace(/单价(?:是|为)?\s*$/, '');
+    }
+  }
+  bridge = bridge
+    .replace(/[\s，,、：:；;。/\-（）()【】]/g, '');
+  return !/[A-Za-z0-9\u3400-\u9fff]/.test(bridge);
+}
+
+function hasBoundItemQuantityEvidence(sourceText, aiItem) {
+  const index = findBoundedQuantityEvidenceIndex(
+    sourceText,
+    aiItem && aiItem.quantity,
+    aiItem && aiItem.unit
+  );
+  if (index >= 0 && isItemEvidencePathClear(sourceText, aiItem, index)) return true;
+  const source = String(sourceText || '');
+  const productName = String(aiItem && aiItem.productName || '').trim();
+  const productStart = source.indexOf(productName);
+  return Boolean(productName)
+    && findPrefixedQuantityEvidenceStart(
+      source,
+      productStart,
+      aiItem && aiItem.quantity,
+      aiItem && aiItem.unit
+    ) >= 0;
+}
+
+function hasBoundItemUnitPriceEvidence(sourceText, aiItem) {
+  const itemUnit = aiItem && (aiItem.priceUnit || aiItem.unit);
+  const index = findBoundedUnitPriceEvidenceIndex(
+    sourceText,
+    aiItem && aiItem.unitPrice,
+    itemUnit
+  );
+  return index >= 0 && isItemEvidencePathClear(sourceText, aiItem, index, 'unitPrice');
+}
+
+function hasExactItemRemarkEvidence(sourceText, value) {
+  const source = String(sourceText || '');
+  const target = String(value || '').trim();
+  if (!source || !target) return false;
+  const entityCharacter = /[A-Za-z0-9\u3400-\u9fff]/;
+  const targetStartsWithNegation = /^(?:不|不要|别|无需|禁止|非|取消)/.test(target);
+  let cursor = 0;
+  while (cursor <= source.length) {
+    const index = source.indexOf(target, cursor);
+    if (index < 0) return false;
+    const left = source.slice(0, index);
+    const right = source.slice(index + target.length);
+    const compactLeft = left.replace(/[\s"'“”‘’（）()【】\[\]：:,，、]/g, '');
+    const negated = !targetStartsWithNegation
+      && /(?:不要|无需|禁止|严禁|切勿|避免|拒绝|取消|不需要|别|非|不)(?:(?:做成|使用|改为|改成|选择|采用|用|需要|要|推荐|接受|可以|能))*$/.test(compactLeft);
+    const previous = source[index - 1] || '';
+    const next = source[index + target.length] || '';
+    const positiveLead = /(?:备注|要求|颜色|款式|包装|做成|需要)$/.test(compactLeft);
+    const leftBoundary = !previous || !entityCharacter.test(previous) || positiveLead;
+    const rightBoundary = !next || !entityCharacter.test(next);
+    if (!negated && leftBoundary && rightBoundary) return true;
+    cursor = index + target.length;
+  }
+  return false;
 }
 
 function isAiItemSupplementSupported(field, value, aiItem, evidenceText) {
   const source = String(evidenceText || '');
   const normalizedValue = String(value === undefined || value === null ? '' : value).trim();
   if (!source || !normalizedValue) return false;
-  if (['spec', 'itemRemark'].includes(field)) return source.includes(normalizedValue);
+  if (field === 'spec') {
+    return isTrustedAiItemSpecShape(normalizedValue)
+      && hasExactItemTextEvidence(source, normalizedValue, {
+      leftAdjacent: aiItem && aiItem.productName,
+      rightAdjacent: aiItem && aiItem.productName,
+      quantity: aiItem && aiItem.quantity,
+      unit: aiItem && aiItem.unit
+      });
+  }
+  if (field === 'itemRemark') return hasExactItemRemarkEvidence(source, normalizedValue);
 
-  const escapedValue = escapeItemEvidencePattern(normalizedValue);
-  const moneyUnit = '(?:元|块|块钱|毛|角|分|钱)';
-  const itemUnit = String(aiItem && (aiItem.priceUnit || aiItem.unit) || '').trim();
-  const escapedUnit = escapeItemEvidencePattern(itemUnit);
+  if (field === 'productName') {
+    return hasExactItemTextEvidence(source, normalizedValue, {
+      leftAdjacent: aiItem && aiItem.spec,
+      rightAdjacent: aiItem && aiItem.spec,
+      quantity: aiItem && aiItem.quantity,
+      unit: aiItem && aiItem.unit,
+      unitPrice: aiItem && aiItem.unitPrice,
+      priceUnit: aiItem && (aiItem.priceUnit || aiItem.unit)
+    });
+  }
   if (field === 'quantity') {
-    const unit = String(aiItem && aiItem.unit || '').trim();
-    return Boolean(unit) && new RegExp(`${escapedValue}\\s*${escapeItemEvidencePattern(unit)}`).test(source);
+    return hasBoundItemQuantityEvidence(source, aiItem);
   }
   if (field === 'unit') {
-    const quantity = String(aiItem && aiItem.quantity || '').trim();
-    return Boolean(quantity) && new RegExp(`${escapeItemEvidencePattern(quantity)}\\s*${escapedValue}`).test(source);
+    return hasBoundItemQuantityEvidence(source, aiItem)
+      && normalizeUnit(aiItem && aiItem.unit) === normalizeUnit(normalizedValue);
   }
   if (field === 'unitPrice') {
-    const beforePrice = escapedUnit
-      ? new RegExp(`(?:单价|价格|每\\s*${escapedUnit})\\s*${escapedValue}\\s*${moneyUnit}`).test(source)
-      : new RegExp(`(?:单价|价格)\\s*${escapedValue}\\s*${moneyUnit}`).test(source);
-    const afterPrice = escapedUnit
-      ? new RegExp(`${escapedValue}\\s*${moneyUnit}\\s*(?:(?:一|每|/)\\s*)?${escapedUnit}`).test(source)
-      : false;
-    return beforePrice || afterPrice;
+    if (hasItemFactValue(aiItem, 'quantity') && !hasBoundItemQuantityEvidence(source, aiItem)) return false;
+    return hasBoundItemUnitPriceEvidence(source, aiItem);
   }
   if (field === 'priceUnit') {
-    const unitPrice = String(aiItem && aiItem.unitPrice || '').trim();
-    if (!unitPrice) return false;
-    const escapedPrice = escapeItemEvidencePattern(unitPrice);
-    return new RegExp(`每\\s*${escapedValue}\\s*${escapedPrice}\\s*${moneyUnit}`).test(source)
-      || new RegExp(`${escapedPrice}\\s*${moneyUnit}\\s*(?:(?:一|每|/)\\s*)?${escapedValue}`).test(source);
+    if (hasItemFactValue(aiItem, 'quantity') && !hasBoundItemQuantityEvidence(source, aiItem)) return false;
+    return normalizeUnit(aiItem && aiItem.priceUnit) === normalizeUnit(normalizedValue)
+      && hasBoundItemUnitPriceEvidence(source, aiItem);
   }
   // item total 只由可信数量×单价推导。末项文本范围可能包含整单“合计/共计”，
   // 不能把它当作该 item 的原文小计证据。
@@ -2173,9 +2512,89 @@ function matchItemsByUniqueIdentity(localItems, aiItems) {
     : null;
 }
 
-function mergeMatchedItemFacts(localItem, aiItem, itemIndex, conflictValues, evidenceText) {
+function getDeclaredLocalItemRiskFields(localResult = {}, localItem = {}, itemIndex = 0, itemCount = 1) {
+  const safety = localResult.local_parse_safety || {};
+  const validations = safety.field_validations || {};
+  const rootRisks = uniqueStrings([].concat(
+    localResult.missing_fields || [],
+    localResult.low_confidence_fields || [],
+    safety.missing_fields || [],
+    safety.low_confidence_fields || [],
+    safety.unsafe_fields || [],
+    validations.invalid_fields || [],
+    validations.semantic_low_fields || [],
+    validations.conflict_fields || []
+  ));
+  const itemKey = String(localItem && localItem.confirmationItemKey || '');
+  const risks = new Set();
+  toArray(localResult.field_conflicts || []).forEach((conflict) => {
+    const field = typeof conflict === 'string' ? conflict : conflict && conflict.field;
+    if (field === 'items' && conflict && conflict.itemField) {
+      const conflictKey = String(conflict.itemKey || '');
+      if ((conflictKey && conflictKey === itemKey)
+        || (!conflictKey && Number(conflict.itemIndex) === itemIndex)) {
+        risks.add(conflict.itemField);
+      }
+      return;
+    }
+    if (field && itemCount === 1) risks.add(field);
+  });
+  if (itemCount === 1) rootRisks.forEach((field) => risks.add(field));
+  if (risks.has('amount') || risks.has('quantity') || risks.has('unitPrice')) {
+    risks.add('totalAmount');
+  }
+  if (risks.has('unitPrice')) risks.add('priceUnit');
+  return risks;
+}
+
+function isPlausibleLocalItemIdentity(value) {
+  const productName = String(value || '').trim();
+  if (!productName || productName.length > 24) return false;
+  if (/^(?:到|交|发|要|做|订|买|拿|好|好的|可以|没问题)$/.test(productName)) return false;
+  if (new RegExp(
+    `^(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分|钱|${SOURCE_EVIDENCE_UNIT_PATTERN})`
+  ).test(productName)) return false;
+  return !/(?:元|块|块钱|毛|角|分|钱).*(?:周|星期|礼拜|交|发|到)$/.test(productName);
+}
+
+function localItemIdentityNeedsCorrection(localResult, localItem, itemIndex, itemCount) {
+  const risks = getDeclaredLocalItemRiskFields(
+    localResult,
+    localItem,
+    itemIndex,
+    itemCount
+  );
+  if (risks.has('productName')) return true;
+  if (!isPlausibleLocalItemIdentity(localItem && localItem.productName)) return true;
+  const originalText = localResult.original_text || localResult.originalText || '';
+  const scope = getAiItemEvidenceScope(originalText, localItem, [localItem]);
+  return !scope.unique;
+}
+
+function hasAiIdentityCorrectionEvidence(localResult, localItem, aiItem, aiItems) {
+  if (!localItemIdentityNeedsCorrection(localResult, localItem, 0, 1)) return false;
+  const originalText = localResult.original_text || localResult.originalText || '';
+  const scope = getAiItemEvidenceScope(originalText, aiItem, aiItems);
+  if (!scope.unique
+    || !isAiItemSupplementSupported('productName', aiItem.productName, aiItem, scope.text)) {
+    return false;
+  }
+  const productName = String(aiItem && aiItem.productName || '').trim();
+  const productIndex = String(originalText || '').indexOf(productName);
+  const beforeProduct = productIndex >= 0
+    ? String(originalText || '').slice(Math.max(0, productIndex - 18), productIndex)
+    : '';
+  const explicitCorrection = /(?:不对(?:是)?|更正(?:为|成)?|改成|改为|应该是|实际是)[^，,。；;\n]{0,12}$/.test(beforeProduct);
+  return explicitCorrection
+    || hasBoundItemQuantityEvidence(scope.text, aiItem)
+    || hasBoundItemUnitPriceEvidence(scope.text, aiItem);
+}
+
+function mergeMatchedItemFacts(localItem, aiItem, itemIndex, itemConflicts, evidenceText, options = {}) {
   const merged = Object.assign({}, aiItem, localItem);
   let unsupportedAiTotalAmount = false;
+  let correctedBaseFact = false;
+  const localRiskFields = options.localRiskFields || new Set();
   ITEM_FACT_FIELDS.forEach((field) => {
     const localHasValue = hasItemFactValue(localItem, field);
     const aiHasValue = hasItemFactValue(aiItem, field);
@@ -2185,7 +2604,16 @@ function mergeMatchedItemFacts(localItem, aiItem, itemIndex, conflictValues, evi
       } else {
         delete merged[field];
         if (field === 'totalAmount') unsupportedAiTotalAmount = true;
-        else conflictValues.push(`items[${itemIndex}].${field}: AI supplement lacks original-text evidence`);
+        else {
+          const conflict = createItemFieldConflict(
+            Object.assign({}, localItem, { [field]: aiItem[field] }),
+            itemIndex,
+            field,
+            'AI_MATCHED_ITEM_FIELD_UNSUPPORTED',
+            `商品${itemIndex + 1}的${field}缺少可核对的原文证据。`
+          );
+          itemConflicts.push(conflict);
+        }
       }
       return;
     }
@@ -2193,9 +2621,50 @@ function mergeMatchedItemFacts(localItem, aiItem, itemIndex, conflictValues, evi
       delete merged[field];
       return;
     }
+    if (field === 'productName'
+      && options.trustedIdentityCorrection === true
+      && aiHasValue) {
+      merged[field] = aiItem[field];
+      return;
+    }
+    if (field === 'totalAmount' && correctedBaseFact) {
+      if (aiHasValue) merged[field] = aiItem[field];
+      else delete merged[field];
+      return;
+    }
+    if (aiHasValue && !itemFactValuesEqual(field, localItem[field], aiItem[field])) {
+      const aiSupported = isAiItemSupplementSupported(
+        field,
+        aiItem[field],
+        aiItem,
+        evidenceText
+      );
+      const localEvidenceItem = Object.assign({}, aiItem, { [field]: localItem[field] });
+      const localSupported = isAiItemSupplementSupported(
+        field,
+        localItem[field],
+        localEvidenceItem,
+        evidenceText
+      );
+      if (localRiskFields.has(field) && aiSupported && !localSupported) {
+        merged[field] = aiItem[field];
+        if (['quantity', 'unit', 'unitPrice', 'priceUnit'].includes(field)) {
+          correctedBaseFact = true;
+        }
+        return;
+      }
+    }
     merged[field] = localItem[field];
     if (aiHasValue && !itemFactValuesEqual(field, localItem[field], aiItem[field])) {
-      conflictValues.push(`items[${itemIndex}].${field}: local=${localItem[field]} ai=${aiItem[field]}`);
+      const conflict = createItemFieldConflict(
+        localItem,
+        itemIndex,
+        field,
+        'AI_MATCHED_ITEM_FIELD_CONFLICT',
+        `商品${itemIndex + 1}的${field}与本地原文提取结果冲突，已保留本地值。`
+      );
+      conflict.values = uniqueStrings([localItem[field], aiItem[field]]);
+      itemConflicts.push(conflict);
     }
   });
 
@@ -2206,16 +2675,47 @@ function mergeMatchedItemFacts(localItem, aiItem, itemIndex, conflictValues, evi
     merged.priceUnit
   );
   if (calculatedAmount) {
+    if (correctedBaseFact
+      && hasItemFactValue(aiItem, 'totalAmount')
+      && !itemFactValuesEqual('totalAmount', calculatedAmount, aiItem.totalAmount)) {
+      const conflict = createItemFieldConflict(
+        Object.assign({}, merged, { totalAmount: calculatedAmount }),
+        itemIndex,
+        'totalAmount',
+        'AI_MATCHED_ITEM_TOTAL_MISMATCH',
+        `商品${itemIndex + 1}的小计与可信数量、单价计算结果不一致。`
+      );
+      conflict.values = uniqueStrings([calculatedAmount, aiItem.totalAmount]);
+      itemConflicts.push(conflict);
+    }
+    if (correctedBaseFact) {
+      merged.totalAmount = calculatedAmount;
+      return merged;
+    }
     if (!hasItemFactValue(localItem, 'totalAmount')
       && hasItemFactValue(aiItem, 'totalAmount')
       && !itemFactValuesEqual('totalAmount', calculatedAmount, aiItem.totalAmount)) {
-      conflictValues.push(`items[${itemIndex}].totalAmount: calculated=${calculatedAmount} ai=${aiItem.totalAmount}`);
+      const conflict = createItemFieldConflict(
+        Object.assign({}, localItem, { totalAmount: calculatedAmount }),
+        itemIndex,
+        'totalAmount',
+        'AI_MATCHED_ITEM_TOTAL_MISMATCH',
+        `商品${itemIndex + 1}的小计与可信数量、单价计算结果不一致。`
+      );
+      conflict.values = uniqueStrings([calculatedAmount, aiItem.totalAmount]);
+      itemConflicts.push(conflict);
     }
     merged.totalAmount = hasItemFactValue(localItem, 'totalAmount')
       ? localItem.totalAmount
       : calculatedAmount;
   } else if (unsupportedAiTotalAmount) {
-    conflictValues.push(`items[${itemIndex}].totalAmount: AI supplement lacks original-text evidence`);
+    itemConflicts.push(createItemFieldConflict(
+      Object.assign({}, localItem, { totalAmount: aiItem.totalAmount }),
+      itemIndex,
+      'totalAmount',
+      'AI_MATCHED_ITEM_FIELD_UNSUPPORTED',
+      `商品${itemIndex + 1}的小计缺少可核对的原文证据。`
+    ));
   }
   return merged;
 }
@@ -2238,9 +2738,408 @@ function createItemIntegrityConflict(values, message) {
   };
 }
 
-function applyAiItemStructureGuard(localResult = {}, aiFields = {}) {
+function createItemFieldConflict(item, itemIndex, itemField, code, message) {
+  return {
+    code,
+    field: 'items',
+    itemKey: String(item && item.confirmationItemKey || ''),
+    itemIndex,
+    itemField,
+    fieldPath: `items[${itemIndex}].${itemField}`,
+    values: hasItemFactValue(item, itemField) ? [String(item[itemField])] : [],
+    message
+  };
+}
+
+function countTextOccurrences(source, target) {
+  const text = String(source || '');
+  const needle = String(target || '');
+  if (!needle) return 0;
+  let count = 0;
+  let cursor = 0;
+  while (cursor <= text.length) {
+    const index = text.indexOf(needle, cursor);
+    if (index < 0) break;
+    count += 1;
+    cursor = index + needle.length;
+  }
+  return count;
+}
+
+function getAiItemEvidenceScope(originalText, aiItem, aiItems) {
+  const source = normalizeBusinessText(originalText || '');
+  const productName = String(aiItem && aiItem.productName || '').trim();
+  const spec = String(aiItem && aiItem.spec || '').trim();
+  if (!productName) return { text: '', unique: false };
+  const sameIdentityCount = aiItems.filter((item) => (
+    normalizeItemIdentityText(item.productName) === normalizeItemIdentityText(productName)
+      && normalizeItemIdentityText(item.spec) === normalizeItemIdentityText(spec)
+  )).length;
+  if (sameIdentityCount !== 1) return { text: '', unique: false };
+  const normalizedProductName = normalizeItemIdentityText(productName);
+  const nestedInOtherAiProduct = aiItems.some((item) => {
+    const otherProductName = normalizeItemIdentityText(item && item.productName);
+    return otherProductName
+      && otherProductName !== normalizedProductName
+      && otherProductName.includes(normalizedProductName);
+  });
+  if (nestedInOtherAiProduct) return { text: '', unique: false };
+  if (countTextOccurrences(source, productName) !== 1) return { text: '', unique: false };
+  if (!hasExactItemTextEvidence(source, productName, {
+    leftAdjacent: spec,
+    rightAdjacent: spec,
+    quantity: aiItem && aiItem.quantity,
+    unit: aiItem && aiItem.unit,
+    unitPrice: aiItem && aiItem.unitPrice,
+    priceUnit: aiItem && (aiItem.priceUnit || aiItem.unit)
+  })) return { text: '', unique: false };
+  if (spec && (!isTrustedAiItemSpecShape(spec) || !hasExactItemTextEvidence(source, spec, {
+    leftAdjacent: productName,
+    rightAdjacent: productName,
+    quantity: aiItem && aiItem.quantity,
+    unit: aiItem && aiItem.unit
+  }))) return { text: '', unique: false };
+  const productStart = source.indexOf(productName);
+  let scopeStart = productStart;
+  const prefixedQuantityStart = findPrefixedQuantityEvidenceStart(
+    source,
+    productStart,
+    aiItem && aiItem.quantity,
+    aiItem && aiItem.unit
+  );
+  if (prefixedQuantityStart >= 0) scopeStart = prefixedQuantityStart;
+  let hasPrefixedSpec = false;
+  let hasSuffixedSpec = false;
+  if (spec) {
+    const specStart = source.lastIndexOf(spec, productStart);
+    const betweenSpecAndProduct = specStart >= 0
+      ? source.slice(specStart + spec.length, productStart)
+      : '';
+    if (specStart >= 0 && /^\s*$/.test(betweenSpecAndProduct)) {
+      scopeStart = Math.min(scopeStart, specStart);
+      hasPrefixedSpec = true;
+    }
+    const productEnd = productStart + productName.length;
+    const suffixSpecStart = source.indexOf(spec, productEnd);
+    const betweenProductAndSpec = suffixSpecStart >= 0
+      ? source.slice(productEnd, suffixSpecStart)
+      : '';
+    if (suffixSpecStart >= 0 && /^[\s/\-（(【]*$/.test(betweenProductAndSpec)) {
+      hasSuffixedSpec = true;
+    }
+  }
+  if (spec && !hasPrefixedSpec && !hasSuffixedSpec) return { text: '', unique: false };
+  const nextProductStarts = aiItems
+    .filter((item) => item !== aiItem)
+    .map((item) => String(item && item.productName || '').trim())
+    .filter(Boolean)
+    // A repeated *other* product name is still a hard right boundary. Ignoring
+    // it would let the current item borrow quantity/price facts from text after
+    // that product mention. The target item itself remains subject to the
+    // stricter unique-identity check above.
+    .map((name) => source.indexOf(name, productStart + productName.length))
+    .filter((index) => index > productStart);
+  const hardStops = [
+    source.indexOf('；', productStart),
+    source.indexOf(';', productStart),
+    source.indexOf('\n', productStart),
+    source.indexOf('。', productStart)
+  ]
+    .filter((index) => index >= 0);
+  const endCandidates = nextProductStarts.concat(hardStops).filter((index) => index > productStart);
+  const end = endCandidates.length ? Math.min(...endCandidates) : source.length;
+  const scopedText = source.slice(scopeStart, end);
+  const hasScopedSpec = !spec || hasExactItemTextEvidence(scopedText, spec, {
+    leftAdjacent: productName,
+    rightAdjacent: productName,
+    quantity: aiItem && aiItem.quantity,
+    unit: aiItem && aiItem.unit
+  });
+  if (!scopedText.includes(productName) || !hasScopedSpec) {
+    return { text: '', unique: false };
+  }
+  return { text: scopedText, unique: true };
+}
+
+function buildAiAddedItem(aiItem, itemIndex, aiItems, originalText, usedKeys) {
+  const item = ensureConfirmationItemKey(aiItem, 'ai', itemIndex, usedKeys);
+  item.confirmationItemOrigin = 'AI_ADDED_ITEM';
+  const conflicts = [];
+  const scope = getAiItemEvidenceScope(originalText, item, aiItems);
+  const compositeIdentity = /^.{1,24}(?:、|,|，|&|＆|\+|＋|\/|\||｜|和|及|与|跟|加).{1,24}$/.test(
+    String(item.productName || '').trim()
+  );
+  if (!scope.unique || compositeIdentity) {
+    conflicts.push(createItemFieldConflict(
+      item,
+      itemIndex,
+      'identity',
+      'AI_ADDED_ITEM_IDENTITY_AMBIGUOUS',
+      compositeIdentity
+        ? `商品${itemIndex + 1}像是多个商品的集合，不能合并成一个商品保存。`
+        : `商品${itemIndex + 1}无法与原文片段唯一对应，请逐项确认。`
+    ));
+  }
+
+  const supported = {};
+  ['productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit', 'itemDeliveryDate', 'itemRemark']
+    .forEach((field) => {
+      if (!hasItemFactValue(item, field)) return;
+      supported[field] = scope.unique
+        && isAiItemSupplementSupported(field, item[field], item, scope.text);
+      if (!supported[field]) {
+        conflicts.push(createItemFieldConflict(
+          item,
+          itemIndex,
+          field,
+          'AI_ADDED_ITEM_FIELD_UNSUPPORTED',
+          `商品${itemIndex + 1}的${field}无法从原文逐项核对，请确认或修改。`
+        ));
+      }
+    });
+
+  const calculatedAmount = supported.quantity && supported.unitPrice
+    ? calculateAmount(item.quantity, item.unitPrice, item.unit, item.priceUnit)
+    : '';
+  if (calculatedAmount) {
+    if (hasItemFactValue(item, 'totalAmount')
+      && !itemFactValuesEqual('totalAmount', calculatedAmount, item.totalAmount)) {
+      conflicts.push(createItemFieldConflict(
+        item,
+        itemIndex,
+        'totalAmount',
+        'AI_ADDED_ITEM_TOTAL_MISMATCH',
+        `商品${itemIndex + 1}的小计与可信数量、单价计算结果不一致。`
+      ));
+    }
+    item.totalAmount = calculatedAmount;
+  } else if (hasItemFactValue(item, 'totalAmount')) {
+    conflicts.push(createItemFieldConflict(
+      item,
+      itemIndex,
+      'totalAmount',
+      'AI_ADDED_ITEM_FIELD_UNSUPPORTED',
+      `商品${itemIndex + 1}的小计缺少可信逐项计算依据。`
+    ));
+  }
+  return { item, conflicts };
+}
+
+function getUncoveredSourceProductHints(originalText, aiItems) {
+  const source = normalizeBusinessText(originalText || '');
+  if (!source) return [];
+  const explicitItemMarker = '__explicit_item_add__';
+  const segmentedSource = source.replace(
+    /(?:还有|另外|另加|再要|再加|加做|补做)/g,
+    `；${explicitItemMarker}`
+  );
+  const normalizedAiItems = Array.isArray(aiItems) ? aiItems : [];
+  const aiProducts = normalizedAiItems
+    .map((item) => normalizeItemIdentityText(item && item.productName))
+    .filter(Boolean);
+  const aiCoverageIdentities = uniqueStrings(normalizedAiItems.reduce((all, item) => {
+    const productName = normalizeItemIdentityText(item && item.productName);
+    const spec = normalizeItemIdentityText(item && item.spec);
+    if (!productName) return all;
+    all.push(productName);
+    if (spec) {
+      all.push(`${spec}${productName}`);
+      all.push(`${productName}${spec}`);
+      all.push(`${productName}（${spec}）`);
+      all.push(`${productName}(${spec})`);
+      all.push(`${productName}【${spec}】`);
+      all.push(`${productName}[${spec}]`);
+      all.push(`${productName}《${spec}》`);
+      all.push(`${productName}“${spec}”`);
+      all.push(`${productName}"${spec}"`);
+      all.push(`${productName}「${spec}」`);
+      all.push(`${productName}『${spec}』`);
+      all.push(`${productName} ${spec}`);
+      all.push(`${spec} ${productName}`);
+    }
+    return all;
+  }, []));
+  const segmentedHints = segmentedSource
+    .split(/[；;。\n，,]+/)
+    .map((clause) => String(clause || '').trim())
+    .filter(Boolean)
+    .map((clause) => clause
+      .replace(/^.*?(?:下单|订货|订购|要货|返单|补单|采购|买|要|订|拿|做)[：:\s]*/, '')
+      .replace(/^(?:要订|下单|订货|订购|要货|返单|补单|采购|买|要|订|拿|做)[：:\s]*/, '')
+      .trim())
+    .filter((clause) => {
+      if (clause.startsWith(explicitItemMarker)) return true;
+      return !aiCoverageIdentities.some((identity) => {
+        const index = clause.indexOf(identity);
+        if (index < 0) return false;
+        const before = clause.slice(0, index);
+        const after = clause.slice(index + identity.length);
+        if (/^(?:\d|[零〇一二两三四五六七八九十百千万俩]|数量|单价|价格|规格)/.test(after)) {
+          return true;
+        }
+        if (!after && new RegExp(
+          `(?:${numberPattern()})\\s*${SOURCE_EVIDENCE_UNIT_PATTERN}\\s*$`
+        ).test(before)) {
+          return true;
+        }
+        return !after && !/[A-Za-z0-9\u3400-\u9fff]/.test(before);
+      });
+    })
+    .filter((clause) => !/^(?:(?:19|20)\d{2}年)?\d{1,2}月\d{1,2}[日号]?(?:前|左右)?(?:(?:一起|统一|全部|都)?(?:交|交货|发货|出货|送货|到期))?$/.test(clause))
+    .filter((clause) => !/^(?:(?:本|这|下|上)?(?:周|星期|礼拜))[一二三四五六日天](?:(?:一起|统一|全部|都)?(?:交|发|到|交货|发货|出货|送货|到期))?$/.test(clause))
+    .filter((clause) => !/^(?:交期|交货|发货|出货|送货|到期)/.test(clause))
+    .filter((clause) => !/^(?:合计|共计|总计|总价|总金额|订单金额|金额)/.test(clause))
+    .filter((clause) => clause.startsWith(explicitItemMarker) || !(
+      /(?:定金|订金|预付|尾款|货款|欠款|收款|付款|支付|到账|转账)/.test(clause)
+      && new RegExp(`(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分)`).test(clause)
+    ))
+    .filter((clause) => !new RegExp(
+      `^(?:每${SOURCE_EVIDENCE_UNIT_PATTERN}|单价|价格)\\s*(?:是|为)?\\s*(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分)$`
+    ).test(clause))
+    .filter((clause) => !new RegExp(
+      `^(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分)\\s*(?:一|每)?${SOURCE_EVIDENCE_UNIT_PATTERN}$`
+    ).test(clause))
+    .filter((clause) => !new RegExp(
+      `^(?:${numberPattern()})\\s*(?:元|块)(?:${numberPattern()})?\\s*(?:毛|角|分)?(?:一|每)?(?:${SOURCE_EVIDENCE_UNIT_PATTERN})?$`
+    ).test(clause))
+    .filter((clause) => !new RegExp(
+      `^(?:还是|仍按|继续按|按原来)?\\s*(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分|钱)(?:一|每)?(?:${SOURCE_EVIDENCE_UNIT_PATTERN})?$`
+    ).test(clause))
+    .filter((clause) => !new RegExp(
+      `^(?:(?:数量)(?:是|为)?|共(?:计)?|合计)?\\s*(?:${numberPattern()})\\s*${SOURCE_EVIDENCE_UNIT_PATTERN}$`
+    ).test(clause))
+    .filter((clause) => !new RegExp(
+      `^每(?:箱|盒|包|袋|套)(?:装|放|含|有)?\\s*(?:${numberPattern()})\\s*${SOURCE_EVIDENCE_UNIT_PATTERN}$`
+    ).test(clause))
+    .filter((clause) => !/^(?:备注|要求|颜色|包装要求|加急|不急|尽快|不要|别|无需|禁止)/.test(clause))
+    .filter((clause) => !/(?:吗|呢|吧|么)[？?]?$/.test(clause))
+    .filter((clause) => !/(?:忙不忙|好不好|行不行|能不能|有没有)/.test(clause))
+    .filter((clause) => !/^(?:(?:我|客户|对方|老板|[^：:\s]{1,8})[：:])?(?:好|好的|可以|行|没问题|你说|收到|知道了)$/.test(clause))
+    .filter((clause) => !/(?:这是新单|不是之前那单|不是原来那单|并非之前订单)$/.test(clause))
+    .filter((clause) => !/^(?:到|交|发|要到|补一句|补充一句)$/.test(clause))
+    .filter((clause) => !/(?:客户自提|自提|现金结算|月底付款|含税|不含税|开票|发票|送到|送至|发到|配送|先打样|打样|货到付款|月结|现结|到付|包邮|运费|交货|发货|出货|收货|送货|装箱|包装要求|颜色要求|质量要求|验货|联系人|联系电话|收货地址)/.test(clause))
+    .filter((clause) => !/^[\u3400-\u9fff]{1,6}色$/.test(clause))
+    .filter((clause) => !/^(?:加隔板|贴标签|贴标|印logo|印LOGO|印字|印花|丝印|移印|烫金|烫银|激光|打孔|冲孔|覆膜|过膜|喷涂|喷漆|加厚|防水|防潮|防刮|防锈|抛光|磨砂|做旧|电镀|装磁铁|配内衬|加内衬)$/.test(clause))
+    .map((clause) => {
+      const explicitItem = clause.startsWith(explicitItemMarker);
+      const candidateClause = explicitItem
+        ? clause.slice(explicitItemMarker.length).trim()
+        : clause;
+      if (new RegExp(
+        `^(?:${numberPattern()})\\s*${SOURCE_EVIDENCE_UNIT_PATTERN}$`
+      ).test(candidateClause)) return '';
+      const pendingField = candidateClause.match(
+        /^([\u3400-\u9fffA-Za-z0-9Ａ-Ｚａ-ｚ０-９.\/\-]{1,24}?)[，,、：:\s]*(?:数量|单价|价格|规格)\s*(?:是|为)?\s*(?:待定|未定|待确认|不确定|未提供|没说|不知道|晚点确认|稍后确认|后续确认|回头确认)$/
+      );
+      if (pendingField) return pendingField[1];
+      if (!explicitItem && (
+        /^(?:包装|加工|工艺|材质|颜色|标签|印刷|唛头|款式|尺寸|质量|外箱|内盒)/.test(candidateClause)
+        || /^(?:加|贴|印|喷|烫|打|装|配|换成|做成|改成)[\u3400-\u9fffA-Za-z0-9]/.test(candidateClause)
+        || /^[\u3400-\u9fffA-Za-z0-9]{1,12}级$/.test(candidateClause)
+        || /^\d{2,4}[\u3400-\u9fffA-Za-z]{1,12}$/.test(candidateClause)
+      )) {
+        return '';
+      }
+      const explicitItemFact = candidateClause.match(new RegExp(
+        `^(${SOURCE_ITEM_IDENTITY_TOKEN}{1,24}?)(?:${SOURCE_SPEC_SEGMENT_PATTERN})?\\s*(?:${numberPattern()})\\s*(${SOURCE_EVIDENCE_UNIT_PATTERN})$`
+      ));
+      if (explicitItemFact
+        && !isNonProductSourceFact(explicitItemFact[1], explicitItemFact[2], explicitItem)) {
+        return explicitItemFact[1];
+      }
+      const bracketedItemFact = candidateClause.match(new RegExp(
+        `^(${SOURCE_ITEM_IDENTITY_TOKEN}{1,24}?)${SOURCE_SPEC_SEGMENT_PATTERN}\\s*(?:${numberPattern()})\\s*(${SOURCE_GENERIC_MEASURE_PATTERN})$`
+      ));
+      if (bracketedItemFact
+        && !isNonProductSourceFact(bracketedItemFact[1], bracketedItemFact[2], explicitItem)) {
+        return bracketedItemFact[1];
+      }
+      return /^[\u3400-\u9fffA-Za-z0-9Ａ-Ｚａ-ｚ０-９.\/\-]{1,24}$/.test(candidateClause)
+        ? candidateClause
+        : '';
+    })
+    .map((product) => normalizeItemIdentityText(product))
+    .filter(Boolean)
+    .filter((product) => !aiProducts.some((aiProduct) => (
+      aiProduct === product
+    )));
+  return uniqueStrings(segmentedHints);
+}
+
+function isNonProductSourceFact(label, unit, explicitlyAdded = false) {
+  if (explicitlyAdded) return false;
+  const normalizedLabel = normalizeItemIdentityText(label);
+  const normalizedUnit = normalizeItemIdentityText(unit);
+  if (!normalizedLabel) return true;
+  if (/^(?:元|块|块钱|毛|角|分|月|日|号|年|天|周|星期|点|时|分钟|工作日|字|折|处|道|班|遍|次|usd|cny|rmb|eur|gbp|jpy|hkd|cad|aud|day|days|week|weeks|month|months|year|years|yr|yrs|hr|hrs|hour|hours|min|mins|minute|minutes)$/.test(normalizedUnit)) {
+    return true;
+  }
+  if (/^(?:说明|备注|折扣|优惠|报价|价格|金额|总价|总金额|检验|抽检|质检|班次|工时|工序|工艺|加工|排产|交期|账期|税率|质保|保修|有效期|保质期)$/.test(normalizedLabel)) {
+    return true;
+  }
+  return /(?:刻字|雕刻|绣字|开槽|缝线|车缝|锁边|包边|裁剪|切割|焊接|滴胶|抛光|打孔|冲孔|喷涂|喷漆|印刷|丝印|移印|烫金|烫银|电镀|检验|抽检|质检|装配|组装|包装|加工)$/.test(normalizedLabel);
+}
+
+function getIndependentOriginalItemCount(localResult = {}, options = {}) {
+  const originalText = localResult.original_text || localResult.originalText || '';
+  const source = String(originalText || '');
+  if (!source.trim()) return 0;
+  const localItems = Array.isArray((localResult.fields || {}).items)
+    ? localResult.fields.items
+    : [];
+  const productNames = uniqueStrings([].concat(
+    localItems.map((item) => String(item && item.productName || '').trim()),
+    (Array.isArray(options.aiItems) ? options.aiItems : [])
+      .map((item) => String(item && item.productName || '').trim())
+  )).filter(Boolean);
+  const productSpans = [];
+  productNames.forEach((productName) => {
+    let cursor = 0;
+    while (cursor <= source.length) {
+      const index = source.indexOf(productName, cursor);
+      if (index < 0) break;
+      productSpans.push({ start: index, end: index + productName.length });
+      cursor = index + productName.length;
+    }
+  });
+  const itemUnit = SOURCE_EVIDENCE_UNIT_PATTERN;
+  const matches = Array.from(source.matchAll(new RegExp(`(${numberPattern()})\\s*(${itemUnit})`, 'g')));
+  return matches.filter((match) => {
+    const matchStart = Number(match.index || 0);
+    const matchEnd = matchStart + String(match[0] || '').length;
+    if (productSpans.some((span) => matchStart >= span.start && matchEnd <= span.end)) {
+      return false;
+    }
+    const parsed = parseChineseNumber(match[1]);
+    if (!Number.isFinite(parsed) || parsed <= 0) return false;
+    const prefix = source.slice(Math.max(0, match.index - 24), match.index);
+    const suffix = source.slice(match.index + match[0].length, match.index + match[0].length + 8);
+    const sourceFactLabel = prefix.match(
+      new RegExp(`(${SOURCE_ITEM_IDENTITY_TOKEN}{1,24}?)(?:${SOURCE_SPEC_SEGMENT_PATTERN})?\\s*$`)
+    );
+    const explicitlyAdded = /(?:还有|另外|另加|再要|再加|加做|补做)[^；;。，,]{0,24}$/.test(prefix);
+    if (/(?:不是|并非|不对(?:是)?|更正(?:为|成)?)\s*$/.test(prefix)) return false;
+    if (sourceFactLabel
+      && isNonProductSourceFact(sourceFactLabel[1], match[2], explicitlyAdded)) {
+      return false;
+    }
+    if (parsed === 1
+      && new RegExp(`(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分|钱)\\s*(?:${numberPattern()})?\\s*$`).test(prefix)) {
+      return false;
+    }
+    if (parsed === 1
+      && /^(?:\d|[零〇一二两三四五六七八九十百千万俩])(?:块|元|毛|角|分|钱)/.test(suffix)) {
+      return false;
+    }
+    if (/每(?:箱|盒|包|袋|套)(?:装|放|含|有)?\s*$/.test(prefix)) return false;
+    return true;
+  }).length;
+}
+
+function applyAiItemStructureGuard(localResult = {}, aiFields = {}, options = {}) {
   const localFields = localResult.fields || {};
-  const localItems = normalizeAiItems(localFields.items || []);
+  const rawLocalItems = Array.isArray(localFields.items) ? localFields.items : [];
+  const localItems = normalizeAiItems(rawLocalItems || []);
   const aiItems = normalizeAiItems(aiFields.items || []);
   const joined = hasJoinedMultiItemValue(aiFields);
   const malformed = joined && aiItems.length < 2;
@@ -2254,35 +3153,179 @@ function applyAiItemStructureGuard(localResult = {}, aiFields = {}) {
     ));
   }
 
-  if (localItems.length > 1) {
-    const matches = aiItems.length === localItems.length
-      ? matchItemsByUniqueIdentity(localItems, aiItems)
-      : null;
+  const independentOriginalItemCount = aiItems.length
+    ? getIndependentOriginalItemCount(localResult, Object.assign({}, options, { aiItems }))
+    : 0;
+  const uncoveredSourceProductHints = aiItems.length > 0
+    ? getUncoveredSourceProductHints(
+      localResult.original_text || localResult.originalText || '',
+      aiItems
+    )
+    : [];
+  if (independentOriginalItemCount > aiItems.length || uncoveredSourceProductHints.length) {
+    const conflict = createItemIntegrityConflict(
+      [
+        `sourceCount>=${independentOriginalItemCount}`,
+        `aiCount=${aiItems.length}`
+      ].concat(uncoveredSourceProductHints.map((product) => `uncovered:${product}`)),
+      '原文仍有未被 AI 逐项覆盖的商品事实，不能按不完整商品清单保存。'
+    );
+    conflict.code = 'AI_ITEM_SOURCE_COVERAGE_INCOMPLETE';
+    conflict.itemField = 'identity';
+    conflict.fieldPath = 'items';
+    conflicts.push(conflict);
+  }
+
+  if (localItems.length > 1 && aiItems.length === 0) {
+    const usedKeys = new Set();
+    const duplicatedLocalKeys = getDuplicatedConfirmationItemKeys(rawLocalItems);
+    const keyedLocalItems = localItems.map((item, index) => ensureConfirmationItemKey(
+      Object.assign({}, item, {
+        confirmationItemKey: duplicatedLocalKeys.has(String(
+          rawLocalItems[index] && rawLocalItems[index].confirmationItemKey || ''
+        ).trim())
+          ? ''
+          : String(rawLocalItems[index] && rawLocalItems[index].confirmationItemKey || '')
+      }),
+      'local',
+      index,
+      usedKeys
+    ));
+    fields = projectFirstItemToLegacyFields(fields, keyedLocalItems);
+    const conflict = createItemIntegrityConflict(
+      [`localCount=${localItems.length}`, 'aiCount=0'],
+      '本地已识别多件商品，但 AI 没有返回逐项商品结构，已保留本地明细并要求确认。'
+    );
+    conflict.code = 'AI_ITEM_STRUCTURE_MISSING';
+    conflict.itemField = 'identity';
+    conflict.fieldPath = 'items';
+    conflicts.push(conflict);
+  }
+
+  if (localItems.length > 0 && aiItems.length > 0) {
+    const usedKeys = new Set();
+    const duplicatedLocalKeys = getDuplicatedConfirmationItemKeys(rawLocalItems);
+    const keyedLocalItems = localItems.map((item, index) => ensureConfirmationItemKey(
+      Object.assign({}, item, {
+        confirmationItemKey: duplicatedLocalKeys.has(String(
+          rawLocalItems[index] && rawLocalItems[index].confirmationItemKey || ''
+        ).trim())
+          ? ''
+          : String(rawLocalItems[index] && rawLocalItems[index].confirmationItemKey || '')
+      }),
+      'local',
+      index,
+      usedKeys
+    ));
+    let matches = matchItemsByUniqueIdentity(keyedLocalItems, aiItems);
+    let trustedIdentityCorrection = false;
+    if (!matches
+      && keyedLocalItems.length === 1
+      && aiItems.length === 1
+      && hasAiIdentityCorrectionEvidence(
+        localResult,
+        keyedLocalItems[0],
+        aiItems[0],
+        aiItems
+      )) {
+      matches = [0];
+      trustedIdentityCorrection = true;
+    }
     if (!matches) {
-      fields = projectFirstItemToLegacyFields(fields, localItems);
+      fields = projectFirstItemToLegacyFields(fields, keyedLocalItems);
       if (!malformed) {
-        conflicts.push(createItemIntegrityConflict(
+        const conflict = createItemIntegrityConflict(
           [`localCount=${localItems.length}`, `aiCount=${aiItems.length}`],
           'AI 商品无法与本地商品逐项唯一对应，已保留本地明细并要求确认。'
-        ));
+        );
+        conflict.code = 'AI_ITEM_IDENTITY_AMBIGUOUS';
+        conflict.itemField = 'identity';
+        conflict.itemIndex = 0;
+        conflict.itemKey = String(keyedLocalItems[0] && keyedLocalItems[0].confirmationItemKey || '');
+        conflict.fieldPath = 'items';
+        conflicts.push(conflict);
       }
     } else {
       const factConflicts = [];
-      const evidenceScopes = buildLocalItemEvidenceScopes(localResult, localItems);
-      const mergedItems = matches.map((aiIndex, localIndex) => mergeMatchedItemFacts(
-        localItems[localIndex],
-        aiItems[aiIndex],
-        localIndex,
-        factConflicts,
-        evidenceScopes[localIndex]
-      ));
+      const originalText = localResult.original_text || localResult.originalText || '';
+      const evidenceScopes = matches.map((aiIndex) => {
+        const scope = getAiItemEvidenceScope(originalText, aiItems[aiIndex], aiItems);
+        return scope.unique ? scope.text : '';
+      });
+      const localByAiIndex = {};
+      matches.forEach((aiIndex, localIndex) => {
+        localByAiIndex[aiIndex] = localIndex;
+      });
+      const mergedItems = aiItems.map((aiItem, aiIndex) => {
+        if (Object.prototype.hasOwnProperty.call(localByAiIndex, aiIndex)) {
+          const localIndex = localByAiIndex[aiIndex];
+          const matchedAiItem = Object.assign({}, aiItem);
+          // Some providers repeat the order-level delivery date inside every
+          // item. When it is identical to the already trusted top-level date,
+          // it is redundant transport shape rather than a new item fact.
+          if (!hasItemFactValue(keyedLocalItems[localIndex], 'itemDeliveryDate')
+            && hasItemFactValue(matchedAiItem, 'itemDeliveryDate')
+            && hasItemFactValue(localFields, 'dueDate')
+            && itemFactValuesEqual(
+              'itemDeliveryDate',
+              matchedAiItem.itemDeliveryDate,
+              localFields.dueDate
+            )) {
+            delete matchedAiItem.itemDeliveryDate;
+          }
+          if (!hasItemFactValue(matchedAiItem, 'priceUnit')
+            && hasItemFactValue(matchedAiItem, 'unit')
+            && hasItemFactValue(matchedAiItem, 'unitPrice')
+            && isAiItemSupplementSupported(
+              'unitPrice',
+              matchedAiItem.unitPrice,
+              matchedAiItem,
+              evidenceScopes[localIndex]
+            )) {
+            matchedAiItem.priceUnit = matchedAiItem.unit;
+          }
+          const mergedItem = mergeMatchedItemFacts(
+            keyedLocalItems[localIndex],
+            matchedAiItem,
+            aiIndex,
+            factConflicts,
+            evidenceScopes[localIndex],
+            {
+              trustedIdentityCorrection,
+              localRiskFields: getDeclaredLocalItemRiskFields(
+                localResult,
+                keyedLocalItems[localIndex],
+                localIndex,
+                keyedLocalItems.length
+              )
+            }
+          );
+          mergedItem.confirmationItemKey = keyedLocalItems[localIndex].confirmationItemKey;
+          mergedItem.confirmationItemOrigin = 'LOCAL_MATCHED';
+          return mergedItem;
+        }
+        const addedAiItem = Object.assign({}, aiItem);
+        if (hasItemFactValue(addedAiItem, 'itemDeliveryDate')
+          && hasItemFactValue(localFields, 'dueDate')
+          && itemFactValuesEqual(
+            'itemDeliveryDate',
+            addedAiItem.itemDeliveryDate,
+            localFields.dueDate
+          )) {
+          delete addedAiItem.itemDeliveryDate;
+        }
+        const added = buildAiAddedItem(
+          addedAiItem,
+          aiIndex,
+          aiItems,
+          localResult.original_text || localResult.originalText || '',
+          usedKeys
+        );
+        conflicts.push(...added.conflicts);
+        return added.item;
+      });
       fields = projectFirstItemToLegacyFields(fields, mergedItems);
-      if (factConflicts.length) {
-        conflicts.push(createItemIntegrityConflict(
-          factConflicts,
-          'AI 返回的逐项商品事实与本地原文提取结果冲突，已保留本地明确事实并要求确认。'
-        ));
-      }
+      conflicts.push(...factConflicts);
     }
   }
 
@@ -2615,7 +3658,7 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
   const aiFields = prepared.fields;
   const intent = mergeAiIntent(localResult, normalized);
   const hardSafety = getLocalHardSafety(localResult, normalized);
-  const itemStructure = applyAiItemStructureGuard(localResult, aiFields);
+  const itemStructure = applyAiItemStructureGuard(localResult, aiFields, options);
   const aiMissingFields = toStringArray(normalized.missing_fields || normalized.missingFields);
   const aiLowFields = toStringArray(normalized.low_confidence_fields || normalized.lowConfidenceFields);
   const aiConflicts = toArray(normalized.field_conflicts || normalized.fieldConflicts);
@@ -2646,6 +3689,29 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
   // provenance are transport/control-plane facts and must never be supplied by
   // the model response. Keep the local route/safety values and let the shared
   // core attach its protected record_flow_context after normalization.
+  // `manual_fields` means a real user edited or confirmed a field. It is trust
+  // metadata, not an AI business fact, so only the pre-merge local draft may
+  // contribute it; provider JSON and its camelCase alias are always discarded.
+  merged.manual_fields = normalizeManualFields(localResult.manual_fields);
+  delete merged.manualFields;
+  merged.manual_item_fields = normalizeManualItemFields(
+    localResult.manual_item_fields,
+    (itemStructure.fields || {}).items || []
+  );
+  delete merged.manualItemFields;
+  delete merged.item_manual_fields;
+  delete merged.itemManualFields;
+  // User-resolution evidence is created only by the confirmation page after
+  // this AI cycle. Neither model JSON nor a previous cycle may carry it into a
+  // new result. Incrementing the revision also invalidates any copied proof
+  // that was bound to the prior AI risk set.
+  merged.ai_resolution_revision = Math.max(0, Number(localResult.ai_resolution_revision || 0)) + 1;
+  merged.user_manual_edits = [];
+  delete merged.userManualEdits;
+  delete merged.user_resolution;
+  delete merged.userResolution;
+  delete merged.resolutionOutcome;
+  delete merged.allRisksResolved;
   merged.parse_route = localResult.parse_route;
   merged.local_parse_safety = localResult.local_parse_safety;
   merged.parse_trace = localResult.parse_trace;

@@ -229,28 +229,28 @@
     <view wx:if="{{showProductSuggestion}}" class="confirm-warning" data-value="{{productSuggestionValue}}" bindtap="applyProductSuggestion">{{productSuggestionText}} 点这里采用建议</view>
     <view wx:if="{{showItemList}}" class="item-list-field">
       <view class="label">商品明细</view>
-      <view wx:for="{{confirmItems}}" wx:for-item="item" wx:for-index="itemIndex" wx:key="itemKey" class="confirm-item-card">
+      <view wx:for="{{confirmItems}}" wx:for-item="item" wx:for-index="itemIndex" wx:key="itemKey" class="confirm-item-card" data-item-key="{{item.itemKey}}">
         <view class="confirm-item-head">
           <text>{{item.indexLabel}}</text>
-          <text wx:if="{{item.canRemove}}" class="confirm-item-remove" data-index="{{itemIndex}}" bindtap="removeConfirmItem">删除此项</text>
+          <text wx:if="{{item.canRemove}}" class="confirm-item-remove" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" bindtap="removeConfirmItem">删除此项</text>
         </view>
         <view class="field item-field">
           <text class="label">商品</text>
-          <input class="input" value="{{item.productName}}" data-index="{{itemIndex}}" data-field="productName" bindinput="updateItemField" placeholder="例如：保温杯" />
+          <input class="input" value="{{item.productName}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="productName" bindinput="updateItemField" placeholder="例如：保温杯" />
           <view wx:if="{{item.showProductCatalogSuggestions}}" class="catalog-suggestion-box">
             <view class="catalog-suggestion-label">商品库里的常用商品</view>
             <view class="catalog-chip-row">
-              <text wx:for="{{item.productSuggestions}}" wx:for-item="suggestion" wx:key="*this" class="catalog-chip" data-index="{{itemIndex}}" data-value="{{suggestion}}" bindtap="applyCatalogProduct">{{suggestion}}</text>
+              <text wx:for="{{item.productSuggestions}}" wx:for-item="suggestion" wx:key="*this" class="catalog-chip" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-value="{{suggestion}}" bindtap="applyCatalogProduct">{{suggestion}}</text>
             </view>
           </view>
         </view>
         <view class="field item-field">
           <text class="label">规格</text>
-          <input class="input" value="{{item.spec}}" data-index="{{itemIndex}}" data-field="spec" bindinput="updateItemField" placeholder="例如：紫色、红色、大号" />
+          <input class="input" value="{{item.spec}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="spec" bindinput="updateItemField" placeholder="例如：紫色、红色、大号" />
           <view wx:if="{{item.showSpecCatalogSuggestions}}" class="catalog-suggestion-box">
             <view class="catalog-suggestion-label">这个商品的常用规格</view>
             <view class="catalog-chip-row">
-              <text wx:for="{{item.specSuggestions}}" wx:for-item="suggestion" wx:key="*this" class="catalog-chip" data-index="{{itemIndex}}" data-value="{{suggestion}}" bindtap="applyCatalogSpec">{{suggestion}}</text>
+              <text wx:for="{{item.specSuggestions}}" wx:for-item="suggestion" wx:key="*this" class="catalog-chip" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-value="{{suggestion}}" bindtap="applyCatalogSpec">{{suggestion}}</text>
             </view>
           </view>
         </view>
@@ -258,26 +258,26 @@
         <view class="grid-2">
           <view class="field item-field">
             <text class="label">数量</text>
-            <input class="input" value="{{item.quantity}}" data-index="{{itemIndex}}" data-field="quantity" bindinput="updateItemField" type="digit" />
+            <input class="input" value="{{item.quantity}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="quantity" bindinput="updateItemField" type="digit" />
           </view>
           <view class="field item-field">
             <text class="label">单位</text>
-            <input class="input" value="{{item.unit}}" data-index="{{itemIndex}}" data-field="unit" bindinput="updateItemField" />
+            <input class="input" value="{{item.unit}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="unit" bindinput="updateItemField" />
           </view>
         </view>
         <view class="grid-2">
           <view class="field item-field">
             <text class="label">单价</text>
-            <input class="input" value="{{item.unitPrice}}" data-index="{{itemIndex}}" data-field="unitPrice" bindinput="updateItemField" type="digit" />
+            <input class="input" value="{{item.unitPrice}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="unitPrice" bindinput="updateItemField" type="digit" />
           </view>
           <view class="field item-field">
             <text class="label">计价单位</text>
-            <input class="input" value="{{item.priceUnit}}" data-index="{{itemIndex}}" data-field="priceUnit" bindinput="updateItemField" placeholder="通常同数量单位" />
+            <input class="input" value="{{item.priceUnit}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="priceUnit" bindinput="updateItemField" placeholder="通常同数量单位" />
           </view>
         </view>
         <view class="field item-field">
           <text class="label">该项金额</text>
-          <input class="input" value="{{item.totalAmount}}" data-index="{{itemIndex}}" data-field="totalAmount" bindinput="updateItemField" type="digit" placeholder="单位不同时请手动确认" />
+          <input class="input" value="{{item.totalAmount}}" data-index="{{itemIndex}}" data-item-key="{{item.itemKey}}" data-field="totalAmount" bindinput="updateItemField" type="digit" placeholder="单位不同时请手动确认" />
         </view>
         <view wx:if="{{item.showItemDeliveryDate}}" class="item-meta-line">单项交期：{{item.itemDeliveryDate}}</view>
         <view wx:if="{{item.itemRemark}}" class="item-meta-line">备注：{{item.itemRemark}}</view>
@@ -395,6 +395,10 @@
       <textarea class="textarea small-textarea" value="{{fields.remark}}" maxlength="-1" data-field="remark" bindinput="updateField" />
     </view>
 
+    <view wx:if="{{showDomainBlocking}}" class="warning-box domain-blocking-box">
+      <view class="card-title">正式保存前还要处理</view>
+      <view wx:for="{{domainBlockingLines}}" wx:key="*this" class="warning-line">{{item}}</view>
+    </view>
     <view wx:if="{{showWarning}}" class="warning-box">
       <view class="card-title">需要确认</view>
       <view class="muted">有缺失或低置信度字段。补齐后点确认保存；不确定就先存到待整理。</view>
@@ -411,7 +415,7 @@
       <button class="secondary-button" bindtap="returnToInput">继续修改</button>
       <button wx:if="{{showPendingButton}}" class="secondary-button" bindtap="savePending">先放待整理</button>
       <button wx:if="{{showDeepReviewButton}}" class="secondary-button" bindtap="requestDeepReview">深度核对</button>
-      <button wx:if="{{showFormalSaveButton}}" class="primary-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
+      <button wx:if="{{showFormalSaveButton}}" class="primary-button formal-save-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
     </view>
   </view>
   </view>

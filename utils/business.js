@@ -4,6 +4,7 @@ const { ensureProductCatalog, learnProductCatalogFromRecord } = require('./produ
 const {
   ACTIVE_ORDER_STATUSES: activeOrderStatuses,
   ACTIVE_RECEIVABLE_STATUSES: activeReceivableStatuses,
+  calculateCanonicalOrderItemsTotal,
   calculateOrderDepositAmount,
   calculateOrderRemainingSettlement,
   customerNameMatches,
@@ -783,7 +784,25 @@ function saveOrder(state, parseResult) {
     return Object.assign({}, quotationLinkError, { noMutation: true });
   }
   const items = normalizeLineItemsFromFields(fields);
-  const draftTotalAmount = getDraftTotalAmount(fields, items);
+  const orderItemsTotal = calculateCanonicalOrderItemsTotal(
+    Object.assign({}, fields, { items }),
+    parseResult
+  );
+  if (orderItemsTotal.mismatchedFields.length) {
+    return {
+      error: '订单总额与商品明细合计不一致，请确认后再保存。',
+      field: orderItemsTotal.mismatchedFields.some((field) => field.startsWith('items.'))
+        ? 'items'
+        : 'amount',
+      code: 'ORDER_TOTAL_ITEMS_MISMATCH',
+      noMutation: true
+    };
+  }
+  const draftTotalAmount = orderItemsTotal.hasConfirmedTotal
+    ? orderItemsTotal.confirmedTotalAmount
+    : (orderItemsTotal.complete
+      ? orderItemsTotal.canonicalTotalAmount
+      : getDraftTotalAmount(fields, items));
   if (quotationAssessment) {
     const draftValidation = getQuotationItemsValidation({
       items,
@@ -1127,6 +1146,24 @@ function saveTodo(state, parseResult) {
   return todo;
 }
 
+function formalSaveBlocked(error, field = '', code = 'FORMAL_SAVE_BLOCKED', details = {}) {
+  return Object.assign({
+    type: 'error',
+    blocked: true,
+    code,
+    error: error || '正式保存被阻止，请确认后再试。',
+    field,
+    noMutation: true
+  }, details);
+}
+
+function restoreBusinessState(state, snapshot) {
+  Object.keys(state).forEach((key) => delete state[key]);
+  Object.keys(snapshot).forEach((key) => {
+    state[key] = snapshot[key];
+  });
+}
+
 function saveConfirmedDraft(state, parseResult) {
   if (isNoRecordPersistenceForbidden(parseResult || {})) {
     return {
@@ -1159,142 +1196,74 @@ function saveConfirmedDraft(state, parseResult) {
       || (firstIssue.messageParams && firstIssue.messageParams.reason)
       || firstIssue.messageKey
       || '信息不完整，需要稍后整理';
-    if (parseResult.edit_mode === 'direct_order') {
-      return {
-        type: 'error',
-        error: preflightReason,
-        field: firstIssue.field || '',
-        preflight
-      };
-    }
-    appendParseLog(state, parseResult, 'save_pending');
-    return {
-      type: 'pending',
-      record: savePendingNote(state, parseResult, preflightReason),
-      preflight
-    };
+    return formalSaveBlocked(
+      preflightReason,
+      firstIssue.field || '',
+      firstIssue.code || 'FORMAL_SAVE_BLOCKED',
+      { preflight }
+    );
   }
+  const stateBeforeSave = cloneRecord(state);
   const saveResult = (() => {
   if (parseResult.operation === 'update_quotation') {
     const record = updateQuotationFromDraft(state, parseResult);
     if (record && !record.error) return { type: 'quotation', record };
-    if (record && record.error) {
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: Array.from(new Set(
-          (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
-        ))
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult, record.error) };
-    }
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['quotationId'] })) };
+    if (record && record.error) return formalSaveBlocked(record.error, record.field || '', record.code || 'QUOTATION_UPDATE_BLOCKED');
+    return formalSaveBlocked('没有找到要修改的报价。', 'quotationId', 'QUOTATION_TARGET_NOT_FOUND');
   }
   if (parseResult.operation === 'update_order') {
     const record = updateOrderFromDraft(state, parseResult);
     if (record && !record.error) return { type: 'order', record };
-    if (record && record.error) {
-      if (parseResult.edit_mode === 'direct_order') {
-        return { type: 'error', error: record.error, field: record.field || '' };
-      }
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: Array.from(new Set(
-          (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
-        ))
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult, record.error) };
-    }
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['orderId'] })) };
+    if (record && record.error) return formalSaveBlocked(record.error, record.field || '', record.code || 'ORDER_UPDATE_BLOCKED');
+    return formalSaveBlocked('没有找到要修改的订单。', 'orderId', 'ORDER_TARGET_NOT_FOUND');
   }
   if (parseResult.intent === 'quotation') {
     const record = saveQuotation(state, parseResult);
     if (record) return { type: 'quotation', record };
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+    return formalSaveBlocked('有多个同名客户，需要先确认关联哪一个客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
   if (parseResult.intent === 'order') {
     const record = saveOrder(state, parseResult);
     if (record && !record.error) return { type: 'order', record };
-    if (record && record.error) {
-      if (record.noMutation) {
-        return {
-          type: 'error',
-          error: record.error,
-          field: record.field || '',
-          code: record.code || '',
-          noMutation: true
-        };
-      }
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: Array.from(new Set(
-          (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
-        ))
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult, record.error) };
-    }
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+    if (record && record.error) return formalSaveBlocked(record.error, record.field || '', record.code || 'ORDER_SAVE_BLOCKED');
+    return formalSaveBlocked('有多个同名客户，需要先确认关联哪一个客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
   if (parseResult.operation === 'record_order_deposit') {
     const record = saveOrderDeposit(state, parseResult);
     if (record && !record.error) return { type: 'order_deposit', record };
-    const nextResult = Object.assign({}, parseResult, {
-      low_confidence_fields: Array.from(new Set(
-        (parseResult.low_confidence_fields || []).concat(record && record.field ? [record.field] : [])
-      ))
-    });
-    appendParseLog(state, nextResult, 'save_pending');
-    return {
-      type: 'pending',
-      record: savePendingNote(state, nextResult, (record && record.error) || '没有找到可关联的唯一订单，先存到待整理')
-    };
+    return formalSaveBlocked(
+      (record && record.error) || '没有找到可关联的唯一订单。',
+      (record && record.field) || 'orderId',
+      (record && record.code) || 'ORDER_DEPOSIT_SAVE_BLOCKED'
+    );
   }
   if (parseResult.intent === 'receivable') {
     const record = saveReceivable(state, parseResult);
     if (record && !record.error) return { type: 'receivable', record };
-    if (record && record.error) {
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: Array.from(new Set(
-          (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
-        ))
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult, record.error) };
-    }
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+    if (record && record.error) return formalSaveBlocked(record.error, record.field || '', record.code || 'RECEIVABLE_SAVE_BLOCKED');
+    return formalSaveBlocked('有多个同名客户，需要先确认关联哪一个客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
   if (parseResult.intent === 'todo') {
     const record = saveTodo(state, parseResult);
     if (record) return { type: 'todo', record };
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+    return formalSaveBlocked('有多个同名客户，需要先确认关联哪一个客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
   if (parseResult.intent === 'dunning') {
     const record = saveTodo(state, parseResult);
     if (record) return { type: 'todo', record };
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+    return formalSaveBlocked('有多个同名客户，需要先确认关联哪一个客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
   if (parseResult.operation === 'create_receivable_with_payment') {
     const fields = parseResult.fields || {};
     const totalAmount = toMoney(fields.amount);
     const paymentAmount = toMoney(getPaymentAmount(fields));
-    if (paymentAmount > totalAmount) {
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: ['paymentAmount']
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult) };
-    }
+    if (paymentAmount > totalAmount) return formalSaveBlocked(
+      '收款金额不能超过待收总额。', 'paymentAmount', 'PAYMENT_EXCEEDS_RECEIVABLE'
+    );
     const record = saveReceivableWithPayment(state, parseResult);
     if (record && !record.error) return { type: 'receivable_with_payment', record };
-    if (record && record.error) {
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: Array.from(new Set(
-          (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
-        ))
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult, record.error) };
-    }
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '有多个同名客户，需要先确认关联哪一个客户') };
+    if (record && record.error) return formalSaveBlocked(record.error, record.field || '', record.code || 'RECEIVABLE_PAYMENT_SAVE_BLOCKED');
+    return formalSaveBlocked('有多个同名客户，需要先确认关联哪一个客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
   if (parseResult.intent === 'payment') {
     const fields = parseResult.fields || {};
@@ -1302,29 +1271,19 @@ function saveConfirmedDraft(state, parseResult) {
       item.id === fields.receivableId && activeReceivableStatuses.includes(item.status)
     ));
     const paymentAmount = toMoney(getPaymentAmount(fields));
-    if (activeReceivable && paymentAmount > getReceivableRemaining(activeReceivable)) {
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: ['paymentAmount']
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult) };
-    }
+    if (activeReceivable && paymentAmount > getReceivableRemaining(activeReceivable)) return formalSaveBlocked(
+      '收款金额不能超过剩余待收金额。', 'paymentAmount', 'PAYMENT_EXCEEDS_REMAINING'
+    );
     const record = savePayment(state, parseResult);
     if (record && !record.error) return { type: 'payment', record };
-    if (record && record.error) {
-      const nextResult = Object.assign({}, parseResult, {
-        low_confidence_fields: Array.from(new Set(
-          (parseResult.low_confidence_fields || []).concat(record.field ? [record.field] : [])
-        ))
-      });
-      appendParseLog(state, nextResult, 'save_pending');
-      return { type: 'pending', record: savePendingNote(state, nextResult, record.error) };
-    }
-    return { type: 'pending', record: savePendingNote(state, Object.assign({}, parseResult, { missing_fields: ['customerId'] }), '缺少可确认的客户，先存到待整理') };
+    if (record && record.error) return formalSaveBlocked(record.error, record.field || '', record.code || 'PAYMENT_SAVE_BLOCKED');
+    return formalSaveBlocked('缺少可确认的客户。', 'customerId', 'CUSTOMER_SELECTION_REQUIRED');
   }
-  appendParseLog(state, parseResult, 'save_pending');
-  return { type: 'pending', record: savePendingNote(state, parseResult) };
+  return formalSaveBlocked('当前草稿不能正式保存。', 'intent', 'FORMAL_SAVE_UNSUPPORTED');
   })();
+  if (saveResult.type === 'error' || saveResult.blocked === true) {
+    restoreBusinessState(state, stateBeforeSave);
+  }
   return Object.assign({}, saveResult, { preflight });
 }
 
