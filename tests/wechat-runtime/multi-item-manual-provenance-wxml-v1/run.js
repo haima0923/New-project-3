@@ -28,7 +28,9 @@ const SOURCE_FILES = [
   'pages/input/input.js',
   'pages/input/input.wxml',
   'utils/ai-parser.js',
+  'utils/business.js',
   'utils/parse-safety.js',
+  'utils/parser.js',
   'utils/record-domain-preflight.js'
 ];
 

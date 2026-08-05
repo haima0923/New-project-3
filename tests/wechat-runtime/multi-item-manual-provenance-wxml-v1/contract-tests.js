@@ -285,6 +285,23 @@ test('WXML-010', '真实WXML runner保留porcelain首列身份', () => {
   assert(!/const worktreeStatus = git\('status', '--short'\)/.test(REAL_WXML_RUNNER));
 });
 
+test('WXML-011', '真实WXML runner哈希覆盖全部候选生产文件', () => {
+  const allowedMatch = REAL_WXML_RUNNER.match(
+    /const ALLOWED_WORKTREE_FILES = new Set\(\[([\s\S]*?)\]\);/
+  );
+  const sourceMatch = REAL_WXML_RUNNER.match(
+    /const SOURCE_FILES = \[([\s\S]*?)\];/
+  );
+  assert(allowedMatch, '必须能读取候选生产文件白名单');
+  assert(sourceMatch, '必须能读取候选源码哈希文件表');
+  const readFiles = (source) => Array.from(source.matchAll(/'([^']+)'/g), (entry) => entry[1]).sort();
+  assert.deepStrictEqual(
+    readFiles(sourceMatch[1]),
+    readFiles(allowedMatch[1]),
+    '源码哈希必须逐项覆盖全部允许的未提交生产文件'
+  );
+});
+
 function main() {
   let passed = 0;
   let failed = 0;
