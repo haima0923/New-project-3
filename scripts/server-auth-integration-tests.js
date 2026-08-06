@@ -23,7 +23,12 @@ function getFreePort() {
 
 function request(port, pathName, token = '') {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ text: '王总订水杯100个' });
+    const body = JSON.stringify({
+      businessDate: '2026-07-22',
+      businessTimezone: 'Asia/Shanghai',
+      nowInstant: '2026-07-22T02:30:00.000Z',
+      text: '王总订水杯100个，5块5一个，明天交'
+    });
     const req = http.request({
       hostname: '127.0.0.1',
       port,
@@ -85,7 +90,8 @@ async function main() {
 
     const validToken = createSessionToken('openid_test_user', config).token;
     const verified = await request(port, '/api/ai/parse', validToken);
-    assert.strictEqual(verified.statusCode, 200);
+    assert.strictEqual(verified.statusCode, 200,
+      `有效令牌必须进入完整简单订单业务处理：${JSON.stringify(verified.body)}`);
 
     const tampered = await request(port, '/api/ai/parse', `${validToken}bad`);
     assert.strictEqual(tampered.statusCode, 401);

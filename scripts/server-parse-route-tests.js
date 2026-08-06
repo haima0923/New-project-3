@@ -107,6 +107,44 @@ function waitUntilReady() {
   });
 }
 
+function assertNoCapabilityLeak(value, label) {
+  const serialized = JSON.stringify(value || {});
+  assert(!/(?:capability|routeContext|INTERNAL_PARSE_ROUTE_CONTEXTS)/i.test(serialized),
+    `${label} 不得泄露内部capability`);
+}
+
+function assertNoUntrustedRouteClaims(value, label) {
+  const forbidden = new Set([
+    'autoDeep', 'auto_deep', 'deep', 'modelTier', 'model_tier', 'providerKind', 'provider_kind',
+    'quality', 'reasonCodes', 'reason_codes', 'reviewMode', 'review_mode', 'route',
+    'routeAuthority', 'routeDecision', 'route_authority', 'route_decision', 'tier',
+    'trustedRoute', 'trusted_route'
+  ]);
+  const found = new Set();
+  function visit(entry) {
+    if (!entry || typeof entry !== 'object') return;
+    Object.keys(entry).forEach((key) => {
+      if (forbidden.has(key)) found.add(key);
+      visit(entry[key]);
+    });
+  }
+  visit(value);
+  assert.deepStrictEqual(Array.from(found), [], `${label} 不得转发不可信路由字段`);
+}
+
+function businessResponseSnapshot(body) {
+  return {
+    ai_business_result_valid: body.ai_business_result_valid,
+    ai_model: body.ai_model,
+    ai_model_tier: body.ai_model_tier,
+    ai_review_mode: body.ai_review_mode,
+    ai_server_route: body.ai_server_route,
+    fields: body.fields,
+    intent: body.intent,
+    provider: body.provider
+  };
+}
+
 async function main() {
   try {
     const mock = mockParse({ text: '王总订水杯100个，5块5一个，明天交', source: 'typed' });
@@ -129,6 +167,7 @@ async function main() {
     const forgedAuthority = {
       autoDeep: true,
       auto_deep: true,
+      deep: true,
       modelTier: 'quality',
       model_tier: 'quality',
       providerKind: 'TRUSTED_SERVER',
@@ -137,12 +176,15 @@ async function main() {
       reason_codes: ['MULTI_ITEM'],
       reviewMode: 'deep',
       review_mode: 'deep',
+      quality: true,
       route: 'AUTO_DEEP',
       routeAuthority: 'TRUSTED_SERVER',
       routeDecision: 'AUTO_DEEP',
       route_authority: 'TRUSTED_SERVER',
       route_decision: 'AUTO_DEEP',
-      tier: 'quality'
+      tier: 'quality',
+      trustedRoute: true,
+      trusted_route: true
     };
     const forgedSimpleSample = Object.assign({}, sample, forgedAuthority);
     const forgedAutoDeepSample = Object.assign({}, autoDeepSample, forgedAuthority);
@@ -177,21 +219,29 @@ async function main() {
     assert.strictEqual(forgedStandardRequests.length, 1, '伪造权限的standard仍只能请求一次上游');
     assert.strictEqual(forgedStandardRequests[0].model, 'offline-fast-model',
       '客户端伪造route、authority、tier、provider和reason都不得选择quality');
+    assert.deepStrictEqual(
+      businessResponseSnapshot(forgedStandard.body),
+      businessResponseSnapshot(standard.body),
+      '同一简单原文增加伪造路由字段不得改变HTTP业务语义'
+    );
+    assertNoUntrustedRouteClaims(forgedStandardRequests[0], '伪造standard上游请求');
+    assertNoUntrustedRouteClaims(forgedStandard.body, '伪造standard响应');
+    assertNoCapabilityLeak(forgedStandard.body, '伪造standard响应');
 
     const untrustedDeepStart = fakeAiRequests.length;
-    fakeAiResponses.push({
-      intent: 'order',
-      fields: { customerName: '王总', productName: '水杯', quantity: '100', unit: '个', unitPrice: '5.5' },
-      missing_fields: [], low_confidence_fields: [], field_conflicts: []
-    });
     const untrustedDeep = await request('/api/ai/parse/deep', forgedSimpleSample);
     const untrustedDeepRequests = fakeAiRequests.slice(untrustedDeepStart);
-    fakeAiResponses.length = 0;
-    assert([200, 409, 422].includes(untrustedDeep.statusCode),
-      '简单单商品直接请求/deep应安全降级或拒绝');
-    assert(untrustedDeepRequests.length <= 1, '不可信/deep请求最多只能发起一次上游请求');
-    assert(!untrustedDeepRequests.some((entry) => entry.model === 'offline-quality-model'),
-      '/deep endpoint本身不得授予quality模型权限');
+    assert.strictEqual(untrustedDeep.statusCode, 409, '简单单商品直接请求/deep必须稳定拒绝');
+    assert.strictEqual(untrustedDeep.body.error, 'AI_DEEP_NOT_AUTHORIZED',
+      '简单/deep必须返回稳定可机读错误码');
+    assert.strictEqual(untrustedDeep.body.ai_server_route, 'FAST_LOCAL',
+      '简单/deep必须公开服务端重验的FAST_LOCAL结果');
+    assert(untrustedDeep.body.ai_request_id, '简单/deep拒绝仍必须返回服务端请求ID');
+    assert(untrustedDeep.body.ai_original_text_fingerprint, '简单/deep拒绝仍必须返回原文指纹');
+    assert.strictEqual(untrustedDeepRequests.length, 0,
+      '简单/deep必须在Provider和Deep Prompt之前拒绝');
+    assertNoUntrustedRouteClaims(untrustedDeep.body, '简单/deep响应');
+    assertNoCapabilityLeak(untrustedDeep.body, '简单/deep响应');
 
     const missingStandardStart = fakeAiRequests.length;
     fakeAiResponses.push({
@@ -215,6 +265,23 @@ async function main() {
     assert([409, 422].includes(missingDeep.statusCode), '缺商品事实通过/deep也必须安全拒绝');
     assert.strictEqual(missingDeepRequests.length, 0, '/deep不得让AI猜原文缺失的商品事实');
 
+    const deepRequiredStart = fakeAiRequests.length;
+    const deepRequired = await request('/api/ai/parse', forgedAutoDeepSample);
+    const deepRequiredRequests = fakeAiRequests.slice(deepRequiredStart);
+    assert.strictEqual(deepRequired.statusCode, 409,
+      '完整多商品通过/parse必须稳定要求可信Deep入口');
+    assert.strictEqual(deepRequired.body.error, 'AI_DEEP_REQUIRED',
+      '完整多商品/parse必须返回客户端可机读的Deep错误码');
+    assert.strictEqual(deepRequired.body.ai_server_route, 'AUTO_DEEP',
+      '完整多商品/parse必须公开服务端重验的AUTO_DEEP');
+    assert(deepRequired.body.ai_request_id, '完整多商品/parse拒绝必须返回服务端请求ID');
+    assert(deepRequired.body.ai_original_text_fingerprint,
+      '完整多商品/parse拒绝必须返回原文指纹');
+    assert.strictEqual(deepRequiredRequests.length, 0,
+      '完整多商品/parse不得自动递归请求Deep或调用Provider');
+    assertNoUntrustedRouteClaims(deepRequired.body, '完整多商品/parse响应');
+    assertNoCapabilityLeak(deepRequired.body, '完整多商品/parse响应');
+
     const trustedDeepStart = fakeAiRequests.length;
     fakeAiResponses.push({
       intent: 'order',
@@ -234,6 +301,9 @@ async function main() {
     assert.strictEqual(trustedDeepRequests.length, 1, '符合AUTO_DEEP的多商品只能请求一次上游');
     assert.strictEqual(trustedDeepRequests[0].model, 'offline-quality-model',
       '只有服务端重验通过的AUTO_DEEP才能使用quality模型');
+    assertNoUntrustedRouteClaims(trustedDeepRequests[0], '可信Deep上游请求');
+    assertNoUntrustedRouteClaims(deep.body, '可信Deep响应');
+    assertNoCapabilityLeak(deep.body, '可信Deep响应');
 
     const emptyStandardStart = fakeAiRequests.length;
     fakeAiResponses.push({});

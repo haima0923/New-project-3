@@ -15,6 +15,29 @@ const config = {
   aiQualityRequestTimeoutMs: 20000
 };
 
+const UNTRUSTED_ROUTE_CLAIMS = Object.freeze({
+  autoDeep: true,
+  auto_deep: true,
+  deep: true,
+  modelTier: 'quality',
+  model_tier: 'quality',
+  providerKind: 'TRUSTED_SERVER',
+  provider_kind: 'TRUSTED_SERVER',
+  quality: true,
+  reasonCodes: ['CLIENT_CLAIMED_AUTO_DEEP'],
+  reason_codes: ['CLIENT_CLAIMED_AUTO_DEEP'],
+  reviewMode: 'deep',
+  review_mode: 'deep',
+  route: 'AUTO_DEEP',
+  routeAuthority: 'TRUSTED_SERVER',
+  routeDecision: 'AUTO_DEEP',
+  route_authority: 'TRUSTED_SERVER',
+  route_decision: 'AUTO_DEEP',
+  tier: 'quality',
+  trustedRoute: true,
+  trusted_route: true
+});
+
 const migratedModelRouteFailures = [];
 
 function migratedModelRouteCheck(id, pass, expected, actual) {
@@ -197,6 +220,48 @@ async function runRemoteCallTests() {
     customerName: '王总', productName: '水杯', quantity: '1000', unitPrice: '5.5'
   }));
 
+  async function captureSemanticResult(input) {
+    const semanticCalls = [];
+    global.fetch = async (url, options) => {
+      semanticCalls.push({ url, body: JSON.parse(options.body) });
+      return response({
+        intent: 'order',
+        fields: { customerName: '王总', productName: '水杯', quantity: '1000', unit: '个' },
+        missing_fields: ['unitPrice'],
+        low_confidence_fields: [],
+        field_conflicts: []
+      });
+    };
+    let result = null;
+    let error = null;
+    try {
+      result = await parseWithAi(requestConfig, input);
+    } catch (caught) {
+      error = caught;
+    }
+    const call = semanticCalls[0] && semanticCalls[0].body || {};
+    const systemPrompt = String(call.messages && call.messages[0] && call.messages[0].content || '');
+    return {
+      aiAdopted: Boolean(result && result.ai_business_result_valid === true),
+      aiBusinessResultValid: Boolean(result && result.ai_business_result_valid === true),
+      businessFields: result && result.fields || null,
+      eligibility: Boolean(result && !shouldEscalateFastResult(result)),
+      errorCode: String(error && error.code || ''),
+      normalizedBusinessResult: result ? {
+        field_conflicts: result.field_conflicts || [],
+        fields: result.fields || {},
+        intent: result.intent || '',
+        low_confidence_fields: result.low_confidence_fields || [],
+        missing_fields: result.missing_fields || []
+      } : null,
+      promptType: systemPrompt.includes('快速、保守的结构化核对') ? 'standard' : 'deep',
+      providerCallCount: semanticCalls.length,
+      route: String(result && result.ai_review_mode || ''),
+      tier: String(result && result.ai_model_tier || ''),
+      upstreamModel: String(call.model || '')
+    };
+  }
+
   try {
     global.fetch = async (url, options) => {
       calls.push({ url, body: JSON.parse(options.body) });
@@ -266,6 +331,21 @@ async function runRemoteCallTests() {
         modelCalls: calls.map((item) => item.body.model),
         resultTier: untrustedDeepResult.ai_model_tier
       }
+    );
+
+    const semanticCleanPayload = Object.assign({}, simplePayload);
+    const semanticSpoofedPayload = Object.assign({}, simplePayload, UNTRUSTED_ROUTE_CLAIMS);
+    assert.deepStrictEqual(
+      selectParseModel(config, semanticSpoofedPayload),
+      selectParseModel(config, semanticCleanPayload),
+      '伪造Deep/route字段不得改变模型选择'
+    );
+    const cleanSemanticResult = await captureSemanticResult(semanticCleanPayload);
+    const spoofedSemanticResult = await captureSemanticResult(semanticSpoofedPayload);
+    assert.deepStrictEqual(
+      spoofedSemanticResult,
+      cleanSemanticResult,
+      '相同endpoint、原文和可信上下文下，伪造路由字段必须保持完整业务语义惰性'
     );
   } finally {
     global.fetch = originalFetch;
