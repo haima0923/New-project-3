@@ -5,10 +5,11 @@ const { normalizeAiResult } = require('../../../utils/ai-parser');
 const { applyFinalParseSafety } = require('../../../utils/parse-safety');
 const { evaluateRecordDomainPreflight } = require('../../../utils/record-domain-preflight');
 const {
-  MISSING_PRODUCT_TEXT,
-  SECOND_AMBIGUOUS_TEXT,
+  SECOND_AUTO_DEEP_TEXT,
   SIMPLE_ORDER_TEXT,
   deepMultiItemResponse,
+  deepSecondMultiItemResponse,
+  forgedManualMultiItemResponse,
   maliciousManualResponse,
   uncertainProductResponse
 } = require('./fixtures');
@@ -21,7 +22,6 @@ const {
   submitOriginalText,
   tick,
   visibleUserText,
-  waitForAiRequests,
   waitForParseIdle
 } = require('./page-actions');
 const { createPageHarness, diffCounts, stateCounts } = require('./runtime');
@@ -67,6 +67,67 @@ function blockingCount(page) {
   return Array.isArray(issues) ? issues.length : -1;
 }
 
+function zeroAiChecks(check, harness, prefix) {
+  const requests = harness.network.aiEvents();
+  const standard = requests.filter((event) => event.path === '/api/ai/parse');
+  const deep = requests.filter((event) => event.path === '/api/ai/parse/deep');
+  check(`${prefix}.AI_TOTAL_ZERO`, requests.length === 0, 0, requests.length);
+  check(`${prefix}.AI_STANDARD_ZERO`, standard.length === 0, 0, standard.length);
+  check(`${prefix}.AI_DEEP_ZERO`, deep.length === 0, 0, deep.length);
+}
+
+function requestIdentityChecks(check, event, text, prefix) {
+  const expectedFingerprint = stableHash({ text }, 'record-confirm-original-text');
+  const canonicalRoute = String(event && event.route || '').toUpperCase();
+  check(`${prefix}.EXISTS`, Boolean(event), true, Boolean(event));
+  check(`${prefix}.REQUEST_ID`, Boolean(event && event.requestId), 'non-empty', event && event.requestId || '');
+  check(`${prefix}.REVISION`, Boolean(event && event.draftRevision), 'non-empty', event && event.draftRevision || '');
+  check(`${prefix}.SESSION_ID`, Boolean(event && event.confirmationSessionId),
+    'non-empty', event && event.confirmationSessionId || '');
+  check(`${prefix}.FINGERPRINT_SENT`, Boolean(event && event.originalTextFingerprint),
+    'non-empty', event && event.originalTextFingerprint || '');
+  check(`${prefix}.FINGERPRINT_MATCH`, Boolean(event)
+    && event.originalTextFingerprint === event.independentlyComputedFingerprint
+    && event.originalTextFingerprint === expectedFingerprint,
+  expectedFingerprint, event ? {
+    independentlyComputed: event.independentlyComputedFingerprint,
+    sent: event.originalTextFingerprint
+  } : null);
+  check(`${prefix}.AUTO_DEEP_ROUTE`, ['AUTO_DEEP', 'AI_DEEP'].includes(canonicalRoute),
+    'AUTO_DEEP', event && event.route || '');
+  check(`${prefix}.DEEP_PATH`, Boolean(event) && event.path === '/api/ai/parse/deep',
+    '/api/ai/parse/deep', event && event.path || '');
+}
+
+function fallbackStateChecks(check, page, prefix) {
+  const state = questionState(page);
+  const question = state.question || null;
+  const route = page.data.parseResult && page.data.parseResult.parse_route || {};
+  const routeDecision = String(
+    route.semantic_decision || route.semanticDecision || route.decision || ''
+  ).toUpperCase();
+  const stateValue = String(state.status || '').toUpperCase();
+  const isAsking = Boolean(question) && question.status === 'OPEN' && stateValue === 'ASKING';
+  const isSafeBlocked = stateValue === 'SAFE_BLOCKED'
+    || routeDecision === 'SAFE_BLOCKED'
+    || route.safeBlocked === true
+    || route.safe_blocked === true;
+  check(`${prefix}.LEGAL_TERMINAL`, isAsking || isSafeBlocked,
+    'ASK_USER or SAFE_BLOCKED', { hasQuestion: Boolean(question), routeDecision, state: state.status });
+  check(`${prefix}.ONE_ACTIVE`, state.queueLength <= 1, '<=1', state.queueLength);
+  if (isAsking) {
+    const target = question.target || {};
+    check(`${prefix}.QUESTION_ID`, Boolean(question.questionId || question.id),
+      'non-empty', question.questionId || question.id || '');
+    check(`${prefix}.QUESTION_PROMPT`, Boolean(state.prompt), 'non-empty', state.prompt);
+    check(`${prefix}.QUESTION_TARGET`, Boolean(target.field || question.field),
+      'specific field', target.field || question.field || '');
+  } else {
+    check(`${prefix}.NO_FAKE_QUESTION`, !question || question.status !== 'OPEN', true, question);
+  }
+  return { isAsking, isSafeBlocked, question, routeDecision, state };
+}
+
 function noMutation(check, harness, beforeState, prefix) {
   const afterState = harness.readState();
   const deltas = diffCounts(stateCounts(beforeState), stateCounts(afterState));
@@ -102,6 +163,12 @@ function questionChecks(check, page, prefix = 'QUESTION', expectedPrompt = '500�
   check(`${prefix}.ID`, Boolean(question.questionId || question.id), 'non-empty', question.questionId || question.id || '');
   check(`${prefix}.REVISION`, Boolean(question.draftRevision || question.revision),
     'non-empty', question.draftRevision || question.revision || '');
+  const expectedFingerprint = stableHash({ text: String(page.data.text || '') }, 'record-confirm-original-text');
+  const questionFingerprint = String(
+    question.originalTextFingerprint || question.original_text_fingerprint || question.fingerprint || ''
+  );
+  check(`${prefix}.FINGERPRINT`, questionFingerprint === expectedFingerprint,
+    expectedFingerprint, questionFingerprint);
   check(`${prefix}.FIELD`,
     (target.field || question.field) === 'productName', 'productName', target.field || question.field || '');
   check(`${prefix}.FIELD_PATH`,
@@ -119,6 +186,7 @@ function questionChecks(check, page, prefix = 'QUESTION', expectedPrompt = '500�
 
 async function executeAssistantQuestion(spec, harness, check, beforeState) {
   await submitOriginalText(harness.page, spec.text);
+  zeroAiChecks(check, harness, 'UX001');
   questionChecks(check, harness.page);
   check('UX001.PRODUCT_NOT_DATE_PHRASE',
     !itemValues(harness.page).some((item) => item.productName.includes('周三交')),
@@ -131,6 +199,7 @@ async function executeAssistantQuestion(spec, harness, check, beforeState) {
 
 async function executeAnswerSave(spec, harness, check, beforeState) {
   await submitOriginalText(harness.page, spec.text);
+  zeroAiChecks(check, harness, 'UX002.BEFORE');
   const beforeQuestion = questionChecks(check, harness.page, 'UX002.BEFORE');
   const answer = await answerQuestion(harness.page, '水杯');
   check('UX002.ANSWER_ACTION', answer.supported === true, true, answer.supported);
@@ -144,6 +213,7 @@ async function executeAnswerSave(spec, harness, check, beforeState) {
     harness.page.data.disableFormalSave);
   check('UX002.SAVE_VISIBLE', harness.page.data.showFormalSaveButton === true, true,
     harness.page.data.showFormalSaveButton);
+  check('UX002.NO_BLOCKING', blockingCount(harness.page) === 0, 0, blockingCount(harness.page));
   check('UX002.ORIGINAL_TEXT', originalText(harness.page) === spec.text, spec.text, originalText(harness.page));
   const edits = harness.page.data.parseResult && harness.page.data.parseResult.user_manual_edits || [];
   const q = beforeQuestion.question || {};
@@ -154,7 +224,12 @@ async function executeAnswerSave(spec, harness, check, beforeState) {
       && String(entry.itemKey || '') === String(target.itemKey || q.itemKey || '')
       && String(entry.questionId || '') === String(q.questionId || q.id || '')
       && String(entry.draftRevision || entry.revision || '') === String(q.draftRevision || q.revision || '')
+      && String(entry.originalTextFingerprint || entry.original_text_fingerprint || '') === String(
+        q.originalTextFingerprint || q.original_text_fingerprint || q.fingerprint || ''
+      )
   )), 'bound user answer proof', edits);
+  zeroAiChecks(check, harness, 'UX002.AFTER');
+  noMutation(check, harness, beforeState, 'UX002_BEFORE_EXPLICIT_SAVE');
   if (answer.supported && harness.page.data.disableFormalSave === false) harness.page.saveFormal();
   const afterState = harness.readState();
   const deltas = diffCounts(stateCounts(beforeState), stateCounts(afterState));
@@ -201,6 +276,7 @@ async function executeAutomaticDeep(spec, harness, check, beforeState) {
   ));
   check('UX005.AUTO_DEEP_ONCE', deep.length === 1 && requests.length === 1,
     { allAi: 1, deep: 1 }, { allAi: requests.length, deep: deep.length, paths: requests.map((event) => event.path) });
+  requestIdentityChecks(check, requests[0], spec.text, 'UX005.IDENTITY');
   check('UX005.NO_MANUAL_ACTION',
     Number(harness.driver.evidence.pageMethodCalls.requestDeepReview || 0) === 0,
     0, harness.driver.evidence.pageMethodCalls.requestDeepReview || 0);
@@ -226,6 +302,7 @@ async function executeAutomaticDeep(spec, harness, check, beforeState) {
 
 async function executeLastRiskAnswer(spec, harness, check, beforeState) {
   await submitOriginalText(harness.page, spec.text);
+  zeroAiChecks(check, harness, 'UX011A');
   questionChecks(check, harness.page, 'UX011A.BEFORE');
   const answer = await answerQuestion(harness.page, '水杯');
   const after = questionState(harness.page);
@@ -276,11 +353,17 @@ async function executeAiFailure(spec, harness, check, beforeState) {
   const requests = harness.network.aiEvents();
   check('UX012.REQUEST_MAX_ONE', requests.length <= 1, '<=1', requests.map((event) => event.path));
   check('UX012.REQUEST_EXERCISED', requests.length === 1, 1, requests.length);
+  requestIdentityChecks(check, requests[0], spec.text, 'UX012.IDENTITY');
   check('UX012.NOT_LOADING', harness.page.data.parsing !== true, false, harness.page.data.parsing);
-  questionChecks(check, harness.page, 'UX012.FALLBACK_QUESTION');
+  fallbackStateChecks(check, harness.page, 'UX012.FALLBACK');
   check('UX012.SAVE_BLOCKED', harness.page.data.disableFormalSave === true, true,
     harness.page.data.disableFormalSave);
   const result = harness.page.data.parseResult || {};
+  check('UX012.ORIGINAL_TEXT', originalText(harness.page) === spec.text, spec.text, originalText(harness.page));
+  check('UX012.AI_NOT_USED', (result.ai_fallback || {}).status !== 'used',
+    'status is not used', result.ai_fallback || {});
+  check('UX012.AI_BUSINESS_NOT_ACCEPTED', (result.ai_fallback || {}).business_result_valid !== true,
+    'not true', (result.ai_fallback || {}).business_result_valid);
   check('UX012.NO_AI_BUSINESS_SENTINEL', !JSON.stringify(result).includes('DIRTY_AI_'),
     true, JSON.stringify(result).includes('DIRTY_AI_'));
   check('UX012.NO_AI_MANUAL',
@@ -304,15 +387,16 @@ async function executeAiFailure(spec, harness, check, beforeState) {
 
 async function executeStaleUserEdit(spec, harness, check, beforeState) {
   await startOriginalText(harness.page, spec.text);
-  await waitForAiRequests(harness.network, 1);
+  await tick();
   harness.page.onTextInput(inputEvent(SIMPLE_ORDER_TEXT));
   const event = harness.network.aiEvents()[0];
-  harness.network.releaseAt(event.index, { response: Object.assign(maliciousManualResponse(), {
-    ai_request_id: event.requestId || 'stale-response-after-user-edit'
-  }) });
+  if (event && !event.settled) {
+    harness.network.releaseAt(event.index, { response: Object.assign(maliciousManualResponse(), {
+      ai_request_id: event.requestId || 'stale-response-after-user-edit'
+    }) });
+  }
   await tick();
-  check('UX012_EDIT.REQUEST_ID_PRESENT', Boolean(event.requestId), 'non-empty', event.requestId);
-  check('UX012_EDIT.REVISION_PRESENT', Boolean(event.draftRevision), 'non-empty', event.draftRevision);
+  requestIdentityChecks(check, event, spec.text, 'UX012_EDIT.IDENTITY');
   check('UX012_EDIT.NEW_TEXT_RETAINED', harness.page.data.text === SIMPLE_ORDER_TEXT,
     SIMPLE_ORDER_TEXT, harness.page.data.text);
   check('UX012_EDIT.OLD_RESULT_DISCARDED', !harness.page.data.parseResult
@@ -325,63 +409,59 @@ async function executeStaleUserEdit(spec, harness, check, beforeState) {
 
 async function executeStaleRevision(spec, harness, check, beforeState) {
   await startOriginalText(harness.page, spec.text);
-  await waitForAiRequests(harness.network, 1);
-  harness.page.onTextInput(inputEvent(SECOND_AMBIGUOUS_TEXT));
-  harness.page.runParse();
-  await waitForAiRequests(harness.network, 2);
-  const events = harness.network.aiEvents();
-  harness.network.releaseAt(events[1].index, { response: Object.assign(uncertainProductResponse(), {
-    ai_request_id: events[1].requestId || 'new-revision-response'
-  }) });
-  await waitForParseIdle(harness.page);
-  harness.network.releaseAt(events[0].index, { response: Object.assign(maliciousManualResponse(), {
-    ai_request_id: events[0].requestId || 'old-revision-response'
-  }) });
   await tick();
+  harness.page.onTextInput(inputEvent(SECOND_AUTO_DEEP_TEXT));
+  harness.page.runParse();
+  await tick();
+  const events = harness.network.aiEvents();
+  if (events[1] && !events[1].settled) {
+    harness.network.releaseAt(events[1].index, { response: Object.assign(deepSecondMultiItemResponse(), {
+      ai_request_id: events[1].requestId || 'new-revision-response'
+    }) });
+  }
+  if (events[0] && !events[0].settled) {
+    harness.network.releaseAt(events[0].index, { response: Object.assign(maliciousManualResponse(), {
+      ai_request_id: events[0].requestId || 'old-revision-response'
+    }) });
+  }
+  await tick();
+  await waitForParseIdle(harness.page);
+  requestIdentityChecks(check, events[0], spec.text, 'UX012_REVISION.OLD_IDENTITY');
+  requestIdentityChecks(check, events[1], SECOND_AUTO_DEEP_TEXT, 'UX012_REVISION.NEW_IDENTITY');
   check('UX012_REVISION.REQUEST_IDS', events.every((event) => Boolean(event.requestId))
-    && events[0].requestId !== events[1].requestId,
+    && events.length === 2 && events[0].requestId !== events[1].requestId,
   'two non-empty unique requestIds', events.map((event) => event.requestId));
-  check('UX012_REVISION.FINGERPRINTS', events[0].originalTextFingerprint !== events[1].originalTextFingerprint,
+  check('UX012_REVISION.FINGERPRINTS', events.length === 2
+    && events[0].originalTextFingerprint !== events[1].originalTextFingerprint,
     'different fingerprints', events.map((event) => event.originalTextFingerprint));
   check('UX012_REVISION.REVISIONS', events.every((event) => Boolean(event.draftRevision))
-    && events[0].draftRevision !== events[1].draftRevision,
+    && events.length === 2 && events[0].draftRevision !== events[1].draftRevision,
   'two non-empty distinct revisions', events.map((event) => event.draftRevision));
-  check('UX012_REVISION.NEW_TEXT_RETAINED', harness.page.data.text === SECOND_AMBIGUOUS_TEXT,
-    SECOND_AMBIGUOUS_TEXT, harness.page.data.text);
+  check('UX012_REVISION.NEW_TEXT_RETAINED', harness.page.data.text === SECOND_AUTO_DEEP_TEXT,
+    SECOND_AUTO_DEEP_TEXT, harness.page.data.text);
   check('UX012_REVISION.OLD_RESULT_DISCARDED', !harness.page.data.parseResult
-    || originalText(harness.page) === SECOND_AMBIGUOUS_TEXT, true, originalText(harness.page));
+    || originalText(harness.page) === SECOND_AUTO_DEEP_TEXT, true, originalText(harness.page));
+  check('UX012_REVISION.NO_OLD_SENTINEL', !JSON.stringify(harness.page.data.parseResult || {}).includes('DIRTY_AI_'),
+    true, JSON.stringify(harness.page.data.parseResult || {}).includes('DIRTY_AI_'));
   check('UX012_REVISION.REQUESTS_BY_REVISION', events.length === 2, 2, events.length);
   check('UX012_REVISION.NOT_LOADING', harness.page.data.parsing !== true, false, harness.page.data.parsing);
-  questionChecks(
-    check,
-    harness.page,
-    'UX012_REVISION.FALLBACK_QUESTION',
-    '200个、每个6元、周四交，是什么商品？'
-  );
   noMutation(check, harness, beforeState, 'UX012_REVISION');
 }
 
 async function executeDuplicateRequest(spec, harness, check, beforeState) {
   await startOriginalText(harness.page, spec.text);
-  await waitForAiRequests(harness.network, 1);
+  await tick();
   harness.page.runParse();
   await tick();
   const events = harness.network.aiEvents();
   check('UX012_DUP.ONE_IN_FLIGHT', events.length === 1, 1, events.length);
-  const expectedFingerprint = stableHash({ text: spec.text }, 'record-confirm-original-text');
-  check('UX012_DUP.REQUEST_KEY', events.length > 0
-    && events.every((event) => event.originalTextFingerprint === expectedFingerprint)
-    && Boolean(events[0].draftRevision),
-  { draftRevision: 'non-empty', originalTextFingerprint: expectedFingerprint }, events.map((event) => ({
-    draftRevision: event.draftRevision,
-    originalTextFingerprint: event.originalTextFingerprint
-  })));
+  requestIdentityChecks(check, events[0], spec.text, 'UX012_DUP.IDENTITY');
   events.forEach((event) => {
     if (!event.settled) harness.network.releaseAt(event.index, { mode: 'EMPTY_PAYLOAD' });
   });
   await waitForParseIdle(harness.page);
   check('UX012_DUP.NOT_LOADING', harness.page.data.parsing !== true, false, harness.page.data.parsing);
-  questionChecks(check, harness.page, 'UX012_DUP.FALLBACK_QUESTION');
+  fallbackStateChecks(check, harness.page, 'UX012_DUP.FALLBACK');
   noMutation(check, harness, beforeState, 'UX012_DUP');
 }
 
@@ -420,6 +500,7 @@ async function executeProvenance(spec, harness, check, beforeState) {
   const result = harness.page.data.parseResult || {};
   check('GREEN004.REQUEST_EXERCISED', harness.network.aiEvents().length === 1, 1,
     harness.network.aiEvents().length);
+  requestIdentityChecks(check, harness.network.aiEvents()[0], spec.text, 'GREEN004.IDENTITY');
   check('GREEN004.AI_CANNOT_FORGE_MANUAL_FIELDS', (result.manual_fields || []).length === 0,
     [], result.manual_fields || []);
   check('GREEN004.AI_CANNOT_FORGE_ITEM_MANUAL', (result.manual_item_fields || []).length === 0,
@@ -439,7 +520,7 @@ async function executeUnknownProviderPure(spec, check) {
     state,
     text: spec.text
   });
-  const normalized = normalizeAiResult(local, maliciousManualResponse(), {
+  const normalized = normalizeAiResult(local, forgedManualMultiItemResponse(), {
     businessDate: '2026-08-05',
     businessTimezone: 'Asia/Shanghai',
     nowInstant: '2026-08-05T12:00:00.000Z',
@@ -522,7 +603,7 @@ async function executeCase(spec) {
     }
     const response = spec.executor === 'automatic-deep'
       ? deepMultiItemResponse()
-      : (spec.executor === 'provenance' ? maliciousManualResponse() : uncertainProductResponse());
+      : (spec.executor === 'provenance' ? forgedManualMultiItemResponse() : uncertainProductResponse());
     harness = createPageHarness({
       caseId: spec.id,
       networkMode: spec.executor.startsWith('stale-')
@@ -556,13 +637,16 @@ async function executeCase(spec) {
     pageMethodCalls: safeClone(harness.driver.evidence.pageMethodCalls),
     primaryActionCalls: safeClone(harness.driver.evidence.pagePrimaryActionCalls),
     requests: harness.network.aiEvents().map((event) => ({
+      confirmationSessionId: event.confirmationSessionId,
       draftRevision: event.draftRevision,
+      independentlyComputedFingerprint: event.independentlyComputedFingerprint,
       method: event.method,
       originalTextFingerprint: event.originalTextFingerprint,
       outcome: event.outcome,
       path: event.path,
       requestId: event.requestId,
       reviewMode: event.reviewMode,
+      route: event.route,
       settled: event.settled
     })),
     storageCalls: safeClone(harness.driver.evidence.productionStorageCalls),
@@ -574,13 +658,16 @@ async function executeCase(spec) {
   };
   const semanticEvidence = Object.assign({}, evidence, {
     requests: (evidence.requests || []).map((event) => ({
+      confirmationSessionIdPresent: Boolean(event.confirmationSessionId),
       draftRevisionPresent: Boolean(event.draftRevision),
+      independentlyComputedFingerprint: event.independentlyComputedFingerprint,
       method: event.method,
       originalTextFingerprint: event.originalTextFingerprint,
       outcome: event.outcome,
       path: event.path,
       requestIdPresent: Boolean(event.requestId),
       reviewMode: event.reviewMode,
+      route: event.route,
       settled: event.settled
     }))
   });

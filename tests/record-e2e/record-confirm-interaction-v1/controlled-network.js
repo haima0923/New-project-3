@@ -77,21 +77,31 @@ function createControlledNetwork(options = {}) {
 
   function request(requestOptions = {}) {
     const path = pathFromUrl(requestOptions.url);
+    const requestData = requestOptions.data || {};
+    const independentlyComputedFingerprint = stableHash({
+      text: String(requestData.rawText || requestData.text || '')
+    }, 'record-confirm-original-text');
+    const sentRoute = requestData.route || requestData.routeDecision || requestData.route_decision || '';
     const event = {
-      draftRevision: String(requestOptions.data && (
-        requestOptions.data.draftRevision || requestOptions.data.revision
+      confirmationSessionId: String(
+        requestData.confirmationSessionId || requestData.confirmation_session_id || ''
+      ),
+      draftRevision: String(requestData && (
+        requestData.draftRevision || requestData.revision
       ) || ''),
       index: events.length,
+      independentlyComputedFingerprint,
       method: requestOptions.method || 'POST',
-      originalTextFingerprint: stableHash({
-        text: String(requestOptions.data && (
-          requestOptions.data.rawText || requestOptions.data.text
-        ) || '')
-      }, 'record-confirm-original-text'),
+      originalTextFingerprint: String(
+        requestData.originalTextFingerprint || requestData.original_text_fingerprint || ''
+      ),
       path,
-      requestId: String(requestOptions.data && requestOptions.data.requestId || ''),
-      requestData: safeClone(requestOptions.data || {}),
-      reviewMode: String(requestOptions.data && requestOptions.data.reviewMode || ''),
+      requestId: String(requestData.requestId || requestData.request_id || ''),
+      requestData: safeClone(requestData),
+      reviewMode: String(requestData.reviewMode || ''),
+      route: typeof sentRoute === 'string' ? sentRoute : String(
+        sentRoute.semantic_decision || sentRoute.semanticDecision || sentRoute.decision || ''
+      ),
       outcome: '',
       settled: false
     };

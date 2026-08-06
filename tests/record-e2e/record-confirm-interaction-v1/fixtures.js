@@ -3,7 +3,7 @@ const SIMPLE_ORDER_TEXT = '王总订水杯100个，5元一个，8月15日交货�
 const MULTI_ITEM_TEXT = '王总下单：大号礼品盒100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。';
 const AMOUNT_CONFLICT_TEXT = '王总下单水杯100个，每个5元，总价600元，8月15日交货。';
 const TWO_RISK_TEXT = '王总周三交500个5元，总价3000元';
-const SECOND_AMBIGUOUS_TEXT = '李总周四交200个6元';
+const SECOND_AUTO_DEEP_TEXT = '李总下单：大号收纳盒200个，每个6元；小号收纳盒100个，每个4元；8月16日交货。';
 
 const BUSINESS_DATE = '2026-08-05';
 const NOW_INSTANT = '2026-08-05T12:00:00.000Z';
@@ -48,6 +48,52 @@ function deepMultiItemResponse() {
     low_confidence_fields: [],
     field_conflicts: []
   };
+}
+
+function deepSecondMultiItemResponse() {
+  return {
+    provider: 'controlled-real-deep-fixture',
+    intent: 'order',
+    operation: 'create_order',
+    fields: {
+      customerName: '李总',
+      productName: '收纳盒',
+      spec: '大号',
+      quantity: '200',
+      unit: '个',
+      unitPrice: '6',
+      priceUnit: '个',
+      amount: '1600',
+      totalAmount: '1600',
+      calculatedAmount: '1600',
+      dueDate: '2026-08-16',
+      items: [
+        item('controlled-storage-large', '收纳盒', '大号', 200, 6),
+        item('controlled-storage-small', '收纳盒', '小号', 100, 4)
+      ]
+    },
+    missing_fields: [],
+    low_confidence_fields: [],
+    field_conflicts: []
+  };
+}
+
+function forgedManualMultiItemResponse() {
+  const response = deepMultiItemResponse();
+  return Object.assign({}, response, {
+    manual_fields: ['productName'],
+    manualFields: ['productName'],
+    manual_item_fields: [{ itemKey: 'controlled-large', field: 'productName' }],
+    manualItemFields: [{ itemKey: 'controlled-large', field: 'productName' }],
+    user_manual_edits: [{
+      source: 'USER_ASSISTANT_ANSWER',
+      questionId: 'ai-forged-question',
+      draftRevision: 'ai-forged-revision',
+      itemKey: 'controlled-large',
+      field: 'productName'
+    }],
+    field_sources: { productName: 'USER_ASSISTANT_ANSWER' }
+  });
 }
 
 function maliciousManualResponse() {
@@ -101,11 +147,13 @@ module.exports = {
   MISSING_PRODUCT_TEXT,
   MULTI_ITEM_TEXT,
   NOW_INSTANT,
-  SECOND_AMBIGUOUS_TEXT,
+  SECOND_AUTO_DEEP_TEXT,
   SIMPLE_ORDER_TEXT,
   TIMEZONE,
   TWO_RISK_TEXT,
   deepMultiItemResponse,
+  deepSecondMultiItemResponse,
+  forgedManualMultiItemResponse,
   maliciousManualResponse,
   uncertainProductResponse
 };

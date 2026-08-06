@@ -750,7 +750,7 @@ async function testNextMonthDateHasDirectEvidence() {
   assert(!result.low_confidence_fields.includes('dueDate'), '原话明确有“下个月5号”时不能误报交期不确定');
 }
 
-async function testServerDeepContractRejectsCollapsedItems() {
+async function testUntrustedDeepIntentCannotSelectQuality() {
   const originalFetch = global.fetch;
   const calls = [];
   const config = {
@@ -777,29 +777,39 @@ async function testServerDeepContractRejectsCollapsedItems() {
     const result = await parseWithAi(config, {
       reviewMode: 'deep', source: 'typed', text: '两件商品', localDraft: { intent: 'order', fields: {} }
     });
-    assert(calls[0].messages[0].content.includes('fields.items必须是逐项数组'), '深度 AI 提示必须强制逐项商品数组');
-    assert(calls[0].messages[1].content.includes('"items":[]'), '深度 AI 返回结构必须包含 items 数组');
+    assert.strictEqual(calls.length, 1, '裸reviewMode最多只能请求一次安全模型');
+    assert.strictEqual(calls[0].model, 'fast-model', '裸reviewMode:deep不得授权quality模型');
+    assert.strictEqual(result.ai_model_tier, 'fast', '裸reviewMode结果必须标记为fast');
+    assert.strictEqual(result.ai_review_mode, 'standard', '裸reviewMode结果不得伪装为deep');
+    assert(calls[0].messages[1].content.includes('"items":[]'), '安全模型返回结构仍必须包含 items 数组');
     assert(result.field_conflicts.some((item) => item.field === 'items'), '服务端也要拦住多商品被拼成一条的返回');
   } finally {
     global.fetch = originalFetch;
   }
 }
 
-Promise.resolve()
-  .then(testAiBusinessResultValidityContract)
-  .then(testServerRejectsEmptyBusinessForStandardAndDeep)
-  .then(testClientAndBusinessDefenseInDepth)
-  .then(testLiveModeNeverUsesStubOrFakesSuccess)
-  .then(testPageDeepEmptyBusinessIsBlocked)
-  .then(testLocalOnlyFlowUnaffected)
-  .then(testMixedBusinessCannotBeDowngraded)
-  .then(testAiMustShowResolutionEvidence)
-  .then(testCollapsedItemsAreBlocked)
-  .then(testProductTranscriptionNeedsConfirmation)
-  .then(testReturnedUncertainIsNotReportedAsNoResponse)
-  .then(testNextMonthDateHasDirectEvidence)
-  .then(testServerDeepContractRejectsCollapsedItems)
-  .then(() => console.log('AI安全回归测试通过：live失败保真、空业务拒绝、双入口按钮、保存副作用、standard/deep、mock、多商品和local。'))
+const trustedDeepContractOnly = process.argv.includes('--trusted-deep-contract');
+const suite = trustedDeepContractOnly
+  ? Promise.resolve().then(testUntrustedDeepIntentCannotSelectQuality)
+  : Promise.resolve()
+    .then(testAiBusinessResultValidityContract)
+    .then(testServerRejectsEmptyBusinessForStandardAndDeep)
+    .then(testClientAndBusinessDefenseInDepth)
+    .then(testLiveModeNeverUsesStubOrFakesSuccess)
+    .then(testPageDeepEmptyBusinessIsBlocked)
+    .then(testLocalOnlyFlowUnaffected)
+    .then(testMixedBusinessCannotBeDowngraded)
+    .then(testAiMustShowResolutionEvidence)
+    .then(testCollapsedItemsAreBlocked)
+    .then(testProductTranscriptionNeedsConfirmation)
+    .then(testReturnedUncertainIsNotReportedAsNoResponse)
+    .then(testNextMonthDateHasDirectEvidence)
+    .then(testUntrustedDeepIntentCannotSelectQuality);
+
+suite
+  .then(() => console.log(trustedDeepContractOnly
+    ? '可信Deep权限专项通过：裸reviewMode不能选择quality。'
+    : 'AI安全回归测试通过：live失败保真、空业务拒绝、双入口按钮、保存副作用、standard/deep、mock、多商品和local。'))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

@@ -73,12 +73,17 @@ async function answerQuestion(page, value) {
     fieldPath: target.fieldPath || state.question.fieldPath || '',
     itemKey: target.itemKey || state.question.itemKey || '',
     questionId: state.question.questionId || state.question.id || '',
-    revision: state.question.revision || state.question.draftRevision || ''
+    revision: state.question.revision || state.question.draftRevision || '',
+    originalTextFingerprint: state.question.originalTextFingerprint
+      || state.question.original_text_fingerprint
+      || state.question.fingerprint
+      || ''
   };
   await Promise.resolve(handler.call(page, {
     currentTarget: { dataset },
     detail: {
       draftRevision: dataset.revision,
+      originalTextFingerprint: dataset.originalTextFingerprint,
       questionId: dataset.questionId,
       target: {
         field: dataset.field,
