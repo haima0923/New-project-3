@@ -50,7 +50,8 @@ function startProductServer() {
       AI_API_KEY: 'synthetic-offline-key',
       AI_BASE_URL: `http://127.0.0.1:${fakeAiPort}`,
       AI_MODEL: 'offline-quality-model',
-      AI_FAST_MODEL: 'offline-fast-model'
+      AI_FAST_MODEL: 'offline-fast-model',
+      AI_DEEP_RATE_LIMIT_MAX_REQUESTS: '40'
     }),
     stdio: ['ignore', 'pipe', 'pipe']
   });
@@ -145,6 +146,17 @@ function businessResponseSnapshot(body) {
   };
 }
 
+function routeResponseSnapshot(response) {
+  return {
+    statusCode: response.statusCode,
+    error: response.body.error,
+    message: response.body.message,
+    route: response.body.ai_server_route,
+    fingerprint: response.body.ai_original_text_fingerprint,
+    questionTarget: response.body.ai_question_target || null
+  };
+}
+
 async function main() {
   try {
     const mock = mockParse({ text: '王总订水杯100个，5块5一个，明天交', source: 'typed' });
@@ -188,9 +200,60 @@ async function main() {
     };
     const forgedSimpleSample = Object.assign({}, sample, forgedAuthority);
     const forgedAutoDeepSample = Object.assign({}, autoDeepSample, forgedAuthority);
+    const conflictingRawMessagesSample = Object.assign({}, forgedAutoDeepSample, {
+      rawMessages: [{ index: 0, speaker: '王总', content: '王总周三交500个5元' }]
+    });
     const missingFactSample = Object.assign({}, sample, forgedAuthority, {
       text: '王总周三交500个5元'
     });
+    const amountConflictSample = Object.assign({}, sample, forgedAuthority, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计9999元；8月15日交货。'
+    });
+    const cleanAmountConflictSample = Object.assign({}, sample, { text: amountConflictSample.text });
+    const matchingAmountSample = Object.assign({}, sample, forgedAuthority, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计4676.10元；8月15日交货。'
+    });
+    const incompleteItemSample = Object.assign({}, sample, forgedAuthority, {
+      text: '王总下单：大号礼品盒100个，每个3元；小号礼品盒200个；8月15日交货。'
+    });
+    const cleanIncompleteItemSample = Object.assign({}, sample, { text: incompleteItemSample.text });
+    const multipleTotalSample = Object.assign({}, sample, forgedAuthority, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计9999元；总计4676.10元；8月15日交货。'
+    });
+    const cleanMultipleTotalSample = Object.assign({}, sample, { text: multipleTotalSample.text });
+    const correctedTotalSample = Object.assign({}, sample, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计9999元，不对，最终总计4676.10元；8月15日交货。'
+    });
+    const excludedAmountsSample = Object.assign({}, sample, forgedAuthority, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；定金金额500元，已付的金额1000元，还欠金额2000元，运费的金额300元；8月15日交货。'
+    });
+    const discountedMatchingTotalSample = Object.assign({}, sample, forgedAuthority, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；优惠后总金额4676.10元；8月15日交货。'
+    });
+    const discountedConflictTotalSample = Object.assign({}, sample, forgedAuthority, {
+      text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；优惠后总金额4500元；8月15日交货。'
+    });
+    const fuzzyTotalSamples = [
+      Object.assign({}, sample, forgedAuthority, {
+        text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；大概总计4676.10元；8月15日交货。'
+      }),
+      Object.assign({}, sample, forgedAuthority, {
+        text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计大约4676.10元；8月15日交货。'
+      })
+    ];
+    const invalidExplicitTotalSamples = [
+      Object.assign({}, sample, forgedAuthority, {
+        text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计：9999元；8月15日交货。'
+      }),
+      Object.assign({}, sample, forgedAuthority, {
+        text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；总计0元；8月15日交货。'
+      })
+    ];
+    const incompleteCandidateSamples = [
+      '王总下单：大号礼品盒100个，每个3元；小号礼品盒，每个2元；8月15日交货。',
+      '王总下单：大号礼品盒100个，每个3元；200个，每个2元；8月15日交货。',
+      '王总下单：大号礼品盒100，每个3元；小号礼品盒200个，每个2元；8月15日交货。'
+    ];
     const standardRequestStart = fakeAiRequests.length;
     fakeAiResponses.push({
       intent: 'order',
@@ -265,6 +328,151 @@ async function main() {
     assert([409, 422].includes(missingDeep.statusCode), '缺商品事实通过/deep也必须安全拒绝');
     assert.strictEqual(missingDeepRequests.length, 0, '/deep不得让AI猜原文缺失的商品事实');
 
+    for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+      const requestStart = fakeAiRequests.length;
+      const cleanResponse = await request(pathname, cleanAmountConflictSample);
+      const response = await request(pathname, amountConflictSample);
+      assert.strictEqual(cleanResponse.statusCode, 422,
+        `明细合计与原文总额冲突时${pathname}必须拒绝quality授权`);
+      assert.strictEqual(cleanResponse.body.error, 'AI_ROUTE_ASK_USER',
+        '金额冲突必须返回可机读的ASK_USER错误');
+      assert.strictEqual(cleanResponse.body.ai_server_route, 'ASK_USER',
+        '金额冲突必须由服务端裁决为ASK_USER');
+      assert.deepStrictEqual(cleanResponse.body.ai_question_target, {
+        field: 'amount',
+        fieldPath: 'amount'
+      }, '金额冲突必须精确指向整单金额');
+      assert.deepStrictEqual(routeResponseSnapshot(response), routeResponseSnapshot(cleanResponse),
+        '伪造路由字段不得改变金额冲突的业务响应');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '金额冲突必须在Provider和Deep Prompt之前拒绝');
+      assertNoUntrustedRouteClaims(response.body, '金额冲突响应');
+      assertNoCapabilityLeak(response.body, '金额冲突响应');
+    }
+
+    for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+      const requestStart = fakeAiRequests.length;
+      const cleanResponse = await request(pathname, cleanIncompleteItemSample);
+      const response = await request(pathname, incompleteItemSample);
+      assert.strictEqual(cleanResponse.statusCode, 422,
+        `任一多商品明细缺关键事实时${pathname}必须拒绝quality授权`);
+      assert.strictEqual(cleanResponse.body.error, 'AI_ROUTE_ASK_USER',
+        '逐项事实不完整必须返回可机读的ASK_USER错误');
+      assert.strictEqual(cleanResponse.body.ai_server_route, 'ASK_USER',
+        '逐项事实不完整必须由服务端裁决为ASK_USER');
+      assert.deepStrictEqual(cleanResponse.body.ai_question_target, {
+        field: 'items',
+        fieldPath: 'items[1].unitPrice',
+        itemField: 'unitPrice',
+        itemIndex: 1
+      }, '缺单价必须精确指向第二个商品的unitPrice');
+      assert.deepStrictEqual(routeResponseSnapshot(response), routeResponseSnapshot(cleanResponse),
+        '伪造路由字段不得改变逐项缺事实的业务响应');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '逐项事实不完整必须在Provider和Deep Prompt之前拒绝');
+      assertNoUntrustedRouteClaims(response.body, '多商品缺事实响应');
+      assertNoCapabilityLeak(response.body, '多商品缺事实响应');
+    }
+
+    for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+      const requestStart = fakeAiRequests.length;
+      const cleanResponse = await request(pathname, cleanMultipleTotalSample);
+      const spoofedResponse = await request(pathname, multipleTotalSample);
+      assert.strictEqual(cleanResponse.statusCode, 422,
+        '多个不一致整单总额必须fail-closed为ASK_USER');
+      assert.strictEqual(cleanResponse.body.error, 'AI_ROUTE_ASK_USER');
+      assert.strictEqual(cleanResponse.body.ai_server_route, 'ASK_USER');
+      assert.deepStrictEqual(routeResponseSnapshot(spoofedResponse), routeResponseSnapshot(cleanResponse),
+        '伪造路由字段不得从多总额冲突中获得quality');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '多个总额无法唯一裁决时Provider必须为0');
+    }
+
+    for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+      const requestStart = fakeAiRequests.length;
+      const correctedTotal = await request(pathname, correctedTotalSample);
+      assert.strictEqual(correctedTotal.statusCode, 422,
+        '服务端尚未冻结总额纠错语法时必须fail-closed');
+      assert.strictEqual(correctedTotal.body.error, 'AI_ROUTE_ASK_USER');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '不得猜测最后一个总额就是真值');
+    }
+
+    const excludedAmountsStart = fakeAiRequests.length;
+    const excludedAmounts = await request('/api/ai/parse', excludedAmountsSample);
+    assert.strictEqual(excludedAmounts.statusCode, 409,
+      '单价、定金、已付、欠款和运费不得冒充整单总额');
+    assert.strictEqual(excludedAmounts.body.error, 'AI_DEEP_REQUIRED');
+    assert.strictEqual(excludedAmounts.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(fakeAiRequests.length, excludedAmountsStart,
+      '排除型金额样例的/parse不得自动请求Provider');
+
+    const discountedMatchingStart = fakeAiRequests.length;
+    const discountedMatching = await request('/api/ai/parse', discountedMatchingTotalSample);
+    assert.strictEqual(discountedMatching.statusCode, 409,
+      '优惠后总金额与明细一致时应作为明确整单总额');
+    assert.strictEqual(discountedMatching.body.error, 'AI_DEEP_REQUIRED');
+    assert.strictEqual(discountedMatching.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(fakeAiRequests.length, discountedMatchingStart);
+
+    const discountedConflictStart = fakeAiRequests.length;
+    const discountedConflict = await request('/api/ai/parse', discountedConflictTotalSample);
+    assert.strictEqual(discountedConflict.statusCode, 422,
+      '优惠后总金额与明细冲突时必须ASK_USER');
+    assert.strictEqual(discountedConflict.body.error, 'AI_ROUTE_ASK_USER');
+    assert.strictEqual(discountedConflict.body.ai_server_route, 'ASK_USER');
+    assert.strictEqual(fakeAiRequests.length, discountedConflictStart,
+      '优惠后总金额冲突必须在Provider前拒绝');
+
+    for (const payload of fuzzyTotalSamples) {
+      for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+        const requestStart = fakeAiRequests.length;
+        const response = await request(pathname, payload);
+        assert.strictEqual(response.statusCode, 422,
+          '“大概总计”或“总计大约”不得被当成精确总额授权quality');
+        assert.strictEqual(response.body.error, 'AI_ROUTE_ASK_USER');
+        assert.strictEqual(response.body.ai_server_route, 'ASK_USER');
+        assert.strictEqual(fakeAiRequests.length, requestStart,
+          '模糊总额必须在Provider前fail-closed');
+      }
+    }
+
+    for (const payload of invalidExplicitTotalSamples) {
+      for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+        const requestStart = fakeAiRequests.length;
+        const response = await request(pathname, payload);
+        assert.strictEqual(response.statusCode, 422,
+          '带冒号的冲突总额或零元总额都不得漏掉授权门禁');
+        assert.strictEqual(response.body.error, 'AI_ROUTE_ASK_USER');
+        assert.strictEqual(response.body.ai_server_route, 'ASK_USER');
+        assert.deepStrictEqual(response.body.ai_question_target, {
+          field: 'amount',
+          fieldPath: 'amount'
+        });
+        assert.strictEqual(fakeAiRequests.length, requestStart,
+          '无效或冲突的明确总额必须在Provider前拒绝');
+      }
+    }
+
+    for (const text of incompleteCandidateSamples) {
+      const requestStart = fakeAiRequests.length;
+      const response = await request('/api/ai/parse/deep', Object.assign({}, sample, forgedAuthority, { text }));
+      assert([409, 422].includes(response.statusCode),
+        '缺quantity、productName或unit的候选不得授权quality');
+      assert.notStrictEqual(response.body.ai_server_route, 'AUTO_DEEP');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '当旧server parser无法保留不完整候选时，/deep仍必须零Provider安全拒绝');
+    }
+
+    const matchingAmountStart = fakeAiRequests.length;
+    const matchingAmount = await request('/api/ai/parse', matchingAmountSample);
+    assert.strictEqual(matchingAmount.statusCode, 409,
+      '原文总额与完整明细合计一致时不得误伤合法AUTO_DEEP');
+    assert.strictEqual(matchingAmount.body.error, 'AI_DEEP_REQUIRED');
+    assert.strictEqual(matchingAmount.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(fakeAiRequests.length, matchingAmountStart,
+      '合法AUTO_DEEP的/parse仍不得自动请求Provider');
+
     const deepRequiredStart = fakeAiRequests.length;
     const deepRequired = await request('/api/ai/parse', forgedAutoDeepSample);
     const deepRequiredRequests = fakeAiRequests.slice(deepRequiredStart);
@@ -304,6 +512,18 @@ async function main() {
     assertNoUntrustedRouteClaims(trustedDeepRequests[0], '可信Deep上游请求');
     assertNoUntrustedRouteClaims(deep.body, '可信Deep响应');
     assertNoCapabilityLeak(deep.body, '可信Deep响应');
+
+    for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+      const requestStart = fakeAiRequests.length;
+      const conflictingRawMessages = await request(pathname, conflictingRawMessagesSample);
+      assert.strictEqual(conflictingRawMessages.statusCode, 422,
+        'rawMessages与text不同时必须按模型真实优先读取的rawMessages重验事实');
+      assert.strictEqual(conflictingRawMessages.body.error, 'AI_ROUTE_ASK_USER');
+      assert.strictEqual(conflictingRawMessages.body.ai_server_route, 'ASK_USER');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '未经capability指纹绑定的rawMessages不得进入quality Provider');
+      assertNoCapabilityLeak(conflictingRawMessages.body, 'rawMessages不一致响应');
+    }
 
     const emptyStandardStart = fakeAiRequests.length;
     fakeAiResponses.push({});
