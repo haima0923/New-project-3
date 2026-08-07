@@ -272,6 +272,14 @@ async function main() {
     const quantityPhraseSamples = ['一共', '总计', '合计'].map((cue) => Object.assign({}, sample, forgedAuthority, {
       text: `宏达包装厂下单：大号礼品盒${cue}100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。`
     }));
+    const splitSingleItemSamples = [
+      '王总下单礼品盒100个；单价3元；8月15日交货。',
+      '王总下单礼品盒100个；每个3元；8月15日交货。',
+      '王总下单礼品盒100个；3元一个；8月15日交货。'
+    ];
+    const splitMultiItemSample = Object.assign({}, sample, forgedAuthority, {
+      text: '王总下单：礼品盒100个；每个3元；饭盒200个；每个2元；8月15日交货。'
+    });
     const standardRequestStart = fakeAiRequests.length;
     fakeAiResponses.push({
       intent: 'order',
@@ -287,6 +295,21 @@ async function main() {
     const standardRequests = fakeAiRequests.slice(standardRequestStart);
     assert.strictEqual(standardRequests.length, 1, '普通核对只能请求一次离线上游');
     assert.strictEqual(standardRequests[0].model, 'offline-fast-model', 'standard必须使用离线fast模型');
+
+    for (const text of splitSingleItemSamples) {
+      const requestStart = fakeAiRequests.length;
+      fakeAiResponses.push({
+        intent: 'order',
+        fields: { customerName: '王总', productName: '礼品盒', quantity: '100', unit: '个', unitPrice: '3' },
+        missing_fields: [], low_confidence_fields: [], field_conflicts: []
+      });
+      const response = await request('/api/ai/parse', Object.assign({}, sample, { text }));
+      assert.strictEqual(response.statusCode, 200,
+        '同一单商品的数量和单价分段表达不得被误判为两个商品');
+      const requests = fakeAiRequests.slice(requestStart);
+      assert.strictEqual(requests.length, 1, '完整单商品分段表达必须恰好调用一次fast Provider');
+      assert.strictEqual(requests[0].model, 'offline-fast-model');
+    }
 
     const forgedStandardStart = fakeAiRequests.length;
     fakeAiResponses.push({
@@ -506,6 +529,31 @@ async function main() {
       assert.strictEqual(fakeAiRequests.length, quantityPhraseStart,
         '合法AUTO_DEEP的/parse仍不得自动请求Provider');
     }
+
+    const splitMultiParseStart = fakeAiRequests.length;
+    const splitMultiParse = await request('/api/ai/parse', splitMultiItemSample);
+    assert.strictEqual(splitMultiParse.statusCode, 409,
+      '多商品各自的数量和单价分段表达不得被误判为缺少额外商品');
+    assert.strictEqual(splitMultiParse.body.error, 'AI_DEEP_REQUIRED');
+    assert.strictEqual(splitMultiParse.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(fakeAiRequests.length, splitMultiParseStart,
+      '完整分段多商品的/parse不得自动请求Provider');
+
+    const splitMultiDeepStart = fakeAiRequests.length;
+    fakeAiResponses.push({
+      intent: 'order',
+      fields: { items: [
+        { productName: '礼品盒', quantity: '100', unit: '个', unitPrice: '3' },
+        { productName: '饭盒', quantity: '200', unit: '个', unitPrice: '2' }
+      ] },
+      missing_fields: [], low_confidence_fields: [], field_conflicts: []
+    });
+    const splitMultiDeep = await request('/api/ai/parse/deep', splitMultiItemSample);
+    assert.strictEqual(splitMultiDeep.statusCode, 200,
+      '完整分段多商品的/deep必须允许一次quality核对');
+    const splitMultiDeepRequests = fakeAiRequests.slice(splitMultiDeepStart);
+    assert.strictEqual(splitMultiDeepRequests.length, 1);
+    assert.strictEqual(splitMultiDeepRequests[0].model, 'offline-quality-model');
 
     const matchingAmountStart = fakeAiRequests.length;
     const matchingAmount = await request('/api/ai/parse', matchingAmountSample);
