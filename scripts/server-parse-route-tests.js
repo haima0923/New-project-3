@@ -51,6 +51,7 @@ function startProductServer() {
       AI_BASE_URL: `http://127.0.0.1:${fakeAiPort}`,
       AI_MODEL: 'offline-quality-model',
       AI_FAST_MODEL: 'offline-fast-model',
+      AI_RATE_LIMIT_MAX_REQUESTS: '100',
       AI_DEEP_RATE_LIMIT_MAX_REQUESTS: '40'
     }),
     stdio: ['ignore', 'pipe', 'pipe']
@@ -252,11 +253,14 @@ async function main() {
     const incompleteCandidateSamples = [
       '王总下单：大号礼品盒100个，每个3元；小号礼品盒，每个2元；8月15日交货。',
       '王总下单：大号礼品盒100个，每个3元；200个，每个2元；8月15日交货。',
-      '王总下单：大号礼品盒100，每个3元；小号礼品盒200个，每个2元；8月15日交货。'
+      '王总下单：大号礼品盒100，每个3元；小号礼品盒200个，每个2元；8月15日交货。',
+      '王总下单：大号礼品盒100个，3元一个；小号礼品盒，2元一个；8月15日交货。',
+      '王总下单：大号礼品盒100，3元/个；小号礼品盒200个，2元/个；8月15日交货。',
+      '王总下单：大号礼品盒100个，每个3.8；小号礼品盒，每个2.8；8月15日交货。'
     ];
-    const quantityPhraseSample = Object.assign({}, sample, forgedAuthority, {
-      text: '王总下单：大号礼品盒一共100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。'
-    });
+    const quantityPhraseSamples = ['一共', '总计', '合计'].map((cue) => Object.assign({}, sample, forgedAuthority, {
+      text: `宏达包装厂下单：大号礼品盒${cue}100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。`
+    }));
     const standardRequestStart = fakeAiRequests.length;
     fakeAiResponses.push({
       intent: 'order',
@@ -470,14 +474,16 @@ async function main() {
       }
     }
 
-    const quantityPhraseStart = fakeAiRequests.length;
-    const quantityPhrase = await request('/api/ai/parse', quantityPhraseSample);
-    assert.strictEqual(quantityPhrase.statusCode, 409,
-      '“一共100个”是商品数量，不得被金额门禁误判为模糊总额');
-    assert.strictEqual(quantityPhrase.body.error, 'AI_DEEP_REQUIRED');
-    assert.strictEqual(quantityPhrase.body.ai_server_route, 'AUTO_DEEP');
-    assert.strictEqual(fakeAiRequests.length, quantityPhraseStart,
-      '合法AUTO_DEEP的/parse仍不得自动请求Provider');
+    for (const payload of quantityPhraseSamples) {
+      const quantityPhraseStart = fakeAiRequests.length;
+      const quantityPhrase = await request('/api/ai/parse', payload);
+      assert.strictEqual(quantityPhrase.statusCode, 409,
+        '“一共/总计/合计100个”是商品数量，不得被金额门禁误判为模糊总额');
+      assert.strictEqual(quantityPhrase.body.error, 'AI_DEEP_REQUIRED');
+      assert.strictEqual(quantityPhrase.body.ai_server_route, 'AUTO_DEEP');
+      assert.strictEqual(fakeAiRequests.length, quantityPhraseStart,
+        '合法AUTO_DEEP的/parse仍不得自动请求Provider');
+    }
 
     const matchingAmountStart = fakeAiRequests.length;
     const matchingAmount = await request('/api/ai/parse', matchingAmountSample);
