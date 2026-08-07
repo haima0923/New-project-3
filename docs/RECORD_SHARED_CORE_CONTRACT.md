@@ -866,6 +866,22 @@ savePlan 只描述“准备怎样写”，不能修改状态：
 
 领域层每次都必须根据可信用户证据和当前风险重新派生用户解决状态；不得信任 payload 中声明的 `USER_RESOLVED`、`allRisksResolved` 或等价布尔值。正式保存失败时，customers、orders、orderProgress、pending、parse logs、quotations、receivables、payments 和 todos 均不得产生部分写入。
 
+### 14.2 客户端用户回答 provenance 威胁模型
+
+`USER_ASSISTANT_ANSWER` 是当前确认会话内的来源与完整性标记，不是身份认证、服务端授权、模型权限或正式保存授权。它只能证明：货小玲随包发布的一方确认页回答处理入口，曾把该入口接收的一次回答值绑定到当前会话、草稿 revision、原文指纹、问题、风险、商品、字段和值，并重新执行客户端安全计算；它不证明物理点击、触摸或人类在场。
+
+当前客户端信任边界如下：
+
+- 随包发布并经过审查的一方生产 JavaScript 属于同一个 Trusted Computing Base（TCB）。真实回答处理入口是 `pages/input/input.js`；proof challenge 与签发逻辑位于 `utils/parse-safety.js`。签发 API 的生产调用者必须由静态调用图门禁限制在这条固定链路内。
+- AI、Provider、HTTP JSON、普通对象、页面参数、dataset 标量、`field_sources`、`manual_fields`、storage 数据、fixtures、replay、JSON clone、对象展开、过期问题、过期 proof、过期 context 和迟到异步回调全部是不可信数据。它们不能凭字段名、字符串、布尔值或对象形状获得 proof authority；复制普通对象或 challenge 不能产生新的 authority。复制一个当前有效的已签名 proof 不扩大其原有绑定语义，仍须通过全部上下文与当前值校验。
+- 现有旧链路仍可能把 `manual_fields` 投影成页面 `USER` 来源；这是 12.2 已记录的兼容差距，不等于获得 `USER_ASSISTANT_ANSWER` proof，不能解除 `returned_uncertain` 的 proof 门禁，也不能授权服务端、domain 或保存。
+- challenge 的对象身份只能由 TCB 内部创建和一次性消费；JSON clone、spread、`Object.assign` 和深拷贝不得复制 authority。可序列化 proof 仍必须严格绑定并校验 confirmation session、draft revision、originalText fingerprint、question、risk、item、field 和当前 value。
+- 同一 JavaScript 权限域内的恶意一方生产模块，主动导入并滥用内部签发 API，明确不属于本阶段威胁模型。CommonJS/微信小程序客户端模块之间不存在可据此宣称的进程级安全沙箱；本阶段使用代码审查和静态调用图治理该风险，不把架构约束描述成不可伪造的模块权限。
+- proof 不能绕过 final safety、domain preflight、业务必填、金额/商品/关系一致性、Provider 身份、幂等或原子保存门禁，也不能自动触发保存。页面仍必须在用户明确执行 `SAVE_FORMAL` 后走完整保存链路。
+- 服务端不得仅凭客户端传来的 `USER_ASSISTANT_ANSWER`、其他 `USER_*` 标签、proof 对象或“已人工确认”布尔值跳过服务端事实检查、模型路由权限、安全校验或正式业务 mutation 门禁。客户端 provenance 只能作为受限输入，不能升级为服务端 capability。
+
+因此，本合同防御的是不可信数据伪造、challenge authority 复制、陈旧或跨上下文重放，不宣称防御已进入同一客户端 TCB 的恶意代码。若未来要防御同进程恶意模块，必须引入 JavaScript 权限域之外的可信根或平台级事件证明，并另行版本化合同。
+
 ## 15. 保存计划、MemoryStore 与原子性
 
 ### 15.1 分离原则
