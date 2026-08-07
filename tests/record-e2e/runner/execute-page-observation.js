@@ -16,6 +16,7 @@ const {
 const {
   validateParserInvocationGraph
 } = require('./validate-parser-invocation-graph');
+const { BUSINESS_STORAGE_KEY } = require('./constants');
 
 function routeFromResult(result = {}) {
   const route = result.parse_route || {};
@@ -67,6 +68,8 @@ function pageSnapshot(driver) {
     formalSaveVisible: page.data.showFormalSaveButton === true,
     pendingSaveVisible: page.data.showPendingButton === true,
     deepReviewVisible: page.data.showDeepReviewButton === true,
+    activeQuestion: safeClone(page.data.activeQuestion || page.data.assistantQuestion || null),
+    assistantQuestionState: String(page.data.assistantQuestionState || ''),
     isNoRecord: page.data.isNoRecord === true,
     lastNoRecordActionRejection: safeClone(page.data.lastNoRecordActionRejection || null),
     requiresFullPage: page.data.requiresFullPage === true,
@@ -270,18 +273,6 @@ function collectPageEditConsistency(driver, interaction, beforeEdits, afterEdits
   };
 }
 
-async function maybeDeepReview(driver, spec) {
-  if (spec.ai.profile !== 'FAKE_DEEP') return;
-  await waitForPageParse(driver.page);
-  if (typeof driver.page.requestDeepReview === 'function'
-    && driver.page.data.parseResult
-    && driver.page.data.parseResult.parse_route
-    && driver.page.data.parseResult.parse_route.deep_review_available) {
-    driver.page.requestDeepReview();
-    await waitForPageParse(driver.page);
-  }
-}
-
 async function executePageObservation(runtime, spec, options = {}) {
   if (spec.input.channel === 'PENDING_EDIT') {
     runtime.fakeWx.wx.setStorageSync('pending_to_edit', spec.input.pendingNoteId);
@@ -291,6 +282,8 @@ async function executePageObservation(runtime, spec, options = {}) {
     runLifecycle: true
   });
   const rawBefore = pageSnapshot(driver);
+  const routeStageStateBefore = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY);
+  const routeStageNetworkCursor = runtime.network.audit().events.length;
   let actualPageMethod = expectedPageInputMethod(surface, spec.input.channel);
   try {
     if (spec.input.channel === 'TYPED_TEXT') {
@@ -313,9 +306,14 @@ async function executePageObservation(runtime, spec, options = {}) {
       });
     }
     await waitForPageParse(driver.page);
-    await maybeDeepReview(driver, spec);
     await flushAsync();
     const beforeEdits = pageSnapshot(driver);
+    const routeStageNetworkEvents = runtime.network.audit().events.slice(routeStageNetworkCursor);
+    const routeStageEvidence = {
+      businessStateMutation: stableHash(routeStageStateBefore, 'client-route-stage-state-v1')
+        !== stableHash(runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY), 'client-route-stage-state-v1'),
+      networkEvents: safeClone(routeStageNetworkEvents)
+    };
     const missingCapabilities = (spec.interaction.requiredCapabilities || [])
       .filter((capability) => driver.availableCapabilities[capability] !== true);
     const interaction = await applyPageInteractions(driver, spec.interaction, options.hooks);
@@ -359,6 +357,7 @@ async function executePageObservation(runtime, spec, options = {}) {
       pageEditConsistency,
       parserObservation: collected.parserObservation,
       productionPathObservation: collected.productionPathObservation,
+      routeStageEvidence,
       route: routeFromResult(afterEdits.parseResult)
     };
   } catch (error) {

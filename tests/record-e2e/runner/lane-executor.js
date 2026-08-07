@@ -205,6 +205,10 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
   const networkEvents = Array.isArray(networkAudit.events)
     ? networkAudit.events
     : [];
+  const routeStage = observation && observation.routeStageEvidence || {};
+  const routeStageNetworkEvents = Array.isArray(routeStage.networkEvents)
+    ? routeStage.networkEvents
+    : [];
   const standardAiRequestCount = networkEvents.filter((event) => (
     event && event.path === '/api/ai/parse'
   )).length;
@@ -212,6 +216,27 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
     event && event.path === '/api/ai/parse/deep'
   )).length;
   const observedAiRequestCount = standardAiRequestCount + deepAiRequestCount;
+  const automaticDeepEvents = routeStageNetworkEvents.filter((event) => (
+    event && event.path === '/api/ai/parse/deep'
+  ));
+  const automaticStandardEvents = routeStageNetworkEvents.filter((event) => (
+    event && event.path === '/api/ai/parse'
+  ));
+  const routeRequestEvent = automaticDeepEvents[0] || automaticStandardEvents[0] || null;
+  const initialPage = observation && observation.beforeEdits || {};
+  const initialPageResult = initialPage.parseResult || {};
+  const initialPageRoute = initialPageResult.parse_route || {};
+  const initialPageContext = initialPageResult.client_confirmation_context || {};
+  const routeRequestIdentity = safeClone(
+    routeRequestEvent && routeRequestEvent.requestIdentity || initialPageContext || {}
+  );
+  const clientRoute = String(
+    routeRequestIdentity.requestedRoute
+    || initialPageRoute.client_route
+    || initialPageRoute.semantic_decision
+    || ''
+  ).toUpperCase();
+  const finalSafety = initialPageResult.final_parse_safety || {};
   const initialHybrid = hybridInvocations[0] || {};
   const initialHybridSummary = initialHybrid.resultSummary || {};
   const deepReviewHybridInvocations = hybridInvocations.filter((item) => (
@@ -326,8 +351,11 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
     AIRequestCount: networkAudit.auditPerformed === true
       ? observedAiRequestCount
       : (aiFallback.attempted === true ? 1 : 0),
+    totalAiRequestCount: observedAiRequestCount,
     standardAIRequestCount: standardAiRequestCount,
     deepAIRequestCount: deepAiRequestCount,
+    automaticDeepRequestCount: automaticDeepEvents.length,
+    automaticStandardRequestCount: automaticStandardEvents.length,
     duplicateDeepAIRequestCount: Math.max(0, deepAiRequestCount - 1),
     duplicateDeepReviewInvocationCount: Math.max(
       0,
@@ -359,7 +387,30 @@ function buildRouteEvidence(observation, rawParser, voiceAudit = {}, networkAudi
       item && item.phase === 'DEEP_REVIEW'
     )),
     requestDeepReviewInvocationCount,
+    manualDeepRequestCount: requestDeepReviewInvocationCount,
     secondHybridInvocationCount: deepReviewHybridInvocations.length,
+    clientRoute,
+    finalClientRoute: String(
+      route.client_route || route.semantic_decision || route.decision || ''
+    ).toUpperCase(),
+    requestIdentity: {
+      confirmationSessionId: String(routeRequestIdentity.confirmationSessionId || ''),
+      draftRevision: String(routeRequestIdentity.draftRevision || ''),
+      originalTextFingerprint: String(routeRequestIdentity.originalTextFingerprint || ''),
+      requestId: String(routeRequestIdentity.requestId || ''),
+      requestedRoute: String(routeRequestIdentity.requestedRoute || '')
+    },
+    activeQuestion: safeClone(initialPage.activeQuestion || null),
+    assistantQuestionState: String(initialPage.assistantQuestionState || ''),
+    entrySurface: String(initialPage.surface || ''),
+    formalSaveBlocked: initialPage.domainCanSaveFormal !== true
+      || initialPageResult.formal_save_blocked === true,
+    finalSafetyStatus: String(finalSafety.status || ''),
+    safetyEvaluated: Boolean(finalSafety && typeof finalSafety === 'object'
+      && Object.keys(finalSafety).length),
+    preflightEvaluated: Boolean(initialPage.preflightFingerprint),
+    preflightFingerprint: String(initialPage.preflightFingerprint || ''),
+    automaticStageMutation: routeStage.businessStateMutation === true,
     quotationLocalEvidenceDropCount,
     untrustedQuotationIdPromotionCount,
     inputChannel: firstVoiceEvidence.inputChannel || null,

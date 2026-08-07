@@ -63,10 +63,20 @@ function createFakeNetwork(options = {}) {
 
   function request(requestOptions = {}) {
     const requestPath = pathFromUrl(requestOptions.url);
+    const payload = requestOptions.data && typeof requestOptions.data === 'object'
+      ? requestOptions.data
+      : {};
     const event = {
       method: requestOptions.method || 'POST',
       path: requestPath,
       routeKind: 'MEMORY_ONLY',
+      requestIdentity: {
+        confirmationSessionId: String(payload.confirmationSessionId || ''),
+        draftRevision: String(payload.draftRevision === undefined ? '' : payload.draftRevision),
+        originalTextFingerprint: String(payload.originalTextFingerprint || ''),
+        requestId: String(payload.requestId || ''),
+        requestedRoute: String(payload.requestedRoute || '')
+      },
       outcome: ''
     };
     events.push(event);

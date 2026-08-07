@@ -42,6 +42,77 @@ function assertAuditZero(value, label, failureCode) {
   }
 }
 
+function assertClientRouteIntegrity(result) {
+  const evidence = result.routeEvidence || {};
+  const clientRoute = String(evidence.clientRoute || '').toUpperCase();
+  if (!['FAST_LOCAL', 'ASK_USER', 'AUTO_DEEP', 'SAFE_BLOCKED'].includes(clientRoute)) {
+    return;
+  }
+  const manualDeep = Number(evidence.manualDeepRequestCount || 0);
+  const automaticDeep = Number(evidence.automaticDeepRequestCount || 0);
+  const totalAi = Number(evidence.totalAiRequestCount || 0);
+  const fail = (reason, detail = {}) => {
+    throw integrityError(
+      'CLIENT_ROUTE_INTEGRITY_MISMATCH',
+      `${result.caseId} ${clientRoute} client route integrity failed: ${reason}`,
+      Object.assign({ clientRoute, routeEvidence: evidence }, detail)
+    );
+  };
+
+  if (manualDeep !== 0) fail('manual Deep must remain zero', { manualDeep });
+  if (evidence.automaticStageMutation === true) {
+    fail('automatic route stage must not mutate business state');
+  }
+
+  if (clientRoute === 'FAST_LOCAL') {
+    if (automaticDeep !== 0 || totalAi !== 0) {
+      fail('FAST_LOCAL must not call AI', { automaticDeep, totalAi });
+    }
+    return;
+  }
+  if (clientRoute === 'ASK_USER') {
+    if (automaticDeep !== 0 || totalAi !== 0) {
+      fail('ASK_USER must not call AI', { automaticDeep, totalAi });
+    }
+    if (evidence.formalSaveBlocked !== true) {
+      fail('ASK_USER must block formal save');
+    }
+    if (evidence.entrySurface === 'FULL_PAGE' && !evidence.activeQuestion) {
+      fail('FULL_PAGE ASK_USER must expose one active question');
+    }
+    return;
+  }
+  if (clientRoute === 'SAFE_BLOCKED') {
+    if (automaticDeep !== 0 || totalAi !== 0) {
+      fail('SAFE_BLOCKED must not call AI', { automaticDeep, totalAi });
+    }
+    if (evidence.formalSaveBlocked !== true) fail('SAFE_BLOCKED must block formal save');
+    return;
+  }
+
+  const identity = evidence.requestIdentity || {};
+  const missingIdentity = [
+    'requestId', 'draftRevision', 'confirmationSessionId',
+    'originalTextFingerprint', 'requestedRoute'
+  ].filter((field) => !String(identity[field] || '').trim());
+  if (automaticDeep !== 1 || totalAi !== 1
+    || Number(evidence.standardAIRequestCount || 0) !== 0) {
+    fail('AUTO_DEEP must issue exactly one automatic Deep request', {
+      automaticDeep,
+      standardAi: Number(evidence.standardAIRequestCount || 0),
+      totalAi
+    });
+  }
+  const identityRequired = evidence.entrySurface === 'FULL_PAGE';
+  if ((identityRequired && missingIdentity.length)
+    || String(identity.requestedRoute) !== 'AUTO_DEEP') {
+    fail('AUTO_DEEP request identity is incomplete', { identity, missingIdentity });
+  }
+  if (evidence.safetyEvaluated !== true || evidence.preflightEvaluated !== true) {
+    fail('AUTO_DEEP result must pass through safety and preflight');
+  }
+}
+
 function assertWorkerAudit(audit, label) {
   if (!audit || audit.exitObserved !== true || audit.exitCode !== 0
     || audit.ipcClosed !== true) {
@@ -244,6 +315,7 @@ function assertRuntimeIsolation(result) {
   );
 
   const routeEvidence = result.routeEvidence || {};
+  assertClientRouteIntegrity(result);
   assertAuditZero(
     Number(routeEvidence.duplicateDeepReviewInvocationCount || 0),
     `${result.caseId}.duplicateDeepReviewInvocationCount`,
@@ -287,18 +359,13 @@ function assertRuntimeIsolation(result) {
     );
   });
   if (routeEvidence.quotationConversionDeepReviewEligible === true) {
-    const route = String(routeEvidence.actualRoute || '').toUpperCase();
-    if (routeEvidence.initialRoute !== 'PENDING'
-      || routeEvidence.initialDeepReviewAvailable !== true
-      || Number(routeEvidence.requestDeepReviewInvocationCount || 0) !== 1
-      || Number(routeEvidence.secondHybridInvocationCount || 0) !== 1
-      || route !== 'AI_DEEP'
-      || Number(routeEvidence.AIRequestCount || 0) !== 1
-      || Number(routeEvidence.deepAIRequestCount || 0) !== 1
-      || Number(routeEvidence.standardAIRequestCount || 0) !== 0) {
+    if (routeEvidence.clientRoute !== 'AUTO_DEEP'
+      || Number(routeEvidence.automaticDeepRequestCount || 0) !== 1
+      || Number(routeEvidence.manualDeepRequestCount || 0) !== 0
+      || Number(routeEvidence.totalAiRequestCount || 0) !== 1) {
       throw integrityError(
-        'QUOTATION_CONVERSION_DEEP_REVIEW_COUNT_MISMATCH',
-        `${result.caseId} explicit quotation conversion must use one user-initiated Deep request`,
+        'QUOTATION_CONVERSION_AUTO_DEEP_INTEGRITY_MISMATCH',
+        `${result.caseId} explicit quotation conversion must use one automatic trusted Deep request`,
         { routeEvidence }
       );
     }

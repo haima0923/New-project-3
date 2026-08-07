@@ -6,22 +6,39 @@ const { createCaseRuntime } = require('../runner/create-case-runtime');
 const { loadCorpus } = require('../runner/load-corpus');
 const { loadProductionPage } = require('../runner/page-vm-driver');
 const { normalizeAiResult } = require('../../../utils/ai-parser');
-const { saveConfirmedDraft } = require('../../../utils/business');
-const { applyFinalParseSafety } = require('../../../utils/parse-safety');
+const { isFormalReady, saveConfirmedDraft } = require('../../../utils/business');
+const {
+  applyFinalParseSafety,
+  collectUserResolvableAiRisks,
+  evaluateUserResolvedAiState
+} = require('../../../utils/parse-safety');
 const { parseInput } = require('../../../utils/parser');
 const { evaluateRecordDomainPreflight } = require('../../../utils/record-domain-preflight');
 const { safeClone } = require('../../../utils/record-state-diff');
 const { createInitialState } = require('../../../utils/storage');
+const {
+  answerQuestion,
+  submitOriginalText
+} = require('../record-confirm-interaction-v1/page-actions');
+const { createPageHarness } = require('../record-confirm-interaction-v1/runtime');
 const { BUSINESS_DATE, NOW_INSTANT, TIMEZONE, withFrozenClock } = require('./clock');
 
 const tests = [];
+const FIRST_ITEM_ALIASES = [
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+  'itemDeliveryDate', 'itemRemark'
+];
 const corpus = loadCorpus();
 const pageCase = corpus.byId.get('REC-E2E-MULTI-001');
 assert(pageCase, 'Missing REC-E2E-MULTI-001 page fixture');
 const pagePlan = buildExecutionPlan(pageCase, corpus.fixtureResolver);
 
 function test(caseId, title, fn) {
-  tests.push({ caseId, title, fn });
+  tests.push({ async: false, caseId, title, fn });
+}
+
+function testAsync(caseId, title, fn) {
+  tests.push({ async: true, caseId, title, fn });
 }
 
 function parseText(text) {
@@ -306,29 +323,91 @@ test('MIP-004', '删除商品后manual来源不能漂移', () => {
   });
 });
 
-test('MIP-005', '商品顺序变化不能串位', () => {
-  const draft = completePageDraft([
-    { confirmationItemKey: 'first-key', productName: '礼品盒', spec: '大号', quantity: '10', unit: '套', unitPrice: '3', priceUnit: '套', totalAmount: '30' },
-    { confirmationItemKey: 'second-key', productName: '饭盒', spec: '小号', quantity: '20', unit: '个', unitPrice: '5', priceUnit: '个', totalAmount: '100' }
-  ]);
-  withInputPage(({ page }) => {
-    installDraft(page, draft);
-    const edited = editItem(page, 0, 'productName', '礼品盒');
-    const reordered = Object.assign({}, edited, {
-      fields: Object.assign({}, edited.fields, {
-        items: [safeClone(edited.fields.items[1]), safeClone(edited.fields.items[0])]
-      }),
-      field_conflicts: [
-        { field: 'items', itemKey: 'first-key', itemIndex: 1, itemField: 'productName', fieldPath: 'items[1].productName', message: '已确认项' },
-        { field: 'items', itemKey: 'second-key', itemIndex: 0, itemField: 'productName', fieldPath: 'items[0].productName', message: '未确认项' }
-      ]
-    });
-    const reviewed = review(reordered);
-    assert.strictEqual(itemKey(reviewed.fields.items[0]), 'second-key');
-    assert.strictEqual(itemKey(reviewed.fields.items[1]), 'first-key');
-    assert(!hasItemRisk(reviewed, { itemKey: 'first-key', itemField: 'productName' }));
-    assert(hasItemRisk(reviewed, { itemKey: 'second-key', itemField: 'productName' }));
+testAsync('MIP-005', '真实 signed proof 在纯商品重排后继续绑定稳定商品身份', async () => {
+  const text = '王总下单：大号礼品盒100个，每个3元；小号礼品盒每个2元；8月15日交货。';
+  const harness = createPageHarness({
+    caseId: 'MIP-005',
+    networkMode: 'DEFERRED',
+    text
   });
+  const stateBefore = JSON.stringify(harness.readState());
+  try {
+    await submitOriginalText(harness.page, text);
+    const question = safeClone(harness.page.data.activeQuestion || null);
+    assert(question && question.target, '真实页面必须生成商品级问题');
+    assert.strictEqual(question.target.field, 'quantity');
+    assert(question.target.itemKey, '真实问题必须绑定稳定 confirmationItemKey');
+
+    const answer = await answerQuestion(harness.page, '200');
+    assert.strictEqual(answer.supported, true, '必须通过真实页面回答 handler 生成 proof');
+    const before = review(safeClone(harness.page.data.parseResult));
+    const beforeItems = before.fields.items || [];
+    const beforeKeys = beforeItems.map(itemKey);
+    const beforeProofs = before.user_manual_edits || [];
+    const beforeProof = beforeProofs[0] || {};
+    const beforeRisks = collectUserResolvableAiRisks(before, before.fields)
+      .map((risk) => risk.riskId).sort();
+    const beforeResolution = evaluateUserResolvedAiState(before);
+    const beforeFormalReady = isFormalReady(before, harness.readState());
+    const beforeContext = safeClone(before.client_confirmation_context || {});
+    const beforeAiRevision = Number(before.ai_resolution_revision || 0);
+
+    assert.strictEqual(beforeItems.length, 2);
+    assert(beforeKeys.every(Boolean));
+    assert.strictEqual(new Set(beforeKeys).size, 2);
+    assert.strictEqual(beforeItems[0].productName, '礼品盒');
+    assert.strictEqual(beforeItems[1].productName, '礼品盒');
+    assert.notStrictEqual(beforeItems[0].spec, beforeItems[1].spec);
+    assert.strictEqual(beforeProofs.length, 1);
+    assert.strictEqual(beforeProof.source, 'USER_ASSISTANT_ANSWER');
+    assert.strictEqual(beforeProof.itemKey, question.target.itemKey);
+    assert.strictEqual(beforeProof.field, 'quantity');
+    assert(beforeProof.signature, '重排前 proof 必须带生产签名');
+    assert.strictEqual(beforeResolution.status, 'MANUAL_RESOLUTION_COMPLETE');
+
+    const reordered = safeClone(before);
+    reordered.fields.items = reordered.fields.items.slice().reverse();
+    const first = reordered.fields.items[0];
+    FIRST_ITEM_ALIASES.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(first, field)) reordered.fields[field] = first[field];
+      else delete reordered.fields[field];
+    });
+    const reorderedRisks = collectUserResolvableAiRisks(reordered, reordered.fields)
+      .map((risk) => risk.riskId).sort();
+    assert.deepStrictEqual(reorderedRisks, beforeRisks, '纯重排不得新增或改变 risk');
+    assert.strictEqual(reordered.original_text, before.original_text);
+    assert.deepStrictEqual(reordered.client_confirmation_context, beforeContext);
+    assert.strictEqual(Number(reordered.ai_resolution_revision || 0), beforeAiRevision);
+
+    const reviewed = review(reordered);
+    const afterProofs = reviewed.user_manual_edits || [];
+    const afterProof = afterProofs[0] || {};
+    const targetIndex = reviewed.fields.items.findIndex((item) => (
+      itemKey(item) === question.target.itemKey
+    ));
+    const otherItem = reviewed.fields.items.find((item) => (
+      itemKey(item) !== question.target.itemKey
+    ));
+
+    assert.deepStrictEqual(reviewed.fields.items.map(itemKey), beforeKeys.slice().reverse());
+    assert.strictEqual(afterProofs.length, 1);
+    assert.strictEqual(afterProof.itemKey, question.target.itemKey);
+    assert.strictEqual(afterProof.field, 'quantity');
+    assert.strictEqual(afterProof.fieldPath, `items[${targetIndex}].quantity`);
+    assert.strictEqual(reviewed.fields.items[targetIndex].quantity, '200');
+    assert(otherItem && otherItem.productName === '礼品盒');
+    assert.strictEqual(afterProof.itemKey === itemKey(otherItem), false, '同名商品不能串用 proof');
+    assert.strictEqual(evaluateUserResolvedAiState(reviewed).status, 'MANUAL_RESOLUTION_COMPLETE');
+    assert.strictEqual(
+      isFormalReady(reviewed, harness.readState()),
+      beforeFormalReady,
+      '纯重排不得让正式保存资格进一步退化'
+    );
+    assert.strictEqual(harness.network.aiEvents().length, 0);
+    assert.strictEqual(JSON.stringify(harness.readState()), stateBefore, '确认阶段 business/storage mutation 必须为0');
+  } finally {
+    harness.dispose();
+  }
 });
 
 test('MIP-006', 'AI不能注入商品级manual provenance', () => {
@@ -503,12 +582,13 @@ test('MIP-012', '恶意manual类型安全忽略且不抛异常', () => {
   });
 });
 
-function main() {
+async function main() {
   let passed = 0;
   let failed = 0;
-  tests.forEach((item) => {
+  for (const item of tests) {
     try {
-      withFrozenClock(item.caseId, item.fn);
+      if (item.async) await item.fn();
+      else withFrozenClock(item.caseId, item.fn);
       passed += 1;
       console.log(`PASS ${item.caseId} ${item.title}`);
     } catch (error) {
@@ -516,11 +596,16 @@ function main() {
       console.log(`CASE_FAIL ${item.caseId} ${item.title}`);
       console.log(`${error.name}: ${error.message}`);
     }
-  });
+  }
   console.log(`Manual item provenance gate: PASS=${passed} CASE_FAIL=${failed} RUNNER_ERROR=0`);
   if (failed) process.exitCode = 1;
 }
 
-if (require.main === module) main();
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}
 
 module.exports = { main };

@@ -416,14 +416,30 @@ test('PRODUCTION_ROUTING继续保持local pending standard deep和P0状态', asy
   assert.strictEqual(pendingAdapter.getCallCount(), 0);
 
   const standardAdapter = createFakeAiAdapter(() => validAiOrder());
-  const standard = await runRecordFlow(baseInput('王总要订5个水悲，五块五一个，明天交', {
+  const standardInput = baseInput('王总要订5个水悲，五块五一个，明天交', {
     inputSource: 'voice'
-  }), { aiAdapter: standardAdapter });
+  });
+  const standardStateBefore = JSON.stringify(standardInput.initialState);
+  const standard = await runRecordFlow(standardInput, { aiAdapter: standardAdapter });
   assert.strictEqual(standard.productionRoute, PRODUCTION_ROUTES.AI_STANDARD);
   assert.strictEqual(standard.executionPath, EXECUTION_PATHS.PRODUCTION_STANDARD);
   assert.strictEqual(standard.trace.merge.performed, true);
-  assert.strictEqual(standard.trace.merge.adoptionStatus, ADOPTION_STATUSES.NOT_APPLICABLE);
-  assert.strictEqual(standard.trace.merge.adoptionStatusResolved, false);
+  assert.strictEqual(standard.trace.ai.providerKind, PROVIDER_KINDS.FAKE);
+  assert.notStrictEqual(standard.trace.ai.providerKind, PROVIDER_KINDS.REAL);
+  assert.strictEqual(standard.trace.ai.adapterInvoked, true);
+  assert.strictEqual(standard.trace.ai.responseReceived, true);
+  assert.strictEqual(standard.trace.merge.adoptionStatus, ADOPTION_STATUSES.NOT_ADOPTED);
+  assert.strictEqual(standard.trace.merge.adoptionStatusResolved, true);
+  assert.strictEqual(standard.result.ai_fallback.status, 'rejected');
+  assert.strictEqual(standard.result.ai_fallback.provider_kind, PROVIDER_KINDS.FAKE);
+  assert.strictEqual(standard.result.ai_fallback.business_result_valid, false);
+  assert.strictEqual(standard.result.fields.productName, '水杯');
+  assert.notStrictEqual(standard.result.fields.productName, '水悲');
+  assert(!String(standard.result.fields.remark || '').includes('PHASE1C_AI_UNIQUE'));
+  assert.strictEqual(standard.saveEligibility.allowed, false);
+  assert.strictEqual(standard.saveEligibility.canCommitToRealStorage, false);
+  assert.strictEqual(standard.saveEligibility.formalSaveBlocked, true);
+  assert.strictEqual(JSON.stringify(standardInput.initialState), standardStateBefore);
   assert.strictEqual(standardAdapter.getCallCount(), 1);
 
   const deepAdapter = createFakeAiAdapter(() => validDeepOrder());

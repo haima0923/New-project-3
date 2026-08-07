@@ -347,7 +347,7 @@ const tests = [
     }
   },
   {
-    name: 'full-attempt-requires-one-user-initiated-deep-for-explicit-quotation-conversion',
+    name: 'full-attempt-requires-one-automatic-deep-for-explicit-quotation-conversion',
     run() {
       const plans = [{
         testCase: {
@@ -357,23 +357,40 @@ const tests = [
       }];
       const result = cleanResult('CASE-A');
       result.routeEvidence = Object.assign({}, result.routeEvidence, {
-        actualRoute: 'PENDING',
-        AIRequestCount: 0,
-        deepAIRequestCount: 0,
+        activeQuestion: null,
+        actualRoute: 'AI_DEEP',
+        AIRequestCount: 1,
+        automaticDeepRequestCount: 0,
+        automaticStageMutation: false,
+        clientRoute: 'AUTO_DEEP',
+        deepAIRequestCount: 1,
         duplicateDeepAIRequestCount: 0,
         duplicateDeepReviewInvocationCount: 0,
-        initialDeepReviewAvailable: true,
-        initialRoute: 'PENDING',
+        finalSafetyStatus: 'NEEDS_AI',
+        formalSaveBlocked: true,
+        initialDeepReviewAvailable: false,
+        initialRoute: 'AI_DEEP',
+        manualDeepRequestCount: 0,
+        preflightEvaluated: true,
         quotationConversionDeepReviewEligible: true,
         quotationLocalEvidenceDropCount: 0,
-        requestDeepReviewInvocationCount: 1,
-        secondHybridInvocationCount: 1,
+        requestDeepReviewInvocationCount: 0,
+        requestIdentity: {
+          confirmationSessionId: 'session-1',
+          draftRevision: '1',
+          originalTextFingerprint: 'fingerprint-1',
+          requestId: 'request-1',
+          requestedRoute: 'AUTO_DEEP'
+        },
+        safetyEvaluated: true,
+        secondHybridInvocationCount: 0,
         standardAIRequestCount: 0,
+        totalAiRequestCount: 1,
         untrustedQuotationIdPromotionCount: 0
       });
       expectThrow(
         () => assertFullAttemptIntegrity({ attempt: 1, results: [result] }, plans),
-        'QUOTATION_CONVERSION_DEEP_REVIEW_COUNT_MISMATCH'
+        'CLIENT_ROUTE_INTEGRITY_MISMATCH'
       );
     }
   },

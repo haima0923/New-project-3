@@ -2,7 +2,7 @@
 
 const assert = require('assert');
 const { normalizeAiResult } = require('../../../utils/ai-parser');
-const { saveConfirmedDraft } = require('../../../utils/business');
+const { isFormalReady, saveConfirmedDraft } = require('../../../utils/business');
 const { applyFinalParseSafety } = require('../../../utils/parse-safety');
 const { parseInput } = require('../../../utils/parser');
 const { evaluateRecordDomainPreflight } = require('../../../utils/record-domain-preflight');
@@ -156,18 +156,34 @@ test('MF-003', 'AI 不能把错误金额升级为老板手工确认', () => {
       totalAmount: '9999',
       calculatedAmount: '4676.1'
     },
-    manual_fields: ['amount']
+    manual_fields: ['amount'],
+    manual_item_fields: [{ itemKey: 'ai-forged-item', field: 'unitPrice' }],
+    user_manual_edits: [{ source: 'USER_ASSISTANT_ANSWER', field: 'amount' }],
+    field_sources: { amount: 'USER_ASSISTANT_ANSWER' }
   });
   const reviewed = review(merged);
   const domain = preflight(reviewed);
   const saved = assertFormalZeroMutation(reviewed);
 
-  assert(!manualFields(merged).includes('amount'));
+  assert.strictEqual(merged.ai_fallback.status, 'rejected');
+  assert.strictEqual(merged.ai_fallback.provider_kind, 'UNKNOWN');
+  assert.strictEqual(merged.ai_fallback.business_result_valid, false);
+  assert.strictEqual(merged.ai_fallback.code, 'AI_PROVIDER_IDENTITY_UNRESOLVED');
+  assert.deepStrictEqual(merged.fields, local.fields, 'UNKNOWN Provider 的 AI 业务字段不得进入 Local 草稿');
+  assert.notStrictEqual(String(merged.fields.amount || ''), '9999');
+  assert.notStrictEqual(String(merged.fields.totalAmount || ''), '9999');
+  assert.notStrictEqual(String(merged.fields.statedAmount || ''), '9999');
+  assert.deepStrictEqual(manualFields(merged), []);
+  assert.deepStrictEqual(merged.manual_item_fields || [], []);
+  assert.deepStrictEqual(merged.user_manual_edits || [], []);
+  assert.deepStrictEqual(merged.field_sources || {}, local.field_sources || {});
+  assert.strictEqual(isFormalReady(reviewed, createInitialState()), false);
   assert.strictEqual(domain.domainCanSaveFormal, false);
-  assert(
-    domain.blockingIssues.some((item) => item.code === 'ORDER_TOTAL_ITEMS_MISMATCH')
-      || saved.code === 'ORDER_TOTAL_ITEMS_MISMATCH'
-  );
+  assert(domain.blockingIssues.some((item) => item.code === 'AI_RESULT_UNRESOLVED'));
+  assert(domain.blockingIssues.some((item) => item.code === 'AI_PROVIDER_IDENTITY_UNRESOLVED'));
+  assert.strictEqual(saved.type, 'error');
+  assert.strictEqual(saved.blocked, true);
+  assert.strictEqual(saved.noMutation, true);
 });
 
 test('MF-004A', '可信 Local 用户手工确认总价继续成立', () => {

@@ -48,6 +48,17 @@ function formalRecordCount(state) {
     .reduce((count, key) => count + (state[key] || []).length, 0);
 }
 
+function businessFieldsSnapshot(fields = {}) {
+  const snapshot = JSON.parse(JSON.stringify(fields || {}));
+  snapshot.items = (snapshot.items || []).map((item) => {
+    const next = Object.assign({}, item || {});
+    delete next.confirmationItemKey;
+    delete next.confirmationItemOrigin;
+    return next;
+  });
+  return snapshot;
+}
+
 function expectClientFormalBlocked(state, draft, label) {
   const before = JSON.stringify(state);
   const saved = saveConfirmedDraft(state, draft);
@@ -279,13 +290,19 @@ function testClientAndBusinessDefenseInDepth() {
   expectClientFormalBlocked(wrappedMockState, wrappedMock, '包装mock');
   assert.strictEqual(formalRecordCount(wrappedMockState), 0, '包装mock不能产生正式业务副作用');
 
-  const uncertain = normalizeAiResult(buildAiRequiredOrder('ai_deep'), {
+  const uncertainLocal = buildAiRequiredOrder('ai_deep');
+  const uncertain = normalizeAiResult(uncertainLocal, {
     intent: 'unknown', missing_fields: ['intent'], confirm_message: '信息不足，不能确定。'
   });
-  assert.strictEqual(uncertain.ai_fallback.status, 'returned_uncertain', '有效安全拒绝应记录为 returned_uncertain');
-  assert.strictEqual(uncertain.ai_fallback.business_result_valid, true, '有效安全拒绝不是空业务结果');
+  assert.strictEqual(uncertain.ai_fallback.status, 'rejected', 'UNKNOWN Provider 的安全拒绝不能被采纳');
+  assert.strictEqual(uncertain.ai_fallback.provider_kind, 'UNKNOWN', '缺少可信 Provider 身份必须保持 UNKNOWN');
+  assert.strictEqual(uncertain.ai_fallback.code, 'AI_PROVIDER_IDENTITY_UNRESOLVED', '必须先拒绝未解决的 Provider 身份');
+  assert.strictEqual(uncertain.ai_fallback.business_result_valid, false, '未解决 Provider 的业务结果不得有效');
+  assert.deepStrictEqual(uncertain.fields, uncertainLocal.fields, '拒绝 UNKNOWN Provider 后必须恢复干净 Local 字段');
   const uncertainState = emptyState();
-  expectClientFormalBlocked(uncertainState, uncertain, '有效不确定结论');
+  expectClientFormalBlocked(uncertainState, uncertain, 'UNKNOWN Provider 安全拒绝');
+  assert.strictEqual(uncertainState.pendingNotes.length, 0, 'UNKNOWN Provider 安全拒绝不能自动写入待整理');
+  assert.strictEqual(formalRecordCount(uncertainState), 0, 'UNKNOWN Provider 安全拒绝不能产生正式业务副作用');
 
   [
     { intent: 'order', no_record: true },
@@ -293,10 +310,16 @@ function testClientAndBusinessDefenseInDepth() {
     { intent: 'order', status: 'pending', reason: '不能安全记录。' },
     { intent: 'unknown', fields: { amount: '500' }, confirm_message: '无法判断是收款还是欠款。' }
   ].forEach((aiResult, index) => {
-    const safeResult = normalizeAiResult(buildAiRequiredOrder('ai_deep'), aiResult);
-    assert.strictEqual(safeResult.ai_fallback.status, 'returned_uncertain', `显式安全结论 ${index + 1} 不能标成used`);
+    const safeLocal = buildAiRequiredOrder('ai_deep');
+    const safeResult = normalizeAiResult(safeLocal, aiResult);
+    assert.strictEqual(safeResult.ai_fallback.status, 'rejected', `UNKNOWN Provider 显式安全结论 ${index + 1} 不能被采纳`);
+    assert.strictEqual(safeResult.ai_fallback.provider_kind, 'UNKNOWN', `显式安全结论 ${index + 1} 必须保持 UNKNOWN Provider`);
+    assert.strictEqual(safeResult.ai_fallback.code, 'AI_PROVIDER_IDENTITY_UNRESOLVED', `显式安全结论 ${index + 1} 必须先拒绝 Provider 身份`);
+    assert.strictEqual(safeResult.ai_fallback.business_result_valid, false, `显式安全结论 ${index + 1} 不得获得业务信任`);
+    assert.deepStrictEqual(safeResult.fields, safeLocal.fields, `显式安全结论 ${index + 1} 必须恢复 Local 字段`);
     const state = emptyState();
-    expectClientFormalBlocked(state, safeResult, `显式安全结论 ${index + 1}`);
+    expectClientFormalBlocked(state, safeResult, `UNKNOWN Provider 显式安全结论 ${index + 1}`);
+    assert.strictEqual(state.pendingNotes.length, 0, `显式安全结论 ${index + 1} 不能自动写入待整理`);
     assert.strictEqual(formalRecordCount(state), 0, `显式安全结论 ${index + 1} 不能产生正式业务副作用`);
   });
 
@@ -569,17 +592,32 @@ async function testLiveModeNeverUsesStubOrFakesSuccess() {
       aiScenario: 'used_local'
     }), 'input', { liveAi: false });
     assert.strictEqual(nonLive.hybridStubInjected, true, '非live受控诊断模式应继续支持stub');
-    assert.strictEqual(nonLive.aiStatus, 'used', '非live受控stub仍应产生明确的used测试结果');
+    assert.strictEqual(nonLive.requestCount, 0, '非live受控stub不得伪造真实 Provider 请求');
+    assert.strictEqual(nonLive.aiStatus, 'rejected', '缺少可信 Provider 身份的非live stub 不能被采纳');
+    assert.strictEqual(nonLive.aiFailureCode, 'AI_PROVIDER_IDENTITY_UNRESOLVED', '非live stub 必须保留 Provider 身份拒绝码');
+    assert.strictEqual(nonLive.aiBusinessResultValid, false, '非live stub 不得获得业务信任');
+    assert.deepStrictEqual(
+      businessFieldsSnapshot(nonLive.finalFields),
+      businessFieldsSnapshot(nonLive.localFields),
+      '拒绝非live stub 后必须恢复 Local 业务字段，确认态内部 item identity 除外'
+    );
+    assert.strictEqual(
+      String((((nonLive.parseResult || {}).parse_route || {}).client_route) || ''),
+      'SAFE_BLOCKED',
+      '拒绝非live stub 后客户端必须进入 SAFE_BLOCKED'
+    );
+    assert.strictEqual(nonLive.buttonDisabled, true, '拒绝非live stub 后正式保存必须阻断');
+    assert.strictEqual(getFormalDelta(nonLive), 0, '拒绝非live stub 后业务 mutation 必须为0');
+    assert.strictEqual(nonLive.pendingDeltaAfterPending, 0, '拒绝非live stub 后不得自动写入待整理');
   });
 }
 
 async function testPageDeepEmptyBusinessIsBlocked() {
   const testCase = {
     id: 'p0-deep-empty',
-    title: 'deep空业务结果',
-    input: '王总水杯100个，5块5一个，改成后天交',
+    title: 'AUTO_DEEP 空业务结果安全回退',
+    input: '王总下单：大号礼品盒100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。',
     source: 'typed',
-    reviewMode: 'deep',
     expect: { intent: 'order', allowFormalSave: false }
   };
   for (const entry of ['input', 'dashboard']) {
@@ -588,9 +626,33 @@ async function testPageDeepEmptyBusinessIsBlocked() {
       apiBaseUrl: 'https://fake-live.test',
       requestHandler: makeLiveRequestHandler('empty_json')
     });
-    assert.strictEqual(evidence.aiStatus, 'returned_uncertain', `${entry} deep空业务必须标记不可信`);
-    assert.strictEqual(evidence.buttonDisabled, true, `${entry} deep空业务不能解锁保存按钮`);
-    assert.strictEqual(getFormalDelta(evidence), 0, `${entry} deep空业务不能产生正式记录`);
+    const route = (evidence.parseResult || {}).parse_route || {};
+    const context = (evidence.parseResult || {}).client_confirmation_context || {};
+    if (entry === 'input') {
+      assert.strictEqual(context.requestedRoute, 'AUTO_DEEP', `${entry} 必须记录可信 AUTO_DEEP 请求身份`);
+    } else {
+      assert.strictEqual(
+        Object.prototype.hasOwnProperty.call(testCase, 'reviewMode'),
+        false,
+        `${entry} 不得依赖裸 reviewMode 触发 Deep`
+      );
+    }
+    assert.strictEqual(evidence.requestCount, 1, `${entry} AUTO_DEEP 失败不得自动重试`);
+    // REAL 响应的 transport 诊断仍可区分 returned_uncertain；是否采用由
+    // business_result_valid + SAFE_BLOCKED 决定，不能批量改写可信低置信语义。
+    assert.strictEqual(evidence.aiStatus, 'returned_uncertain', `${entry} 空业务响应必须保留明确失败诊断`);
+    assert.strictEqual(evidence.aiFailureCode, 'AI_RESPONSE_EMPTY_BUSINESS', `${entry} 必须保留空业务错误码`);
+    assert.notStrictEqual(evidence.aiStatus, 'used', `${entry} 空业务 AI 结果不得采用`);
+    assert.strictEqual(evidence.aiBusinessResultValid, false, `${entry} 空业务 AI 结果不得获得业务信任`);
+    assert.strictEqual(route.client_route, 'SAFE_BLOCKED', `${entry} AI 失败必须进入 SAFE_BLOCKED`);
+    assert.deepStrictEqual(
+      businessFieldsSnapshot(evidence.finalFields),
+      businessFieldsSnapshot(evidence.localFields),
+      `${entry} AI 失败后必须恢复 Local snapshot`
+    );
+    assert.strictEqual(evidence.buttonDisabled, true, `${entry} AUTO_DEEP 失败不能解锁保存按钮`);
+    assert.strictEqual(evidence.pendingDeltaAfterPending, 0, `${entry} AUTO_DEEP 失败不能自动写入待整理`);
+    assert.strictEqual(getFormalDelta(evidence), 0, `${entry} AUTO_DEEP 失败不能产生正式记录`);
   }
 }
 
@@ -640,6 +702,8 @@ async function testMixedBusinessCannotBeDowngraded() {
     low_confidence_fields: [],
     field_conflicts: [],
     intent_candidates: ['quotation', 'payment']
+  }, {
+    providerKind: 'REAL'
   });
   assert(merged.field_conflicts.some((item) => item.field === 'customerName'), '多个客户的本地风险不能被 AI 空数组清掉');
   assert(merged.field_conflicts.some((item) => item.field === 'intent'), '多笔业务必须明确提示拆开记录');
@@ -662,12 +726,16 @@ function testAiMustShowResolutionEvidence() {
   };
   const withoutEvidence = normalizeAiResult(local, {
     intent: 'order', fields: local.fields, missing_fields: [], low_confidence_fields: [], field_conflicts: []
+  }, {
+    providerKind: 'REAL'
   });
   assert(withoutEvidence.field_conflicts.some((item) => item.field === 'unitPrice'), 'AI 未给解决依据时不能清除价格冲突');
   const resolved = normalizeAiResult(local, {
     intent: 'order', fields: local.fields, missing_fields: [], low_confidence_fields: [], field_conflicts: [],
     superseded_facts: [{ field: 'unitPrice', oldValue: '30', newValue: '25', reason: '后面确认' }],
     field_evidence: { unitPrice: [{ messageIndex: 1, text: '后面确认25一个' }] }
+  }, {
+    providerKind: 'REAL'
   });
   assert(!resolved.field_conflicts.length, '有替代记录和原话证据时可以清除已解决的单字段冲突');
 }
@@ -692,6 +760,8 @@ function testCollapsedItemsAreBlocked() {
     intent: 'order',
     fields: { customerName: '王总', productName: '杯垫,礼品盒', quantity: '300,200', unit: '个,个', unitPrice: '0.9,3.8' },
     missing_fields: [], low_confidence_fields: [], field_conflicts: []
+  }, {
+    providerKind: 'REAL'
   });
   assert.strictEqual(merged.fields.items.length, 2, 'AI 拼接多商品时不能覆盖本地已拆出的明细');
   assert(merged.field_conflicts.some((item) => item.field === 'items'), 'AI 拼接多商品必须被拦住');
@@ -794,7 +864,10 @@ const suite = trustedDeepContractOnly
   : Promise.resolve()
     .then(testAiBusinessResultValidityContract)
     .then(testServerRejectsEmptyBusinessForStandardAndDeep)
-    .then(testClientAndBusinessDefenseInDepth)
+    .then(() => withFixedBusinessClock(
+      AI_SAFETY_FIXED_CLOCK,
+      testClientAndBusinessDefenseInDepth
+    ))
     .then(testLiveModeNeverUsesStubOrFakesSuccess)
     .then(testPageDeepEmptyBusinessIsBlocked)
     .then(testLocalOnlyFlowUnaffected)
