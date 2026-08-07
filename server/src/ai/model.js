@@ -1,9 +1,53 @@
+const crypto = require('crypto');
 const { isRealAiEnabled } = require('../config');
 const { mockParse, mockQuery, mockTranscribe } = require('./mock');
 const { resolveBusinessTimeContext } = require('../../utils/record-flow-runtime');
 
 const COMPLEX_PARSE_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|改数量|延期|提前|那单|那笔|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回|定金|订金|预付|尾款|欠款|还了|还剩|结清|到账|转了|付了|收了)/i;
 const CRITICAL_FIELDS = ['customerName', 'productName', 'quantity', 'unitPrice', 'amount', 'paymentAmount', 'dueDate'];
+const INTERNAL_PARSE_ROUTE_CONTEXTS = new WeakMap();
+const INTERNAL_AUTO_DEEP_ROUTE = 'AUTO_DEEP';
+
+function createInternalParseRouteContext(metadata = {}) {
+  const route = String(metadata.route || '').trim().toUpperCase();
+  const requestId = String(metadata.requestId || '').trim();
+  const originalTextFingerprint = String(metadata.originalTextFingerprint || '').trim();
+  if (route !== INTERNAL_AUTO_DEEP_ROUTE || !requestId || !originalTextFingerprint) {
+    throw createAiError('INVALID_INTERNAL_ROUTE_CONTEXT', 'Internal parse route context is incomplete');
+  }
+  const context = Object.freeze({});
+  INTERNAL_PARSE_ROUTE_CONTEXTS.set(context, Object.freeze({
+    originalTextFingerprint,
+    requestId,
+    route
+  }));
+  return context;
+}
+
+function createParseTextFingerprint(payload = {}) {
+  const text = String(payload.text || payload.extractedText || payload.rawText || '').trim();
+  const rawMessages = Array.isArray(payload.rawMessages) ? payload.rawMessages.map((message, index) => ({
+    index: Number.isInteger(message && message.index) ? message.index : index,
+    speaker: String(message && message.speaker || '').trim(),
+    time: String(message && message.time || '').trim(),
+    content: String(message && (message.content || message.text) || '').trim()
+  })).filter((message) => message.content) : [];
+  const evidence = JSON.stringify({ text, rawMessages });
+  return crypto.createHash('sha256').update(evidence, 'utf8').digest('hex');
+}
+
+function consumeInternalParseRouteContext(payload = {}, dependencies = {}) {
+  const context = dependencies && dependencies.routeContext;
+  const metadata = context && INTERNAL_PARSE_ROUTE_CONTEXTS.get(context);
+  if (!metadata) return null;
+  INTERNAL_PARSE_ROUTE_CONTEXTS.delete(context);
+  const requestId = String(dependencies.requestId || '').trim();
+  if (requestId !== metadata.requestId
+    || createParseTextFingerprint(payload) !== metadata.originalTextFingerprint) {
+    return null;
+  }
+  return metadata;
+}
 
 function createAiError(code, message) {
   const error = new Error(message);
@@ -237,8 +281,11 @@ function isSimpleFastParse(payload = {}) {
   return false;
 }
 
-function selectParseModel(config, payload = {}) {
-  if (payload.reviewMode === 'deep') return { model: config.aiModel, tier: 'quality', canEscalate: false };
+function selectParseModel(config, payload = {}, dependencies = {}) {
+  const routeContext = consumeInternalParseRouteContext(payload, dependencies);
+  if (routeContext && routeContext.route === INTERNAL_AUTO_DEEP_ROUTE) {
+    return { model: config.aiModel, tier: 'quality', canEscalate: false };
+  }
   return { model: config.aiFastModel || config.aiModel, tier: 'fast', canEscalate: false };
 }
 
@@ -276,6 +323,24 @@ function markCollapsedMultiItems(result = {}) {
     field_conflicts: conflicts,
     low_confidence_fields: low
   });
+}
+
+function isExplicitSafeFastOutcome(result = {}) {
+  const conflicts = Array.isArray(result.field_conflicts) ? result.field_conflicts : [];
+  const lowConfidenceFields = Array.isArray(result.low_confidence_fields)
+    ? result.low_confidence_fields
+    : [];
+  const missingFields = Array.isArray(result.missing_fields) ? result.missing_fields : [];
+  const fields = result.fields || {};
+  const items = fields.items || fields.lineItems || fields.line_items || [];
+  const collapsedMultiItemRejection = conflicts.some((item) => item && item.field === 'items')
+    && lowConfidenceFields.includes('items');
+  const explicitUnknownRejection = result.intent === 'unknown'
+    && missingFields.includes('intent')
+    && Boolean(String(result.confirm_message || '').trim());
+  return collapsedMultiItemRejection
+    || explicitUnknownRejection
+    || (Array.isArray(items) && items.length > 1);
 }
 
 function withParseMetadata(result, config, selection, escalated) {
@@ -349,7 +414,8 @@ function parseWithAi(config, payload, dependencies = {}) {
   });
   if (!isRealAiEnabled(config)) return Promise.resolve(mockParse(payload));
   const today = runtime.businessDate;
-  const messages = payload.reviewMode === 'deep' ? [
+  const selection = selectParseModel(config, payload, dependencies);
+  const messages = selection.tier === 'quality' ? [
     {
       role: 'system',
       content: [
@@ -442,17 +508,20 @@ function parseWithAi(config, payload, dependencies = {}) {
       })
     }
   ] : buildFastParseMessages(payload, today);
-  const selection = selectParseModel(config, payload);
   const requestSelection = withModelTimeout(config, selection);
   requestSelection.timeoutCode = selection.tier === 'fast' ? 'AI_FAST_TIMEOUT' : 'AI_DEEP_TIMEOUT';
   return chatCompletion(config, messages, requestSelection)
     .then((result) => {
       assertAiBusinessResult(result);
-      // 普通快速核对绝不能为了“凑完整”再偷偷请求慢模型。
-      if (selection.tier === 'fast' && shouldEscalateFastResult(result)) {
+      const protectedResult = markCollapsedMultiItems(result);
+      // 普通快速核对绝不能为了“凑完整”再偷偷请求慢模型。只有结果本身明确表达的
+      // 安全拒绝或完整多商品结果可以返回；客户端路由声明不得改变该语义。
+      if (selection.tier === 'fast'
+        && shouldEscalateFastResult(protectedResult)
+        && !isExplicitSafeFastOutcome(protectedResult)) {
         throw createAiError('AI_RESPONSE_INVALID', 'Fast AI result is incomplete or uncertain');
       }
-      return withParseMetadata(markCollapsedMultiItems(result), config, selection, false);
+      return withParseMetadata(protectedResult, config, selection, false);
     });
 }
 
@@ -486,6 +555,7 @@ function transcribeWithAi() {
 }
 
 module.exports = {
+  createInternalParseRouteContext,
   getAiBusinessResultValidity,
   isSimpleFastParse,
   parseWithAi,
