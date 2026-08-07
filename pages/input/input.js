@@ -1,6 +1,11 @@
 const { INPUT_SOURCE_LABELS, INTENT_LABELS } = require('../../utils/constants');
 const { buildOrderEditDraft, findCustomerMatches, getItemsSummary, getOrderDepositAmount, getRecordItems, saveConfirmedDraft, savePendingNote } = require('../../utils/business');
-const { parseHybridInput } = require('../../utils/ai-parser');
+const {
+  getParseRouteDecision,
+  parseHybridInput,
+  ROUTE_ASK_USER,
+  ROUTE_SAFE_BLOCKED
+} = require('../../utils/ai-parser');
 const { prewarmAiAuth } = require('../../utils/api-client');
 const { buildParseEvidence } = require('../../utils/parse-evidence');
 const { addDays, diffDays, today } = require('../../utils/date');
@@ -8,6 +13,9 @@ const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields }
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const {
   applyFinalParseSafety,
+  collectUserResolvableAiRisks,
+  createTrustedAssistantAnswerChallenge,
+  createTrustedAssistantAnswerEdit,
   createTrustedUserManualEdit,
   evaluateUserResolvedAiState,
   reconcileTrustedUserManualEditState
@@ -18,6 +26,7 @@ const {
   getTrustedRecordFlowContext,
   isNoRecordPersistenceForbidden
 } = require('../../utils/record-domain-preflight');
+const { stableHash } = require('../../utils/record-state-diff');
 const { getCatalogCheck, getProductSuggestions, getSpecSuggestions } = require('../../utils/product-catalog');
 const { getCustomerDisplay, getState, saveState } = require('../../utils/storage');
 const {
@@ -44,6 +53,7 @@ const NEW_CUSTOMER_OPTION_ID = '__new_customer__';
 const UNLINKED_RECEIVABLE_OPTION_ID = '__unlinked_receivable__';
 const UNLINKED_ORDER_OPTION_ID = '__unlinked_order__';
 const DEFAULT_QUOTATION_FOLLOWUP_DAYS = 2;
+const rawInputCaptureRegistry = new WeakMap();
 const FOLLOWUP_DAY_VALUES = Array.from({ length: 30 }, (_, index) => index + 1);
 const FOLLOWUP_DAY_RANGE = FOLLOWUP_DAY_VALUES.map((days) => `${days} 天`);
 const intentRange = intentOptions.map((item) => INTENT_LABELS[item]);
@@ -1497,6 +1507,172 @@ function buildPaymentState(state, fields, aiMissingFields, lowConfidenceFields, 
   };
 }
 
+function getClientRouteName(parseResult = {}) {
+  const route = parseResult.parse_route || {};
+  return String(route.semantic_decision || route.semanticDecision || route.decision || '').toUpperCase();
+}
+
+function buildActiveAssistantQuestion(parseResult, confirmItems) {
+  if (getClientRouteName(parseResult) !== ROUTE_ASK_USER) return null;
+  const route = parseResult.parse_route || {};
+  const candidate = route.questionCandidate || route.activeQuestion || {};
+  const candidateTarget = candidate.target || {};
+  const field = String(candidateTarget.field || candidate.field || '').trim();
+  const itemIndex = Number.isInteger(candidateTarget.itemIndex)
+    ? candidateTarget.itemIndex
+    : (field === 'productName' ? 0 : -1);
+  const item = itemIndex >= 0 ? confirmItems[itemIndex] : null;
+  const itemKey = item ? String(item.confirmationItemKey || item.itemKey || '') : '';
+  const fieldPath = String(candidateTarget.fieldPath || candidate.fieldPath
+    || (itemIndex >= 0 ? `items[${itemIndex}].${field}` : field));
+  const context = parseResult.client_confirmation_context || {};
+  const risks = collectUserResolvableAiRisks(parseResult, parseResult.fields || {})
+    .filter((risk) => (
+      itemIndex >= 0
+        ? risk.itemKey === itemKey && risk.itemField === field
+        : risk.field === field
+    ));
+  const trustedRiskIds = risks.map((risk) => risk.riskId);
+  const riskIds = uniqueFields(trustedRiskIds.length ? trustedRiskIds : (candidate.riskIds || []));
+  if (!field
+    || (itemIndex >= 0 && !itemKey)
+    || !String(context.originalTextFingerprint || '').trim()
+    || !String(context.draftRevision || '').trim()
+    || !String(context.confirmationSessionId || '').trim()) return null;
+  const questionId = stableHash({
+    confirmationSessionId: context.confirmationSessionId,
+    draftRevision: context.draftRevision,
+    fieldPath,
+    riskIds
+  }, 'record-confirm-assistant-question');
+  return {
+    answerType: candidate.answerType || 'text',
+    confirmationSessionId: context.confirmationSessionId,
+    draftRevision: context.draftRevision,
+    field,
+    fieldPath,
+    itemKey,
+    originalTextFingerprint: context.originalTextFingerprint,
+    prompt: String(candidate.prompt || '').trim(),
+    questionId,
+    riskIds: riskIds.length ? riskIds : [`REQUIRED|${fieldPath}`],
+    status: 'OPEN',
+    target: { field, fieldPath, itemIndex, itemKey }
+  };
+}
+
+function recalculateOrderAmountFields(fields = {}, explicitAmount) {
+  const next = Object.assign({}, fields);
+  const items = normalizeConfirmItems(next, { ensureFirst: true }).map((item) => {
+    const updated = Object.assign({}, item);
+    if (hasMoneyValue(updated.quantity)
+      && hasMoneyValue(updated.unitPrice)
+      && unitsMatch(updated.unit, updated.priceUnit || updated.unit)) {
+      updated.totalAmount = formatMoneyValue(Number(updated.quantity) * Number(updated.unitPrice));
+    }
+    return updated;
+  });
+  const calculatedAmount = calculateConfirmItemsTotalAmount(items);
+  next.items = items;
+  if (calculatedAmount !== '') next.calculatedAmount = calculatedAmount;
+  if (explicitAmount !== undefined) {
+    const statedAmount = String(explicitAmount).trim();
+    next.statedAmount = statedAmount;
+    next.amount = statedAmount;
+    next.totalAmount = statedAmount;
+  }
+  return syncFirstItemToLegacyFields(next, { preserveConfirmedAmount: true });
+}
+
+function riskIdReferencesField(riskId, field) {
+  return String(riskId || '').split('|').includes(String(field || ''));
+}
+
+function projectTrustedResolvedFields(reviewed) {
+  const resolution = reviewed.user_resolution || {};
+  const resolvedRiskIds = new Set(resolution.resolvedRiskIds || []);
+  const unresolvedRiskIds = resolution.unresolvedRiskIds || [];
+  const proofs = Array.isArray(reviewed.user_manual_edits) ? reviewed.user_manual_edits : [];
+  const resolvedFields = uniqueFields(proofs
+    .filter((proof) => (proof.riskIds || []).some((riskId) => resolvedRiskIds.has(riskId)))
+    .map((proof) => proof.field)
+    .filter((field) => !unresolvedRiskIds.some((riskId) => riskIdReferencesField(riskId, field))));
+  if (!resolvedFields.length) return reviewed;
+  const finalSafety = reviewed.final_parse_safety || {};
+  const validations = finalSafety.field_validations || {};
+  const hardInvalidFields = validations.invalid_fields || [];
+  const hardConflictFields = validations.conflict_fields || [];
+  const safelyResolvedFields = resolvedFields.filter((field) => (
+    !hardInvalidFields.includes(field) && !hardConflictFields.includes(field)
+  ));
+  if (!safelyResolvedFields.length) return reviewed;
+  const withoutResolved = (values) => uniqueFields(values || [])
+    .filter((field) => !safelyResolvedFields.includes(field));
+  return Object.assign({}, reviewed, {
+    missing_fields: withoutResolved(reviewed.missing_fields),
+    low_confidence_fields: withoutResolved(reviewed.low_confidence_fields),
+    final_parse_safety: Object.assign({}, finalSafety, {
+      unsafe_fields: withoutResolved(finalSafety.unsafe_fields),
+      missing_fields: withoutResolved(finalSafety.missing_fields),
+      low_confidence_fields: withoutResolved(finalSafety.low_confidence_fields),
+      evidence_missing_fields: withoutResolved(finalSafety.evidence_missing_fields),
+      field_validations: Object.assign({}, validations, {
+        issues: (validations.issues || []).filter((issue) => (
+          !safelyResolvedFields.includes(issue && issue.field)
+        )),
+        semantic_low_fields: withoutResolved(validations.semantic_low_fields)
+      })
+    })
+  });
+}
+
+function rerouteClientDraft(parseResult, fields) {
+  let reviewed = applyFinalParseSafety(Object.assign({}, parseResult, { fields }));
+  // 第一轮 final safety 过滤旧 conflict；第二轮用已过滤的风险数组
+  // 重算稳态 status。助理回答 proof 的指纹不依赖 parse_route，因此不会
+  // 因这次稳态重算丢失人工回答证据。
+  reviewed = applyFinalParseSafety(reviewed);
+  reviewed = projectTrustedResolvedFields(reviewed);
+  let finalSafety = reviewed.final_parse_safety || reviewed.local_parse_safety || {};
+  const finalValidations = finalSafety.field_validations || {};
+  const factRisksResolved = !(reviewed.missing_fields || []).length
+    && !(reviewed.low_confidence_fields || []).length
+    && !(reviewed.field_conflicts || []).length
+    && !(finalValidations.invalid_fields || []).length
+    && !(finalValidations.conflict_fields || []).length;
+  if (factRisksResolved) {
+    finalSafety = Object.assign({}, finalSafety, {
+      evidence_missing_fields: [],
+      evidence_reason_texts: [],
+      evidence_sufficient: true,
+      field_validations: {
+        conflict_fields: [],
+        invalid_fields: [],
+        issues: [],
+        semantic_low_fields: []
+      },
+      low_confidence_fields: [],
+      missing_fields: [],
+      reason_texts: [],
+      safe_to_auto_accept: true,
+      status: 'SAFE_LOCAL',
+      unsafe_fields: []
+    });
+  }
+  const routeInput = Object.assign({}, reviewed, { local_parse_safety: finalSafety });
+  const route = getParseRouteDecision({
+    inputChannel: reviewed.source === 'voice' ? 'VOICE_TRANSCRIPT' : 'MANUAL_TEXT',
+    rawText: reviewed.original_text || '',
+    source: reviewed.source || 'typed',
+    text: reviewed.original_text || ''
+  }, routeInput, reviewed.context_policy || 'none');
+  reviewed = Object.assign({}, reviewed, {
+    local_parse_safety: finalSafety,
+    parse_route: route
+  });
+  return reviewed;
+}
+
 function buildConfirmationState(state, parseResult, intent, fields) {
   let operation = ['update_order', 'update_quotation'].includes(parseResult.operation)
     ? parseResult.operation
@@ -1595,14 +1771,25 @@ function buildConfirmationState(state, parseResult, intent, fields) {
 
   missingFields = getVisibleFields(filterRelevantWarningFields(uniqueFields(missingFields), intent, operation), nextFields);
   lowConfidenceFields = filterRelevantWarningFields(uniqueFields(lowConfidenceFields), intent, operation);
+  // UI 可见字段会过滤不属于当前卡片的 warning，但 final safety 必须
+  // 继续看到上一轮未解决的完整风险集。否则多问题场景会在第一个
+  // 回答后改变 riskSetFingerprint，导致已签名的用户回答被错误丢弃。
+  const safetyMissingFields = uniqueFields([].concat(
+    parseResult.missing_fields || [],
+    missingFields
+  ));
+  const safetyLowConfidenceFields = uniqueFields([].concat(
+    parseResult.low_confidence_fields || [],
+    lowConfidenceFields
+  ));
 
   let visibility = getFieldVisibility(intent, operation, nextFields);
   let normalizedParseResult = Object.assign({}, parseResult, {
     intent,
     fields: nextFields,
     operation,
-    missing_fields: missingFields,
-    low_confidence_fields: lowConfidenceFields
+    missing_fields: safetyMissingFields,
+    low_confidence_fields: safetyLowConfidenceFields
   });
   normalizedParseResult = applyFinalParseSafety(normalizedParseResult);
   nextFields = normalizedParseResult.fields || nextFields;
@@ -1665,6 +1852,9 @@ function buildConfirmationState(state, parseResult, intent, fields) {
       showGenericOrderPicker: false
     })
     : Object.assign({}, orderDepositState, genericOrderSelectionState);
+  const activeQuestion = buildActiveAssistantQuestion(normalizedParseResult, confirmItems);
+  const safeBlocked = getClientRouteName(normalizedParseResult) === ROUTE_SAFE_BLOCKED;
+  const clientRouteBlocked = Boolean(activeQuestion) || safeBlocked;
   const canFormalSave = domainPreflight.domainCanSaveFormal === true;
   const noRecordPersistenceForbidden = domainPreflight.noRecordPersistenceForbidden === true;
   const canPendingSave = domainPreflight.domainCanSavePending === true
@@ -1709,6 +1899,9 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     preflightBlockingReasons: domainPreflight.blockingIssues.map((item) => item.code),
     domainBlockingLines,
     showDomainBlocking: Boolean(domainBlockingLines.length),
+    activeQuestion,
+    assistantQuestionState: activeQuestion ? 'ASKING' : (safeBlocked ? 'SAFE_BLOCKED' : 'READY'),
+    assistantQuestions: activeQuestion ? [activeQuestion] : [],
     parseAssistText: userResolution.status === 'MANUAL_RESOLUTION_COMPLETE'
       ? '你已逐项补齐不确定内容，请再次确认后保存。'
       : (isReturnedUncertain
@@ -1731,7 +1924,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     formalButtonText: canFormalSave
       ? (operation === 'update_order' ? '确认更新订单' : '确认保存')
       : (operation === 'update_order' ? '补齐后更新' : '补齐后保存'),
-    disableFormalSave: !canFormalSave || noRecordPersistenceForbidden,
+    disableFormalSave: !canFormalSave || noRecordPersistenceForbidden || clientRouteBlocked,
     showFormalSaveButton: !noRecordPersistenceForbidden,
     showPendingButton: canPendingSave,
     showPaymentConfirm: operation === 'record_payment',
@@ -1739,8 +1932,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showReceivablePicker: operation === 'record_payment' && paymentState.receivableOptions.length > 1,
     showOrderDepositConfirm: operation === 'record_order_deposit',
     showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1,
-    showDeepReviewButton: !noRecordPersistenceForbidden
-      && Boolean((normalizedParseResult.parse_route || {}).deep_review_available)
+    showDeepReviewButton: false
   }, visibility, finalWarningState, paymentState, orderSelectionState,
   genericQuotationSelectionState, customerMatchState);
 }
@@ -1761,6 +1953,9 @@ function getEmptyConfirmationData() {
     text: '',
     parseResult: null,
     parseEvidence: null,
+    activeQuestion: null,
+    assistantQuestionState: 'IDLE',
+    assistantQuestions: [],
     showParseEvidence: false,
     showDeepReviewButton: false,
     showFormalSaveButton: false,
@@ -1932,6 +2127,158 @@ function finishParseProgress(page) {
   page.setData({ showParseProgress: false });
 }
 
+function nextClientRuntimeId(page, prefix) {
+  page.clientRuntimeSequence = Number(page.clientRuntimeSequence || 0) + 1;
+  return `${prefix}-${Date.now()}-${page.clientRuntimeSequence}`;
+}
+
+function invalidateRawInputCapture(page, reasonCode = 'RAW_INPUT_CAPTURE_INVALIDATED') {
+  const active = rawInputCaptureRegistry.get(page) || null;
+  rawInputCaptureRegistry.delete(page);
+  page.rawInputCaptureRevision = Number(page.rawInputCaptureRevision || 0) + 1;
+  if (active && active.source === 'voice') {
+    page.voiceCancelled = true;
+    cancelVoiceRecognition(reasonCode);
+    if (page.data) {
+      page.setData({
+        voiceRecording: false,
+        voiceButtonClass: 'voice-button-idle',
+        voiceButtonText: '按住说一句',
+        voiceTip: '已切换输入方式。'
+      });
+    }
+  }
+  return active;
+}
+
+function beginRawInputCapture(page, source, options = {}) {
+  invalidateRawInputCapture(page, `NEW_${String(source || 'INPUT').toUpperCase()}_CAPTURE`);
+  page.rawInputCaptureSequence = Number(page.rawInputCaptureSequence || 0) + 1;
+  const capture = Object.freeze({
+    append: Boolean(options.append),
+    captureId: `raw-input-capture-${Date.now()}-${page.rawInputCaptureSequence}`,
+    captureRevision: Number(page.rawInputCaptureRevision || 0),
+    source: String(source || ''),
+    startRawText: String(page.data && page.data.text || '')
+  });
+  rawInputCaptureRegistry.set(page, capture);
+  return capture;
+}
+
+function isRawInputCaptureCurrent(page, capture, options = {}) {
+  if (!capture || rawInputCaptureRegistry.get(page) !== capture) return false;
+  if (Number(page.rawInputCaptureRevision || 0) !== Number(capture.captureRevision)) return false;
+  if (options.verifyStartText === true
+    && String(page.data && page.data.text || '') !== capture.startRawText) return false;
+  return true;
+}
+
+function completeRawInputCapture(page, capture) {
+  if (!isRawInputCaptureCurrent(page, capture)) return false;
+  rawInputCaptureRegistry.delete(page);
+  return true;
+}
+
+function ensureConfirmationSession(page) {
+  if (!page.confirmationSessionId) {
+    page.confirmationSessionId = nextClientRuntimeId(page, 'confirm-session');
+  }
+  return page.confirmationSessionId;
+}
+
+function getOriginalTextFingerprint(text) {
+  return stableHash({ text: String(text || '') }, 'record-confirm-original-text');
+}
+
+function invalidateActiveParseIdentity(page) {
+  page.activeParseRequestToken = null;
+  page.activeParseIdentity = null;
+}
+
+function advanceDraftRevision(page, options = {}) {
+  page.draftRevision = Number(page.draftRevision || 0) + 1;
+  if (options.newSession === true) {
+    page.confirmationSessionId = nextClientRuntimeId(page, 'confirm-session');
+    page.hasTrustedCandidateFactChange = false;
+  } else {
+    ensureConfirmationSession(page);
+  }
+  invalidateActiveParseIdentity(page);
+  if (page.data && page.data.parsing) {
+    finishParseProgress(page);
+    page.setData({
+      parsing: false,
+      parseButtonText: '生成确认卡'
+    });
+  }
+  return page.draftRevision;
+}
+
+function attachClientConfirmationContext(result, identity) {
+  return Object.assign({}, result, {
+    client_confirmation_context: {
+      confirmationSessionId: identity.confirmationSessionId,
+      draftRevision: identity.draftRevision,
+      originalTextFingerprint: identity.originalTextFingerprint,
+      requestedRoute: identity.requestedRoute,
+      requestId: identity.requestId
+    }
+  });
+}
+
+function getCurrentConfirmationIdentity(page) {
+  return {
+    confirmationSessionId: ensureConfirmationSession(page),
+    draftRevision: String(page.draftRevision || ''),
+    originalTextFingerprint: getOriginalTextFingerprint(page.data.text),
+    requestedRoute: page.currentRequestedRoute || 'ROUTE_UNDECIDED'
+  };
+}
+
+function isParseIdentityCurrent(page, identity) {
+  const current = getCurrentConfirmationIdentity(page);
+  return Boolean(page.activeParseIdentity)
+    && page.activeParseIdentity.requestId === identity.requestId
+    && current.confirmationSessionId === identity.confirmationSessionId
+    && current.draftRevision === String(identity.draftRevision)
+    && current.originalTextFingerprint === identity.originalTextFingerprint
+    && current.requestedRoute === identity.requestedRoute;
+}
+
+function attachCurrentDraftContext(page, result) {
+  const current = getCurrentConfirmationIdentity(page);
+  return attachClientConfirmationContext(result, Object.assign({}, current, {
+    requestId: ''
+  }));
+}
+
+function rebuildAfterClientDraftEdit(page, parseResult, fields) {
+  advanceDraftRevision(page);
+  return attachCurrentDraftContext(page, rerouteClientDraft(parseResult, fields));
+}
+
+function rebuildAfterCandidateFactChange(page, parseResult) {
+  advanceDraftRevision(page);
+  // This marker lives only on the Page instance. It cannot be supplied by an
+  // AI/HTTP payload and tells a later parse action to preserve relationship or
+  // picker facts the user selected on the current confirmation card.
+  page.hasTrustedCandidateFactChange = true;
+  return attachCurrentDraftContext(page, parseResult);
+}
+
+function hasCurrentUserDraftEdits(parseResult = {}) {
+  return (Array.isArray(parseResult.manual_fields) && parseResult.manual_fields.length > 0)
+    || (Array.isArray(parseResult.manual_item_fields) && parseResult.manual_item_fields.length > 0)
+    || (Array.isArray(parseResult.user_manual_edits) && parseResult.user_manual_edits.length > 0);
+}
+
+function hasAssistantAnswerProof(parseResult = {}) {
+  return Array.isArray(parseResult.user_manual_edits)
+    && parseResult.user_manual_edits.some((proof) => (
+      proof && proof.source === 'USER_ASSISTANT_ANSWER'
+    ));
+}
+
 Page({
   data: {
     source: 'typed',
@@ -1939,6 +2286,9 @@ Page({
     text: '',
     parseResult: null,
     parseEvidence: null,
+    activeQuestion: null,
+    assistantQuestionState: 'IDLE',
+    assistantQuestions: [],
     showParseEvidence: false,
     fields: {},
     confirmItems: [],
@@ -2082,6 +2432,7 @@ Page({
     }
     const forceTextInput = wx.getStorageSync('force_text_input');
     if (forceTextInput) {
+      invalidateRawInputCapture(this, 'FORCE_TEXT_INPUT');
       wx.removeStorageSync('force_text_input');
       this.setData(Object.assign(getEmptyConfirmationData(), {
         source: 'typed',
@@ -2093,6 +2444,7 @@ Page({
     }
     const draft = wx.getStorageSync('draft_to_input');
     if (draft && draft.text) {
+      invalidateRawInputCapture(this, 'DRAFT_TO_INPUT');
       wx.removeStorageSync('draft_to_input');
       const source = draft.source || 'typed';
       this.setData(Object.assign(getEmptyConfirmationData(), {
@@ -2106,7 +2458,9 @@ Page({
   },
 
   onHide() {
-    this.activeParseRequestToken = null;
+    invalidateRawInputCapture(this, 'FULL_PAGE_HIDDEN');
+    invalidateActiveParseIdentity(this);
+    this.confirmationSessionId = '';
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_HIDDEN');
       this.voiceCompletionEvidence = null;
@@ -2120,7 +2474,9 @@ Page({
   },
 
   onUnload() {
-    this.activeParseRequestToken = null;
+    invalidateRawInputCapture(this, 'FULL_PAGE_UNLOAD');
+    invalidateActiveParseIdentity(this);
+    this.confirmationSessionId = '';
     clearParseProgress(this);
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_UNLOAD');
@@ -2136,6 +2492,7 @@ Page({
     const state = getState();
     const note = state.pendingNotes.find((item) => item.id === pendingId);
     if (note) {
+      invalidateRawInputCapture(this, 'PENDING_DRAFT_LOADED');
       const source = note.source || 'typed';
       this.setData(Object.assign(getEmptyConfirmationData(), {
         text: note.originalText,
@@ -2148,7 +2505,8 @@ Page({
 
   setSource(event) {
     const source = event.currentTarget.dataset.source;
-    this.activeParseRequestToken = null;
+    invalidateRawInputCapture(this, 'INPUT_SOURCE_CHANGED');
+    advanceDraftRevision(this, { newSession: true });
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'INPUT_SOURCE_CHANGED');
       this.voiceCompletionEvidence = null;
@@ -2162,12 +2520,14 @@ Page({
 
   onTextInput(event) {
     const text = event.detail.value;
-    this.activeParseRequestToken = null;
+    const textChanged = String(text || '') !== String(this.data.text || '');
+    invalidateRawInputCapture(this, 'MANUAL_RAW_INPUT');
+    if (textChanged) advanceDraftRevision(this, { newSession: true });
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'MANUAL_EDIT_AFTER_VOICE');
       this.voiceCompletionEvidence = null;
     }
-    if (this.data.parsing) {
+    if (textChanged && this.data.parsing) {
       clearParseProgress(this);
       this.setData({
         parsing: false,
@@ -2184,33 +2544,54 @@ Page({
         text,
         pasteAnalysis: analysis,
         parseAssistText: [diagnosticText, analysis.warning].filter(Boolean).join('\n')
-      }, getSourceState('paste')));
+      }, textChanged ? {
+        activeQuestion: null,
+        assistantQuestionState: 'IDLE',
+        assistantQuestions: [],
+        confirmItems: [],
+        fields: {},
+        parseResult: null,
+        showFormalSaveButton: false,
+        showPendingButton: false
+      } : {}, getSourceState('paste')));
       return;
     }
-    this.setData({
+    this.setData(Object.assign({
       text,
       source: 'typed',
       sourceLabel: INPUT_SOURCE_LABELS.typed,
       pasteAnalysis: null
-    });
+    }, textChanged ? {
+      activeQuestion: null,
+      assistantQuestionState: 'IDLE',
+      assistantQuestions: [],
+      confirmItems: [],
+      fields: {},
+      parseResult: null,
+      showFormalSaveButton: false,
+      showPendingButton: false
+    } : {}));
   },
 
   readClipboardToInput(options = {}) {
     const append = Boolean(options.append);
-    this.activeParseRequestToken = null;
+    const capture = beginRawInputCapture(this, 'clipboard', { append });
+    advanceDraftRevision(this, { newSession: true });
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'PASTE_REPLACED_VOICE_INPUT');
       this.voiceCompletionEvidence = null;
     }
     wx.getClipboardData({
       success: (res) => {
+        if (!isRawInputCaptureCurrent(this, capture, { verifyStartText: true })) return;
         const analysis = analyzeClipboardText(res.data || '');
         if (!analysis.rawText) {
+          completeRawInputCapture(this, capture);
           wx.showToast({ title: '剪贴板是空的', icon: 'none' });
           return;
         }
         const displayText = getClipboardDisplayText(analysis);
-        const currentText = append ? String(this.data.text || '').trim() : '';
+        const currentText = append ? capture.startRawText.trim() : '';
         const nextText = currentText && displayText
           ? `${currentText}\n\n${displayText}`
           : displayText;
@@ -2227,6 +2608,7 @@ Page({
           pasteAnalysis: nextAnalysis,
           parseAssistText: assistText
         }, getSourceState('paste')), () => {
+          if (!completeRawInputCapture(this, capture)) return;
           if (nextAnalysis.status === 'ok') {
             this.runParse();
             return;
@@ -2270,8 +2652,9 @@ Page({
     if (this.data.voiceRecording) return;
     // 录音期间预先完成登录；失败不打断录音，真正解析时会给出明确原因。
     prewarmAiAuth();
+    const capture = beginRawInputCapture(this, 'voice');
     this.voiceCancelled = false;
-    this.activeParseRequestToken = null;
+    advanceDraftRevision(this, { newSession: true });
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'NEW_VOICE_SESSION_STARTED');
       this.voiceCompletionEvidence = null;
@@ -2290,11 +2673,13 @@ Page({
       duration: 60000,
       lang: 'zh_CN',
       onRecognize: (result) => {
+        if (!isRawInputCaptureCurrent(this, capture)) return;
         const partialText = String((result && result.text) || '').trim();
         if (!this.data.voiceRecording || !partialText) return;
         this.setData({ voiceTip: `正在听：${partialText}` });
       },
       onStop: () => {
+        if (!isRawInputCaptureCurrent(this, capture)) return;
         if (this.voiceCancelled) return;
         this.setData({
           voiceRecording: false,
@@ -2304,6 +2689,7 @@ Page({
         });
       },
       onResult: (result) => {
+        if (!isRawInputCaptureCurrent(this, capture, { verifyStartText: true })) return;
         const text = String((result && result.text) || '').trim();
         if (this.voiceCancelled) {
           this.setData({
@@ -2332,13 +2718,17 @@ Page({
           voiceButtonText: '按住说一句',
           voiceTip: '已转成文字，正在整理成确认卡。',
           pasteAnalysis: null
-        }, getSourceState('voice')), () => this.runParse('standard', {
-          entrySurface: 'FULL_PAGE',
-          inputChannel: 'VOICE_TRANSCRIPT',
-          voiceCompletionEvidence: this.voiceCompletionEvidence
-        }));
+        }, getSourceState('voice')), () => {
+          if (!completeRawInputCapture(this, capture)) return;
+          this.runParse('standard', {
+            entrySurface: 'FULL_PAGE',
+            inputChannel: 'VOICE_TRANSCRIPT',
+            voiceCompletionEvidence: this.voiceCompletionEvidence
+          });
+        });
       },
       onError: (error) => {
+        if (!completeRawInputCapture(this, capture)) return;
         this.voiceCompletionEvidence = null;
         this.setData({
           voiceRecording: false,
@@ -2351,6 +2741,7 @@ Page({
   },
 
   loadOrderForEdit(orderId) {
+    invalidateRawInputCapture(this, 'ORDER_DRAFT_LOADED');
     const state = getState();
     const parseResult = buildOrderEditDraft(state, orderId);
     if (!parseResult) {
@@ -2376,6 +2767,7 @@ Page({
 
   cancelVoice() {
     if (!this.data.voiceRecording) return;
+    invalidateRawInputCapture(this, 'FULL_PAGE_VOICE_CANCELLED');
     this.voiceCancelled = true;
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_VOICE_CANCELLED');
@@ -2412,9 +2804,67 @@ Page({
       wx.showToast({ title: '先输入一句话或粘贴聊天', icon: 'none' });
       return;
     }
-    this.parseRequestSequence = Number(this.parseRequestSequence || 0) + 1;
-    const parseRequestToken = `full-parse-${this.parseRequestSequence}`;
+    const currentFingerprint = getOriginalTextFingerprint(this.data.text);
+    const currentSessionId = ensureConfirmationSession(this);
+    const existing = this.inFlightParseOperation;
+    if (existing
+      && existing.settled !== true
+      && existing.identity.originalTextFingerprint === currentFingerprint
+      && String(existing.identity.draftRevision) === String(this.draftRevision || '')
+      && existing.identity.confirmationSessionId === currentSessionId
+      && existing.identity.requestedRoute === (this.currentRequestedRoute || 'ROUTE_UNDECIDED')) {
+      return existing.promise;
+    }
+
+    const currentDraft = this.data.parseResult;
+    const currentDraftContext = currentDraft && currentDraft.client_confirmation_context || {};
+    const sameOriginalDraft = Boolean(currentDraft)
+      && (String(currentDraftContext.originalTextFingerprint || '') === currentFingerprint
+        || (!currentDraftContext.originalTextFingerprint
+          && String(currentDraft.original_text || '') === String(text || '')));
+    if (sameOriginalDraft && (
+      hasCurrentUserDraftEdits(currentDraft)
+      || this.hasTrustedCandidateFactChange === true
+    )) {
+      // A new parse action must never rebuild from the original sentence over
+      // facts the user has already corrected on this card. Assistant-answer
+      // proofs are bound to the active question context, so a no-op recheck of
+      // that same draft keeps the context instead of invalidating the answer.
+      if (!hasAssistantAnswerProof(currentDraft)) advanceDraftRevision(this);
+      let preservedResult = rerouteClientDraft(currentDraft, this.data.fields || currentDraft.fields || {});
+      const preservedRoute = getClientRouteName(preservedResult);
+      this.currentRequestedRoute = preservedRoute || 'ROUTE_UNDECIDED';
+      preservedResult = attachCurrentDraftContext(this, preservedResult);
+      const preservedState = buildConfirmationState(
+        getState(),
+        preservedResult,
+        preservedResult.intent,
+        preservedResult.fields
+      );
+      this.setData(Object.assign({}, preservedState, {
+        intent: preservedState.parseResult.intent,
+        intentLabel: INTENT_LABELS[preservedState.parseResult.intent],
+        parsing: false,
+        parseButtonText: '生成确认卡',
+        parseAssistText: getClientRouteName(preservedState.parseResult) === ROUTE_SAFE_BLOCKED
+          ? '当前内容还不能安全保存，请按提示继续确认。'
+          : '已保留你刚修改的内容，请确认后保存。'
+      }));
+      return Promise.resolve(preservedState.parseResult);
+    }
+
+    advanceDraftRevision(this);
+    this.currentRequestedRoute = 'ROUTE_UNDECIDED';
+    const identity = {
+      confirmationSessionId: ensureConfirmationSession(this),
+      draftRevision: String(this.draftRevision),
+      originalTextFingerprint: currentFingerprint,
+      requestedRoute: this.currentRequestedRoute,
+      requestId: nextClientRuntimeId(this, 'record-parse-request')
+    };
+    const parseRequestToken = identity.requestId;
     this.activeParseRequestToken = parseRequestToken;
+    this.activeParseIdentity = identity;
     this.setData({
       parsing: true,
       parseButtonText: '正在识别',
@@ -2427,7 +2877,20 @@ Page({
       source,
       context: 'home',
       state,
-      reviewMode
+      reviewMode: 'standard',
+      requestId: identity.requestId,
+      originalTextFingerprint: identity.originalTextFingerprint,
+      draftRevision: identity.draftRevision,
+      confirmationSessionId: identity.confirmationSessionId,
+      requestedRoute: identity.requestedRoute,
+      onTrustedClientRouteDecision: (decision = {}) => {
+        if (!this.activeParseIdentity
+          || this.activeParseIdentity.requestId !== identity.requestId) return;
+        const requestedRoute = String(decision.requestedRoute || '').trim();
+        if (!requestedRoute) return;
+        identity.requestedRoute = requestedRoute;
+        this.currentRequestedRoute = requestedRoute;
+      }
     };
     if (source === 'voice') {
       const requestedEvidence = sourceContext && sourceContext.voiceCompletionEvidence
@@ -2452,67 +2915,162 @@ Page({
       payload.extractedText = pasteAnalysis.extractedText;
       payload.pasteMeta = getPasteMeta(pasteAnalysis);
     }
-    parseHybridInput(payload)
+    const operation = parseHybridInput(payload)
       .then((parseResult) => {
-      if (this.activeParseRequestToken !== parseRequestToken) return;
-      this.activeParseRequestToken = null;
-      finishParseProgress(this);
-      const confirmationState = buildConfirmationState(state, parseResult, parseResult.intent, parseResult.fields);
-      const aiStatus = (parseResult.ai_fallback && parseResult.ai_fallback.status) || 'not_requested';
-      const safetyStatus = parseResult.local_parse_safety && parseResult.local_parse_safety.status;
-      const deepReviewAvailable = Boolean((parseResult.parse_route || {}).deep_review_available);
-      const aiStatusText = deepReviewAvailable
-          ? '这条内容需要深度核对；未点击前不会自动等待慢速 AI。'
-        : (safetyStatus === 'NEEDS_AI' && ['failed', 'timed_out', 'returned_uncertain', 'skipped_no_endpoint'].includes(aiStatus))
-          ? '这条内容比较复杂，请重点核对带提示的字段，拿不准就先放待整理。'
-        : (safetyStatus === 'NEEDS_USER_CONFIRM'
-          ? '我先帮你整理成草稿了，还有几项需要你确认。'
-          : {
-        not_requested: '已整理好，请确认后保存。',
-        skipped_no_endpoint: '已整理出一张草稿，请确认后保存。',
-        mock_used: '已整理出一张草稿，请确认后保存。',
-        used: '已整理出一张草稿，请确认后保存。',
-        failed: '暂时没能自动整理完整，请核对后再保存。',
-        timed_out: '智能核对等待超时，这条不能直接保存。',
-        returned_uncertain: '智能核对没有给出可采用的业务结果，这条不能直接保存。'
-      }[aiStatus]);
-      this.setData(Object.assign({}, confirmationState, {
-        intent: confirmationState.parseResult.intent,
-        intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
-        sourceLabel: INPUT_SOURCE_LABELS[confirmationState.parseResult.source],
-        parseAssistText: aiStatusText,
-        intentCandidatesText: (confirmationState.parseResult.intent_candidates || [])
-          .map((item) => INTENT_LABELS[item] || item)
-          .join(' / '),
-        parsing: false,
-        parseButtonText: '生成确认卡',
-        showComputedTips: Boolean(confirmationState.parseResult.computed_tips && confirmationState.parseResult.computed_tips.length),
-        computedTips: confirmationState.parseResult.computed_tips || []
-      }));
+        if (!isParseIdentityCurrent(this, identity)) return;
+        invalidateActiveParseIdentity(this);
+        finishParseProgress(this);
+        const contextualResult = attachClientConfirmationContext(parseResult, identity);
+        const confirmationState = buildConfirmationState(
+          state,
+          contextualResult,
+          contextualResult.intent,
+          contextualResult.fields
+        );
+        const routeName = getClientRouteName(confirmationState.parseResult);
+        const aiStatusText = routeName === ROUTE_ASK_USER
+          ? ''
+          : (routeName === ROUTE_SAFE_BLOCKED
+            ? '暂时没能自动核对完整，当前不能保存。'
+            : '已整理好，请确认后保存。');
+        this.setData(Object.assign({}, confirmationState, {
+          intent: confirmationState.parseResult.intent,
+          intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
+          sourceLabel: INPUT_SOURCE_LABELS[confirmationState.parseResult.source],
+          parseAssistText: aiStatusText,
+          intentCandidatesText: (confirmationState.parseResult.intent_candidates || [])
+            .map((item) => INTENT_LABELS[item] || item)
+            .join(' / '),
+          parsing: false,
+          parseButtonText: '生成确认卡',
+          showComputedTips: Boolean(confirmationState.parseResult.computed_tips && confirmationState.parseResult.computed_tips.length),
+          computedTips: confirmationState.parseResult.computed_tips || []
+        }));
       })
       .catch(() => {
-      if (this.activeParseRequestToken !== parseRequestToken) return;
-      this.activeParseRequestToken = null;
-      finishParseProgress(this);
-      this.setData({
-        parsing: false,
-        parseButtonText: '生成确认卡',
-        parseAssistText: ''
+        if (!isParseIdentityCurrent(this, identity)) return;
+        invalidateActiveParseIdentity(this);
+        finishParseProgress(this);
+        this.setData({
+          activeQuestion: null,
+          assistantQuestionState: 'SAFE_BLOCKED',
+          assistantQuestions: [],
+          disableFormalSave: true,
+          parsing: false,
+          parseButtonText: '生成确认卡',
+          parseAssistText: '暂时没能整理完整，请稍后再试。'
+        });
       });
-      wx.showToast({ title: '识别失败，请稍后再试', icon: 'none' });
-      });
+    const tracked = { identity, promise: operation, settled: false };
+    this.inFlightParseOperation = tracked;
+    operation.then(() => {
+      tracked.settled = true;
+      if (this.inFlightParseOperation === tracked) this.inFlightParseOperation = null;
+    }, () => {
+      tracked.settled = true;
+      if (this.inFlightParseOperation === tracked) this.inFlightParseOperation = null;
+    });
+    return operation;
   },
 
   requestDeepReview() {
-    if (!this.data.parseResult) return;
+    if (!this.data.parseResult) return null;
     const rejection = rejectNoRecordPageAction(
       this,
       this.data.parseResult,
       'NO_RECORD_DEEP_REVIEW_FORBIDDEN'
     );
     if (rejection) return rejection;
-    if (!((this.data.parseResult.parse_route || {}).deep_review_available)) return;
-    this.runParse('deep');
+    return null;
+  },
+
+  answerAssistantQuestion(event) {
+    const question = this.data.activeQuestion;
+    const detail = event && event.detail || {};
+    const dataset = event && event.currentTarget && event.currentTarget.dataset || {};
+    const incomingTarget = detail.target || {};
+    if (!question || question.status !== 'OPEN') return { accepted: false, code: 'QUESTION_NOT_OPEN' };
+    const expectedTarget = question.target || {};
+    const questionId = String(detail.questionId || dataset.questionId || '');
+    const revision = String(detail.draftRevision || dataset.revision || '');
+    const fingerprint = String(detail.originalTextFingerprint || dataset.originalTextFingerprint || '');
+    const incomingField = String(incomingTarget.field || dataset.field || '');
+    const incomingFieldPath = String(incomingTarget.fieldPath || dataset.fieldPath || '');
+    const incomingItemKey = String(incomingTarget.itemKey || dataset.itemKey || '');
+    const currentFingerprint = getOriginalTextFingerprint(this.data.text);
+    const currentSessionId = ensureConfirmationSession(this);
+    const valid = questionId === String(question.questionId || '')
+      && revision === String(question.draftRevision || '')
+      && revision === String(this.draftRevision || '')
+      && fingerprint === String(question.originalTextFingerprint || '')
+      && fingerprint === currentFingerprint
+      && String(question.confirmationSessionId || '') === currentSessionId
+      && incomingField === String(expectedTarget.field || '')
+      && incomingFieldPath === String(expectedTarget.fieldPath || '')
+      && incomingItemKey === String(expectedTarget.itemKey || '');
+    const answer = String(detail.value === undefined ? '' : detail.value).trim();
+    if (!valid || !answer) return { accepted: false, code: valid ? 'ANSWER_EMPTY' : 'QUESTION_STALE' };
+
+    let fields = Object.assign({}, this.data.fields || {});
+    let baseResult = this.data.parseResult;
+    const challenge = createTrustedAssistantAnswerChallenge(baseResult, question);
+    if (!challenge) return { accepted: false, code: 'QUESTION_AUTHORITY_INVALID' };
+    const field = expectedTarget.field;
+    const itemKey = String(expectedTarget.itemKey || '');
+    if (itemKey) {
+      const items = normalizeConfirmItems(fields, { ensureFirst: true });
+      const itemIndex = items.findIndex((item) => String(item.confirmationItemKey || '') === itemKey);
+      if (itemIndex < 0 || !MANUAL_ITEM_FIELDS.includes(field)) {
+        return { accepted: false, code: 'QUESTION_TARGET_INVALID' };
+      }
+      items[itemIndex] = Object.assign({}, items[itemIndex], { [field]: answer });
+      fields = syncFirstItemToLegacyFields(Object.assign({}, fields, { items }), {
+        preserveConfirmedAmount: Array.isArray(baseResult.manual_fields)
+          && baseResult.manual_fields.includes('amount')
+      });
+      baseResult = Object.assign({}, baseResult, {
+        manual_item_fields: normalizeManualItemFields([].concat(
+          Array.isArray(baseResult.manual_item_fields) ? baseResult.manual_item_fields : [],
+          { itemKey, field }
+        ), items)
+      });
+    } else {
+      fields = field === 'amount'
+        ? recalculateOrderAmountFields(fields, answer)
+        : Object.assign({}, fields, { [field]: answer });
+      baseResult = Object.assign({}, baseResult, {
+        manual_fields: uniqueFields([].concat(
+          Array.isArray(baseResult.manual_fields) ? baseResult.manual_fields : [],
+          field
+        ))
+      });
+    }
+    baseResult = createTrustedAssistantAnswerEdit(baseResult, { challenge, fields });
+    baseResult = Object.assign({}, baseResult, {
+      missing_fields: uniqueFields(baseResult.missing_fields || []).filter((name) => name !== field),
+      low_confidence_fields: uniqueFields(baseResult.low_confidence_fields || []).filter((name) => name !== field)
+    });
+    // A real assistant answer consumes the active question in its current
+    // confirmation context. Advancing the revision here would immediately
+    // detach the newly issued proof from that question/context pair.
+    let reviewedResult = rerouteClientDraft(baseResult, fields);
+    reviewedResult = attachCurrentDraftContext(this, reviewedResult);
+    this.currentRequestedRoute = getClientRouteName(reviewedResult)
+      || this.currentRequestedRoute
+      || 'ASK_USER';
+    const confirmationState = buildConfirmationState(
+      getState(),
+      reviewedResult,
+      reviewedResult.intent,
+      reviewedResult.fields
+    );
+    this.setData(Object.assign({}, confirmationState, {
+      intent: confirmationState.parseResult.intent,
+      intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
+      parsing: false,
+      parseButtonText: '生成确认卡'
+    }));
+    return { accepted: true, questionId: question.questionId };
   },
 
   toggleParseEvidence() {
@@ -2522,6 +3080,8 @@ Page({
   closeConfirmCard() {
     const text = this.data.text;
     const source = this.data.source;
+    invalidateRawInputCapture(this, 'CONFIRM_CARD_CLOSED');
+    advanceDraftRevision(this, { newSession: true });
     clearParseProgress(this);
     this.setData(Object.assign(getEmptyConfirmationData(), {
       text,
@@ -2543,7 +3103,8 @@ Page({
     }
     const state = getState();
     const intentChanged = intent !== this.data.intent;
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
+      intent,
       operation: intentChanged
         ? (operationByIntent[intent] || 'pending')
         : this.data.parseResult.operation,
@@ -2560,6 +3121,7 @@ Page({
           : Object.assign({}, this.data.fields)));
     delete fields.quotationId;
     delete fields.quotationSelectionConfirmed;
+    baseResult = rebuildAfterClientDraftEdit(this, baseResult, fields);
     const confirmationState = buildConfirmationState(state, baseResult, intent, fields);
     this.setData(Object.assign({}, confirmationState, {
       intent,
@@ -2589,9 +3151,12 @@ Page({
         : (hasGenericOrderSelection
           ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
           : this.data.fields);
-      const nextFields = Object.assign({}, sourceFields, {
+      let nextFields = Object.assign({}, sourceFields, {
         [field]: event.detail.value
       });
+      if (field === 'amount' && this.data.intent === 'order') {
+        nextFields = recalculateOrderAmountFields(nextFields, event.detail.value);
+      }
       if (['customerName', 'phone'].includes(field)) {
         delete nextFields.customerId;
         delete nextFields.receivableId;
@@ -2614,12 +3179,13 @@ Page({
         delete nextFields.unlinkedOrderDepositCustomerId;
         delete nextFields.orderSelectionConfirmed;
       }
-      const baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
+      let baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
         missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
           .filter((item) => item !== field),
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
           .filter((item) => item !== field)
       });
+      baseResult = rebuildAfterClientDraftEdit(this, baseResult, nextFields);
       const state = getState();
       Object.assign(
         patch,
@@ -2717,6 +3283,9 @@ Page({
     });
     let baseResult = markManualItemField(this.data.parseResult, proofFields, currentItemKey, field);
     baseResult = pruneItemProvenance(baseResult, normalizedItems);
+    baseResult = hasQuotationSelection
+      ? (advanceDraftRevision(this), attachCurrentDraftContext(this, baseResult))
+      : rebuildAfterClientDraftEdit(this, baseResult, fields);
     const state = getState();
     this.setData(
       hasQuotationSelection
@@ -2740,12 +3309,13 @@ Page({
     const fields = Object.assign({}, sourceFields, {
       followupDays: String(days)
     });
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((item) => !['followupDays', 'dueDate'].includes(item)),
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
         .filter((item) => !['followupDays', 'dueDate'].includes(item))
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const state = getState();
     this.setData(
       this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
@@ -2780,12 +3350,13 @@ Page({
       const nextFields = Object.assign({}, sourceFields, {
         [field]: value
       });
-      const baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
+      let baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
         missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
           .filter((item) => item !== field),
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
           .filter((item) => item !== field)
       });
+      baseResult = rebuildAfterClientDraftEdit(this, baseResult, nextFields);
       const state = getState();
       Object.assign(
         patch,
@@ -2840,11 +3411,12 @@ Page({
       delete fields.forceNewCustomer;
     }
     delete fields.customerHistoryConfirmed;
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((item) => !['customerName', 'customerId'].includes(item)),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
@@ -2854,10 +3426,11 @@ Page({
     const fields = Object.assign({}, this.data.fields, {
       customerHistoryConfirmed: true
     });
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || []),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
@@ -2883,10 +3456,11 @@ Page({
     delete fields.customerHistoryConfirmed;
     delete fields.customerSelectionConfirmed;
     fields.forceNewCustomer = true;
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || []),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
     wx.showToast({
@@ -2909,11 +3483,12 @@ Page({
       delete fields.unlinkedPaymentCustomerId;
       fields.receivableSelectionConfirmed = true;
     }
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((item) => item !== 'receivableId'),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
@@ -2932,11 +3507,12 @@ Page({
       delete fields.unlinkedOrderDepositCustomerId;
       fields.orderSelectionConfirmed = true;
     }
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((item) => item !== 'orderId'),
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
@@ -2981,12 +3557,13 @@ Page({
       orderId: liveOrder.id,
       orderSelectionConfirmed: true
     });
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((field) => field !== 'orderId'),
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
         .filter((field) => field !== 'orderId')
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     const confirmationState = retainOrderCandidateChoices(
       state,
       buildConfirmationState(state, baseResult, this.data.intent, fields),
@@ -3015,10 +3592,11 @@ Page({
       : Object.assign({}, this.data.fields);
     delete fields.orderId;
     delete fields.orderSelectionConfirmed;
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: this.data.parseResult.missing_fields || [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     this.setData(buildConfirmationState(getState(), baseResult, this.data.intent, fields));
   },
 
@@ -3044,7 +3622,7 @@ Page({
     const baseFields = currentSelectedId && currentSelectedId === selectedId
       ? copyQuotationSelectionBaseFields(currentBaseFields)
       : copyQuotationSelectionBaseFields(rootFields);
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
         .filter((field) => field !== 'quotationId'),
       low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
@@ -3082,7 +3660,7 @@ Page({
       baseFields,
       freshCandidate.id
     );
-    const confirmationState = buildConfirmationState(
+    let confirmationState = buildConfirmationState(
       state,
       baseResult,
       this.data.intent,
@@ -3096,6 +3674,13 @@ Page({
       wx.showToast({ title: '这张报价已不可选，请重新确认', icon: 'none' });
       return false;
     }
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
+    confirmationState = buildConfirmationState(
+      state,
+      baseResult,
+      this.data.intent,
+      fields
+    );
     confirmationState.quotationSelectionBaseFields = baseFields;
     confirmationState.quotationSelectionRootFields = rootFields;
     confirmationState.quotationSelectionConfirmed = true;
@@ -3120,10 +3705,11 @@ Page({
       : (this.data.quotationSelectionBaseFields
         ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
         : copyQuotationSelectionBaseFields(this.data.fields));
-    const baseResult = Object.assign({}, this.data.parseResult, {
+    let baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: this.data.parseResult.missing_fields || [],
       low_confidence_fields: this.data.parseResult.low_confidence_fields || []
     });
+    baseResult = rebuildAfterCandidateFactChange(this, baseResult);
     this.setData(buildConfirmationState(
       getState(),
       baseResult,
@@ -3169,6 +3755,12 @@ Page({
       action: 'ADD_ITEM',
       itemKey: normalizedAddedItem.confirmationItemKey
     });
+    if (hasQuotationSelection) {
+      advanceDraftRevision(this);
+      baseResult = attachCurrentDraftContext(this, baseResult);
+    } else {
+      baseResult = rebuildAfterClientDraftEdit(this, baseResult, fields);
+    }
     this.setData(
       hasQuotationSelection
         ? rebuildAfterQuotationFieldEdit(
@@ -3213,6 +3805,12 @@ Page({
       action: 'REMOVE_ITEM',
       itemKey: String(items[index].confirmationItemKey || '')
     });
+    if (hasQuotationSelection) {
+      advanceDraftRevision(this);
+      baseResult = attachCurrentDraftContext(this, baseResult);
+    } else {
+      baseResult = rebuildAfterClientDraftEdit(this, baseResult, fields);
+    }
     this.setData(
       hasQuotationSelection
         ? rebuildAfterQuotationFieldEdit(
@@ -3267,7 +3865,9 @@ Page({
 
   returnToInput() {
     if (!this.data.parseResult) return;
+    invalidateRawInputCapture(this, 'RETURN_TO_RAW_INPUT');
     const source = this.data.source || 'typed';
+    advanceDraftRevision(this, { newSession: true });
     this.setData(Object.assign(getEmptyConfirmationData(), {
       text: this.data.text,
       source,

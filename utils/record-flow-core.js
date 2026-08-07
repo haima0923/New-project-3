@@ -38,8 +38,10 @@ const {
   prepareHybridLocalStage,
   ROUTE_AI_DEEP,
   ROUTE_AI_STANDARD,
+  ROUTE_ASK_USER,
   ROUTE_LOCAL,
   ROUTE_PENDING,
+  ROUTE_SAFE_BLOCKED,
   withAiStatus
 } = require('./ai-parser');
 const { applyFinalParseSafety } = require('./parse-safety');
@@ -101,6 +103,16 @@ function getExecutionPath(route) {
     [ROUTE_AI_DEEP]: EXECUTION_PATHS.PRODUCTION_DEEP
   };
   return mapping[route] || EXECUTION_PATHS.UNKNOWN;
+}
+
+function getLegacyProductionRouteDecision(route = {}) {
+  const canonical = String(
+    route.client_route || route.semantic_decision || route.decision || ''
+  ).toUpperCase();
+  if (canonical === 'FAST_LOCAL') return ROUTE_LOCAL;
+  if (canonical === 'AUTO_DEEP') return ROUTE_AI_DEEP;
+  if ([ROUTE_ASK_USER, ROUTE_SAFE_BLOCKED].includes(canonical)) return ROUTE_PENDING;
+  return route.decision || '';
 }
 
 function getAiOutcome(result, errorCode, providerKind) {
@@ -797,9 +809,10 @@ async function runRecordFlow(input = {}, dependencies = {}) {
 
   startTraceStage(trace, 'routing', traceClock);
   route = (prepared && prepared.route) || {};
+  const productionRouteDecision = getLegacyProductionRouteDecision(route);
   trace.routing.productionRouteRaw = route.decision || null;
-  trace.routing.productionRoute = normalizeProductionRoute(route.decision);
-  trace.routing.executionPath = getExecutionPathForMode(mode, route.decision, input.reviewMode);
+  trace.routing.productionRoute = normalizeProductionRoute(productionRouteDecision);
+  trace.routing.executionPath = getExecutionPathForMode(mode, productionRouteDecision, input.reviewMode);
   trace.routing.routeReasons = safeClone(route.reasons || []);
   trace.routing.deepReviewAvailable = Boolean(route.deep_review_available);
   if ((trace.routing.productionRoute === PRODUCTION_ROUTES.UNKNOWN && mode !== FLOW_MODES.AI_ONLY)
@@ -824,7 +837,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
       errors: finalizedTrace.errors
     });
   }
-  trace.ai.requiredByRoute = routeRequiresAi(route.decision);
+  trace.ai.requiredByRoute = routeRequiresAi(productionRouteDecision);
   trace.ai.requiredByProductionRoute = trace.ai.requiredByRoute;
   trace.ai.requiredByExecutionMode = mode === FLOW_MODES.AI_ONLY
     || (mode === FLOW_MODES.PRODUCTION_ROUTING && trace.ai.requiredByRoute);
@@ -849,7 +862,7 @@ async function runRecordFlow(input = {}, dependencies = {}) {
     skipTraceStage(trace, 'merge', traceClock);
   } else if (mode === FLOW_MODES.PRODUCTION_ROUTING && productionLocalResult) {
     result = productionLocalResult;
-    trace.ai.skippedReason = route.decision === ROUTE_PENDING ? 'PRODUCTION_PENDING' : 'PRODUCTION_LOCAL';
+    trace.ai.skippedReason = productionRouteDecision === ROUTE_PENDING ? 'PRODUCTION_PENDING' : 'PRODUCTION_LOCAL';
     trace.ai.outcomeRaw = ((result.ai_fallback || {}).status) || 'not_requested';
     trace.ai.outcome = getAiOutcome(result, '', PROVIDER_KINDS.NONE);
     trace.merge.reason = 'PRODUCTION_ROUTE_DID_NOT_CALL_AI';

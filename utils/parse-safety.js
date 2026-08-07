@@ -1,4 +1,5 @@
 const { diffDays, parseChineseDateDetail, today } = require('./date');
+const { stableHash } = require('./record-state-diff');
 const { RAW_UNIT_PATTERN, UNIT_PATTERN, unitsMatch } = require('./units');
 
 const SAFE_LOCAL = 'SAFE_LOCAL';
@@ -40,12 +41,19 @@ const MANUAL_ITEM_FIELDS = [
   'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
   'totalAmount', 'itemDeliveryDate', 'itemRemark'
 ];
+const PROOF_FIRST_ITEM_ALIAS_FIELDS = [
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+  'itemDeliveryDate', 'itemRemark'
+];
 const TRUSTED_MANUAL_EDIT_SCHEMA = 'USER_MANUAL_EDIT_V1';
+const USER_PAGE_EDIT = 'USER_PAGE_EDIT';
+const USER_ASSISTANT_ANSWER = 'USER_ASSISTANT_ANSWER';
 const USER_RESOLUTION_COMPLETE = 'MANUAL_RESOLUTION_COMPLETE';
 const USER_RESOLUTION_INCOMPLETE = 'MANUAL_RESOLUTION_INCOMPLETE';
 // This nonce never enters parser/AI JSON. It makes a page edit proof an
 // in-process capability instead of another forgeable field on the draft.
 const MANUAL_EDIT_SECRET = `${Date.now()}|${Math.random()}|${Math.random()}`;
+const assistantAnswerChallengeRegistry = new WeakMap();
 
 function normalizeManualFields(value) {
   return Array.isArray(value)
@@ -102,13 +110,18 @@ function isAiReturnedUncertain(result = {}) {
 
 function requiresTrustedAiManualProof(result = {}) {
   const fallback = result.ai_fallback || {};
+  const route = result.parse_route || {};
+  const routeDecision = String(
+    route.client_route || route.semantic_decision || route.decision || ''
+  ).toUpperCase();
   return fallback.attempted === true
-    || !['', 'not_requested'].includes(String(fallback.status || ''));
+    || !['', 'not_requested'].includes(String(fallback.status || ''))
+    || routeDecision === 'ASK_USER'
+    || (Array.isArray(result.user_manual_edits) && result.user_manual_edits.length > 0);
 }
 
 function getUserResolutionDraftFingerprint(result = {}) {
   const fallback = result.ai_fallback || {};
-  const route = result.parse_route || {};
   return proofFingerprint({
     originalText: String(result.original_text || ''),
     rawText: String(result.raw_text || ''),
@@ -118,7 +131,31 @@ function getUserResolutionDraftFingerprint(result = {}) {
     revision: getAiResolutionRevision(result),
     aiStatus: String(fallback.status || ''),
     providerKind: String(fallback.provider_kind || ''),
-    routeDecision: String(route.decision || ''),
+    parseTrace: result.parse_trace || null,
+    flowContext: result.record_flow_context || null
+  });
+}
+
+function getManualProofDraftFingerprint(result, source) {
+  if (source !== USER_ASSISTANT_ANSWER) return getUserResolutionDraftFingerprint(result);
+  return proofFingerprint({
+    originalText: String(result.original_text || ''),
+    rawText: String(result.raw_text || ''),
+    extractedText: String(result.extracted_text || ''),
+    intent: String(result.intent || ''),
+    source: String(result.source || ''),
+    revision: getAiResolutionRevision(result),
+    aiStatus: String((result.ai_fallback || {}).status || ''),
+    providerKind: String((result.ai_fallback || {}).provider_kind || ''),
+    confirmationContext: {
+      confirmationSessionId: String(
+        (result.client_confirmation_context || {}).confirmationSessionId || ''
+      ),
+      draftRevision: String((result.client_confirmation_context || {}).draftRevision || ''),
+      originalTextFingerprint: String(
+        (result.client_confirmation_context || {}).originalTextFingerprint || ''
+      )
+    },
     parseTrace: result.parse_trace || null,
     flowContext: result.record_flow_context || null
   });
@@ -145,6 +182,45 @@ function compactManualResolutionState(value, inArray = false) {
   }
   if (!inArray && (value === undefined || value === null || value === '')) return undefined;
   return value;
+}
+
+function hasUniqueConfirmationItemKeys(items) {
+  if (!Array.isArray(items) || !items.length) return false;
+  const keys = items.map((item) => String(item && item.confirmationItemKey || '').trim());
+  return keys.every(Boolean) && new Set(keys).size === keys.length;
+}
+
+function getManualResolutionFieldsContext(fields = {}) {
+  const nextFields = Object.assign({}, fields);
+  const items = Array.isArray(fields.items)
+    ? fields.items
+      .filter((item) => item && typeof item === 'object' && !Array.isArray(item))
+      .map((item) => Object.assign({}, item))
+    : [];
+  const itemKeysValid = !items.length || hasUniqueConfirmationItemKeys(items);
+  let itemAliasesValid = true;
+  if (items.length > 1) {
+    const firstItem = items[0];
+    itemAliasesValid = PROOF_FIRST_ITEM_ALIAS_FIELDS.every((field) => (
+      manualStateValuesEqual(nextFields[field], firstItem[field])
+    ));
+    PROOF_FIRST_ITEM_ALIAS_FIELDS.forEach((field) => delete nextFields[field]);
+  }
+  nextFields.items = itemKeysValid
+    ? items.slice().sort((left, right) => (
+      String(left.confirmationItemKey || '').localeCompare(String(right.confirmationItemKey || ''))
+    ))
+    : items;
+  return {
+    fields: compactManualResolutionState(nextFields),
+    itemAliasesValid,
+    itemKeysValid
+  };
+}
+
+function hasValidManualResolutionItemContext(fields) {
+  const context = getManualResolutionFieldsContext(fields || {});
+  return context.itemKeysValid && context.itemAliasesValid;
 }
 
 function manualStateValuesEqual(left, right) {
@@ -193,6 +269,13 @@ function isAllowedManualFieldTransition(result, fields, field, itemKey) {
     return changedRootFields.every((name) => allowedRootFields.has(name));
   }
   const allowedRootFields = new Set([field]);
+  if (field === 'amount') {
+    // Confirming the stated order amount also refreshes its canonical aliases.
+    // These are deterministic projections of the same user answer, not extra
+    // user-supplied facts.
+    ['statedAmount', 'totalAmount', 'calculatedAmount', 'items']
+      .forEach((name) => allowedRootFields.add(name));
+  }
   if (['customerName', 'phone'].includes(field)) {
     [
       'customerId', 'receivableId', 'orderId', 'allowUnlinkedPayment',
@@ -213,10 +296,20 @@ function isAllowedManualFieldTransition(result, fields, field, itemKey) {
 
 function isAllowedItemStructureTransition(result, fields, options = {}) {
   const action = String(options.action || '');
-  if (!['ADD_ITEM', 'REMOVE_ITEM'].includes(action)) return false;
+  if (!['ADD_ITEM', 'REMOVE_ITEM', 'REORDER_ITEMS'].includes(action)) return false;
   const before = result.fields || {};
   const beforeItems = Array.isArray(before.items) ? before.items : [];
   const afterItems = Array.isArray(fields.items) ? fields.items : [];
+  if (action === 'REORDER_ITEMS') {
+    if (!hasUniqueConfirmationItemKeys(beforeItems)
+      || !hasUniqueConfirmationItemKeys(afterItems)
+      || beforeItems.length !== afterItems.length) return false;
+    const beforeKeys = beforeItems.map((item) => String(item.confirmationItemKey)).sort();
+    const afterKeys = afterItems.map((item) => String(item.confirmationItemKey)).sort();
+    return beforeKeys.every((itemKey, index) => itemKey === afterKeys[index])
+      && getManualResolutionStateFingerprint(result, before)
+        === getManualResolutionStateFingerprint(result, fields);
+  }
   const itemKey = String(options.itemKey || '');
   if (!itemKey) return false;
   if (action === 'ADD_ITEM') {
@@ -243,7 +336,7 @@ function isAllowedItemStructureTransition(result, fields, options = {}) {
 function getManualResolutionStateFingerprint(result = {}, fieldsOverride) {
   return proofFingerprint({
     intent: String(result.intent || ''),
-    fields: compactManualResolutionState(fieldsOverride || result.fields || {}),
+    fieldsContext: getManualResolutionFieldsContext(fieldsOverride || result.fields || {}),
     relationReferences: compactManualResolutionState(result.relation_references || null),
     formalSaveBlocked: Boolean(result.formal_save_blocked),
     requiresExistingRecord: Boolean(result.requires_existing_record),
@@ -315,6 +408,12 @@ function collectUserResolvableAiRisks(result = {}, fieldsOverride) {
   (Array.isArray(result.field_conflicts) ? result.field_conflicts : []).forEach((conflict) => {
     risks.push(getConflictRiskDescriptor(conflict));
   });
+  const finalValidations = (result.final_parse_safety || {}).field_validations || {};
+  uniqueStrings(finalValidations.invalid_fields || [])
+    .filter((field) => ['productName', 'dueDate', 'amount'].includes(field))
+    .forEach((field) => {
+      risks.push(...getItemRiskDescriptors('INVALID', field, items));
+    });
   const seen = new Set();
   return risks.filter((risk) => {
     if (seen.has(risk.riskId)) return false;
@@ -336,6 +435,12 @@ function getManualEditSigningPayload(proof = {}) {
     riskSetFingerprint: proof.riskSetFingerprint,
     valueFingerprint: proof.valueFingerprint,
     itemIdentityFingerprint: proof.itemIdentityFingerprint,
+    questionId: proof.questionId,
+    fieldPath: proof.fieldPath,
+    draftRevision: proof.draftRevision,
+    originalTextFingerprint: proof.originalTextFingerprint,
+    confirmationSessionId: proof.confirmationSessionId,
+    questionContextFingerprint: proof.questionContextFingerprint,
     riskIds: uniqueStrings(proof.riskIds || []).sort()
   };
 }
@@ -346,30 +451,126 @@ function signManualEditProof(proof) {
 }
 
 function findItemByKey(items, itemKey) {
-  return items.find((item) => String(item.confirmationItemKey || '') === String(itemKey || '')) || null;
+  const targetKey = String(itemKey || '').trim();
+  if (!targetKey || !Array.isArray(items)) return null;
+  const matches = items.filter((item) => (
+    String(item && item.confirmationItemKey || '').trim() === targetKey
+  ));
+  return matches.length === 1 ? matches[0] : null;
 }
 
 function validateManualEditProof(proof, result, fields) {
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return false;
+  const validSource = [USER_PAGE_EDIT, USER_ASSISTANT_ANSWER].includes(proof.source);
   if (proof.schemaVersion !== TRUSTED_MANUAL_EDIT_SCHEMA
-    || proof.source !== 'USER_PAGE_EDIT'
+    || !validSource
     || proof.action !== 'EDIT_FIELD'
     || Number(proof.revision) !== getAiResolutionRevision(result)
-    || proof.draftFingerprint !== getUserResolutionDraftFingerprint(result)
+    || proof.draftFingerprint !== getManualProofDraftFingerprint(result, proof.source)
     || proof.stateFingerprint !== getManualResolutionStateFingerprint(result, fields)
     || !proof.riskSetFingerprint
     || !proof.field
     || !Array.isArray(proof.riskIds)
     || !proof.riskIds.length
     || proof.signature !== signManualEditProof(proof)) return false;
+  if (proof.source === USER_ASSISTANT_ANSWER) {
+    const context = result.client_confirmation_context || {};
+    const expectedQuestionFingerprint = proofFingerprint({
+      confirmationSessionId: proof.confirmationSessionId,
+      draftRevision: proof.draftRevision,
+      field: proof.field,
+      fieldPath: proof.fieldPath,
+      itemKey: proof.itemKey,
+      originalTextFingerprint: proof.originalTextFingerprint,
+      questionId: proof.questionId,
+      riskIds: uniqueStrings(proof.riskIds || []).sort()
+    });
+    if (!String(proof.questionId || '').trim()
+      || !String(proof.fieldPath || '').trim()
+      || !String(proof.draftRevision || '').trim()
+      || !String(proof.originalTextFingerprint || '').trim()
+      || !String(proof.confirmationSessionId || '').trim()
+      || !String(proof.questionContextFingerprint || '').trim()
+      || proof.questionContextFingerprint !== expectedQuestionFingerprint
+      || String(context.confirmationSessionId || '') !== proof.confirmationSessionId
+      || String(context.draftRevision || '') !== proof.draftRevision
+      || String(context.originalTextFingerprint || '') !== proof.originalTextFingerprint) return false;
+  }
   if (proof.itemKey) {
     const items = Array.isArray(fields.items) ? fields.items : [];
+    if (!hasValidManualResolutionItemContext(fields)) return false;
     const item = findItemByKey(items, proof.itemKey);
     return Boolean(item)
       && proof.valueFingerprint === proofFingerprint(item[proof.field])
       && proof.itemIdentityFingerprint === getItemIdentityFingerprint(item);
   }
   return proof.valueFingerprint === proofFingerprint(fields[proof.field]);
+}
+
+function sameExactStrings(left, right) {
+  const a = uniqueStrings(left || []).sort();
+  const b = uniqueStrings(right || []).sort();
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function createTrustedAssistantAnswerChallenge(result = {}, question = {}) {
+  const context = result.client_confirmation_context || {};
+  const target = question.target || {};
+  const field = String(target.field || question.field || '').trim();
+  const itemKey = String(target.itemKey || question.itemKey || '').trim();
+  const fieldPath = String(target.fieldPath || question.fieldPath || '').trim();
+  const route = result.parse_route || {};
+  const routeName = String(
+    route.client_route || route.semantic_decision || route.decision || ''
+  ).toUpperCase();
+  if (routeName !== 'ASK_USER'
+    || !field
+    || !fieldPath
+    || String(question.status || '') !== 'OPEN'
+    || String(question.confirmationSessionId || '') !== String(context.confirmationSessionId || '')
+    || String(question.draftRevision || '') !== String(context.draftRevision || '')
+    || String(question.originalTextFingerprint || '') !== String(context.originalTextFingerprint || '')) {
+    return null;
+  }
+  const fields = result.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  if (itemKey && (!hasValidManualResolutionItemContext(fields)
+    || !findItemByKey(items, itemKey))) return null;
+  const risks = collectUserResolvableAiRisks(result, fields).filter((risk) => (
+    risk.resolvable
+      && risk.itemKey === itemKey
+      && (itemKey ? risk.itemField === field : risk.field === field)
+      && risk.fieldPath === fieldPath
+  ));
+  const riskIds = risks.map((risk) => risk.riskId).sort();
+  const questionRiskIds = uniqueStrings(question.riskIds || []);
+  if (!riskIds.length || !sameExactStrings(questionRiskIds, riskIds)) return null;
+  const questionId = stableHash({
+    confirmationSessionId: context.confirmationSessionId,
+    draftRevision: context.draftRevision,
+    fieldPath,
+    riskIds: questionRiskIds
+  }, 'record-confirm-assistant-question');
+  if (questionId !== String(question.questionId || '')) return null;
+  const challenge = Object.freeze(Object.create(null));
+  assistantAnswerChallengeRegistry.set(challenge, Object.freeze({
+    beforeDraftFingerprint: getManualProofDraftFingerprint(result, USER_ASSISTANT_ANSWER),
+    beforeStateFingerprint: getManualResolutionStateFingerprint(result, fields),
+    confirmationSessionId: String(context.confirmationSessionId || ''),
+    draftRevision: String(context.draftRevision || ''),
+    existingProofs: normalizeTrustedUserManualEdits(
+      result.user_manual_edits,
+      result,
+      fields
+    ),
+    field,
+    fieldPath,
+    itemKey,
+    originalTextFingerprint: String(context.originalTextFingerprint || ''),
+    questionId,
+    riskIds
+  }));
+  return challenge;
 }
 
 function getManualResolutionRiskSetFingerprint(result, fields, proofs = []) {
@@ -402,7 +603,8 @@ function normalizeTrustedUserManualEdits(value, result, fields) {
 
 function refreshTrustedManualEditProofs(result, fields, templates) {
   const items = Array.isArray(fields.items) ? fields.items : [];
-  const draftFingerprint = getUserResolutionDraftFingerprint(result);
+  if (templates.some((template) => template && template.itemKey)
+    && !hasValidManualResolutionItemContext(fields)) return [];
   const stateFingerprint = getManualResolutionStateFingerprint(result, fields);
   const riskSetFingerprint = getManualResolutionRiskSetFingerprint(result, fields, templates);
   return templates.reduce((output, template) => {
@@ -410,10 +612,10 @@ function refreshTrustedManualEditProofs(result, fields, templates) {
     if (template.itemKey && !currentItem) return output;
     const proof = Object.assign({}, template, {
       schemaVersion: TRUSTED_MANUAL_EDIT_SCHEMA,
-      source: 'USER_PAGE_EDIT',
+      source: template.source || USER_PAGE_EDIT,
       action: 'EDIT_FIELD',
       revision: getAiResolutionRevision(result),
-      draftFingerprint,
+      draftFingerprint: getManualProofDraftFingerprint(result, template.source || USER_PAGE_EDIT),
       stateFingerprint,
       riskSetFingerprint,
       valueFingerprint: proofFingerprint(
@@ -422,6 +624,30 @@ function refreshTrustedManualEditProofs(result, fields, templates) {
       itemIdentityFingerprint: template.itemKey ? getItemIdentityFingerprint(currentItem) : '',
       riskIds: uniqueStrings(template.riskIds || []).sort()
     });
+    if (proof.source === USER_ASSISTANT_ANSWER) {
+      const context = result.client_confirmation_context || {};
+      const itemIndex = proof.itemKey ? items.indexOf(currentItem) : -1;
+      const fieldPath = proof.itemKey ? `items[${itemIndex}].${proof.field}` : proof.field;
+      proof.confirmationSessionId = String(context.confirmationSessionId || '');
+      proof.draftRevision = String(context.draftRevision || '');
+      proof.originalTextFingerprint = String(context.originalTextFingerprint || '');
+      proof.fieldPath = fieldPath;
+      proof.questionContextFingerprint = proofFingerprint({
+        confirmationSessionId: proof.confirmationSessionId,
+        draftRevision: proof.draftRevision,
+        field: proof.field,
+        fieldPath,
+        itemKey: proof.itemKey,
+        originalTextFingerprint: proof.originalTextFingerprint,
+        questionId: proof.questionId,
+        riskIds: proof.riskIds
+      });
+      if (!proof.confirmationSessionId
+        || !proof.draftRevision
+        || !proof.originalTextFingerprint
+        || !proof.fieldPath
+        || !proof.questionId) return output;
+    }
     proof.signature = signManualEditProof(proof);
     output.push(proof);
     return output;
@@ -433,6 +659,41 @@ function reconcileTrustedUserManualEditState(result = {}, fields = {}, options =
     || !Array.isArray(result.user_manual_edits)
     || !result.user_manual_edits.length) return result;
   if (!isAllowedItemStructureTransition(result, fields, options)) return result;
+  if (String(options.action || '') === 'REORDER_ITEMS') {
+    const validForPreviousState = normalizeTrustedUserManualEdits(
+      result.user_manual_edits,
+      result,
+      result.fields || {}
+    );
+    if (validForPreviousState.length !== result.user_manual_edits.length) {
+      return Object.assign({}, result, { user_manual_edits: [] });
+    }
+    const currentContext = result.client_confirmation_context || {};
+    const nextContext = options.nextConfirmationContext || currentContext;
+    const currentWithoutRevision = Object.assign({}, currentContext);
+    const nextWithoutRevision = Object.assign({}, nextContext);
+    const currentDraftRevision = Number(currentContext.draftRevision);
+    const nextDraftRevision = Number(nextContext.draftRevision);
+    delete currentWithoutRevision.draftRevision;
+    delete nextWithoutRevision.draftRevision;
+    if (!Number.isInteger(currentDraftRevision)
+      || !Number.isInteger(nextDraftRevision)
+      || nextDraftRevision !== currentDraftRevision + 1
+      || !manualStateValuesEqual(currentWithoutRevision, nextWithoutRevision)) {
+      return Object.assign({}, result, { user_manual_edits: [] });
+    }
+    const nextResult = Object.assign({}, result, {
+      client_confirmation_context: Object.assign({}, nextContext),
+      fields: Object.assign({}, fields)
+    });
+    return Object.assign({}, nextResult, {
+      user_manual_edits: refreshTrustedManualEditProofs(
+        nextResult,
+        fields,
+        validForPreviousState
+      )
+    });
+  }
   const validForNextState = normalizeTrustedUserManualEdits(
     result.user_manual_edits,
     result,
@@ -493,7 +754,7 @@ function createTrustedUserManualEdit(result = {}, options = {}) {
   } else if (matchingRiskIds.length) {
     templates.push({
       schemaVersion: TRUSTED_MANUAL_EDIT_SCHEMA,
-      source: 'USER_PAGE_EDIT',
+      source: USER_PAGE_EDIT,
       action: 'EDIT_FIELD',
       revision: getAiResolutionRevision(result),
       field,
@@ -502,6 +763,78 @@ function createTrustedUserManualEdit(result = {}, options = {}) {
     });
   }
   if (!templates.length) return result;
+  return Object.assign({}, result, {
+    user_manual_edits: refreshTrustedManualEditProofs(result, fields, templates)
+  });
+}
+
+function createTrustedAssistantAnswerEdit(result = {}, options = {}) {
+  const challenge = options.challenge;
+  const authority = challenge && assistantAnswerChallengeRegistry.get(challenge);
+  if (!authority) return result;
+  assistantAnswerChallengeRegistry.delete(challenge);
+  const previousFields = result.fields || {};
+  const fields = options.fields || previousFields;
+  const items = Array.isArray(fields.items) ? fields.items : [];
+  const field = authority.field;
+  const itemKey = authority.itemKey;
+  const item = itemKey ? findItemByKey(items, itemKey) : null;
+  const context = result.client_confirmation_context || {};
+  const metadata = {
+    questionId: authority.questionId,
+    fieldPath: authority.fieldPath,
+    draftRevision: String(context.draftRevision || ''),
+    originalTextFingerprint: String(context.originalTextFingerprint || ''),
+    confirmationSessionId: String(context.confirmationSessionId || '')
+  };
+  if (!field
+    || (itemKey && !item)
+    || Object.values(metadata).some((value) => !value)
+    || metadata.confirmationSessionId !== authority.confirmationSessionId
+    || metadata.draftRevision !== authority.draftRevision
+    || metadata.originalTextFingerprint !== authority.originalTextFingerprint
+    || getManualProofDraftFingerprint(result, USER_ASSISTANT_ANSWER)
+      !== authority.beforeDraftFingerprint
+    || getManualResolutionStateFingerprint(result, previousFields)
+      !== authority.beforeStateFingerprint) return result;
+  const itemIndex = itemKey ? items.indexOf(item) : -1;
+  if (authority.fieldPath !== (itemKey ? `items[${itemIndex}].${field}` : field)) return result;
+  if (itemKey) {
+    const previousItems = Array.isArray(previousFields.items) ? previousFields.items : [];
+    const previousItem = findItemByKey(previousItems, itemKey);
+    if (!previousItem || manualStateValuesEqual(previousItem[field], item[field])) return result;
+  } else if (manualStateValuesEqual(previousFields[field], fields[field])) {
+    return result;
+  }
+  if (!isAllowedManualFieldTransition(result, fields, field, itemKey)) return result;
+  const matchingRisks = collectUserResolvableAiRisks(result, fields).filter((risk) => (
+    risk.resolvable
+      && risk.itemKey === itemKey
+      && (itemKey ? risk.itemField === field : risk.field === field)
+  ));
+  if (!matchingRisks.length
+    || !sameExactStrings(matchingRisks.map((risk) => risk.riskId), authority.riskIds)) return result;
+  const templates = authority.existingProofs.map((entry) => Object.assign({}, entry));
+  const questionContextFingerprint = proofFingerprint({
+    confirmationSessionId: metadata.confirmationSessionId,
+    draftRevision: metadata.draftRevision,
+    field,
+    fieldPath: metadata.fieldPath,
+    itemKey,
+    originalTextFingerprint: metadata.originalTextFingerprint,
+    questionId: metadata.questionId,
+    riskIds: authority.riskIds
+  });
+  templates.push(Object.assign({
+    schemaVersion: TRUSTED_MANUAL_EDIT_SCHEMA,
+    source: USER_ASSISTANT_ANSWER,
+    action: 'EDIT_FIELD',
+    revision: getAiResolutionRevision(result),
+    field,
+    itemKey,
+    riskIds: authority.riskIds,
+    questionContextFingerprint
+  }, metadata));
   return Object.assign({}, result, {
     user_manual_edits: refreshTrustedManualEditProofs(result, fields, templates)
   });
@@ -517,13 +850,13 @@ function evaluateUserResolvedAiState(result = {}) {
   risks.forEach((risk) => allRiskIds.add(risk.riskId));
   const unresolvedRisks = risks.filter((risk) => !risk.resolvable || !resolvedRiskIds.has(risk.riskId));
   const fallback = result.ai_fallback || {};
-  const route = String((result.parse_route || {}).decision || '');
-  const eligibleAiOutcome = isAiReturnedUncertain(result)
-    && fallback.provider_kind === 'REAL'
-    // normalizeAiResult is also a supported boundary in the shared-core tests;
-    // it may not yet have the outer router annotation. A declared local route,
-    // however, must never be upgraded into an AI user-resolution path.
-    && (!route || ['ai_standard', 'ai_deep'].includes(route));
+  const eligibleAiOutcome = (isAiReturnedUncertain(result)
+    && fallback.provider_kind === 'REAL')
+    || (fallback.status === 'not_requested' && proofs.length > 0);
+  // parse_route is a derived, mutable presentation/routing result. A trusted
+  // edit may legitimately move an uncertain AI draft to FAST_LOCAL in the same
+  // turn, so completion is bound to the signed proof, AI revision and Provider
+  // identity instead of the post-edit route label.
   const complete = eligibleAiOutcome
     && proofs.length > 0
     && allRiskIds.size > 0
@@ -1057,11 +1390,18 @@ function applyFinalParseSafety(result, options = {}) {
   const items = needsItemKeys ? normalizeConfirmationItems(rawItems) : rawItems;
   if (Array.isArray(fields.items)) fields.items = items;
   const aiManualResolutionRequired = requiresTrustedAiManualProof(result);
-  const trustedUserManualEdits = normalizeTrustedUserManualEdits(
-    result.user_manual_edits,
-    result,
-    fields
-  );
+  const rawProofs = Array.isArray(result.user_manual_edits) ? result.user_manual_edits : [];
+  const rawItemProofIdentityValid = !rawProofs.some((proof) => proof && proof.itemKey)
+    || hasUniqueConfirmationItemKeys(rawItems);
+  const trustedUserManualEdits = rawItemProofIdentityValid
+    ? normalizeTrustedUserManualEdits(result.user_manual_edits, result, fields)
+    : [];
+  const rawAssistantProofCount = (Array.isArray(result.user_manual_edits)
+    ? result.user_manual_edits
+    : []).filter((proof) => proof && proof.source === USER_ASSISTANT_ANSWER).length;
+  const trustedAssistantProofCount = trustedUserManualEdits
+    .filter((proof) => proof.source === USER_ASSISTANT_ANSWER).length;
+  const rejectedAssistantProof = rawAssistantProofCount > trustedAssistantProofCount;
   const resolvedRiskIds = new Set();
   trustedUserManualEdits.forEach((proof) => {
     proof.riskIds.forEach((riskId) => resolvedRiskIds.add(riskId));
@@ -1186,7 +1526,10 @@ function applyFinalParseSafety(result, options = {}) {
     .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
     .filter((field) => !effectiveManualFields.includes(field))
     .filter((field) => !trustedResolvedFields.includes(field))
-    .concat(finalMissing.filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))));
+    .concat(finalMissing
+      .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
+      .filter((field) => !effectiveManualFields.includes(field))
+      .filter((field) => !trustedResolvedFields.includes(field))));
   const lowConfidenceFields = uniqueStrings([]
     .concat(result.low_confidence_fields || [])
     .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
@@ -1201,6 +1544,26 @@ function applyFinalParseSafety(result, options = {}) {
         && !(suggestedFields.includes(field) && !effectiveManualFields.includes(field))))
     .concat(finalLow.filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))));
 
+  const resolvedSafetyFields = new Set(trustedResolvedFields);
+  const projectedSafety = resolvedSafetyFields.size
+    ? Object.assign({}, safety, {
+      unsafe_fields: uniqueStrings(safety.unsafe_fields || [])
+        .filter((field) => !resolvedSafetyFields.has(field)),
+      missing_fields: uniqueStrings(safety.missing_fields || [])
+        .filter((field) => !resolvedSafetyFields.has(field)),
+      low_confidence_fields: uniqueStrings(safety.low_confidence_fields || [])
+        .filter((field) => !resolvedSafetyFields.has(field)),
+      evidence_missing_fields: uniqueStrings(safety.evidence_missing_fields || [])
+        .filter((field) => !resolvedSafetyFields.has(field)),
+      field_validations: Object.assign({}, safety.field_validations || {}, {
+        issues: (((safety.field_validations || {}).issues) || [])
+          .filter((issue) => !resolvedSafetyFields.has(issue && issue.field)),
+        semantic_low_fields: uniqueStrings(
+          ((safety.field_validations || {}).semantic_low_fields) || []
+        ).filter((field) => !resolvedSafetyFields.has(field))
+      })
+    })
+    : safety;
   const next = Object.assign({}, result, {
     fields,
     manual_fields: manualFields,
@@ -1209,8 +1572,20 @@ function applyFinalParseSafety(result, options = {}) {
     missing_fields: missingFields,
     low_confidence_fields: lowConfidenceFields,
     field_conflicts: fieldConflicts,
-    final_parse_safety: safety
+    formal_save_blocked: Boolean(result.formal_save_blocked || rejectedAssistantProof),
+    block_reason: rejectedAssistantProof
+      ? '当前人工回答已过期，需要重新确认。'
+      : result.block_reason,
+    final_parse_safety: projectedSafety
   });
+  // Final safety can legitimately remove risks that a signed user answer has
+  // resolved. Refresh only proofs that were already validated above so the
+  // next safety/preflight pass remains bound to the new canonical risk state.
+  next.user_manual_edits = refreshTrustedManualEditProofs(
+    next,
+    fields,
+    trustedUserManualEdits
+  );
   delete next.userResolution;
   delete next.resolutionOutcome;
   delete next.allRisksResolved;
@@ -1225,6 +1600,9 @@ module.exports = {
   SAFE_LOCAL,
   applyFinalParseSafety,
   applyLocalParseSafety,
+  collectUserResolvableAiRisks,
+  createTrustedAssistantAnswerChallenge,
+  createTrustedAssistantAnswerEdit,
   createTrustedUserManualEdit,
   evaluateLocalEvidence,
   evaluateLocalParseSafety,

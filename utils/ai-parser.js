@@ -3,13 +3,17 @@ const { parseInput } = require('./parser');
 const { getApiBaseUrl, requestJson } = require('./api-client');
 const { normalizeBusinessText } = require('./text-normalize');
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
-const { applyLocalParseSafety, NEEDS_USER_CONFIRM } = require('./parse-safety');
+const {
+  applyFinalParseSafety,
+  applyLocalParseSafety,
+  NEEDS_USER_CONFIRM
+} = require('./parse-safety');
 const { resolveBusinessTimeContext } = require('./record-flow-runtime');
 const { RAW_UNIT_PATTERN, normalizeUnit, unitsMatch } = require('./units');
 const { validateVoiceCompletionEvidence } = require('./voice-recognition');
 
 // 普通 AI 只是一轮快速核对：网络层最多 6.7 秒，外层连同本地整理最多 8 秒。
-// 深度核对只能由用户主动点击，不能占用日常确认卡的 8 秒预算。
+// 自动深度核对使用独立超时预算，不占用日常快速核对的 8 秒预算。
 const AI_STANDARD_REQUEST_TIMEOUT_MS = 6700;
 const AI_DEEP_REQUEST_TIMEOUT_MS = 25000;
 const AI_STANDARD_WAIT_LIMIT_MS = 8000;
@@ -21,6 +25,9 @@ const ROUTE_AI_STANDARD = 'ai_standard';
 const ROUTE_AI_DEEP = 'ai_deep';
 const ROUTE_PENDING = 'pending';
 const ROUTE_NO_RECORD = 'no_record';
+const ROUTE_ASK_USER = 'ASK_USER';
+const ROUTE_SAFE_BLOCKED = 'SAFE_BLOCKED';
+const CLIENT_ROUTE_SOURCE = 'LOCAL_TRUSTED_ROUTE_V1';
 const SOURCE_EVIDENCE_UNIT_PATTERN = `(?:${RAW_UNIT_PATTERN}|片|枚|根|份)`;
 const SOURCE_ITEM_IDENTITY_TOKEN = '[\\u3400-\\u9fffA-Za-z0-9Ａ-Ｚａ-ｚ０-９.\\/\\-]';
 const SOURCE_DELIMITED_SPEC_PATTERN = '(?:[（(【\\[《“"「『‘\'][^（）()【】\\[\\]《》“”"「」『』‘’\'，,；;]{1,24}[）)】\\]》”"」』’\'])';
@@ -35,6 +42,442 @@ const ROUTE_LABELS = {
   [ROUTE_NO_RECORD]: '没有可记录业务'
 };
 const DEEP_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|按原来|价格不变|还是|最终|最后|确认价|改成|改为|改价|改数量|延期|提前|那单|那笔|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回|定金|订金|预付|尾款|欠款|还了|还剩|结清|到账|转了|付了|收了)/i;
+
+function withTrustedClientRoute(route = {}, canonicalRoute) {
+  return Object.assign({}, route, {
+    client_route: canonicalRoute,
+    decisionSource: CLIENT_ROUTE_SOURCE,
+    routeAuthority: CLIENT_ROUTE_SOURCE,
+    source: CLIENT_ROUTE_SOURCE
+  }, canonicalRoute === 'AUTO_DEEP' ? {
+    autoDeep: true,
+    semantic_decision: 'AUTO_DEEP'
+  } : canonicalRoute === ROUTE_ASK_USER ? {
+    askUser: true,
+    semantic_decision: ROUTE_ASK_USER
+  } : canonicalRoute === ROUTE_SAFE_BLOCKED ? {
+    safeBlocked: true,
+    semantic_decision: ROUTE_SAFE_BLOCKED
+  } : {
+    semantic_decision: route.decision
+  });
+}
+
+function getRouteRiskIds(result = {}, field, itemIndex = -1) {
+  const riskIds = [];
+  const suffix = itemIndex >= 0 ? `|${itemIndex}` : '';
+  toArray(result.missing_fields || []).forEach((name) => {
+    if (name === field) riskIds.push(`MISSING|${field}${suffix}`);
+  });
+  toArray(result.low_confidence_fields || []).forEach((name) => {
+    if (name === field) riskIds.push(`LOW|${field}${suffix}`);
+  });
+  toArray(result.field_conflicts || []).forEach((conflict, index) => {
+    const conflictField = conflict && typeof conflict === 'object' ? conflict.field : conflict;
+    if (conflictField === field) riskIds.push(`CONFLICT|${field}|${index}${suffix}`);
+  });
+  const safety = result.local_parse_safety || {};
+  const invalidFields = ((safety.field_validations || {}).invalid_fields) || [];
+  if (invalidFields.includes(field)) riskIds.push(`INVALID|${field}${suffix}`);
+  return uniqueStrings(riskIds.length ? riskIds : [`REQUIRED|${field}${suffix}`]);
+}
+
+function buildProductQuestionPrompt(text, item = {}) {
+  const facts = [];
+  const quantity = String(item.quantity || '').trim();
+  const unit = String(item.unit || '').trim();
+  const unitPrice = String(item.unitPrice || '').trim();
+  const deliveryMatch = String(text || '').match(/(?:本|下|上)?周[一二三四五六日天]|星期[一二三四五六日天]|今天|明天|后天|\d{1,2}月\d{1,2}日/);
+  if (quantity) facts.push(`${quantity}${unit}`);
+  if (unitPrice) facts.push(unit ? `每${unit}${unitPrice}元` : `单价${unitPrice}元`);
+  if (deliveryMatch) facts.push(`${deliveryMatch[0]}交`);
+  return `${facts.length ? `${facts.join('、')}，` : ''}是什么商品？`;
+}
+
+const CLIENT_FACT_GATE_ITEM_FIELDS = Object.freeze([
+  'productName', 'quantity', 'unitPrice', 'unit'
+]);
+
+function clientFactItemIdentity(item = {}) {
+  return [
+    normalizeItemIdentityText(item.productName),
+    normalizeItemIdentityText(item.spec)
+  ].join('|');
+}
+
+function sourceItemClauseCandidates(payload = {}, localResult = {}) {
+  const sourceText = normalizeBusinessText(String(
+    payload.rawText || payload.text || localResult.original_text || ''
+  ));
+  if (!sourceText || !/[；;\n]/.test(sourceText)) return [];
+  const candidates = sourceText
+    .split(/[；;\n]+/)
+    .map((clause) => String(clause || '').trim())
+    .filter(Boolean)
+    .filter((clause) => !/^(?:交期|交货|发货|到期|合计|共计|总计|总价|总金额)/.test(clause))
+    .filter((clause) => !/^(?:(?:19|20)\d{2}年)?\d{1,2}月\d{1,2}[日号]?(?:前|左右)?(?:交货|交|发货|发|到)?$/.test(clause))
+    .map((clause) => {
+      const parsed = parseInput({
+        businessDate: payload.businessDate,
+        businessTimezone: payload.businessTimezone,
+        context: payload.context || 'home',
+        nowInstant: payload.nowInstant,
+        rawText: clause,
+        source: 'typed',
+        state: { customers: [] },
+        text: clause
+      });
+      const fields = parsed && parsed.fields || {};
+      const parsedItems = Array.isArray(fields.items) ? fields.items.filter(Boolean) : [];
+      const item = Object.assign({}, parsedItems[0] || {
+        productName: fields.productName,
+        spec: fields.spec,
+        quantity: fields.quantity,
+        unit: fields.unit,
+        unitPrice: fields.unitPrice,
+        priceUnit: fields.priceUnit,
+        totalAmount: fields.totalAmount,
+        itemDeliveryDate: '',
+        itemRemark: ''
+      });
+      if (!item.unit && item.priceUnit) item.unit = item.priceUnit;
+      const productName = String(item.productName || '').trim();
+      if (!isPlausibleLocalItemIdentity(productName)
+        || /^(?:其中|一个|某个|任意|这项|那项)$/.test(productName)
+        || !String(clause).includes(productName)
+        || !(String(item.spec || '').trim()
+          || String(item.quantity || '').trim()
+          || String(item.unitPrice || '').trim())) return null;
+      return { clause, item };
+    })
+    .filter(Boolean);
+  const seen = new Set();
+  return candidates.filter((candidate) => {
+    const identity = clientFactItemIdentity(candidate.item);
+    if (!identity || seen.has(identity)) return false;
+    seen.add(identity);
+    return true;
+  });
+}
+
+function applyClientSourceItemDrafts(payload = {}, localResult = {}) {
+  if (!['order', 'quotation'].includes(localResult.intent)) return localResult;
+  const candidates = sourceItemClauseCandidates(payload, localResult);
+  const fields = localResult.fields || {};
+  const rawItems = Array.isArray(fields.items) ? fields.items.filter(Boolean) : [];
+  if (candidates.length < 2 && rawItems.length < 2) return localResult;
+  const existingByIdentity = new Map(rawItems.map((item) => [
+    clientFactItemIdentity(item),
+    item
+  ]));
+  const mergedItems = candidates.map((candidate) => Object.assign(
+    {},
+    candidate.item,
+    existingByIdentity.get(clientFactItemIdentity(candidate.item)) || {}
+  ));
+  rawItems.forEach((item) => {
+    const identity = clientFactItemIdentity(item);
+    if (!mergedItems.some((candidate) => clientFactItemIdentity(candidate) === identity)) {
+      mergedItems.push(Object.assign({}, item));
+    }
+  });
+  if (mergedItems.length < 2) return localResult;
+  const duplicatedKeys = getDuplicatedConfirmationItemKeys(mergedItems);
+  const usedKeys = new Set();
+  const keyedItems = mergedItems.map((item, index) => ensureConfirmationItemKey(
+    Object.assign({}, item, {
+      confirmationItemKey: duplicatedKeys.has(String(item.confirmationItemKey || ''))
+        ? ''
+        : String(item.confirmationItemKey || '')
+    }),
+    'local',
+    index,
+    usedKeys
+  ));
+  return Object.assign({}, localResult, {
+    fields: Object.assign({}, fields, { items: keyedItems })
+  });
+}
+
+function hasTrustedManualItemFact(trustedProofs, item, field) {
+  const itemKey = String(item && item.confirmationItemKey || '').trim();
+  if (!itemKey || !String(item && item[field] === undefined ? '' : item[field]).trim()) return false;
+  return toArray(trustedProofs).some((proof) => (
+    proof
+    && ['USER_ASSISTANT_ANSWER', 'USER_PAGE_EDIT'].includes(proof.source)
+    && proof.schemaVersion === 'USER_MANUAL_EDIT_V1'
+    && proof.action === 'EDIT_FIELD'
+    && proof.itemKey === itemKey
+    && proof.field === field
+  ));
+}
+
+function hasTrustedLocalItemFact(localResult, item, field) {
+  if (!String(item && item[field] === undefined ? '' : item[field]).trim()) return false;
+  if (String(item && item.confirmationItemOrigin || '') === 'AI_ADDED_ITEM') return false;
+  const source = String((localResult.field_sources || {}).items || '');
+  return /^rule:item_/.test(source);
+}
+
+function hasTrustedTopLevelFact(localResult, field, itemCount) {
+  if (itemCount !== 1) return false;
+  const fields = localResult.fields || {};
+  const source = String((localResult.field_sources || {})[field] || '');
+  if (!String(fields[field] === undefined ? '' : fields[field]).trim()) return false;
+  return /^(?:history:(?:quotation|order):|rule:|paste_meta:|computed:)/.test(source);
+}
+
+function evaluateClientAutoDeepFactGate(payload = {}, localResult = {}) {
+  const text = String(payload.rawText || payload.text || localResult.original_text || '');
+  const fields = localResult.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items.filter(Boolean) : [];
+  const sourceCandidates = sourceItemClauseCandidates(payload, localResult);
+  const trustedProofs = toArray(localResult.user_manual_edits || []).length
+    ? toArray(applyFinalParseSafety(localResult, {
+      businessDate: payload.businessDate || ''
+    }).user_manual_edits || [])
+    : [];
+  const sourceByIdentity = new Map(sourceCandidates.map((candidate) => [
+    clientFactItemIdentity(candidate.item),
+    candidate
+  ]));
+  const ambiguousOwnership = items.length > 1
+    && /(?:其中|某个|任意|有一个|其中一(?:个|项|款))[^；;。\n]{0,12}(?:每|单价|价格)/.test(
+      normalizeBusinessText(text)
+    );
+  const missingTargets = [];
+  items.forEach((item, itemIndex) => {
+    const sourceCandidate = sourceByIdentity.get(clientFactItemIdentity(item));
+    const scope = sourceCandidate
+      ? { text: sourceCandidate.clause, unique: true }
+      : getAiItemEvidenceScope(text, item, items);
+    CLIENT_FACT_GATE_ITEM_FIELDS.forEach((field) => {
+      const value = String(item && item[field] === undefined ? '' : item[field]).trim();
+      const trustedExternal = hasTrustedLocalItemFact(localResult, item, field)
+        || hasTrustedManualItemFact(trustedProofs, item, field)
+        || hasTrustedTopLevelFact(localResult, field, items.length);
+      let sourceSupported = false;
+      if (value && scope.unique) {
+        if (field === 'productName') {
+          sourceSupported = isAiItemSupplementSupported(field, value, item, scope.text);
+        } else if (field === 'quantity' || field === 'unit') {
+          sourceSupported = hasBoundItemQuantityEvidence(scope.text, item);
+        } else if (field === 'unitPrice') {
+          sourceSupported = hasBoundItemUnitPriceEvidence(scope.text, item);
+        }
+      }
+      if ((!value && !trustedExternal) || (value && !sourceSupported && !trustedExternal)) {
+        missingTargets.push({
+          field,
+          fieldPath: `items[${itemIndex}].${field}`,
+          item,
+          itemIndex,
+          itemKey: String(item && item.confirmationItemKey || '')
+        });
+      }
+    });
+  });
+  return {
+    ambiguousOwnership,
+    complete: !ambiguousOwnership && missingTargets.length === 0,
+    missingTargets
+  };
+}
+
+function applyQuotationConversionFactExemption(localResult = {}, audit = {}) {
+  if (!evaluateExplicitQuotationConversionDeepReview(localResult).eligible) return audit;
+  const fields = localResult.fields || {};
+  const items = Array.isArray(fields.items) ? fields.items.filter(Boolean) : [];
+  const referencedProductName = normalizeItemIdentityText(fields.productName);
+  const quotationReference = ((localResult.relation_references || {}).quotation) || {};
+  const normalizedReferenceText = normalizeItemIdentityText([
+    quotationReference.sourceText,
+    quotationReference.normalizedReference
+  ].filter(Boolean).join(' '));
+  if (!referencedProductName || !normalizedReferenceText.includes(referencedProductName)) return audit;
+  const relationItemIndex = items.findIndex((item) => (
+    normalizeItemIdentityText(item && item.productName) === referencedProductName
+  ));
+  if (relationItemIndex < 0) return audit;
+  const missingTargets = toArray(audit.missingTargets).filter((target) => (
+    target.itemIndex !== relationItemIndex
+  ));
+  return Object.assign({}, audit, {
+    complete: !audit.ambiguousOwnership && missingTargets.length === 0,
+    missingTargets
+  });
+}
+
+function evaluateClientAutoDeepFactGateForRoute(payload = {}, localResult = {}) {
+  return applyQuotationConversionFactExemption(
+    localResult,
+    evaluateClientAutoDeepFactGate(payload, localResult)
+  );
+}
+
+function getClientFactQuestionCandidate(audit = {}) {
+  if (audit.ambiguousOwnership || !audit.missingTargets.length) return null;
+  const priority = ['productName', 'quantity', 'unitPrice', 'unit'];
+  const target = audit.missingTargets.slice().sort((left, right) => (
+    left.itemIndex - right.itemIndex
+      || priority.indexOf(left.field) - priority.indexOf(right.field)
+  ))[0];
+  if (!target) return null;
+  const item = target.item || {};
+  const label = [item.spec, item.productName].filter(Boolean).join('') || `商品${target.itemIndex + 1}`;
+  const prompts = {
+    productName: `商品${target.itemIndex + 1}是什么商品？`,
+    quantity: `${label}要多少？`,
+    unit: `${label}按什么单位计数？`,
+    unitPrice: `${label}每${item.unit || item.priceUnit || '件'}多少钱？`
+  };
+  return {
+    answerType: ['quantity', 'unitPrice'].includes(target.field) ? 'number' : 'text',
+    prompt: prompts[target.field],
+    riskIds: [`MISSING_ITEM_FACT|${target.fieldPath}`],
+    target: {
+      field: target.field,
+      fieldPath: target.fieldPath,
+      itemIndex: target.itemIndex,
+      itemKey: target.itemKey
+    }
+  };
+}
+
+function shouldApplyClientAutoDeepFactGate(localResult = {}) {
+  const fallback = localResult.ai_fallback || {};
+  return fallback.attempted !== true
+    && !['used', 'returned_uncertain', 'rejected', 'mock_used'].includes(
+      String(fallback.status || '').toLowerCase()
+    );
+}
+
+function applyClientFactGateRisks(payload = {}, localResult = {}) {
+  if (!shouldApplyClientAutoDeepFactGate(localResult)) return localResult;
+  const audit = evaluateClientAutoDeepFactGateForRoute(payload, localResult);
+  if (audit.complete) return localResult;
+  const existing = toArray(localResult.field_conflicts || []).slice();
+  const conflicts = audit.missingTargets.reduce((output, target) => {
+    const alreadyExists = existing.concat(output).some((conflict) => (
+      conflict
+      && conflict.field === 'items'
+      && conflict.itemKey === target.itemKey
+      && conflict.itemField === target.field
+      && conflict.code === 'CLIENT_SOURCE_FACT_MISSING'
+    ));
+    if (!alreadyExists) {
+      output.push({
+        code: 'CLIENT_SOURCE_FACT_MISSING',
+        field: 'items',
+        fieldPath: target.fieldPath,
+        itemField: target.field,
+        itemIndex: target.itemIndex,
+        itemKey: target.itemKey,
+        message: `商品${target.itemIndex + 1}的${target.field}没有可信原文、历史或人工确认依据。`,
+        values: []
+      });
+    }
+    return output;
+  }, []);
+  if (audit.ambiguousOwnership) {
+    conflicts.push({
+      code: 'CLIENT_ITEM_FACT_OWNERSHIP_AMBIGUOUS',
+      field: 'items',
+      fieldPath: 'items',
+      itemField: 'identity',
+      itemIndex: -1,
+      itemKey: '',
+      message: '原话中的商品事实无法可靠绑定到具体商品。',
+      values: []
+    });
+  }
+  const safety = localResult.local_parse_safety || {};
+  const evidencePaths = audit.missingTargets.map((target) => target.fieldPath);
+  return Object.assign({}, localResult, {
+    field_conflicts: existing.concat(conflicts),
+    local_parse_safety: Object.assign({}, safety, {
+      evidence_missing_fields: uniqueStrings([].concat(
+        safety.evidence_missing_fields || [],
+        evidencePaths
+      )),
+      evidence_reason_texts: uniqueReasonTexts([].concat(
+        safety.evidence_reason_texts || [],
+        conflicts.map((conflict) => conflict.message)
+      )),
+      evidence_sufficient: false,
+      reason_texts: uniqueReasonTexts([].concat(
+        safety.reason_texts || [],
+        conflicts.map((conflict) => conflict.message)
+      )),
+      safe_to_auto_accept: false,
+      status: NEEDS_USER_CONFIRM
+    })
+  });
+}
+
+function getTrustedQuestionCandidate(text, localResult = {}) {
+  const safety = localResult.local_parse_safety || {};
+  const fields = localResult.fields || {};
+  const items = Array.isArray(fields.items) && fields.items.length
+    ? fields.items.filter(Boolean)
+    : [fields];
+  const missing = uniqueStrings([].concat(
+    localResult.missing_fields || [],
+    safety.missing_fields || []
+  ));
+  const low = uniqueStrings([].concat(
+    localResult.low_confidence_fields || [],
+    safety.low_confidence_fields || []
+  ));
+  const invalid = uniqueStrings((((safety.field_validations || {}).invalid_fields) || []));
+  const currentProductName = String((items[0] && items[0].productName) || fields.productName || '').trim();
+  const productLooksLikeDeliveryPhrase = /(?:周|星期)[一二三四五六日天].*交|今天|明天|后天|月底|月末/.test(currentProductName);
+  const productRisk = missing.includes('productName')
+    || invalid.includes('productName')
+    || (low.includes('productName') && productLooksLikeDeliveryPhrase);
+  if (productRisk && ['order', 'quotation'].includes(localResult.intent)) {
+    const itemIndex = Math.max(0, items.findIndex((item) => !String(item.productName || '').trim()));
+    const selectedItem = items[itemIndex] || items[0] || {};
+    return {
+      answerType: 'text',
+      prompt: buildProductQuestionPrompt(text, selectedItem),
+      riskIds: getRouteRiskIds(localResult, 'productName', itemIndex),
+      target: {
+        field: 'productName',
+        fieldPath: `items[${itemIndex}].productName`,
+        itemIndex
+      }
+    };
+  }
+  const amountConflict = toArray(localResult.field_conflicts || []).find((conflict) => (
+    (conflict && typeof conflict === 'object' ? conflict.field : conflict) === 'amount'
+  ));
+  const amountRisk = Boolean(amountConflict)
+    || invalid.includes('amount');
+  if (amountRisk) {
+    const stated = fields.statedAmount || fields.amount || '';
+    const calculated = fields.calculatedAmount || '';
+    return {
+      answerType: 'number',
+      prompt: `总金额与商品明细合计不一致。你说的是${stated}元，明细合计${calculated}元，请确认总金额。`,
+      riskIds: getRouteRiskIds(localResult, 'amount'),
+      target: { field: 'amount', fieldPath: 'amount', itemIndex: -1 }
+    };
+  }
+  if (localResult.intent === 'order'
+    && (!String(fields.dueDate || '').trim()
+      || missing.includes('dueDate')
+      || low.includes('dueDate')
+      || invalid.includes('dueDate'))) {
+    return {
+      answerType: 'date',
+      prompt: '这张订单什么时候交货？',
+      riskIds: getRouteRiskIds(localResult, 'dueDate'),
+      target: { field: 'dueDate', fieldPath: 'dueDate', itemIndex: -1 }
+    };
+  }
+  return null;
+}
 
 function unwrapAiResult(result) {
   if (!result || typeof result !== 'object') return {};
@@ -64,6 +507,91 @@ const AI_ITEM_FIELD_KEYS = [
   'priceUnit', 'price_unit', 'totalAmount', 'total_amount', 'amount', 'itemDeliveryDate',
   'deliveryDate', 'dueDate', 'itemRemark', 'remark'
 ];
+const AI_FIELD_SOURCE_KEYS = new Set(AI_BUSINESS_FIELD_KEYS);
+const AI_FIELD_SOURCE_VALUES = new Set(['AI', 'AI_MODEL', 'AI_EXTRACTED', 'AI_INFERRED']);
+
+function isPlainOwnObject(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function normalizeFieldSourceToken(value) {
+  return String(value || '')
+    .normalize('NFKC')
+    .trim()
+    .toUpperCase()
+    .replace(/[\s:./\\-]+/g, '_')
+    .replace(/_+/g, '_');
+}
+
+function isTrustedUserFieldSource(value) {
+  const token = normalizeFieldSourceToken(value);
+  return token === 'USER'
+    || token.startsWith('USER_')
+    || token === 'MANUAL'
+    || token.startsWith('MANUAL_');
+}
+
+function getCanonicalSourceClaims(value) {
+  if (!isPlainOwnObject(value)) return '';
+  return Object.keys(value).sort().map((key) => {
+    const entry = value[key];
+    return `${key}:${typeof entry === 'string' ? entry : `[${typeof entry}]`}`;
+  }).join('|');
+}
+
+function sanitizeAiFieldSources(aiResult = {}) {
+  const hasSnake = Object.prototype.hasOwnProperty.call(aiResult, 'field_sources');
+  const hasCamel = Object.prototype.hasOwnProperty.call(aiResult, 'fieldSources');
+  const snake = hasSnake ? aiResult.field_sources : null;
+  const camel = hasCamel ? aiResult.fieldSources : null;
+  if (hasSnake && hasCamel && getCanonicalSourceClaims(snake) !== getCanonicalSourceClaims(camel)) {
+    return Object.create(null);
+  }
+  const claims = hasSnake ? snake : camel;
+  if (!isPlainOwnObject(claims)) return Object.create(null);
+  return Object.keys(claims).reduce((output, key) => {
+    if (!Object.prototype.hasOwnProperty.call(claims, key)
+      || !AI_FIELD_SOURCE_KEYS.has(key)
+      || ['__proto__', 'prototype', 'constructor', 'toString'].includes(key)) return output;
+    const value = claims[key];
+    if (typeof value !== 'string') return output;
+    const token = normalizeFieldSourceToken(value);
+    if (AI_FIELD_SOURCE_VALUES.has(token)) output[key] = 'AI';
+    return output;
+  }, Object.create(null));
+}
+
+function fieldSourceValuesEqual(left, right) {
+  if (left === right) return true;
+  if (left === undefined || left === null || right === undefined || right === null) return false;
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function mergeTrustedFieldSources(localResult, aiResult, aiFields, finalFields) {
+  const localSources = localResult && localResult.field_sources;
+  const local = isPlainOwnObject(localSources) ? localSources : {};
+  const merged = Object.assign({}, local);
+  const aiSources = sanitizeAiFieldSources(aiResult);
+  const protectedManualFields = new Set([].concat(
+    Array.isArray(localResult && localResult.manual_fields) ? localResult.manual_fields : [],
+    (Array.isArray(localResult && localResult.user_manual_edits)
+      ? localResult.user_manual_edits.map((proof) => proof && proof.field)
+      : [])
+  ).map((field) => String(field || '')).filter(Boolean));
+  Object.keys(aiSources).forEach((key) => {
+    const aiProvidedField = Object.prototype.hasOwnProperty.call(aiFields || {}, key);
+    const finalAdoptedAiValue = aiProvidedField
+      && Object.prototype.hasOwnProperty.call(finalFields || {}, key)
+      && fieldSourceValuesEqual(finalFields[key], aiFields[key]);
+    if (!finalAdoptedAiValue
+      || protectedManualFields.has(key)
+      || isTrustedUserFieldSource(local[key])) return;
+    merged[key] = aiSources[key];
+  });
+  return merged;
+}
 
 function hasMeaningfulValue(value) {
   if (value === undefined || value === null) return false;
@@ -106,10 +634,8 @@ function getAiBusinessResultValidity(aiResult) {
     hasBusinessScalar(fields[key]) || (fields !== result && hasBusinessScalar(result[key]))
   ));
   const fieldEvidence = result.field_evidence || result.fieldEvidence || {};
-  const fieldSources = result.field_sources || result.fieldSources || {};
   const hasBusinessEvidence = AI_BUSINESS_FIELD_KEYS.concat('items').some((key) => (
     hasMeaningfulValue(fieldEvidence[key])
-    || /^(?:history|source|original|message|user|local)(?::|$)/i.test(String(fieldSources[key] || '').trim())
   ));
   const items = fields.items || fields.lineItems || fields.line_items || fields.products || fields.goods
     || result.items || result.lineItems || result.line_items || result.products || result.goods;
@@ -950,9 +1476,14 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     && !hasMissingCriticalFact
     && (localResult.missing_fields || []).length === 0;
   const hasHistoryReference = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|按原来|价格不变|还是)/.test(text);
-  const deepReviewRequested = payload.reviewMode === 'deep';
+  // reviewMode/deep 是不可信的页面请求意图，只能由下面的本地事实和
+  // safety 结果决定是否进入自动深度核对。
+  const deepReviewRequested = false;
   const quotationConversionDeepReview =
     evaluateExplicitQuotationConversionDeepReview(localResult);
+  const clientFactGate = shouldApplyClientAutoDeepFactGate(localResult)
+    ? evaluateClientAutoDeepFactGateForRoute(payload, localResult)
+    : { ambiguousOwnership: false, complete: true, missingTargets: [] };
   // 缺少客户/商品等事实时，“颜色、备注”不能把题目升级成深度 AI；AI 不能替老板编事实。
   const hasSemanticDeepRisk = DEEP_AI_PATTERN.test(text) && (!hasMissingCriticalFact || hasHistoryReference);
   const hasDeepRisk = hasFinancialRisk
@@ -1074,7 +1605,32 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     suggestedOperation: localResult.suggested_operation,
     voiceCompletionAudit
   });
-  const withRouteAudit = (route) => Object.assign({}, route, isVoiceInput ? {
+  let questionCandidate = quotationConversionDeepReview.eligible
+    ? null
+    : getTrustedQuestionCandidate(text, localResult);
+  if (!questionCandidate) {
+    questionCandidate = getClientFactQuestionCandidate(clientFactGate);
+  }
+  // 多轮聊天中的商品语义要结合上下文核对，不能用单句缺字段逻辑
+  // 清空已有 Local 业务事实。金额等确定冲突仍可就地问用户。
+  if (hasConversationRisk
+    && questionCandidate
+    && questionCandidate.target
+    && questionCandidate.target.field === 'productName') {
+    questionCandidate = null;
+  }
+  // 多商品中的交期低置信常来自修改语义或句子边界，应先自动结合
+  // 全部商品核对，不应抢在 AUTO_DEEP 之前让老板手工回答。
+  if (items.length > 1
+    && questionCandidate
+    && questionCandidate.target
+    && questionCandidate.target.field === 'dueDate'
+    && String(fields.dueDate || '').trim()
+    && !toArray(localResult.missing_fields || []).includes('dueDate')) {
+    questionCandidate = null;
+  }
+  const withRouteAudit = (route) => {
+    const audited = Object.assign({}, route, isVoiceInput ? {
       voice_completion_evidence_present: voiceCompletionAudit.present === true,
       voice_completion_evidence_fingerprint_matched:
         voiceCompletionAudit.fingerprintMatched === true,
@@ -1115,6 +1671,20 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
       quotation_conversion_deep_review_reason_codes:
         quotationConversionDeepReview.reasonCodes
     } : {});
+    if (route.decision === ROUTE_AI_DEEP) {
+      return withTrustedClientRoute(audited, 'AUTO_DEEP');
+    }
+    if (route.decision === ROUTE_ASK_USER) {
+      return withTrustedClientRoute(audited, ROUTE_ASK_USER);
+    }
+    if (route.decision === ROUTE_SAFE_BLOCKED) {
+      return withTrustedClientRoute(audited, ROUTE_SAFE_BLOCKED);
+    }
+    if (route.decision === ROUTE_LOCAL) {
+      return withTrustedClientRoute(audited, 'FAST_LOCAL');
+    }
+    return withTrustedClientRoute(audited, route.decision || ROUTE_PENDING);
+  };
 
   if (localResult.formal_save_blocked) {
     return withRouteAudit({
@@ -1149,6 +1719,18 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     });
   }
 
+  if (questionCandidate) {
+    return withRouteAudit({
+      activeQuestion: questionCandidate,
+      decision: ROUTE_ASK_USER,
+      deep_review_available: false,
+      label: '需要你确认一项信息',
+      questionCandidate,
+      reason_codes: questionCandidate.riskIds,
+      reasons: [questionCandidate.prompt]
+    });
+  }
+
   if (voiceStandardReview.eligible) {
     return withRouteAudit({
       decision: ROUTE_AI_STANDARD,
@@ -1158,15 +1740,32 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
     });
   }
 
+  if (clientFactGate.ambiguousOwnership || clientFactGate.missingTargets.length > 0) {
+    return withRouteAudit({
+      decision: ROUTE_SAFE_BLOCKED,
+      deep_review_available: false,
+      label: clientFactGate.ambiguousOwnership
+        ? '商品事实无法可靠对应'
+        : '缺少可用于提问的商品事实',
+      reason_codes: clientFactGate.ambiguousOwnership
+        ? ['CLIENT_ITEM_FACT_OWNERSHIP_AMBIGUOUS']
+        : clientFactGate.missingTargets.map((target) => `CLIENT_SOURCE_FACT_MISSING|${target.fieldPath}`),
+      reasons: uniqueReasonTexts(clientFactGate.ambiguousOwnership
+        ? ['原话中的数量或价格无法可靠对应到具体商品，不能让 AI 猜。']
+        : ['商品缺少可信原文、历史或人工确认依据，不能让 AI 补造。'])
+    });
+  }
+
   if (hasMissingCriticalFact
     && !hasFinancialRisk
     && !hasConversationRisk
     && !hasHistoryReference
     && !quotationConversionDeepReview.eligible) {
     return withRouteAudit({
-      decision: ROUTE_PENDING,
-      label: '待补充后再保存',
-      reasons: uniqueReasonTexts(['原文缺少关键信息，不能让 AI 替老板猜。'].concat(localReasons))
+      decision: ROUTE_SAFE_BLOCKED,
+      deep_review_available: false,
+      label: '缺少可用于提问的关键事实',
+      reasons: uniqueReasonTexts(['原话缺少关键信息，当前不能安全整理。'].concat(localReasons))
     });
   }
 
@@ -1217,18 +1816,11 @@ function getParseRouteDecision(payload = {}, localResult = {}, policy = 'none') 
       reasons.push('明确要求把所指报价转成订单，但具体报价仍需核对。');
     }
     if (localResult.intent === 'unknown') reasons.push('本地没有稳定判断出业务类型。');
-    if (deepReviewRequested) {
-      return withRouteAudit({
-        decision: ROUTE_AI_DEEP,
-        label: ROUTE_LABELS[ROUTE_AI_DEEP],
-        reasons: uniqueReasonTexts(['老板主动要求深度核对。'].concat(reasons, localReasons))
-      });
-    }
     return withRouteAudit({
-      decision: ROUTE_PENDING,
-      label: '需要深度核对',
-      deep_review_available: true,
-      reasons: uniqueReasonTexts(['这条内容不能在首页自动猜，先由你决定是否深度核对。'].concat(reasons, localReasons))
+      decision: ROUTE_AI_DEEP,
+      deep_review_available: false,
+      label: ROUTE_LABELS[ROUTE_AI_DEEP],
+      reasons: uniqueReasonTexts(reasons.concat(localReasons))
     });
   }
 
@@ -1795,6 +2387,11 @@ function buildAiRequestPayload(payload, localResult, scopedHistory) {
     rawMessages: getPayloadRawMessages(payload),
     pasteMeta: payload.pasteMeta || null,
     requestId: payload.requestId || '',
+    originalTextFingerprint: payload.originalTextFingerprint || '',
+    draftRevision: payload.draftRevision === undefined ? '' : payload.draftRevision,
+    confirmationSessionId: payload.confirmationSessionId || '',
+    requestedRoute: payload.requestedRoute || '',
+    route: payload.requestedRoute || '',
     businessTimezone: payload.businessTimezone || 'Asia/Shanghai'
   };
   if (localResult) {
@@ -3608,7 +4205,7 @@ function normalizeAiBusinessResult(aiResult, options = {}) {
     customer_candidates: toArray(normalized.customer_candidates || normalized.customerCandidates),
     computed_fields: toArray(normalized.computed_fields || normalized.computedFields),
     computed_tips: toArray(normalized.computed_tips || normalized.computedTips),
-    field_sources: Object.assign({}, normalized.field_sources || normalized.fieldSources || {}),
+    field_sources: Object.assign({}, sanitizeAiFieldSources(normalized)),
     field_evidence: normalizeObject(normalized.field_evidence || normalized.fieldEvidence, {}),
     remark_items: toArray(normalized.remark_items || normalized.remarkItems),
     intent_candidates: intentCandidates,
@@ -3647,13 +4244,26 @@ function normalizeAiBusinessResult(aiResult, options = {}) {
 }
 
 function normalizeAiResult(localResult, aiResult, options = {}) {
-  const prepared = prepareAiBusinessNormalization(aiResult, options);
-  const normalized = prepared.normalized;
   const mockUsed = hasMockProvider(aiResult);
   const providerKind = normalizeTrustedProviderKind(
     options.providerKind,
     mockUsed ? 'MOCK' : 'UNKNOWN'
   );
+  // 先验证 AI 业务 JSON，再裁决 Provider 是否可信。来源不明不能让
+  // 空结果、无效结果绕过统一的 AI_RESPONSE_INVALID 分类。
+  const prepared = prepareAiBusinessNormalization(aiResult, options);
+  if (!['REAL', 'MOCK'].includes(providerKind)) {
+    const rejected = withAiStatus(cloneTrustedLocalSnapshot(localResult), 'rejected', {
+      attempted: true,
+      businessResultValid: false,
+      code: 'AI_PROVIDER_IDENTITY_UNRESOLVED',
+      providerKind,
+      reason: '本次自动核对结果来源无法确认，已保留核对前的内容。'
+    });
+    rejected.ai_business_result_valid = false;
+    return rejected;
+  }
+  const normalized = prepared.normalized;
   const validity = prepared.validity;
   const aiFields = prepared.fields;
   const intent = mergeAiIntent(localResult, normalized);
@@ -3763,10 +4373,11 @@ function normalizeAiResult(localResult, aiResult, options = {}) {
   merged.customer_candidates = toArray(normalized.customer_candidates || normalized.customerCandidates);
   merged.computed_fields = toArray(normalized.computed_fields || normalized.computedFields || localResult.computed_fields);
   merged.computed_tips = toArray(normalized.computed_tips || normalized.computedTips || localResult.computed_tips);
-  merged.field_sources = Object.assign(
-    {},
-    localResult.field_sources,
-    normalized.field_sources || normalized.fieldSources || {}
+  merged.field_sources = mergeTrustedFieldSources(
+    localResult,
+    normalized,
+    aiFields,
+    merged.fields
   );
   merged.field_evidence = normalizeObject(normalized.field_evidence || normalized.fieldEvidence, localResult.field_evidence || {});
   merged.remark_items = mergeRemarkItems(localResult.remark_items, normalized.remark_items || normalized.remarkItems);
@@ -3840,9 +4451,48 @@ function withAiStatus(localResult, status, metadata = {}) {
     attempted: Boolean(metadata.attempted),
     reason: metadata.reason || '',
     code: metadata.code || '',
-    business_result_valid: metadata.businessResultValid === true
+    business_result_valid: metadata.businessResultValid === true,
+    provider_kind: metadata.providerKind
+      || ((localResult.ai_fallback || {}).provider_kind)
+      || 'NONE'
   });
+  result.ai_business_result_valid = metadata.businessResultValid === true;
   return result;
+}
+
+function cloneTrustedLocalSnapshot(value) {
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function buildSafeBlockedAiFallback(localSnapshot, error) {
+  const code = String(error && error.code || '').toUpperCase();
+  const attempted = code !== 'AI_ENDPOINT_MISSING';
+  const providerKind = code === 'AI_PROVIDER_IDENTITY_UNRESOLVED' ? 'UNKNOWN' : 'NONE';
+  const fallback = withAiStatus(cloneTrustedLocalSnapshot(localSnapshot), getAiFailureStatus(error), {
+    attempted,
+    businessResultValid: false,
+    code: error && error.code,
+    providerKind,
+    reason: getAiFailureReason(error)
+  });
+  fallback.formal_save_blocked = true;
+  fallback.block_reason = '自动核对未完成，当前不能直接保存。';
+  const previousRoute = (localSnapshot && localSnapshot.parse_route) || {};
+  const trustedVoiceAudit = Object.keys(previousRoute).reduce((output, key) => {
+    if (key.startsWith('voice_completion_') || key.startsWith('voice_standard_')) {
+      output[key] = previousRoute[key];
+    }
+    return output;
+  }, {});
+  fallback.parse_route = withTrustedClientRoute(Object.assign({}, trustedVoiceAudit, {
+    decision: ROUTE_SAFE_BLOCKED,
+    deep_review_available: false,
+    label: '自动核对未完成',
+    reason_codes: uniqueStrings([error && error.code || 'AUTO_REVIEW_FAILED']),
+    reasons: ['已保留本地整理结果，未采用本次返回内容。']
+  }), ROUTE_SAFE_BLOCKED);
+  return fallback;
 }
 
 function applySafeLocalReceivableRouteProjection(localResult, route) {
@@ -3883,25 +4533,48 @@ function applyClearNoRecordRouteProjection(localResult, route) {
   });
 }
 
+function applyClientQuestionRouteProjection(localResult, route) {
+  if (!route || route.decision !== ROUTE_ASK_USER) return localResult;
+  const question = route.questionCandidate || route.activeQuestion || {};
+  const target = question.target || {};
+  if (target.field !== 'productName') return localResult;
+  const fields = Object.assign({}, localResult.fields || {});
+  const items = Array.isArray(fields.items)
+    ? fields.items.map((item) => Object.assign({}, item))
+    : [];
+  const itemIndex = Number.isInteger(target.itemIndex) ? target.itemIndex : 0;
+  if (items[itemIndex]) items[itemIndex].productName = '';
+  fields.productName = itemIndex === 0 ? '' : fields.productName;
+  if (items.length) fields.items = items;
+  return Object.assign({}, localResult, { fields });
+}
+
 function prepareHybridLocalStage(payload) {
   const totalStartedAt = Date.now();
   const localParsedResult = parseInput(payload);
   const policy = getContextPolicy(payload.text, localParsedResult);
   const mentionedCustomerName = extractMentionedCustomerName(payload.text, localParsedResult);
   const scopedHistory = findScopedHistory(payload.state || {}, mentionedCustomerName, policy);
-  const localSafetyResult = applyProductTranscriptionSafety(applyLocalParseSafety(
-    attachConversationReview(attachHistoryInfo(localParsedResult, policy, scopedHistory), payload),
+  const localEvidenceResult = applyClientSourceItemDrafts(
+    payload,
+    attachConversationReview(attachHistoryInfo(localParsedResult, policy, scopedHistory), payload)
+  );
+  const localSafetyResult = applyClientFactGateRisks(payload, applyProductTranscriptionSafety(applyLocalParseSafety(
+    localEvidenceResult,
     {
       normalizedText: normalizeBusinessText(payload.rawText || payload.text || localParsedResult.original_text || ''),
       originalText: payload.rawText || localParsedResult.original_text || '',
       source: payload.source || localParsedResult.source,
       businessDate: payload.businessDate || ''
     }
-  ));
+  )));
   const localDurationMs = Date.now() - totalStartedAt;
   const route = getParseRouteDecision(payload, localSafetyResult, policy);
-  const localReviewedResult = applyClearNoRecordRouteProjection(
-    applySafeLocalReceivableRouteProjection(localSafetyResult, route),
+  const localReviewedResult = applyClientQuestionRouteProjection(
+    applyClearNoRecordRouteProjection(
+      applySafeLocalReceivableRouteProjection(localSafetyResult, route),
+      route
+    ),
     route
   );
   const shouldRequestAi = [ROUTE_AI_STANDARD, ROUTE_AI_DEEP].includes(route.decision);
@@ -3941,7 +4614,7 @@ function finishHybridWithoutAi(prepared) {
     return withAiStatus(localResult, 'not_requested', {
       attempted: false,
       reason: route.deep_review_available
-        ? '这条内容需要深度核对；未主动点击前不会调用慢速 AI。'
+        ? '这条内容需要进一步核对，当前不能直接保存。'
         : '这段内容还不能确定是一笔什么业务，先放待整理。'
     });
   }
@@ -3963,9 +4636,10 @@ function requestHybridAiStage(payload, prepared) {
     scopedHistory,
     route
   } = prepared;
-  return requestHybridAiRaw({ payload, localResult, route, scopedHistory, localDurationMs })
+  const trustedLocalSnapshot = cloneTrustedLocalSnapshot(localResult);
+  return requestHybridAiRaw({ payload, localResult: trustedLocalSnapshot, route, scopedHistory, localDurationMs })
     .then(({ aiResult, aiDurationMs, networkWaitLimitMs }) => attachParseTrace(
-      normalizeAiResult(localResult, aiResult, {
+      normalizeAiResult(trustedLocalSnapshot, aiResult, {
         businessDate: payload.businessDate || '',
         businessTimezone: payload.businessTimezone || 'Asia/Shanghai',
         nowInstant: payload.nowInstant || null,
@@ -3987,21 +4661,8 @@ function requestHybridAiStage(payload, prepared) {
       }
     ))
     .catch((error) => {
-      if (error && error.code === 'AI_ENDPOINT_MISSING') {
-        return withAiStatus(localResult, 'skipped_no_endpoint', {
-          attempted: false,
-          reason: error.reason || '没有配置 AI 服务地址，无法发起 AI 请求。'
-        });
-      }
-      return attachParseTrace(withAiStatus(
-      localResult,
-      getAiFailureStatus(error),
-      {
-      attempted: true,
-      reason: getAiFailureReason(error),
-      code: error && error.code
-      }
-      ), route, {
+      const fallback = buildSafeBlockedAiFallback(trustedLocalSnapshot, error);
+      return attachParseTrace(fallback, fallback.parse_route, {
       localDurationMs,
       aiDurationMs: Number(error && error.aiDurationMs) || 0,
       totalDurationMs: Date.now() - totalStartedAt,
@@ -4028,9 +4689,7 @@ function requestHybridAiRaw({ payload, localResult, route, scopedHistory, localD
   }
 
   const aiStartedAt = Date.now();
-  const effectiveRoute = route || {
-    decision: payload.reviewMode === 'deep' ? ROUTE_AI_DEEP : ROUTE_AI_STANDARD
-  };
+  const effectiveRoute = route || { decision: ROUTE_AI_STANDARD };
   const networkWaitLimitMs = getAiWaitLimitMs(effectiveRoute);
   const remainingWaitMs = Math.max(0, networkWaitLimitMs - localDurationMs);
   const requestPath = effectiveRoute.decision === ROUTE_AI_DEEP
@@ -4041,7 +4700,7 @@ function requestHybridAiRaw({ payload, localResult, route, scopedHistory, localD
     : AI_STANDARD_REQUEST_TIMEOUT_MS;
   return requestWithDeadline(
     requestJson(requestPath, buildAiRequestPayload(payload, localResult, scopedHistory), requestTimeoutMs, {
-      retryAuth: effectiveRoute.decision === ROUTE_AI_DEEP,
+      retryAuth: false,
       requireReadyAuth: effectiveRoute.decision === ROUTE_AI_STANDARD
     }),
     remainingWaitMs
@@ -4112,9 +4771,20 @@ function parseHybridInput(payload, dependencies = {}) {
     voiceCompletionEvidenceAudit
   });
   const prepared = prepareHybridLocalStage(resolvedPayload);
+  const requestedRoute = prepared.route.decision === ROUTE_AI_DEEP
+    ? 'AUTO_DEEP'
+    : (prepared.route.decision === ROUTE_AI_STANDARD
+      ? 'AI_STANDARD'
+      : String(prepared.route.client_route || prepared.route.decision || 'SAFE_BLOCKED'));
+  if (typeof inputPayload.onTrustedClientRouteDecision === 'function') {
+    inputPayload.onTrustedClientRouteDecision(Object.freeze({ requestedRoute }));
+  }
   const localOnlyResult = finishHybridWithoutAi(prepared);
   if (localOnlyResult) return Promise.resolve(localOnlyResult);
-  return requestHybridAiStage(resolvedPayload, prepared);
+  return requestHybridAiStage(Object.assign({}, resolvedPayload, {
+    requestedRoute,
+    reviewMode: prepared.route.decision === ROUTE_AI_DEEP ? 'deep' : 'standard'
+  }), prepared);
 }
 
 module.exports = {
@@ -4147,7 +4817,9 @@ module.exports = {
   withAiStatus,
   ROUTE_AI_DEEP,
   ROUTE_AI_STANDARD,
+  ROUTE_ASK_USER,
   ROUTE_LOCAL,
   ROUTE_NO_RECORD,
-  ROUTE_PENDING
+  ROUTE_PENDING,
+  ROUTE_SAFE_BLOCKED
 };
