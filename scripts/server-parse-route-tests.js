@@ -254,6 +254,9 @@ async function main() {
       '王总下单：大号礼品盒100个，每个3元；200个，每个2元；8月15日交货。',
       '王总下单：大号礼品盒100，每个3元；小号礼品盒200个，每个2元；8月15日交货。'
     ];
+    const quantityPhraseSample = Object.assign({}, sample, forgedAuthority, {
+      text: '王总下单：大号礼品盒一共100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。'
+    });
     const standardRequestStart = fakeAiRequests.length;
     fakeAiResponses.push({
       intent: 'order',
@@ -455,14 +458,26 @@ async function main() {
     }
 
     for (const text of incompleteCandidateSamples) {
-      const requestStart = fakeAiRequests.length;
-      const response = await request('/api/ai/parse/deep', Object.assign({}, sample, forgedAuthority, { text }));
-      assert([409, 422].includes(response.statusCode),
-        '缺quantity、productName或unit的候选不得授权quality');
-      assert.notStrictEqual(response.body.ai_server_route, 'AUTO_DEEP');
-      assert.strictEqual(fakeAiRequests.length, requestStart,
-        '当旧server parser无法保留不完整候选时，/deep仍必须零Provider安全拒绝');
+      for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+        const requestStart = fakeAiRequests.length;
+        const response = await request(pathname, Object.assign({}, sample, forgedAuthority, { text }));
+        assert.strictEqual(response.statusCode, 422,
+          '缺quantity、productName或unit的多商品候选必须ASK_USER');
+        assert.strictEqual(response.body.error, 'AI_ROUTE_ASK_USER');
+        assert.strictEqual(response.body.ai_server_route, 'ASK_USER');
+        assert.strictEqual(fakeAiRequests.length, requestStart,
+          '旧server parser丢掉不完整候选时，fast/quality Provider都不得猜测事实');
+      }
     }
+
+    const quantityPhraseStart = fakeAiRequests.length;
+    const quantityPhrase = await request('/api/ai/parse', quantityPhraseSample);
+    assert.strictEqual(quantityPhrase.statusCode, 409,
+      '“一共100个”是商品数量，不得被金额门禁误判为模糊总额');
+    assert.strictEqual(quantityPhrase.body.error, 'AI_DEEP_REQUIRED');
+    assert.strictEqual(quantityPhrase.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(fakeAiRequests.length, quantityPhraseStart,
+      '合法AUTO_DEEP的/parse仍不得自动请求Provider');
 
     const matchingAmountStart = fakeAiRequests.length;
     const matchingAmount = await request('/api/ai/parse', matchingAmountSample);
