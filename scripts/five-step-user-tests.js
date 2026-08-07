@@ -154,16 +154,36 @@ function runFieldAndSpeechTests() {
 }
 
 function runConfirmationStructureTests() {
-  console.log('\n第 4 步：确认卡是否带有可验证凭证（代码结构检查，不能代替真机点击）');
+  console.log('\n第 4 步：确认卡是否提供清楚、可操作的核对界面（代码结构检查，不能代替真机点击）');
   const dashboardWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'dashboard', 'dashboard.wxml'), 'utf8');
   const inputWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'input', 'input.wxml'), 'utf8');
   const dashboardJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'dashboard', 'dashboard.js'), 'utf8');
   const inputJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'input', 'input.js'), 'utf8');
   recordResult('第4步', 'confirmation-evidence-structure', '', [
     { pass: dashboardWxml.includes('本次整理说明') && dashboardWxml.includes('parse-evidence-status'), message: '首页确认卡没有展示识别过程凭证' },
-    { pass: inputWxml.includes('本次整理说明') && inputWxml.includes('parse-evidence-status'), message: '完整记一笔确认卡没有展示识别过程凭证' },
-    { pass: dashboardJs.includes('toggleParseEvidence') && inputJs.includes('toggleParseEvidence'), message: '识别过程没有可展开查看的操作' },
-    { pass: dashboardWxml.includes('showParseEvidence') && inputWxml.includes('showParseEvidence'), message: '识别过程应默认收起，避免挤压底部按钮' },
+    {
+      pass: inputWxml.includes('{{surfaceConfirmTitle}}')
+        && inputWxml.includes('data-surface-role="active-question"')
+        && inputWxml.includes('{{activeQuestion.prompt}}')
+        && inputWxml.includes('bindinput="updateAssistantAnswer"')
+        && inputWxml.includes('bindtap="submitAssistantAnswer"'),
+      message: '完整记一笔确认卡没有提供业务标题和可操作的单问题核对区'
+    },
+    {
+      pass: dashboardJs.includes('toggleParseEvidence')
+        && inputJs.includes('submitAssistantAnswer')
+        && inputJs.includes('toggleOriginalText'),
+      message: '首页诊断入口或完整记一笔的回答、原话折叠操作缺失'
+    },
+    {
+      pass: dashboardWxml.includes('showParseEvidence')
+        && inputWxml.includes('originalTextExpanded')
+        && inputWxml.includes('重新输入原话')
+        && !inputWxml.includes('本次整理说明')
+        && !inputWxml.includes('parse-evidence-status')
+        && !inputWxml.includes('{{showParseEvidence}}'),
+      message: '完整记一笔应折叠保留原话，并从用户界面移除内部整理诊断'
+    },
     {
       pass: (() => {
         const evidence = buildParseEvidence({
