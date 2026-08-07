@@ -228,6 +228,14 @@ async function main() {
     const excludedAmountsSample = Object.assign({}, sample, forgedAuthority, {
       text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；定金金额500元，已付的金额1000元，还欠金额2000元，运费的金额300元；8月15日交货。'
     });
+    const unitPricedFinancialSamples = [
+      Object.assign({}, sample, forgedAuthority, {
+        text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；运费每箱300元；8月15日交货。'
+      }),
+      Object.assign({}, sample, forgedAuthority, {
+        text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；包装费每箱300元；8月15日交货。'
+      })
+    ];
     const discountedMatchingTotalSample = Object.assign({}, sample, forgedAuthority, {
       text: '宏达包装厂下单：礼品盒517套，每套3.8元；饭盒319个，每个8.5元；优惠后总金额4676.10元；8月15日交货。'
     });
@@ -256,7 +264,10 @@ async function main() {
       '王总下单：大号礼品盒100，每个3元；小号礼品盒200个，每个2元；8月15日交货。',
       '王总下单：大号礼品盒100个，3元一个；小号礼品盒，2元一个；8月15日交货。',
       '王总下单：大号礼品盒100，3元/个；小号礼品盒200个，2元/个；8月15日交货。',
-      '王总下单：大号礼品盒100个，每个3.8；小号礼品盒，每个2.8；8月15日交货。'
+      '王总下单：大号礼品盒100个，每个3.8；小号礼品盒，每个2.8；8月15日交货。',
+      '王总下单：大号礼品盒100个，每个3元，小号礼品盒，每个2元，8月15日交货。',
+      '王总下单：大号礼品盒100个，每个3元、小号礼品盒，每个2元，8月15日交货。',
+      '王总下单：大号礼品盒100个，每个3元和小号礼品盒，每个2元，8月15日交货。'
     ];
     const quantityPhraseSamples = ['一共', '总计', '合计'].map((cue) => Object.assign({}, sample, forgedAuthority, {
       text: `宏达包装厂下单：大号礼品盒${cue}100个，每个3元；小号礼品盒200个，每个2元；8月15日交货。`
@@ -413,6 +424,17 @@ async function main() {
     assert.strictEqual(excludedAmounts.body.ai_server_route, 'AUTO_DEEP');
     assert.strictEqual(fakeAiRequests.length, excludedAmountsStart,
       '排除型金额样例的/parse不得自动请求Provider');
+
+    for (const payload of unitPricedFinancialSamples) {
+      const requestStart = fakeAiRequests.length;
+      const response = await request('/api/ai/parse', payload);
+      assert.strictEqual(response.statusCode, 409,
+        '按箱计价的运费或包装费不得冒充商品候选');
+      assert.strictEqual(response.body.error, 'AI_DEEP_REQUIRED');
+      assert.strictEqual(response.body.ai_server_route, 'AUTO_DEEP');
+      assert.strictEqual(fakeAiRequests.length, requestStart,
+        '排除按单位计价财务金额后，/parse仍不得自动请求Provider');
+    }
 
     const discountedMatchingStart = fakeAiRequests.length;
     const discountedMatching = await request('/api/ai/parse', discountedMatchingTotalSample);
