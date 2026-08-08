@@ -165,6 +165,47 @@ const sourceButtonConfig = {
   }
 };
 
+const surfaceConfirmTitles = {
+  quotation: '确认报价',
+  order: '确认订单',
+  receivable: '确认待收',
+  payment: '确认收款',
+  dunning: '确认催款提醒',
+  todo: '确认待办',
+  unknown: '确认这条记录'
+};
+
+const surfaceRiskMessages = {
+  customerName: '请填写客户称呼',
+  dueDate: '请确认交货日期',
+  amount: '请确认总金额',
+  productName: '请确认商品名称',
+  spec: '请确认商品规格',
+  quantity: '请填写这个商品的数量',
+  unit: '请确认商品单位',
+  unitPrice: '请确认商品单价',
+  priceUnit: '请确认计价单位',
+  totalAmount: '请确认这个商品的金额'
+};
+
+const surfacePlacedRootFields = new Set([
+  'amount',
+  'customerName',
+  'dueDate',
+  'productName'
+]);
+
+const surfaceUnplacedRiskMessages = {
+  businessType: '请确认业务类型',
+  intent: '请确认业务类型',
+  orderId: '请确认关联订单',
+  paymentAmount: '请确认收款金额',
+  quotationId: '请确认关联报价',
+  relationId: '请确认关联记录',
+  remainingAmount: '请确认待收金额',
+  todoTitle: '请填写待办事项'
+};
+
 function rejectNoRecordPageAction(page, parseResult, code) {
   if (!isNoRecordPersistenceForbidden(parseResult || {})) return null;
   const rejection = {
@@ -641,6 +682,116 @@ function buildOrderAmountSummary(fields = {}) {
     });
   }
   return lines;
+}
+
+function formatSurfaceMoneyFromCents(cents) {
+  const value = Number(cents);
+  if (!Number.isFinite(value)) return '';
+  return (value / 100).toFixed(2);
+}
+
+function buildSurfaceRisk(field, code, options = {}) {
+  const message = code === 'ORDER_TOTAL_ITEMS_MISMATCH'
+    ? '总金额与商品明细合计不一致'
+    : (surfaceRiskMessages[field] || `请确认${getFieldLabel(field) || '这项信息'}`);
+  return {
+    code: String(code || 'FIELD_REQUIRES_CONFIRMATION'),
+    errorText: message,
+    field,
+    itemKey: String(options.itemKey || ''),
+    message,
+    riskText: message,
+    text: message
+  };
+}
+
+function buildConfirmationSurfaceProjection({
+  activeQuestion,
+  confirmItems,
+  domainPreflight,
+  fields,
+  intent,
+  parseResult,
+  safeBlocked
+}) {
+  const riskByField = {};
+  const riskByItem = {};
+  const unplacedBlockingLines = [];
+  const itemsByKey = new Map((confirmItems || []).map((item) => [String(item.itemKey || ''), item]));
+  const itemFields = new Set(MANUAL_ITEM_FIELDS);
+  const placeFieldRisk = (field, code) => {
+    if (!field || riskByField[field]) return;
+    riskByField[field] = buildSurfaceRisk(field, code);
+  };
+  const placeItemRisk = (itemKey, field, code) => {
+    const key = String(itemKey || '');
+    if (!key || !field || !itemsByKey.has(key)) return false;
+    if (!riskByItem[key]) riskByItem[key] = {};
+    if (!riskByItem[key][field]) {
+      riskByItem[key][field] = buildSurfaceRisk(field, code, { itemKey: key });
+    }
+    return true;
+  };
+
+  if (activeQuestion && activeQuestion.target) {
+    const target = activeQuestion.target;
+    if (target.itemKey) placeItemRisk(target.itemKey, target.field, 'ACTIVE_QUESTION');
+    else placeFieldRisk(target.field, 'ACTIVE_QUESTION');
+  }
+
+  const blockingIssues = domainPreflight && Array.isArray(domainPreflight.blockingIssues)
+    ? domainPreflight.blockingIssues
+    : [];
+  blockingIssues.forEach((issue) => {
+    const field = String(issue.itemField || issue.field || '');
+    const itemKey = String(issue.itemKey || '');
+    if (itemKey && itemFields.has(field) && placeItemRisk(itemKey, field, issue.code)) return;
+    if (surfacePlacedRootFields.has(field)) {
+      placeFieldRisk(field, issue.code);
+      return;
+    }
+    if (field === 'productName' && itemKey && placeItemRisk(itemKey, field, issue.code)) return;
+    if (!['AI_RESULT_UNRESOLVED', 'FORMAL_SAVE_BLOCKED'].includes(issue.code)) {
+      unplacedBlockingLines.push(
+        surfaceUnplacedRiskMessages[field] || '请确认相关信息后再保存'
+      );
+    }
+  });
+
+  const amountMismatch = blockingIssues.find((issue) => issue.code === 'ORDER_TOTAL_ITEMS_MISMATCH');
+  const canonicalTotalCents = amountMismatch
+    && amountMismatch.messageParams
+    && amountMismatch.messageParams.canonicalTotalCents;
+  const canonicalTotalValue = formatSurfaceMoneyFromCents(canonicalTotalCents);
+  if (amountMismatch) {
+    riskByField.amount = buildSurfaceRisk('amount', 'ORDER_TOTAL_ITEMS_MISMATCH');
+  }
+  const amountRisk = riskByField.amount || null;
+  const amountSurface = {
+    canonicalTotalText: amountMismatch && canonicalTotalValue
+      ? `明细合计：${canonicalTotalValue}元`
+      : '',
+    canonicalTotalValue,
+    errorText: amountRisk ? amountRisk.message : '',
+    hasError: Boolean(amountRisk),
+    message: amountRisk ? amountRisk.message : '',
+    riskText: amountRisk ? amountRisk.message : '',
+    statedValue: String(fields.amount || fields.totalAmount || '')
+  };
+  if (amountRisk) riskByField.amount = Object.assign({}, amountRisk, amountSurface);
+
+  const originalText = String(parseResult.raw_text || parseResult.original_text || '');
+  return {
+    amountSurface,
+    originalTextExpanded: false,
+    riskByField,
+    riskByItem,
+    safeBlockedMessage: safeBlocked ? '这笔信息暂时无法确认，请重新输入原话' : '',
+    showSurfaceGlobalRisk: unplacedBlockingLines.length > 0 && !activeQuestion,
+    surfaceConfirmTitle: surfaceConfirmTitles[intent] || surfaceConfirmTitles.unknown,
+    surfaceGlobalRiskText: unplacedBlockingLines[0] || '',
+    surfaceOriginalText: originalText
+  };
 }
 
 function getRemainingAmount(receivable) {
@@ -1863,13 +2014,25 @@ function buildConfirmationState(state, parseResult, intent, fields) {
   const userResolution = evaluateUserResolvedAiState(normalizedParseResult);
   const isReturnedUncertain = ((normalizedParseResult.ai_fallback || {}).status) === 'returned_uncertain';
   const historyDefaultedFields = uniqueFields(normalizedParseResult.history_defaulted_fields || []);
+  const surfaceProjection = buildConfirmationSurfaceProjection({
+    activeQuestion,
+    confirmItems,
+    domainPreflight,
+    fields: nextFields,
+    intent,
+    parseResult: normalizedParseResult,
+    safeBlocked
+  });
+  const surfaceConfirmItems = confirmItems.map((item) => Object.assign({}, item, {
+    riskByField: surfaceProjection.riskByItem[item.itemKey] || {}
+  }));
 
   return Object.assign({
     parseResult: normalizedParseResult,
     parseEvidence: buildParseEvidence(normalizedParseResult),
     showParseEvidence: false,
     fields: nextFields,
-    confirmItems,
+    confirmItems: surfaceConfirmItems,
     operation,
     operationTitle: operationTitles[operation],
     amountLabel: operation === 'create_receivable_with_payment' ? '待收总额' : (intent === 'receivable' ? '待收金额' : '金额/总价'),
@@ -1900,6 +2063,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     domainBlockingLines,
     showDomainBlocking: Boolean(domainBlockingLines.length),
     activeQuestion,
+    assistantAnswerValue: '',
     assistantQuestionState: activeQuestion ? 'ASKING' : (safeBlocked ? 'SAFE_BLOCKED' : 'READY'),
     assistantQuestions: activeQuestion ? [activeQuestion] : [],
     parseAssistText: userResolution.status === 'MANUAL_RESOLUTION_COMPLETE'
@@ -1910,6 +2074,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     fieldConflictLines,
     showFieldConflicts: Boolean(fieldConflictLines.length),
     orderAmountSummaryLines,
+    orderAmountSupplementaryLines: orderAmountSummaryLines.slice(1),
     showOrderAmountSummary: Boolean(orderAmountSummaryLines.length),
     localParseSafetyLines,
     showLocalParseSafety: Boolean(localParseSafetyLines.length),
@@ -1921,9 +2086,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     remarkItemLines,
     showRemarkItems: Boolean(remarkItemLines.length),
     historyDefaultFieldMap: getFieldFlagMap(historyDefaultedFields),
-    formalButtonText: canFormalSave
-      ? (operation === 'update_order' ? '确认更新订单' : '确认保存')
-      : (operation === 'update_order' ? '补齐后更新' : '补齐后保存'),
+    formalButtonText: operation === 'update_order' ? '确认更新订单' : '确认保存',
     disableFormalSave: !canFormalSave || noRecordPersistenceForbidden || clientRouteBlocked,
     showFormalSaveButton: !noRecordPersistenceForbidden,
     showPendingButton: canPendingSave,
@@ -1934,7 +2097,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showOrderPicker: operation === 'record_order_deposit' && orderDepositState.orderOptions.length > 1,
     showDeepReviewButton: false
   }, visibility, finalWarningState, paymentState, orderSelectionState,
-  genericQuotationSelectionState, customerMatchState);
+  genericQuotationSelectionState, customerMatchState, surfaceProjection);
 }
 
 function getSourceState(source) {
@@ -1954,6 +2117,7 @@ function getEmptyConfirmationData() {
     parseResult: null,
     parseEvidence: null,
     activeQuestion: null,
+    assistantAnswerValue: '',
     assistantQuestionState: 'IDLE',
     assistantQuestions: [],
     showParseEvidence: false,
@@ -1967,6 +2131,23 @@ function getEmptyConfirmationData() {
     lastNoRecordActionRejection: null,
     fields: {},
     confirmItems: [],
+    riskByField: {},
+    riskByItem: {},
+    amountSurface: {
+      canonicalTotalText: '',
+      canonicalTotalValue: '',
+      errorText: '',
+      hasError: false,
+      message: '',
+      riskText: '',
+      statedValue: ''
+    },
+    originalTextExpanded: false,
+    safeBlockedMessage: '',
+    showSurfaceGlobalRisk: false,
+    surfaceConfirmTitle: surfaceConfirmTitles.unknown,
+    surfaceGlobalRiskText: '',
+    surfaceOriginalText: '',
     intent: 'unknown',
     operation: 'pending',
     operationTitle: operationTitles.pending,
@@ -2007,6 +2188,7 @@ function getEmptyConfirmationData() {
     warningLowText: '',
     fieldConflictLines: [],
     orderAmountSummaryLines: [],
+    orderAmountSupplementaryLines: [],
     localParseSafetyLines: [],
     domainBlockingLines: [],
     supersededFactLines: [],
@@ -2287,11 +2469,29 @@ Page({
     parseResult: null,
     parseEvidence: null,
     activeQuestion: null,
+    assistantAnswerValue: '',
     assistantQuestionState: 'IDLE',
     assistantQuestions: [],
     showParseEvidence: false,
     fields: {},
     confirmItems: [],
+    riskByField: {},
+    riskByItem: {},
+    amountSurface: {
+      canonicalTotalText: '',
+      canonicalTotalValue: '',
+      errorText: '',
+      hasError: false,
+      message: '',
+      riskText: '',
+      statedValue: ''
+    },
+    originalTextExpanded: false,
+    safeBlockedMessage: '',
+    showSurfaceGlobalRisk: false,
+    surfaceConfirmTitle: surfaceConfirmTitles.unknown,
+    surfaceGlobalRiskText: '',
+    surfaceOriginalText: '',
     intent: 'unknown',
     operation: 'pending',
     operationTitle: operationTitles.pending,
@@ -2346,6 +2546,7 @@ Page({
     warningMissingText: '',
     warningLowText: '',
     orderAmountSummaryLines: [],
+    orderAmountSupplementaryLines: [],
     historyWarningText: '',
     historyDefaultWarningText: '',
     historyDefaultFieldMap: {},
@@ -2955,10 +3156,12 @@ Page({
           activeQuestion: null,
           assistantQuestionState: 'SAFE_BLOCKED',
           assistantQuestions: [],
+          assistantAnswerValue: '',
           disableFormalSave: true,
           parsing: false,
           parseButtonText: '生成确认卡',
-          parseAssistText: '暂时没能整理完整，请稍后再试。'
+          parseAssistText: '暂时没能整理完整，请稍后再试。',
+          safeBlockedMessage: '这笔信息暂时无法确认，请重新输入原话'
         });
       });
     const tracked = { identity, promise: operation, settled: false };
@@ -2982,6 +3185,27 @@ Page({
     );
     if (rejection) return rejection;
     return null;
+  },
+
+  updateAssistantAnswer(event) {
+    this.setData({ assistantAnswerValue: String(event && event.detail && event.detail.value || '') });
+  },
+
+  submitAssistantAnswer(event) {
+    const dataset = event && event.currentTarget && event.currentTarget.dataset || {};
+    const result = this.answerAssistantQuestion({
+      currentTarget: { dataset },
+      detail: {
+        target: {
+          field: dataset.field || '',
+          fieldPath: dataset.fieldPath || '',
+          itemKey: dataset.itemKey || ''
+        },
+        value: this.data.assistantAnswerValue
+      }
+    });
+    if (result && result.accepted) this.setData({ assistantAnswerValue: '' });
+    return result;
   },
 
   answerAssistantQuestion(event) {
@@ -3075,6 +3299,10 @@ Page({
 
   toggleParseEvidence() {
     this.setData({ showParseEvidence: !this.data.showParseEvidence });
+  },
+
+  toggleOriginalText() {
+    this.setData({ originalTextExpanded: !this.data.originalTextExpanded });
   },
 
   closeConfirmCard() {

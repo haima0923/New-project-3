@@ -181,6 +181,64 @@
   min-width: 0;
 }
 
+.surface-confirm-title {
+  color: #101828;
+  font-size: 34rpx;
+  line-height: 1.35;
+}
+
+.assistant-question-card {
+  background: #EEF6FF;
+  border: 2rpx solid #9CC8FF;
+  border-radius: 20rpx;
+  margin-bottom: 22rpx;
+  padding: 22rpx;
+}
+
+.assistant-question-eyebrow {
+  color: #175EA8;
+  font-size: 24rpx;
+  font-weight: 700;
+}
+
+.assistant-question-prompt {
+  color: #101828;
+  font-size: 31rpx;
+  font-weight: 700;
+  line-height: 1.55;
+  margin-top: 10rpx;
+  white-space: pre-wrap;
+}
+
+.assistant-answer-input {
+  background: #FFFFFF;
+  margin-top: 18rpx;
+}
+
+.assistant-answer-button {
+  margin-top: 14rpx;
+  width: 100%;
+}
+
+.safe-blocked-surface {
+  background: #FFF7E6;
+  border: 1rpx solid #FEDF89;
+  border-radius: 18rpx;
+  margin-bottom: 22rpx;
+  padding: 20rpx;
+}
+
+.safe-blocked-message {
+  color: #7A2E0E;
+  font-size: 27rpx;
+  line-height: 1.55;
+}
+
+.safe-blocked-action {
+  margin-top: 14rpx;
+  width: 100%;
+}
+
 .input-confirm-header-actions {
   align-items: center;
   display: flex;
@@ -566,6 +624,96 @@
 
 .item-field {
   margin-bottom: 14rpx;
+}
+
+.surface-field-error .label {
+  color: #B42318;
+}
+
+.surface-input-error {
+  border-color: #F04438 !important;
+  box-shadow: 0 0 0 2rpx rgba(240, 68, 56, 0.08);
+}
+
+.surface-field-risk {
+  color: #B42318;
+  font-size: 23rpx;
+  line-height: 1.45;
+  margin-top: 8rpx;
+}
+
+.surface-amount-detail {
+  color: #B42318;
+  font-size: 24rpx;
+  font-weight: 700;
+  line-height: 1.45;
+  margin-top: 6rpx;
+}
+
+.surface-note-box {
+  background: #F7FAFF;
+  border-radius: 14rpx;
+  margin-top: 16rpx;
+  padding: 16rpx;
+}
+
+.surface-note-warning {
+  background: #FFF7E6;
+}
+
+.surface-note-title {
+  color: #344054;
+  font-size: 25rpx;
+  font-weight: 700;
+}
+
+.surface-note-text {
+  color: #475467;
+  font-size: 24rpx;
+  line-height: 1.5;
+  margin-top: 6rpx;
+}
+
+.surface-global-risk {
+  background: #FFF7E6;
+  border-radius: 14rpx;
+  color: #7A2E0E;
+  font-size: 25rpx;
+  line-height: 1.5;
+  margin-top: 16rpx;
+  padding: 16rpx;
+}
+
+.original-text-surface {
+  border-top: 1rpx solid #E5EAF2;
+  margin-top: 22rpx;
+  padding-top: 14rpx;
+}
+
+.original-text-toggle {
+  background: transparent;
+  border: 0;
+  color: #1677FF;
+  font-size: 25rpx;
+  min-height: 64rpx;
+  padding: 0;
+  text-align: left;
+}
+
+.original-text-toggle::after {
+  border: 0;
+}
+
+.original-text-content {
+  background: #F8FAFC;
+  border-radius: 12rpx;
+  color: #475467;
+  font-size: 24rpx;
+  line-height: 1.65;
+  margin-top: 8rpx;
+  overflow-wrap: anywhere;
+  padding: 16rpx;
+  white-space: pre-wrap;
 }
 
 .catalog-suggestion-box {
