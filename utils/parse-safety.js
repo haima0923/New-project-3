@@ -48,12 +48,18 @@ const PROOF_FIRST_ITEM_ALIAS_FIELDS = [
 const TRUSTED_MANUAL_EDIT_SCHEMA = 'USER_MANUAL_EDIT_V1';
 const USER_PAGE_EDIT = 'USER_PAGE_EDIT';
 const USER_ASSISTANT_ANSWER = 'USER_ASSISTANT_ANSWER';
+const ASSISTANT_QUESTION_TYPES = new Set(['TEXT', 'DATE', 'NUMBER']);
 const USER_RESOLUTION_COMPLETE = 'MANUAL_RESOLUTION_COMPLETE';
 const USER_RESOLUTION_INCOMPLETE = 'MANUAL_RESOLUTION_INCOMPLETE';
 // This nonce never enters parser/AI JSON. It makes a page edit proof an
 // in-process capability instead of another forgeable field on the draft.
 const MANUAL_EDIT_SECRET = `${Date.now()}|${Math.random()}|${Math.random()}`;
 const assistantAnswerChallengeRegistry = new WeakMap();
+
+function getAssistantQuestionType(question = {}) {
+  const type = String(question.questionType || question.answerType || '').trim().toUpperCase();
+  return ASSISTANT_QUESTION_TYPES.has(type) ? type : '';
+}
 
 function normalizeManualFields(value) {
   return Array.isArray(value)
@@ -148,6 +154,7 @@ function getManualProofDraftFingerprint(result, source) {
     aiStatus: String((result.ai_fallback || {}).status || ''),
     providerKind: String((result.ai_fallback || {}).provider_kind || ''),
     confirmationContext: {
+      businessDate: String((result.client_confirmation_context || {}).businessDate || ''),
       confirmationSessionId: String(
         (result.client_confirmation_context || {}).confirmationSessionId || ''
       ),
@@ -440,7 +447,9 @@ function getManualEditSigningPayload(proof = {}) {
     draftRevision: proof.draftRevision,
     originalTextFingerprint: proof.originalTextFingerprint,
     confirmationSessionId: proof.confirmationSessionId,
+    questionBusinessDate: proof.questionBusinessDate,
     questionContextFingerprint: proof.questionContextFingerprint,
+    questionType: proof.questionType,
     riskIds: uniqueStrings(proof.riskIds || []).sort()
   };
 }
@@ -475,6 +484,7 @@ function validateManualEditProof(proof, result, fields) {
     || proof.signature !== signManualEditProof(proof)) return false;
   if (proof.source === USER_ASSISTANT_ANSWER) {
     const context = result.client_confirmation_context || {};
+    const questionType = getAssistantQuestionType(proof);
     const expectedQuestionFingerprint = proofFingerprint({
       confirmationSessionId: proof.confirmationSessionId,
       draftRevision: proof.draftRevision,
@@ -482,16 +492,21 @@ function validateManualEditProof(proof, result, fields) {
       fieldPath: proof.fieldPath,
       itemKey: proof.itemKey,
       originalTextFingerprint: proof.originalTextFingerprint,
+      questionBusinessDate: proof.questionBusinessDate,
       questionId: proof.questionId,
+      questionType,
       riskIds: uniqueStrings(proof.riskIds || []).sort()
     });
-    if (!String(proof.questionId || '').trim()
+    if (!questionType
+      || !String(proof.questionId || '').trim()
       || !String(proof.fieldPath || '').trim()
       || !String(proof.draftRevision || '').trim()
       || !String(proof.originalTextFingerprint || '').trim()
       || !String(proof.confirmationSessionId || '').trim()
+      || !String(proof.questionBusinessDate || '').trim()
       || !String(proof.questionContextFingerprint || '').trim()
       || proof.questionContextFingerprint !== expectedQuestionFingerprint
+      || String(context.businessDate || '') !== proof.questionBusinessDate
       || String(context.confirmationSessionId || '') !== proof.confirmationSessionId
       || String(context.draftRevision || '') !== proof.draftRevision
       || String(context.originalTextFingerprint || '') !== proof.originalTextFingerprint) return false;
@@ -519,14 +534,23 @@ function createTrustedAssistantAnswerChallenge(result = {}, question = {}) {
   const field = String(target.field || question.field || '').trim();
   const itemKey = String(target.itemKey || question.itemKey || '').trim();
   const fieldPath = String(target.fieldPath || question.fieldPath || '').trim();
+  const questionType = getAssistantQuestionType(question);
+  const questionBusinessDate = String(question.businessDate || '').trim();
   const route = result.parse_route || {};
+  const trustedQuestionType = getAssistantQuestionType(
+    route.questionCandidate || route.activeQuestion || {}
+  );
   const routeName = String(
     route.client_route || route.semantic_decision || route.decision || ''
   ).toUpperCase();
   if (routeName !== 'ASK_USER'
     || !field
     || !fieldPath
+    || !questionType
+    || questionType !== trustedQuestionType
+    || !questionBusinessDate
     || String(question.status || '') !== 'OPEN'
+    || questionBusinessDate !== String(context.businessDate || '')
     || String(question.confirmationSessionId || '') !== String(context.confirmationSessionId || '')
     || String(question.draftRevision || '') !== String(context.draftRevision || '')
     || String(question.originalTextFingerprint || '') !== String(context.originalTextFingerprint || '')) {
@@ -549,7 +573,9 @@ function createTrustedAssistantAnswerChallenge(result = {}, question = {}) {
     confirmationSessionId: context.confirmationSessionId,
     draftRevision: context.draftRevision,
     fieldPath,
-    riskIds: questionRiskIds
+    questionBusinessDate,
+    questionType,
+    riskIds: questionRiskIds.slice().sort()
   }, 'record-confirm-assistant-question');
   if (questionId !== String(question.questionId || '')) return null;
   const challenge = Object.freeze(Object.create(null));
@@ -567,7 +593,9 @@ function createTrustedAssistantAnswerChallenge(result = {}, question = {}) {
     fieldPath,
     itemKey,
     originalTextFingerprint: String(context.originalTextFingerprint || ''),
+    questionBusinessDate,
     questionId,
+    questionType,
     riskIds
   }));
   return challenge;
@@ -628,10 +656,13 @@ function refreshTrustedManualEditProofs(result, fields, templates) {
       const context = result.client_confirmation_context || {};
       const itemIndex = proof.itemKey ? items.indexOf(currentItem) : -1;
       const fieldPath = proof.itemKey ? `items[${itemIndex}].${proof.field}` : proof.field;
+      const questionType = getAssistantQuestionType(proof);
+      proof.questionBusinessDate = String(context.businessDate || '');
       proof.confirmationSessionId = String(context.confirmationSessionId || '');
       proof.draftRevision = String(context.draftRevision || '');
       proof.originalTextFingerprint = String(context.originalTextFingerprint || '');
       proof.fieldPath = fieldPath;
+      proof.questionType = questionType;
       proof.questionContextFingerprint = proofFingerprint({
         confirmationSessionId: proof.confirmationSessionId,
         draftRevision: proof.draftRevision,
@@ -639,12 +670,16 @@ function refreshTrustedManualEditProofs(result, fields, templates) {
         fieldPath,
         itemKey: proof.itemKey,
         originalTextFingerprint: proof.originalTextFingerprint,
+        questionBusinessDate: proof.questionBusinessDate,
         questionId: proof.questionId,
+        questionType,
         riskIds: proof.riskIds
       });
-      if (!proof.confirmationSessionId
+      if (!questionType
+        || !proof.confirmationSessionId
         || !proof.draftRevision
         || !proof.originalTextFingerprint
+        || !proof.questionBusinessDate
         || !proof.fieldPath
         || !proof.questionId) return output;
     }
@@ -782,6 +817,8 @@ function createTrustedAssistantAnswerEdit(result = {}, options = {}) {
   const context = result.client_confirmation_context || {};
   const metadata = {
     questionId: authority.questionId,
+    questionType: authority.questionType,
+    questionBusinessDate: authority.questionBusinessDate,
     fieldPath: authority.fieldPath,
     draftRevision: String(context.draftRevision || ''),
     originalTextFingerprint: String(context.originalTextFingerprint || ''),
@@ -822,7 +859,9 @@ function createTrustedAssistantAnswerEdit(result = {}, options = {}) {
     fieldPath: metadata.fieldPath,
     itemKey,
     originalTextFingerprint: metadata.originalTextFingerprint,
+    questionBusinessDate: metadata.questionBusinessDate,
     questionId: metadata.questionId,
+    questionType: metadata.questionType,
     riskIds: authority.riskIds
   });
   templates.push(Object.assign({
@@ -838,6 +877,31 @@ function createTrustedAssistantAnswerEdit(result = {}, options = {}) {
   return Object.assign({}, result, {
     user_manual_edits: refreshTrustedManualEditProofs(result, fields, templates)
   });
+}
+
+function hasTrustedAssistantAnswerEdit(result = {}, fields = {}, question = {}) {
+  const target = question.target || {};
+  const field = String(target.field || question.field || '').trim();
+  const fieldPath = String(target.fieldPath || question.fieldPath || '').trim();
+  const itemKey = String(target.itemKey || question.itemKey || '').trim();
+  const questionType = getAssistantQuestionType(question);
+  const questionBusinessDate = String(question.businessDate || '').trim();
+  if (!field || !fieldPath || !questionType || !questionBusinessDate) return false;
+  const proofs = normalizeTrustedUserManualEdits(
+    result.user_manual_edits,
+    result,
+    fields
+  );
+  return proofs.some((proof) => (
+    proof.source === USER_ASSISTANT_ANSWER
+      && proof.questionId === String(question.questionId || '')
+      && proof.questionType === questionType
+      && proof.questionBusinessDate === questionBusinessDate
+      && proof.field === field
+      && proof.fieldPath === fieldPath
+      && proof.itemKey === itemKey
+      && sameExactStrings(proof.riskIds, question.riskIds || [])
+  ));
 }
 
 function evaluateUserResolvedAiState(result = {}) {
@@ -1607,5 +1671,6 @@ module.exports = {
   evaluateLocalEvidence,
   evaluateLocalParseSafety,
   evaluateUserResolvedAiState,
+  hasTrustedAssistantAnswerEdit,
   reconcileTrustedUserManualEditState
 };

@@ -8,7 +8,8 @@ const {
 } = require('../../utils/ai-parser');
 const { prewarmAiAuth } = require('../../utils/api-client');
 const { buildParseEvidence } = require('../../utils/parse-evidence');
-const { addDays, diffDays, today } = require('../../utils/date');
+const { addDays, diffDays, parseChineseDateDetail, today } = require('../../utils/date');
+const { normalizeNumberText, numberPattern, parseChineseNumber } = require('../../utils/chinese-number');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const {
@@ -18,6 +19,7 @@ const {
   createTrustedAssistantAnswerEdit,
   createTrustedUserManualEdit,
   evaluateUserResolvedAiState,
+  hasTrustedAssistantAnswerEdit,
   reconcileTrustedUserManualEditState
 } = require('../../utils/parse-safety');
 const {
@@ -53,6 +55,7 @@ const NEW_CUSTOMER_OPTION_ID = '__new_customer__';
 const UNLINKED_RECEIVABLE_OPTION_ID = '__unlinked_receivable__';
 const UNLINKED_ORDER_OPTION_ID = '__unlinked_order__';
 const DEFAULT_QUOTATION_FOLLOWUP_DAYS = 2;
+const ASSISTANT_QUESTION_TYPES = new Set(['TEXT', 'DATE', 'NUMBER']);
 const rawInputCaptureRegistry = new WeakMap();
 const FOLLOWUP_DAY_VALUES = Array.from({ length: 30 }, (_, index) => index + 1);
 const FOLLOWUP_DAY_RANGE = FOLLOWUP_DAY_VALUES.map((days) => `${days} 天`);
@@ -1663,6 +1666,74 @@ function getClientRouteName(parseResult = {}) {
   return String(route.semantic_decision || route.semanticDecision || route.decision || '').toUpperCase();
 }
 
+function getAssistantQuestionType(question = {}) {
+  const type = String(question.questionType || question.answerType || '').trim().toUpperCase();
+  return ASSISTANT_QUESTION_TYPES.has(type) ? type : 'UNKNOWN';
+}
+
+function getAssistantQuestionId(input = {}) {
+  return stableHash({
+    confirmationSessionId: input.confirmationSessionId,
+    draftRevision: input.draftRevision,
+    fieldPath: input.fieldPath,
+    questionBusinessDate: input.questionBusinessDate,
+    questionType: input.questionType,
+    riskIds: uniqueFields(input.riskIds || []).sort()
+  }, 'record-confirm-assistant-question');
+}
+
+function normalizeAssistantQuestionAnswer(question = {}, rawAnswer = '') {
+  const answer = String(rawAnswer || '').trim();
+  if (!answer) return { accepted: false, code: 'ANSWER_EMPTY' };
+  const type = getAssistantQuestionType(question);
+  if (type === 'UNKNOWN') return { accepted: false, code: 'ANSWER_TYPE_UNSUPPORTED' };
+  const target = question.target || {};
+  const field = String(target.field || '').trim();
+  const fieldPath = String(target.fieldPath || '').trim();
+  const itemKey = String(target.itemKey || '').trim();
+
+  if (type === 'TEXT') return { accepted: true, value: answer };
+  if (type === 'DATE') {
+    if (field !== 'dueDate' || fieldPath !== 'dueDate' || itemKey) {
+      return { accepted: false, code: 'ANSWER_TYPE_TARGET_MISMATCH' };
+    }
+    const businessDate = String(question.businessDate || '').trim();
+    const businessDateDetail = parseChineseDateDetail(businessDate, businessDate);
+    if (!businessDate
+      || businessDateDetail.ambiguous
+      || businessDateDetail.invalid
+      || businessDateDetail.date !== businessDate
+      || String(businessDateDetail.matchedText || '').trim() !== businessDate) {
+      return { accepted: false, code: 'ANSWER_DATE_CONTEXT_INVALID' };
+    }
+    const detail = parseChineseDateDetail(answer, businessDate);
+    if (!detail.date
+      || detail.ambiguous
+      || detail.invalid
+      || String(detail.matchedText || '').trim() !== answer) {
+      return { accepted: false, code: 'ANSWER_DATE_INVALID' };
+    }
+    return { accepted: true, value: detail.date };
+  }
+
+  const validNumberTarget = (field === 'amount' && fieldPath === 'amount' && !itemKey)
+    || (['quantity', 'unitPrice'].includes(field)
+      && Boolean(itemKey)
+      && new RegExp(`^items\\[\\d+\\]\\.${field}$`).test(fieldPath));
+  if (!validNumberTarget) {
+    return { accepted: false, code: 'ANSWER_TYPE_TARGET_MISMATCH' };
+  }
+  const normalizedText = normalizeNumberText(answer);
+  if (!new RegExp(`^(?:${numberPattern()})$`).test(normalizedText)) {
+    return { accepted: false, code: 'ANSWER_NUMBER_INVALID' };
+  }
+  const value = parseChineseNumber(normalizedText);
+  if (!Number.isFinite(value) || value <= 0) {
+    return { accepted: false, code: 'ANSWER_NUMBER_INVALID' };
+  }
+  return { accepted: true, value: String(value) };
+}
+
 function buildActiveAssistantQuestion(parseResult, confirmItems) {
   if (getClientRouteName(parseResult) !== ROUTE_ASK_USER) return null;
   const route = parseResult.parse_route || {};
@@ -1685,19 +1756,25 @@ function buildActiveAssistantQuestion(parseResult, confirmItems) {
     ));
   const trustedRiskIds = risks.map((risk) => risk.riskId);
   const riskIds = uniqueFields(trustedRiskIds.length ? trustedRiskIds : (candidate.riskIds || []));
+  const questionType = getAssistantQuestionType(candidate);
+  const questionBusinessDate = String(context.businessDate || '').trim();
   if (!field
     || (itemIndex >= 0 && !itemKey)
     || !String(context.originalTextFingerprint || '').trim()
     || !String(context.draftRevision || '').trim()
-    || !String(context.confirmationSessionId || '').trim()) return null;
-  const questionId = stableHash({
+    || !String(context.confirmationSessionId || '').trim()
+    || !questionBusinessDate) return null;
+  const questionId = getAssistantQuestionId({
     confirmationSessionId: context.confirmationSessionId,
     draftRevision: context.draftRevision,
     fieldPath,
+    questionBusinessDate,
+    questionType,
     riskIds
-  }, 'record-confirm-assistant-question');
+  });
   return {
-    answerType: candidate.answerType || 'text',
+    answerType: questionType.toLowerCase(),
+    businessDate: questionBusinessDate,
     confirmationSessionId: context.confirmationSessionId,
     draftRevision: context.draftRevision,
     field,
@@ -1706,6 +1783,7 @@ function buildActiveAssistantQuestion(parseResult, confirmItems) {
     originalTextFingerprint: context.originalTextFingerprint,
     prompt: String(candidate.prompt || '').trim(),
     questionId,
+    questionType,
     riskIds: riskIds.length ? riskIds : [`REQUIRED|${fieldPath}`],
     status: 'OPEN',
     target: { field, fieldPath, itemIndex, itemKey }
@@ -2368,6 +2446,11 @@ function ensureConfirmationSession(page) {
   return page.confirmationSessionId;
 }
 
+function ensureConfirmationBusinessDate(page) {
+  if (!page.confirmationBusinessDate) page.confirmationBusinessDate = today();
+  return page.confirmationBusinessDate;
+}
+
 function getOriginalTextFingerprint(text) {
   return stableHash({ text: String(text || '') }, 'record-confirm-original-text');
 }
@@ -2381,6 +2464,7 @@ function advanceDraftRevision(page, options = {}) {
   page.draftRevision = Number(page.draftRevision || 0) + 1;
   if (options.newSession === true) {
     page.confirmationSessionId = nextClientRuntimeId(page, 'confirm-session');
+    page.confirmationBusinessDate = today();
     page.hasTrustedCandidateFactChange = false;
   } else {
     ensureConfirmationSession(page);
@@ -2399,6 +2483,7 @@ function advanceDraftRevision(page, options = {}) {
 function attachClientConfirmationContext(result, identity) {
   return Object.assign({}, result, {
     client_confirmation_context: {
+      businessDate: identity.businessDate,
       confirmationSessionId: identity.confirmationSessionId,
       draftRevision: identity.draftRevision,
       originalTextFingerprint: identity.originalTextFingerprint,
@@ -2410,6 +2495,7 @@ function attachClientConfirmationContext(result, identity) {
 
 function getCurrentConfirmationIdentity(page) {
   return {
+    businessDate: ensureConfirmationBusinessDate(page),
     confirmationSessionId: ensureConfirmationSession(page),
     draftRevision: String(page.draftRevision || ''),
     originalTextFingerprint: getOriginalTextFingerprint(page.data.text),
@@ -2421,6 +2507,7 @@ function isParseIdentityCurrent(page, identity) {
   const current = getCurrentConfirmationIdentity(page);
   return Boolean(page.activeParseIdentity)
     && page.activeParseIdentity.requestId === identity.requestId
+    && current.businessDate === identity.businessDate
     && current.confirmationSessionId === identity.confirmationSessionId
     && current.draftRevision === String(identity.draftRevision)
     && current.originalTextFingerprint === identity.originalTextFingerprint
@@ -2662,6 +2749,7 @@ Page({
     invalidateRawInputCapture(this, 'FULL_PAGE_HIDDEN');
     invalidateActiveParseIdentity(this);
     this.confirmationSessionId = '';
+    this.confirmationBusinessDate = '';
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_HIDDEN');
       this.voiceCompletionEvidence = null;
@@ -2678,6 +2766,7 @@ Page({
     invalidateRawInputCapture(this, 'FULL_PAGE_UNLOAD');
     invalidateActiveParseIdentity(this);
     this.confirmationSessionId = '';
+    this.confirmationBusinessDate = '';
     clearParseProgress(this);
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'FULL_PAGE_UNLOAD');
@@ -3006,10 +3095,12 @@ Page({
       return;
     }
     const currentFingerprint = getOriginalTextFingerprint(this.data.text);
+    const currentBusinessDate = ensureConfirmationBusinessDate(this);
     const currentSessionId = ensureConfirmationSession(this);
     const existing = this.inFlightParseOperation;
     if (existing
       && existing.settled !== true
+      && existing.identity.businessDate === currentBusinessDate
       && existing.identity.originalTextFingerprint === currentFingerprint
       && String(existing.identity.draftRevision) === String(this.draftRevision || '')
       && existing.identity.confirmationSessionId === currentSessionId
@@ -3057,6 +3148,7 @@ Page({
     advanceDraftRevision(this);
     this.currentRequestedRoute = 'ROUTE_UNDECIDED';
     const identity = {
+      businessDate: currentBusinessDate,
       confirmationSessionId: ensureConfirmationSession(this),
       draftRevision: String(this.draftRevision),
       originalTextFingerprint: currentFingerprint,
@@ -3222,25 +3314,31 @@ Page({
     const incomingFieldPath = String(incomingTarget.fieldPath || dataset.fieldPath || '');
     const incomingItemKey = String(incomingTarget.itemKey || dataset.itemKey || '');
     const currentFingerprint = getOriginalTextFingerprint(this.data.text);
-    const currentSessionId = ensureConfirmationSession(this);
+    const currentSessionId = String(this.confirmationSessionId || '');
+    const currentBusinessDate = String(this.confirmationBusinessDate || '');
     const valid = questionId === String(question.questionId || '')
       && revision === String(question.draftRevision || '')
       && revision === String(this.draftRevision || '')
       && fingerprint === String(question.originalTextFingerprint || '')
       && fingerprint === currentFingerprint
       && String(question.confirmationSessionId || '') === currentSessionId
+      && String(question.businessDate || '') === currentBusinessDate
       && incomingField === String(expectedTarget.field || '')
       && incomingFieldPath === String(expectedTarget.fieldPath || '')
       && incomingItemKey === String(expectedTarget.itemKey || '');
-    const answer = String(detail.value === undefined ? '' : detail.value).trim();
-    if (!valid || !answer) return { accepted: false, code: valid ? 'ANSWER_EMPTY' : 'QUESTION_STALE' };
+    const rawAnswer = String(detail.value === undefined ? '' : detail.value).trim();
+    if (!valid) return { accepted: false, code: 'QUESTION_STALE' };
+    const answerValidation = normalizeAssistantQuestionAnswer(question, rawAnswer);
+    if (!answerValidation.accepted) return answerValidation;
 
     let fields = Object.assign({}, this.data.fields || {});
-    let baseResult = this.data.parseResult;
+    const baseResult = this.data.parseResult;
+    const beforeProofState = evaluateUserResolvedAiState(baseResult);
     const challenge = createTrustedAssistantAnswerChallenge(baseResult, question);
     if (!challenge) return { accepted: false, code: 'QUESTION_AUTHORITY_INVALID' };
     const field = expectedTarget.field;
     const itemKey = String(expectedTarget.itemKey || '');
+    const answer = answerValidation.value;
     if (itemKey) {
       const items = normalizeConfirmItems(fields, { ensureFirst: true });
       const itemIndex = items.findIndex((item) => String(item.confirmationItemKey || '') === itemKey);
@@ -3252,34 +3350,51 @@ Page({
         preserveConfirmedAmount: Array.isArray(baseResult.manual_fields)
           && baseResult.manual_fields.includes('amount')
       });
-      baseResult = Object.assign({}, baseResult, {
-        manual_item_fields: normalizeManualItemFields([].concat(
-          Array.isArray(baseResult.manual_item_fields) ? baseResult.manual_item_fields : [],
-          { itemKey, field }
-        ), items)
-      });
     } else {
       fields = field === 'amount'
         ? recalculateOrderAmountFields(fields, answer)
         : Object.assign({}, fields, { [field]: answer });
-      baseResult = Object.assign({}, baseResult, {
+    }
+    let stagedResult = createTrustedAssistantAnswerEdit(baseResult, { challenge, fields });
+    const stagedProofState = evaluateUserResolvedAiState(Object.assign({}, stagedResult, { fields }));
+    const questionRiskIds = uniqueFields(question.riskIds || []);
+    if (!hasTrustedAssistantAnswerEdit(stagedResult, fields, question)
+      || stagedProofState.trustedEditCount !== beforeProofState.trustedEditCount + 1
+      || !questionRiskIds.every((riskId) => stagedProofState.resolvedRiskIds.includes(riskId))) {
+      return { accepted: false, code: 'ANSWER_PROOF_REJECTED' };
+    }
+    if (itemKey) {
+      stagedResult = Object.assign({}, stagedResult, {
+        manual_item_fields: normalizeManualItemFields([].concat(
+          Array.isArray(baseResult.manual_item_fields) ? baseResult.manual_item_fields : [],
+          { itemKey, field }
+        ), fields.items || [])
+      });
+    } else {
+      stagedResult = Object.assign({}, stagedResult, {
         manual_fields: uniqueFields([].concat(
           Array.isArray(baseResult.manual_fields) ? baseResult.manual_fields : [],
           field
         ))
       });
     }
-    baseResult = createTrustedAssistantAnswerEdit(baseResult, { challenge, fields });
-    baseResult = Object.assign({}, baseResult, {
-      missing_fields: uniqueFields(baseResult.missing_fields || []).filter((name) => name !== field),
-      low_confidence_fields: uniqueFields(baseResult.low_confidence_fields || []).filter((name) => name !== field)
+    stagedResult = Object.assign({}, stagedResult, {
+      missing_fields: uniqueFields(stagedResult.missing_fields || []).filter((name) => name !== field),
+      low_confidence_fields: uniqueFields(stagedResult.low_confidence_fields || []).filter((name) => name !== field)
     });
     // A real assistant answer consumes the active question in its current
     // confirmation context. Advancing the revision here would immediately
     // detach the newly issued proof from that question/context pair.
-    let reviewedResult = rerouteClientDraft(baseResult, fields);
+    let reviewedResult = rerouteClientDraft(stagedResult, fields);
     reviewedResult = attachCurrentDraftContext(this, reviewedResult);
-    this.currentRequestedRoute = getClientRouteName(reviewedResult)
+    const reviewedFields = reviewedResult.fields || fields;
+    const reviewedProofState = evaluateUserResolvedAiState(reviewedResult);
+    if (!hasTrustedAssistantAnswerEdit(reviewedResult, reviewedFields, question)
+      || reviewedProofState.trustedEditCount !== beforeProofState.trustedEditCount + 1
+      || !questionRiskIds.every((riskId) => reviewedProofState.resolvedRiskIds.includes(riskId))) {
+      return { accepted: false, code: 'ANSWER_PROOF_REJECTED' };
+    }
+    const nextRequestedRoute = getClientRouteName(reviewedResult)
       || this.currentRequestedRoute
       || 'ASK_USER';
     const confirmationState = buildConfirmationState(
@@ -3288,12 +3403,21 @@ Page({
       reviewedResult.intent,
       reviewedResult.fields
     );
+    const committedResult = confirmationState.parseResult;
+    const committedFields = confirmationState.fields || committedResult.fields || reviewedFields;
+    const committedProofState = evaluateUserResolvedAiState(committedResult);
+    if (!hasTrustedAssistantAnswerEdit(committedResult, committedFields, question)
+      || committedProofState.trustedEditCount !== beforeProofState.trustedEditCount + 1
+      || !questionRiskIds.every((riskId) => committedProofState.resolvedRiskIds.includes(riskId))) {
+      return { accepted: false, code: 'ANSWER_PROOF_REJECTED' };
+    }
     this.setData(Object.assign({}, confirmationState, {
       intent: confirmationState.parseResult.intent,
       intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
       parsing: false,
       parseButtonText: '生成确认卡'
     }));
+    this.currentRequestedRoute = nextRequestedRoute;
     return { accepted: true, questionId: question.questionId };
   },
 
