@@ -17,10 +17,20 @@ const { analyzeClipboardText, getPasteMeta, isWechatChatText } = require('../uti
 const { normalizeAiResult, parseHybridInput: realParseHybridInput } = require('../utils/ai-parser');
 const { parseInput } = require('../utils/parser');
 const { createInitialState } = require('../utils/storage');
+const { createFakeVoice } = require('../tests/record-e2e/runner/create-fake-voice');
 
 const ROOT = path.resolve(__dirname, '..');
 const STORAGE_KEY = 'yiwu_boss_ai_assistant_v1';
+const AI_AUTH_STORAGE_KEY = 'huoxiaoling_ai_auth_session_v1';
 const AI_PARSER_PATH = require.resolve('../utils/ai-parser');
+const ENTRY_HANDOFF_PATH = (() => {
+  try {
+    return require.resolve('../utils/record-entry-handoff');
+  } catch (error) {
+    return '';
+  }
+})();
+const DASHBOARD_WXML_PATH = path.join(ROOT, 'pages/dashboard/dashboard.wxml');
 
 const FORMAL_KEYS = [
   'customers',
@@ -298,17 +308,21 @@ function createWxHarness({ initialState, apiBaseUrl = '', clipboardText = '', re
   const events = {
     toasts: [],
     navigation: [],
-    requests: []
+    requests: [],
+    storageWrites: []
   };
+  const fakeVoice = createFakeVoice(clipboardText);
   const wx = {
     getStorageSync(key) {
       return clone(storage[key]);
     },
     setStorageSync(key, value) {
       storage[key] = clone(value);
+      events.storageWrites.push({ key, operation: 'SET' });
     },
     removeStorageSync(key) {
       delete storage[key];
+      events.storageWrites.push({ key, operation: 'REMOVE' });
     },
     getStorageInfoSync() {
       const bytes = Object.keys(storage).reduce((sum, key) => (
@@ -379,6 +393,7 @@ function createWxHarness({ initialState, apiBaseUrl = '', clipboardText = '', re
   return {
     wx,
     events,
+    fakeVoice,
     storage,
     getState() {
       return clone(storage[STORAGE_KEY] || buildBaseState());
@@ -395,7 +410,7 @@ function installGlobals(harness, apiBaseUrl = '') {
       aiTranscribeEndpoint: ''
     }
   });
-  global.requirePlugin = () => null;
+  global.requirePlugin = (name) => (name === 'WechatSI' ? harness.fakeVoice.plugin : null);
 }
 
 function applyDataPatch(target, patch) {
@@ -418,7 +433,9 @@ function applyDataPatch(target, patch) {
 
 function instantiatePage(definition) {
   if (!definition) throw new Error('Page definition was not captured');
+  const methodCalls = {};
   const page = {
+    __methodCalls: methodCalls,
     data: clone(definition.data || {}),
     setData(patch, callback) {
       applyDataPatch(this.data, patch || {});
@@ -430,11 +447,67 @@ function instantiatePage(definition) {
   };
   Object.keys(definition).forEach((key) => {
     if (key === 'data') return;
-    page[key] = typeof definition[key] === 'function'
-      ? definition[key].bind(page)
-      : clone(definition[key]);
+    if (typeof definition[key] === 'function') {
+      page[key] = (...args) => {
+        methodCalls[key] = Number(methodCalls[key] || 0) + 1;
+        return definition[key].apply(page, args);
+      };
+      return;
+    }
+    page[key] = clone(definition[key]);
   });
   return page;
+}
+
+function installEntryHandoffAudit() {
+  if (!ENTRY_HANDOFF_PATH) {
+    return { calls: [], restore() {} };
+  }
+  const moduleExports = require(ENTRY_HANDOFF_PATH);
+  const originals = [];
+  const calls = [];
+  ['publishRecordEntryHandoff', 'consumeRecordEntryHandoff', 'invalidateRecordEntryHandoff']
+    .forEach((key) => {
+      if (typeof moduleExports[key] !== 'function') return;
+      const original = moduleExports[key];
+      originals.push({ key, original });
+      moduleExports[key] = (...args) => {
+        const result = original(...args);
+        calls.push({ args, key, result });
+        return result;
+      };
+    });
+  return {
+    calls,
+    restore() {
+      originals.reverse().forEach(({ key, original }) => {
+        moduleExports[key] = original;
+      });
+    }
+  };
+}
+
+function installFunctionAudit(modulePath, functionNames) {
+  const moduleExports = require(modulePath);
+  const originals = [];
+  const calls = [];
+  functionNames.forEach((key) => {
+    if (typeof moduleExports[key] !== 'function') return;
+    const original = moduleExports[key];
+    originals.push({ key, original });
+    moduleExports[key] = (...args) => {
+      calls.push({ args, key });
+      return original(...args);
+    };
+  });
+  return {
+    calls,
+    restore() {
+      originals.reverse().forEach(({ key, original }) => {
+        moduleExports[key] = original;
+      });
+    }
+  };
 }
 
 function loadPage(entry, harness, hybridStub, apiBaseUrl) {
@@ -574,6 +647,10 @@ function getWarningText(entry, page, events) {
   return [pageText, toastText].filter(Boolean).join('\n');
 }
 
+function controllerEntry(entry) {
+  return entry === 'dashboard' ? 'input' : entry;
+}
+
 function getButtonDisabled(entry, page) {
   return Boolean(page.data[ENTRY_CONFIG[entry].disabledKey]);
 }
@@ -598,25 +675,15 @@ function runPageParse(entry, page, testCase) {
 
   if (entry === 'dashboard') {
     if (testCase.source === 'voice') {
-      page.runQuickParse(testCase.input, 'voice', null, testCase.reviewMode || 'standard');
+      page.beginVoiceRecognition();
       return;
     }
     if (testCase.source === 'paste') {
-      const analysis = analyzeClipboardText(testCase.input);
-      if (analysis.status === 'ok') {
-        page.runQuickParse(analysis.extractedText, 'paste', analysis, testCase.reviewMode || 'standard');
-      } else {
-        page.setData({ composerText: testCase.input });
-        page.submitComposer();
-      }
+      page.pasteClipboard();
       return;
     }
-    page.setData({ composerText: testCase.input });
-    if (testCase.reviewMode === 'deep') {
-      page.runQuickParse(testCase.input, 'typed', null, 'deep');
-    } else {
-      page.submitComposer();
-    }
+    page.onComposerInput({ detail: { value: testCase.input } });
+    page.submitComposer();
   }
 }
 
@@ -789,7 +856,8 @@ function assertNotIncludes(haystack, needle, message, failures) {
 
 function evaluateExpectations(testCase, entry, evidence) {
   const failures = [];
-  const expect = Object.assign({}, testCase.expect || {}, ((testCase.expectByEntry || {})[entry] || {}));
+  const expectationEntry = controllerEntry(entry);
+  const expect = Object.assign({}, testCase.expect || {}, ((testCase.expectByEntry || {})[expectationEntry] || {}));
   const fields = evidence.finalFields || {};
   const parseResult = evidence.parseResult || {};
   const items = getItems(fields);
@@ -929,11 +997,214 @@ function evidenceSummary(evidence) {
     preEditSaveDelta: evidence.preEditSaveDelta,
     userResolutionStatus: evidence.userResolutionStatus || '',
     buttonDisabled: evidence.buttonDisabled,
+    entryFlow: evidence.entryFlow || null,
     warningText: evidence.warningText || '',
     saveDelta: evidence.saveDelta,
     pendingDeltaAfterPending: evidence.pendingDeltaAfterPending,
     savedOriginalText: evidence.savedOriginalText || '',
     pendingOriginalText: evidence.pendingOriginalText || ''
+  };
+}
+
+function createAuditedHybrid(rootHybrid) {
+  const calls = [];
+  return {
+    calls,
+    parse(payload) {
+      calls.push({
+        entrySurface: String(payload && payload.entrySurface || ''),
+        inputChannel: String(payload && payload.inputChannel || ''),
+        source: String(payload && payload.source || '')
+      });
+      return rootHybrid(payload);
+    }
+  };
+}
+
+function flowFailure(label, condition, message, failures) {
+  if (!condition) failures.push(`${label}: ${message}`);
+}
+
+async function followDashboardEntry({
+  auditedHybrid,
+  businessAudit,
+  dashboardPage,
+  entryAuditCursor,
+  handoffAudit,
+  harness,
+  options,
+  stateBeforeEntry,
+  storageAudit,
+  testCase
+}) {
+  for (let index = 0; index < 20; index += 1) {
+    if (harness.events.navigation.some((event) => event.url === '/pages/input/input')) break;
+    await flushAsync();
+  }
+  const failures = [];
+  const publishCalls = handoffAudit.calls.filter((call) => call.key === 'publishRecordEntryHandoff');
+  const inputNavigation = harness.events.navigation.filter((event) => event.url === '/pages/input/input');
+  const publishedPayload = publishCalls[0] && publishCalls[0].args[0] || null;
+  const dashboardWxml = fs.readFileSync(DASHBOARD_WXML_PATH, 'utf8');
+  const dashboardStateUnchanged = JSON.stringify(harness.getState()) === stateBeforeEntry;
+  const dashboardStorageMutations = harness.events.storageWrites
+    .slice(entryAuditCursor.storage)
+    .filter((event) => event.key !== AI_AUTH_STORAGE_KEY);
+  const dashboardBusinessStorageMutations = dashboardStorageMutations
+    .filter((event) => event.key === STORAGE_KEY);
+  const dashboardRequests = harness.events.requests.slice(entryAuditCursor.requests);
+
+  flowFailure('首页快记入口', publishCalls.length === 1,
+    `handoff publish expected 1, got ${publishCalls.length}`, failures);
+  flowFailure('首页快记入口', Boolean(publishCalls[0] && publishCalls[0].result),
+    'handoff generation handle missing', failures);
+  flowFailure('首页快记入口', Boolean(publishedPayload
+    && publishedPayload.originalText === testCase.input
+    && publishedPayload.source === (testCase.source || 'typed')
+    && publishedPayload.originSurface === 'HOME_QUICK'
+    && publishedPayload.autoParse === true
+    && JSON.stringify(Object.keys(publishedPayload).sort())
+      === JSON.stringify(['autoParse', 'originSurface', 'originalText', 'source'])),
+  `handoff payload mismatch ${JSON.stringify(publishedPayload)}`, failures);
+  flowFailure('首页快记入口', inputNavigation.length === 1
+    && inputNavigation[0].type === 'switchTab'
+    && inputNavigation[0].url === '/pages/input/input',
+  `navigation expected one exact switchTab, got ${JSON.stringify(inputNavigation)}`, failures);
+  flowFailure('首页快记入口', Number(dashboardPage.__methodCalls.runQuickParse || 0) === 0,
+    `Dashboard runQuickParse expected 0, got ${dashboardPage.__methodCalls.runQuickParse || 0}`, failures);
+  flowFailure('首页快记入口', auditedHybrid.calls.length === 0,
+    `Dashboard hybrid parser expected 0, got ${auditedHybrid.calls.length}`, failures);
+  flowFailure('首页快记入口', dashboardRequests.length === 0,
+    `Dashboard AI/network expected 0, got ${dashboardRequests.length}`, failures);
+  flowFailure('首页快记入口', !dashboardPage.data.parseResult
+    && !/confirm-modal|confirmQuickSave|savePendingFromConfirm|requestDeepReview/.test(dashboardWxml),
+  'old confirm/modal/save/deep surface is reachable', failures);
+  if ((testCase.source || 'typed') === 'typed') {
+    flowFailure('首页快记入口', /class="[^"]*composer-input[^"]*"[^>]*bindinput="onComposerInput"[^>]*bindconfirm="submitComposer"/.test(dashboardWxml),
+      'Dashboard typed WXML input/submit binding is missing', failures);
+  }
+  if (testCase.source === 'paste') {
+    flowFailure('首页快记入口', /bindtap="pasteClipboard"/.test(dashboardWxml),
+      'Dashboard paste WXML binding is missing', failures);
+  }
+  flowFailure('首页快记入口', Number(dashboardPage.__methodCalls.requestDeepReview || 0) === 0,
+    `manual Deep expected 0, got ${dashboardPage.__methodCalls.requestDeepReview || 0}`, failures);
+  flowFailure('首页快记入口', Number(dashboardPage.__methodCalls.confirmQuickSave || 0) === 0,
+    `formal save expected 0, got ${dashboardPage.__methodCalls.confirmQuickSave || 0}`, failures);
+  flowFailure('首页快记入口', Number(dashboardPage.__methodCalls.savePendingFromConfirm || 0) === 0,
+    `pending save expected 0, got ${dashboardPage.__methodCalls.savePendingFromConfirm || 0}`, failures);
+  flowFailure('首页快记入口', dashboardStateUnchanged,
+    'Dashboard acquisition changed business state', failures);
+  flowFailure('首页快记入口', dashboardStorageMutations.length === 0,
+    `Dashboard acquisition mutated non-auth storage ${dashboardStorageMutations.length} times`, failures);
+  flowFailure('首页快记入口', businessAudit.calls.length === 0,
+    `Dashboard business writers expected 0, got ${businessAudit.calls.length}`, failures);
+  flowFailure('首页快记入口', storageAudit.calls.length === 0,
+    `Dashboard storage writer expected 0, got ${storageAudit.calls.length}`, failures);
+
+  if (typeof dashboardPage.onHide === 'function') dashboardPage.onHide();
+  await flushAsync();
+  flowFailure('首页快记入口', JSON.stringify(harness.getState()) === stateBeforeEntry,
+    'Dashboard onHide changed business state during handoff transfer', failures);
+
+  const inputPage = loadPage('input', harness, auditedHybrid.parse, options.liveAi ? options.apiBaseUrl : '');
+  if (typeof inputPage.onLoad === 'function') inputPage.onLoad({});
+  if (typeof inputPage.onShow === 'function') inputPage.onShow();
+  await waitForParseCompletion(inputPage, options);
+  await flushAsync();
+
+  const consumeCalls = handoffAudit.calls.filter((call) => call.key === 'consumeRecordEntryHandoff');
+  const runParseCalls = Number(inputPage.__methodCalls.runParse || 0);
+  const parserPayload = auditedHybrid.calls[0] || {};
+  const beforeRepeat = JSON.stringify({
+    activeQuestion: inputPage.data.activeQuestion || null,
+    conversationPhase: inputPage.data.conversationPhase || '',
+    draftRevision: inputPage.data.draftRevision || '',
+    fields: inputPage.data.fields || {},
+    parseResult: inputPage.data.parseResult || null,
+    text: inputPage.data.text || ''
+  });
+  if (typeof inputPage.onShow === 'function') inputPage.onShow();
+  await flushAsync();
+  const afterRepeat = JSON.stringify({
+    activeQuestion: inputPage.data.activeQuestion || null,
+    conversationPhase: inputPage.data.conversationPhase || '',
+    draftRevision: inputPage.data.draftRevision || '',
+    fields: inputPage.data.fields || {},
+    parseResult: inputPage.data.parseResult || null,
+    text: inputPage.data.text || ''
+  });
+
+  flowFailure('首页转完整页', consumeCalls.length === 1,
+    `handoff consume expected 1, got ${consumeCalls.length}`, failures);
+  flowFailure('首页转完整页', runParseCalls === 1,
+    `Input runParse expected 1, got ${runParseCalls}`, failures);
+  flowFailure('首页转完整页', auditedHybrid.calls.length === 1,
+    `Input hybrid root expected 1, got ${auditedHybrid.calls.length}`, failures);
+  flowFailure('首页转完整页', parserPayload.entrySurface === 'FULL_PAGE',
+    `Input parser surface expected FULL_PAGE, got ${parserPayload.entrySurface}`, failures);
+  flowFailure('首页转完整页', parserPayload.source === (testCase.source || 'typed'),
+    `Input parser source expected ${testCase.source || 'typed'}, got ${parserPayload.source}`, failures);
+  flowFailure('首页转完整页', inputPage.data.source === (testCase.source || 'typed'),
+    `Input consumed source expected ${testCase.source || 'typed'}, got ${inputPage.data.source || ''}`, failures);
+  flowFailure('首页转完整页', String(inputPage.data.parseResult
+    && inputPage.data.parseResult.source || '') === (testCase.source || 'typed'),
+  `Input parseResult source expected ${testCase.source || 'typed'}, got ${String(inputPage.data.parseResult && inputPage.data.parseResult.source || '')}`, failures);
+  flowFailure('首页转完整页', String(inputPage.data.text || '') === testCase.input,
+    'Input did not preserve complete originalText', failures);
+  flowFailure('首页转完整页', String(inputPage.data.parseResult
+    && inputPage.data.parseResult.original_text || '') === testCase.input,
+  'Input parseResult did not preserve complete originalText', failures);
+  flowFailure('首页转完整页', beforeRepeat === afterRepeat,
+    'repeated Input onShow changed the consumed handoff state', failures);
+  flowFailure('首页转完整页', Number(inputPage.__methodCalls.runParse || 0) === 1,
+    `repeated Input onShow reran parse ${inputPage.__methodCalls.runParse || 0} times`, failures);
+  flowFailure('首页转完整页', handoffAudit.calls
+    .filter((call) => call.key === 'consumeRecordEntryHandoff').length === 1,
+  'repeated Input onShow consumed the handoff more than once', failures);
+  flowFailure('首页转完整页', JSON.stringify(harness.getState()) === stateBeforeEntry,
+    'Input parse changed business state before explicit save', failures);
+
+  return {
+    failures,
+    page: inputPage,
+    entryFlow: {
+      dashboard: {
+        aiCount: dashboardRequests.length,
+        businessWriterCount: businessAudit.calls.length,
+        businessStorageMutations: dashboardBusinessStorageMutations.length,
+        deepCount: Number(dashboardPage.__methodCalls.requestDeepReview || 0),
+        formalSaveCount: Number(dashboardPage.__methodCalls.confirmQuickSave || 0),
+        oldModalVisible: Boolean(dashboardPage.data.parseResult),
+        parseCount: Number(dashboardPage.__methodCalls.runQuickParse || 0),
+        pendingSaveCount: Number(dashboardPage.__methodCalls.savePendingFromConfirm || 0),
+        source: testCase.source || 'typed',
+        storageWriterCount: storageAudit.calls.length,
+        transferStorageMutations: dashboardStorageMutations.length
+      },
+      handoff: {
+        consumeCount: consumeCalls.length,
+        generationPresent: Boolean(publishCalls[0] && publishCalls[0].result),
+        navigationCount: inputNavigation.length,
+        publishCount: publishCalls.length,
+        replayCount: Math.max(0, handoffAudit.calls
+          .filter((call) => call.key === 'consumeRecordEntryHandoff').length - 1)
+      },
+      input: {
+        activeQuestionTarget: String(inputPage.data.activeQuestion
+          && inputPage.data.activeQuestion.target
+          && inputPage.data.activeQuestion.target.field || ''),
+        blockers: clone(inputPage.data.preflightBlockingReasons || []),
+        clientRoute: String(inputPage.currentRequestedRoute
+          || (inputPage.data.parseResult && inputPage.data.parseResult.client_route) || ''),
+        formalReady: inputPage.data.showFormalSaveButton === true
+          && inputPage.data.disableFormalSave !== true,
+        parseCount: runParseCalls,
+        phase: String(inputPage.data.conversationPhase || ''),
+        provider: String(inputPage.data.parseResult && inputPage.data.parseResult.provider || ''),
+        source: String(inputPage.data.source || '')
+      }
+    }
   };
 }
 
@@ -944,22 +1215,57 @@ async function runOneFlow(testCase, entry, options = {}) {
   const harness = createWxHarness({
     initialState,
     apiBaseUrl: options.liveAi ? options.apiBaseUrl : '',
-    clipboardText: testCase.source === 'paste' ? testCase.input : '',
+    clipboardText: ['paste', 'voice'].includes(testCase.source) ? testCase.input : '',
     requestHandler: options.requestHandler || null
   });
   installGlobals(harness, options.liveAi ? options.apiBaseUrl : '');
   const hybridStub = options.liveAi ? null : buildHybridStub(testCase);
-  const page = loadPage(entry, harness, hybridStub, options.liveAi ? options.apiBaseUrl : '');
+  const auditedHybrid = createAuditedHybrid(hybridStub || realParseHybridInput);
+  const handoffAudit = entry === 'dashboard' ? installEntryHandoffAudit() : null;
+  const businessAudit = entry === 'dashboard'
+    ? installFunctionAudit(require.resolve('../utils/business'), ['saveConfirmedDraft', 'savePendingNote'])
+    : null;
+  const storageAudit = entry === 'dashboard'
+    ? installFunctionAudit(require.resolve('../utils/storage'), ['saveState'])
+    : null;
+  const authorityEntry = controllerEntry(entry);
+  let page = loadPage(entry, harness, auditedHybrid.parse, options.liveAi ? options.apiBaseUrl : '');
   if (typeof page.onLoad === 'function') page.onLoad({});
   if (typeof page.onShow === 'function') page.onShow();
 
   const localParser = buildLocalParserEvidence(testCase, initialState);
   const beforeCounts = getCounts(harness.getState());
+  const stateBeforeEntry = JSON.stringify(harness.getState());
+  const entryAuditCursor = {
+    requests: harness.events.requests.length,
+    storage: harness.events.storageWrites.length
+  };
   runPageParse(entry, page, testCase);
-  await waitForParseCompletion(page, options);
+  await flushAsync();
+  let entryFlow = null;
+  let entryIntegrityFailures = [];
+  if (entry === 'dashboard') {
+    const followed = await followDashboardEntry({
+      auditedHybrid,
+      businessAudit,
+      dashboardPage: page,
+      entryAuditCursor,
+      handoffAudit,
+      harness,
+      options,
+      stateBeforeEntry,
+      storageAudit,
+      testCase
+    });
+    page = followed.page;
+    entryFlow = followed.entryFlow;
+    entryIntegrityFailures = followed.failures;
+  } else {
+    await waitForParseCompletion(page, options);
+  }
 
-  const saveMethod = ENTRY_CONFIG[entry].saveMethod;
-  const preEditButtonDisabled = getButtonDisabled(entry, page);
+  const saveMethod = ENTRY_CONFIG[authorityEntry].saveMethod;
+  const preEditButtonDisabled = getButtonDisabled(authorityEntry, page);
   let preEditSaveDelta = {};
   if (testCase.probeBeforeEditFormalSave && typeof page[saveMethod] === 'function') {
     const beforePreEditSaveCounts = getCounts(harness.getState());
@@ -969,17 +1275,17 @@ async function runOneFlow(testCase, entry, options = {}) {
   }
 
   for (const edit of (testCase.edits || [])) {
-    runEdit(entry, page, edit);
+    runEdit(authorityEntry, page, edit);
     await flushAsync();
   }
 
   const parseResult = getParseResultFromPage(page) || {};
   const finalFields = clone(getFieldsFromPage(page));
-  const buttonDisabled = getButtonDisabled(entry, page);
+  const buttonDisabled = getButtonDisabled(authorityEntry, page);
   // 必须在点击“打开完整记一笔”或“存待整理”之前取证；这些动作会关闭
   // 首页确认卡。旧脚本在动作之后读取，曾把“已经正确提示过”误报成没提示。
   const showContinueInputBeforeAction = Boolean(page.data.showContinueInput);
-  const entryExpect = Object.assign({}, testCase.expect || {}, ((testCase.expectByEntry || {})[entry] || {}));
+  const entryExpect = Object.assign({}, testCase.expect || {}, ((testCase.expectByEntry || {})[authorityEntry] || {}));
   if (entryExpect.requireFullInput && typeof page.continueInput === 'function') {
     page.continueInput();
     await flushAsync();
@@ -1006,7 +1312,7 @@ async function runOneFlow(testCase, entry, options = {}) {
   let pendingOriginalText = '';
   if (testCase.expect && testCase.expect.pendingAfterPending) {
     const beforePendingCounts = getCounts(harness.getState());
-    const pendingMethod = ENTRY_CONFIG[entry].pendingMethod;
+    const pendingMethod = ENTRY_CONFIG[authorityEntry].pendingMethod;
     if (typeof page[pendingMethod] === 'function') {
       page[pendingMethod]();
       await flushAsync();
@@ -1016,7 +1322,7 @@ async function runOneFlow(testCase, entry, options = {}) {
     pendingOriginalText = ((afterPendingState.pendingNotes || [])[0] || {}).originalText || '';
   }
 
-  const reloadedPage = loadPage(entry, harness, hybridStub, options.liveAi ? options.apiBaseUrl : '');
+  const reloadedPage = loadPage(authorityEntry, harness, auditedHybrid.parse, options.liveAi ? options.apiBaseUrl : '');
   if (typeof reloadedPage.onLoad === 'function') reloadedPage.onLoad({});
   if (typeof reloadedPage.onShow === 'function') reloadedPage.onShow();
   const reloadState = harness.getState();
@@ -1033,6 +1339,7 @@ async function runOneFlow(testCase, entry, options = {}) {
     id: testCase.id,
     title: testCase.title,
     entry,
+    authorityEntry,
     rawText: testCase.input,
     source: testCase.source || 'typed',
     localFields: clone(localParser.fields || {}),
@@ -1046,7 +1353,7 @@ async function runOneFlow(testCase, entry, options = {}) {
     hybridStubInjected: Boolean(hybridStub),
     buttonDisabled,
     showContinueInput: showContinueInputBeforeAction,
-    warningText: getWarningText(entry, page, harness.events),
+    warningText: getWarningText(authorityEntry, page, harness.events),
     beforeCounts,
     preEditButtonDisabled,
     preEditSaveDelta,
@@ -1058,10 +1365,20 @@ async function runOneFlow(testCase, entry, options = {}) {
     pendingOriginalText,
     reloadRecordFound,
     doubleClickFormalDelta: testCase.__doubleClickDelta || 0,
-    requestCount: harness.events.requests.length
+    requestCount: harness.events.requests.length,
+    entryFlow
   };
   evidence.allowEntryDifference = Boolean(testCase.allowEntryDifference);
-  evidence.failures = evaluateExpectations(testCase, entry, evidence);
+  if (entry === 'dashboard' && latestFormal.record && savedOriginalText !== testCase.input) {
+    entryIntegrityFailures.push(`首页转完整页: formal record originalText mismatch ${JSON.stringify(savedOriginalText)}`);
+  }
+  if (entry === 'dashboard' && pendingDeltaAfterPending > 0 && pendingOriginalText !== testCase.input) {
+    entryIntegrityFailures.push(`首页转完整页: pending record originalText mismatch ${JSON.stringify(pendingOriginalText)}`);
+  }
+  evidence.failures = entryIntegrityFailures.concat(evaluateExpectations(testCase, entry, evidence));
+  if (handoffAudit) handoffAudit.restore();
+  if (businessAudit) businessAudit.restore();
+  if (storageAudit) storageAudit.restore();
   return evidence;
 }
 
@@ -1673,13 +1990,52 @@ function checkEntryConsistency(results) {
     const input = items.find((item) => item.entry === 'input');
     const dashboard = items.find((item) => item.entry === 'dashboard');
     if (!input || !dashboard) return;
-    if (!input.allowEntryDifference && !dashboard.allowEntryDifference && input.buttonDisabled !== dashboard.buttonDisabled) {
+    if (input.buttonDisabled !== dashboard.buttonDisabled) {
       failures.push(`${id}: 完整记一笔与首页快记按钮结论不一致 input=${!input.buttonDisabled}, dashboard=${!dashboard.buttonDisabled}`);
     }
     const inputIntent = input.parseResult && input.parseResult.intent;
     const dashboardIntent = dashboard.parseResult && dashboard.parseResult.intent;
     if (inputIntent !== dashboardIntent) {
       failures.push(`${id}: 完整记一笔与首页快记 intent 不一致 input=${inputIntent}, dashboard=${dashboardIntent}`);
+    }
+    const normalizeBusiness = (result) => {
+      const parseResult = result.parseResult || {};
+      const fields = result.finalFields || {};
+      return {
+        aiStatus: result.aiStatus || '',
+        amount: String(fields.amount || fields.totalAmount || ''),
+        buttonDisabled: Boolean(result.buttonDisabled),
+        customerName: String(fields.customerName || ''),
+        dueDate: String(fields.dueDate || ''),
+        fieldConflicts: (parseResult.field_conflicts || []).map((item) => (
+          typeof item === 'string' ? item : `${item.field || ''}:${item.code || item.reason || ''}`
+        )).sort(),
+        intent: String(parseResult.intent || ''),
+        items: getItems(fields).map((item) => ({
+          amount: String(item.totalAmount || item.amount || ''),
+          dueDate: String(item.dueDate || item.itemDeliveryDate || ''),
+          priceUnit: String(item.priceUnit || ''),
+          productName: String(item.productName || ''),
+          quantity: String(item.quantity || ''),
+          spec: String(item.spec || ''),
+          unit: String(item.unit || ''),
+          unitPrice: String(item.unitPrice || '')
+        })),
+        low: (parseResult.low_confidence_fields || []).slice().sort(),
+        missing: (parseResult.missing_fields || []).slice().sort(),
+        operation: String(parseResult.operation || ''),
+        originalText: String(parseResult.original_text || ''),
+        pendingDeltaAfterPending: Number(result.pendingDeltaAfterPending || 0),
+        provider: String(result.aiProvider || ''),
+        recordType: String(result.savedRecordType || ''),
+        saveDelta: result.saveDelta || {},
+        source: String(parseResult.source || '')
+      };
+    };
+    const inputBusiness = normalizeBusiness(input);
+    const dashboardBusiness = normalizeBusiness(dashboard);
+    if (JSON.stringify(inputBusiness) !== JSON.stringify(dashboardBusiness)) {
+      failures.push(`${id}: 首页 handoff 与直接完整页业务语义不一致 input=${JSON.stringify(inputBusiness)}, dashboard=${JSON.stringify(dashboardBusiness)}`);
     }
   });
   return failures;
