@@ -2,43 +2,6 @@
   <view class="page-title">记一笔</view>
   <view class="page-subtitle">说一句、打一段或粘贴聊天；我先整理好，你确认后再保存。</view>
 
-  <view class="card input-entry-card">
-      <view class="segmented">
-        <view class="{{typedClass}}" data-source="typed" bindtap="setSource">手动输入</view>
-        <view class="{{pasteClass}}" data-source="paste" bindtap="setSource">粘贴聊天</view>
-        <view class="{{voiceClass}}" data-source="voice" bindtap="setSource">语音</view>
-      </view>
-
-    <view wx:if="{{showPaste}}" class="button-row">
-      <button class="secondary-button" bindtap="pasteClipboard">读取剪贴板</button>
-      <button class="secondary-button" bindtap="appendClipboard">追加一条</button>
-    </view>
-    <view wx:if="{{showPaste}}" class="muted paste-tip">如果读取剪贴板只读到 1 条，请长按下面输入框粘贴完整聊天。</view>
-
-    <view wx:if="{{showVoice}}" class="voice-box">
-      <button
-        class="{{voiceButtonClass}} voice-button"
-        bindtouchstart="startVoice"
-        bindtouchend="stopVoice"
-        bindtouchcancel="cancelVoice"
-      >
-        {{voiceButtonText}}
-      </button>
-      <view class="muted voice-tip">{{voiceTip}}</view>
-    </view>
-
-    <textarea
-      class="textarea"
-      value="{{text}}"
-      maxlength="-1"
-      placeholder="例如：给王总报 1000 个水杯，5 块 5 一个，月底交。也可以直接粘贴聊天。"
-      bindinput="onTextInput"
-    />
-    <button class="primary-button parse-button" loading="{{parsing}}" disabled="{{parsing}}" bindtap="runParse">
-      {{parseButtonText}}
-    </button>
-  </view>
-
   <view wx:if="{{showParseProgress}}" class="parse-progress-card">
     <view class="parse-progress-orbit"><view class="parse-progress-dot"></view></view>
     <view class="parse-progress-copy">
@@ -47,7 +10,66 @@
     </view>
   </view>
 
-  <view wx:if="{{parseResult}}" class="input-confirm-modal">
+  <view
+    wx:elif="{{conversationPhase === 'CLARIFYING'}}"
+    class="input-confirm-modal conversation-clarifying-surface"
+    data-surface-role="active-question"
+  >
+    <view class="card input-confirm-card">
+      <scroll-view scroll-y="true" class="input-confirm-body">
+        <view
+          wx:if="{{activeQuestion}}"
+          class="assistant-question-card"
+        >
+          <view class="assistant-question-eyebrow">小玲有一个地方没听明白</view>
+          <view class="assistant-question-prompt">{{activeQuestion.prompt}}</view>
+          <input
+            class="input assistant-answer-input"
+            value="{{assistantAnswerValue}}"
+            bindinput="updateAssistantAnswer"
+            placeholder="请输入答案"
+          />
+          <button
+            class="primary-button assistant-answer-button"
+            bindtap="submitAssistantAnswer"
+            data-question-id="{{activeQuestion.questionId}}"
+            data-revision="{{activeQuestion.draftRevision}}"
+            data-original-text-fingerprint="{{activeQuestion.originalTextFingerprint}}"
+            data-field="{{activeQuestion.target.field}}"
+            data-field-path="{{activeQuestion.target.fieldPath}}"
+            data-item-key="{{activeQuestion.target.itemKey}}"
+          >确认</button>
+        </view>
+        <view wx:if="{{surfaceOriginalText}}" class="original-text-surface">
+          <button class="original-text-toggle" bindtap="toggleOriginalText">
+            {{originalTextExpanded ? '收起原话 ∧' : '查看原话 >'}}
+          </button>
+          <view wx:if="{{originalTextExpanded}}" class="original-text-content">{{surfaceOriginalText}}</view>
+        </view>
+      </scroll-view>
+      <view class="button-row confirm-action-row">
+        <button class="secondary-button" bindtap="returnToInput">重新输入原话</button>
+      </view>
+    </view>
+  </view>
+
+  <view
+    wx:elif="{{conversationPhase === 'SAFE_BLOCKED'}}"
+    class="input-confirm-modal conversation-safe-blocked-surface"
+    data-surface-role="safe-blocked"
+  >
+    <view class="card input-confirm-card">
+      <view
+        wx:if="{{assistantQuestionState === 'SAFE_BLOCKED'}}"
+        class="safe-blocked-surface"
+      >
+        <view class="safe-blocked-message">{{safeBlockedMessage}}</view>
+        <button class="secondary-button safe-blocked-action" bindtap="returnToInput">重新输入原话</button>
+      </view>
+    </view>
+  </view>
+
+  <view wx:elif="{{conversationPhase === 'CONFIRMING'}}" class="input-confirm-modal">
     <view class="card input-confirm-card">
     <view class="input-confirm-header">
       <view class="input-confirm-heading">
@@ -58,40 +80,6 @@
       </view>
     </view>
     <scroll-view scroll-y="true" class="input-confirm-body">
-    <view
-      wx:if="{{activeQuestion}}"
-      class="assistant-question-card"
-      data-surface-role="active-question"
-    >
-      <view class="assistant-question-eyebrow">小玲有一个地方没听明白</view>
-      <view class="assistant-question-prompt">{{activeQuestion.prompt}}</view>
-      <input
-        class="input assistant-answer-input"
-        value="{{assistantAnswerValue}}"
-        bindinput="updateAssistantAnswer"
-        placeholder="请输入答案"
-      />
-      <button
-        class="primary-button assistant-answer-button"
-        bindtap="submitAssistantAnswer"
-        data-question-id="{{activeQuestion.questionId}}"
-        data-revision="{{activeQuestion.draftRevision}}"
-        data-original-text-fingerprint="{{activeQuestion.originalTextFingerprint}}"
-        data-field="{{activeQuestion.target.field}}"
-        data-field-path="{{activeQuestion.target.fieldPath}}"
-        data-item-key="{{activeQuestion.target.itemKey}}"
-      >确认</button>
-    </view>
-
-    <view
-      wx:if="{{assistantQuestionState === 'SAFE_BLOCKED'}}"
-      class="safe-blocked-surface"
-      data-surface-role="safe-blocked"
-    >
-      <view class="safe-blocked-message">{{safeBlockedMessage}}</view>
-      <button class="secondary-button safe-blocked-action" bindtap="returnToInput">重新输入原话</button>
-    </view>
-
     <view class="field">
       <text class="label">业务类型</text>
       <picker mode="selector" range="{{intentRange}}" bindchange="changeIntent">
@@ -422,5 +410,42 @@
       <button wx:if="{{showFormalSaveButton}}" hidden="{{activeQuestion}}" class="primary-button formal-save-button" disabled="{{disableFormalSave}}" bindtap="saveFormal">{{formalButtonText}}</button>
     </view>
   </view>
+  </view>
+
+  <view wx:else class="card input-entry-card">
+    <view class="segmented">
+      <view class="{{typedClass}}" data-source="typed" bindtap="setSource">手动输入</view>
+      <view class="{{pasteClass}}" data-source="paste" bindtap="setSource">粘贴聊天</view>
+      <view class="{{voiceClass}}" data-source="voice" bindtap="setSource">语音</view>
+    </view>
+
+    <view wx:if="{{showPaste}}" class="button-row">
+      <button class="secondary-button" bindtap="pasteClipboard">读取剪贴板</button>
+      <button class="secondary-button" bindtap="appendClipboard">追加一条</button>
+    </view>
+    <view wx:if="{{showPaste}}" class="muted paste-tip">如果读取剪贴板只读到 1 条，请长按下面输入框粘贴完整聊天。</view>
+
+    <view wx:if="{{showVoice}}" class="voice-box">
+      <button
+        class="{{voiceButtonClass}} voice-button"
+        bindtouchstart="startVoice"
+        bindtouchend="stopVoice"
+        bindtouchcancel="cancelVoice"
+      >
+        {{voiceButtonText}}
+      </button>
+      <view class="muted voice-tip">{{voiceTip}}</view>
+    </view>
+
+    <textarea
+      class="textarea"
+      value="{{text}}"
+      maxlength="-1"
+      placeholder="例如：给王总报 1000 个水杯，5 块 5 一个，月底交。也可以直接粘贴聊天。"
+      bindinput="onTextInput"
+    />
+    <button class="primary-button parse-button" loading="{{parsing}}" disabled="{{parsing}}" bindtap="runParse">
+      {{parseButtonText}}
+    </button>
   </view>
 </view>

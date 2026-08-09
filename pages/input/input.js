@@ -3,6 +3,9 @@ const { buildOrderEditDraft, findCustomerMatches, getItemsSummary, getOrderDepos
 const {
   getParseRouteDecision,
   parseHybridInput,
+  prepareHybridLocalStage,
+  requestHybridAiStage,
+  ROUTE_AI_DEEP,
   ROUTE_ASK_USER,
   ROUTE_SAFE_BLOCKED
 } = require('../../utils/ai-parser');
@@ -56,6 +59,12 @@ const UNLINKED_RECEIVABLE_OPTION_ID = '__unlinked_receivable__';
 const UNLINKED_ORDER_OPTION_ID = '__unlinked_order__';
 const DEFAULT_QUOTATION_FOLLOWUP_DAYS = 2;
 const ASSISTANT_QUESTION_TYPES = new Set(['TEXT', 'DATE', 'NUMBER']);
+const CONVERSATION_PHASE_INPUT = 'INPUT';
+const CONVERSATION_PHASE_AUTO_REVIEW = 'AUTO_REVIEW';
+const CONVERSATION_PHASE_CLARIFYING = 'CLARIFYING';
+const CONVERSATION_PHASE_CONFIRMING = 'CONFIRMING';
+const CONVERSATION_PHASE_SAFE_BLOCKED = 'SAFE_BLOCKED';
+const CONVERSATION_PHASE_SAVING = 'SAVING';
 const rawInputCaptureRegistry = new WeakMap();
 const FOLLOWUP_DAY_VALUES = Array.from({ length: 30 }, (_, index) => index + 1);
 const FOLLOWUP_DAY_RANGE = FOLLOWUP_DAY_VALUES.map((days) => `${days} 天`);
@@ -102,6 +111,28 @@ const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货']
 function hasResolvedAiFallback(parseResult = {}) {
   const aiFallback = parseResult.ai_fallback || {};
   return aiFallback.status === 'used' && aiFallback.business_result_valid === true;
+}
+
+function deriveConversationPhase(state = {}) {
+  if (state.saving === true) return CONVERSATION_PHASE_SAVING;
+  if (state.parsing === true) return CONVERSATION_PHASE_AUTO_REVIEW;
+  if (state.assistantQuestionState === 'SAFE_BLOCKED') {
+    return CONVERSATION_PHASE_SAFE_BLOCKED;
+  }
+  if (state.activeQuestion) return CONVERSATION_PHASE_CLARIFYING;
+  if (state.parseResult) return CONVERSATION_PHASE_CONFIRMING;
+  return CONVERSATION_PHASE_INPUT;
+}
+
+function withConversationPhase(currentState = {}, patch = {}) {
+  const merged = Object.assign({}, currentState || {}, patch || {});
+  return Object.assign({}, patch, {
+    conversationPhase: deriveConversationPhase(merged)
+  });
+}
+
+function setConversationData(page, patch, callback) {
+  page.setData(withConversationPhase(page.data || {}, patch), callback);
 }
 const operationByIntent = {
   quotation: 'create_quotation',
@@ -2081,8 +2112,14 @@ function buildConfirmationState(state, parseResult, intent, fields) {
       showGenericOrderPicker: false
     })
     : Object.assign({}, orderDepositState, genericOrderSelectionState);
-  const activeQuestion = buildActiveAssistantQuestion(normalizedParseResult, confirmItems);
-  const safeBlocked = getClientRouteName(normalizedParseResult) === ROUTE_SAFE_BLOCKED;
+  const clientRouteName = getClientRouteName(normalizedParseResult);
+  const activeQuestion = clientRouteName === ROUTE_ASK_USER
+    ? buildActiveAssistantQuestion(normalizedParseResult, confirmItems)
+    : null;
+  // An ASK_USER decision without a trusted, renderable question is not a
+  // confirmation. Fail closed into the recovery surface instead.
+  const safeBlocked = clientRouteName === ROUTE_SAFE_BLOCKED
+    || (clientRouteName === ROUTE_ASK_USER && !activeQuestion);
   const clientRouteBlocked = Boolean(activeQuestion) || safeBlocked;
   const canFormalSave = domainPreflight.domainCanSaveFormal === true;
   const noRecordPersistenceForbidden = domainPreflight.noRecordPersistenceForbidden === true;
@@ -2105,7 +2142,7 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     riskByField: surfaceProjection.riskByItem[item.itemKey] || {}
   }));
 
-  return Object.assign({
+  const confirmationData = Object.assign({
     parseResult: normalizedParseResult,
     parseEvidence: buildParseEvidence(normalizedParseResult),
     showParseEvidence: false,
@@ -2176,6 +2213,12 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     showDeepReviewButton: false
   }, visibility, finalWarningState, paymentState, orderSelectionState,
   genericQuotationSelectionState, customerMatchState, surfaceProjection);
+  if (safeBlocked && !confirmationData.safeBlockedMessage) {
+    confirmationData.safeBlockedMessage = '这笔信息暂时无法确认，请重新输入原话';
+  }
+  return Object.assign(confirmationData, {
+    conversationPhase: deriveConversationPhase(confirmationData)
+  });
 }
 
 function getSourceState(source) {
@@ -2191,6 +2234,7 @@ function getSourceState(source) {
 
 function getEmptyConfirmationData() {
   return {
+    conversationPhase: CONVERSATION_PHASE_INPUT,
     text: '',
     parseResult: null,
     parseEvidence: null,
@@ -2198,6 +2242,7 @@ function getEmptyConfirmationData() {
     assistantAnswerValue: '',
     assistantQuestionState: 'IDLE',
     assistantQuestions: [],
+    saving: false,
     showParseEvidence: false,
     showDeepReviewButton: false,
     showFormalSaveButton: false,
@@ -2548,8 +2593,78 @@ function hasAssistantAnswerProof(parseResult = {}) {
     ));
 }
 
+function trackParseOperation(page, identity, operation) {
+  const tracked = { identity, promise: operation, settled: false };
+  page.inFlightParseOperation = tracked;
+  operation.then(() => {
+    tracked.settled = true;
+    if (page.inFlightParseOperation === tracked) page.inFlightParseOperation = null;
+  }, () => {
+    tracked.settled = true;
+    if (page.inFlightParseOperation === tracked) page.inFlightParseOperation = null;
+  });
+  return operation;
+}
+
+function canRunConfirmationSave(page) {
+  const inFlight = page.inFlightParseOperation;
+  return deriveConversationPhase(page.data || {}) === CONVERSATION_PHASE_CONFIRMING
+    && page.data.parsing !== true
+    && page.data.showParseProgress !== true
+    && !page.activeParseIdentity
+    && !(inFlight && inFlight.settled !== true)
+    && page.savingInProgress !== true;
+}
+
+function canRunPendingSave(page) {
+  const inFlight = page.inFlightParseOperation;
+  const phase = deriveConversationPhase(page.data || {});
+  return phase !== CONVERSATION_PHASE_INPUT
+    && phase !== CONVERSATION_PHASE_AUTO_REVIEW
+    && phase !== CONVERSATION_PHASE_SAVING
+    && page.data.parsing !== true
+    && page.data.showParseProgress !== true
+    && !page.activeParseIdentity
+    && !(inFlight && inFlight.settled !== true)
+    && page.savingInProgress !== true;
+}
+
+function buildTrustedAmountReviewText(originalText, question, canonicalAmount) {
+  const target = question && question.target || {};
+  if (getAssistantQuestionType(question) !== 'NUMBER'
+    || String(target.field || '') !== 'amount'
+    || String(target.fieldPath || '') !== 'amount'
+    || String(target.itemKey || '')) return '';
+  const text = String(originalText || '');
+  const amount = String(canonicalAmount || '').trim();
+  if (!text.trim() || !amount || !/^\d+(?:\.\d+)?$/.test(amount)) return '';
+  const pattern = /((?:总金额|总价|总计|合计|金额)\s*(?:是|为|按)?\s*)([零〇一二两三四五六七八九十百千万亿点\d.]+)(\s*(?:元|块钱|块))/g;
+  const matches = Array.from(text.matchAll(pattern));
+  if (matches.length !== 1) return '';
+  const match = matches[0];
+  const start = Number(match.index || 0);
+  const prefix = match[1];
+  const suffix = match[3];
+  return `${text.slice(0, start)}${prefix}${amount}${suffix}${text.slice(start + match[0].length)}`;
+}
+
+function buildSafeBlockedAnswerState(confirmationState, code) {
+  const blockedState = Object.assign({}, confirmationState, {
+    activeQuestion: null,
+    assistantReviewFailureCode: code || 'ASSISTANT_REVIEW_UNAVAILABLE',
+    assistantQuestionState: 'SAFE_BLOCKED',
+    assistantQuestions: [],
+    disableFormalSave: true,
+    safeBlockedMessage: '这笔信息暂时无法确认，请重新输入原话'
+  });
+  return Object.assign(blockedState, {
+    conversationPhase: deriveConversationPhase(blockedState)
+  });
+}
+
 Page({
   data: {
+    conversationPhase: CONVERSATION_PHASE_INPUT,
     source: 'typed',
     sourceLabels: INPUT_SOURCE_LABELS,
     text: '',
@@ -2595,6 +2710,7 @@ Page({
     voiceButtonClass: 'voice-button-idle',
     voiceButtonText: '按住说一句',
     parsing: false,
+    saving: false,
     parseButtonText: '生成确认卡',
     parseAssistText: '',
     showParseProgress: false,
@@ -2756,8 +2872,9 @@ Page({
     }
     this.cancelVoice();
     finishParseProgress(this);
-    this.setData({
+    setConversationData(this, {
       parsing: false,
+      showParseProgress: false,
       parseButtonText: '生成确认卡'
     });
   },
@@ -2801,10 +2918,10 @@ Page({
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'INPUT_SOURCE_CHANGED');
       this.voiceCompletionEvidence = null;
     }
-    this.setData(Object.assign({
+    setConversationData(this, Object.assign({}, getEmptyConfirmationData(), {
+      text: this.data.text,
       source,
       sourceLabel: INPUT_SOURCE_LABELS[source],
-      parseResult: null
     }, getSourceState(source)));
   },
 
@@ -2817,18 +2934,12 @@ Page({
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'MANUAL_EDIT_AFTER_VOICE');
       this.voiceCompletionEvidence = null;
     }
-    if (textChanged && this.data.parsing) {
-      clearParseProgress(this);
-      this.setData({
-        parsing: false,
-        parseButtonText: '生成确认卡'
-      });
-    }
+    if (textChanged && this.data.parsing) clearParseProgress(this);
     if (String(text || '').trim()) prewarmAiAuth();
     if (isWechatChatText(text)) {
       const analysis = analyzeClipboardText(text);
       const diagnosticText = getClipboardDiagnostics(analysis);
-      this.setData(Object.assign({
+      setConversationData(this, Object.assign({
         source: 'paste',
         sourceLabel: INPUT_SOURCE_LABELS.paste,
         text,
@@ -2841,12 +2952,15 @@ Page({
         confirmItems: [],
         fields: {},
         parseResult: null,
+        parsing: false,
+        parseButtonText: '生成确认卡',
+        showParseProgress: false,
         showFormalSaveButton: false,
         showPendingButton: false
       } : {}, getSourceState('paste')));
       return;
     }
-    this.setData(Object.assign({
+    setConversationData(this, Object.assign({
       text,
       source: 'typed',
       sourceLabel: INPUT_SOURCE_LABELS.typed,
@@ -2858,6 +2972,9 @@ Page({
       confirmItems: [],
       fields: {},
       parseResult: null,
+      parsing: false,
+      parseButtonText: '生成确认卡',
+      showParseProgress: false,
       showFormalSaveButton: false,
       showPendingButton: false
     } : {}));
@@ -3158,8 +3275,11 @@ Page({
     const parseRequestToken = identity.requestId;
     this.activeParseRequestToken = parseRequestToken;
     this.activeParseIdentity = identity;
-    this.setData({
+    setConversationData(this, {
       parsing: true,
+      showParseProgress: true,
+      parseProgressTitle: source === 'paste' ? '正在整理聊天内容' : '正在整理这条记录',
+      parseProgressDetail: '请稍等，确认前不会自动保存',
       parseButtonText: '正在识别',
       parseAssistText: '正在识别，请稍等。'
     });
@@ -3212,7 +3332,7 @@ Page({
       .then((parseResult) => {
         if (!isParseIdentityCurrent(this, identity)) return;
         invalidateActiveParseIdentity(this);
-        finishParseProgress(this);
+        clearParseProgress(this);
         const contextualResult = attachClientConfirmationContext(parseResult, identity);
         const confirmationState = buildConfirmationState(
           state,
@@ -3226,7 +3346,7 @@ Page({
           : (routeName === ROUTE_SAFE_BLOCKED
             ? '暂时没能自动核对完整，当前不能保存。'
             : '已整理好，请确认后保存。');
-        this.setData(Object.assign({}, confirmationState, {
+        setConversationData(this, Object.assign({}, confirmationState, {
           intent: confirmationState.parseResult.intent,
           intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
           sourceLabel: INPUT_SOURCE_LABELS[confirmationState.parseResult.source],
@@ -3235,6 +3355,7 @@ Page({
             .map((item) => INTENT_LABELS[item] || item)
             .join(' / '),
           parsing: false,
+          showParseProgress: false,
           parseButtonText: '生成确认卡',
           showComputedTips: Boolean(confirmationState.parseResult.computed_tips && confirmationState.parseResult.computed_tips.length),
           computedTips: confirmationState.parseResult.computed_tips || []
@@ -3243,29 +3364,176 @@ Page({
       .catch(() => {
         if (!isParseIdentityCurrent(this, identity)) return;
         invalidateActiveParseIdentity(this);
-        finishParseProgress(this);
-        this.setData({
+        clearParseProgress(this);
+        setConversationData(this, {
           activeQuestion: null,
           assistantQuestionState: 'SAFE_BLOCKED',
           assistantQuestions: [],
           assistantAnswerValue: '',
           disableFormalSave: true,
           parsing: false,
+          showParseProgress: false,
           parseButtonText: '生成确认卡',
           parseAssistText: '暂时没能整理完整，请稍后再试。',
           safeBlockedMessage: '这笔信息暂时无法确认，请重新输入原话'
         });
       });
-    const tracked = { identity, promise: operation, settled: false };
-    this.inFlightParseOperation = tracked;
-    operation.then(() => {
-      tracked.settled = true;
-      if (this.inFlightParseOperation === tracked) this.inFlightParseOperation = null;
-    }, () => {
-      tracked.settled = true;
-      if (this.inFlightParseOperation === tracked) this.inFlightParseOperation = null;
+    return trackParseOperation(this, identity, operation);
+  },
+
+  startTrustedAssistantAnswerDeepReview(confirmationState, question) {
+    const committedResult = confirmationState && confirmationState.parseResult || {};
+    const committedFields = confirmationState && confirmationState.fields
+      || committedResult.fields
+      || {};
+    const canonicalText = buildTrustedAmountReviewText(
+      this.data.text,
+      question,
+      committedFields.amount
+    );
+    const originalTextFingerprint = getOriginalTextFingerprint(this.data.text);
+    const context = committedResult.client_confirmation_context || {};
+    const identityValid = canonicalText
+      && String(question.confirmationSessionId || '') === String(this.confirmationSessionId || '')
+      && String(question.draftRevision || '') === String(this.draftRevision || '')
+      && String(question.originalTextFingerprint || '') === originalTextFingerprint
+      && String(context.confirmationSessionId || '') === String(question.confirmationSessionId || '')
+      && String(context.draftRevision || '') === String(question.draftRevision || '')
+      && String(context.originalTextFingerprint || '') === originalTextFingerprint;
+    if (!identityValid) {
+      const blockedState = buildSafeBlockedAnswerState(
+        confirmationState,
+        'ASSISTANT_REVIEW_IDENTITY_INVALID'
+      );
+      setConversationData(this, blockedState);
+      return Promise.resolve({
+        accepted: true,
+        code: 'ASSISTANT_REVIEW_IDENTITY_INVALID',
+        questionId: question.questionId
+      });
+    }
+
+    const state = getState();
+    const source = this.data.source || committedResult.source || 'typed';
+    const routePayload = {
+      businessDate: String(question.businessDate || context.businessDate || ''),
+      context: 'home',
+      entrySurface: 'FULL_PAGE',
+      inputChannel: source === 'voice' ? 'VOICE_TRANSCRIPT' : (source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT'),
+      reviewMode: 'deep',
+      source,
+      state,
+      text: canonicalText
+    };
+    let prepared;
+    try {
+      prepared = prepareHybridLocalStage(routePayload);
+    } catch (error) {
+      prepared = null;
+    }
+    if (!prepared || !prepared.route || prepared.route.decision !== ROUTE_AI_DEEP) {
+      const blockedState = buildSafeBlockedAnswerState(
+        confirmationState,
+        'ASSISTANT_REVIEW_ROUTE_NOT_TRUSTED'
+      );
+      setConversationData(this, blockedState);
+      return Promise.resolve({
+        accepted: true,
+        code: 'ASSISTANT_REVIEW_ROUTE_NOT_TRUSTED',
+        questionId: question.questionId
+      });
+    }
+
+    const identity = {
+      businessDate: routePayload.businessDate,
+      confirmationSessionId: String(question.confirmationSessionId || ''),
+      draftRevision: String(question.draftRevision || ''),
+      originalTextFingerprint,
+      requestedRoute: 'AUTO_DEEP',
+      requestId: nextClientRuntimeId(this, 'record-answer-review-request')
+    };
+    this.currentRequestedRoute = identity.requestedRoute;
+    this.activeParseRequestToken = identity.requestId;
+    this.activeParseIdentity = identity;
+    setConversationData(this, Object.assign({}, confirmationState, {
+      activeQuestion: null,
+      assistantAnswerValue: '',
+      assistantQuestionState: 'READY',
+      assistantQuestions: [],
+      disableFormalSave: true,
+      parsing: true,
+      parseAssistText: '正在核对你刚确认的内容。',
+      parseButtonText: '正在识别',
+      parseProgressDetail: '请稍等，确认前不会自动保存',
+      parseProgressTitle: '正在核对关键信息',
+      showParseProgress: true
+    }));
+    startParseProgress(this, source);
+
+    const payload = Object.assign({}, routePayload, {
+      confirmationSessionId: identity.confirmationSessionId,
+      draftRevision: identity.draftRevision,
+      extractedText: canonicalText,
+      originalTextFingerprint: identity.originalTextFingerprint,
+      pasteMeta: null,
+      rawMessages: [],
+      rawText: this.data.text,
+      requestId: identity.requestId,
+      requestedRoute: identity.requestedRoute
     });
-    return operation;
+    // The trusted answer replaces the raw stated total for the current draft,
+    // while original_text remains untouched for audit. Keeping the old
+    // statedAmount slot would falsely claim that the original 5000 text was
+    // evidence for the newly confirmed 4676.1 value.
+    const reviewedFields = Object.assign({}, committedFields, { statedAmount: '' });
+    const reviewedResult = Object.assign({}, committedResult, { fields: reviewedFields });
+    const requestPrepared = Object.assign({}, prepared, {
+      localResult: Object.assign({}, reviewedResult, { parse_route: prepared.route }),
+      localReviewedResult: reviewedResult,
+      route: prepared.route,
+      totalStartedAt: Date.now()
+    });
+    const operation = requestHybridAiStage(payload, requestPrepared)
+      .then((parseResult) => {
+        if (!isParseIdentityCurrent(this, identity)) {
+          return { accepted: false, code: 'ANSWER_REVIEW_STALE', questionId: question.questionId };
+        }
+        invalidateActiveParseIdentity(this);
+        clearParseProgress(this);
+        const contextualResult = attachClientConfirmationContext(parseResult, identity);
+        const nextState = buildConfirmationState(
+          state,
+          contextualResult,
+          contextualResult.intent,
+          contextualResult.fields
+        );
+        setConversationData(this, Object.assign({}, nextState, {
+          intent: nextState.parseResult.intent,
+          intentLabel: INTENT_LABELS[nextState.parseResult.intent],
+          parsing: false,
+          parseButtonText: '生成确认卡',
+          showParseProgress: false
+        }));
+        return { accepted: true, questionId: question.questionId };
+      })
+      .catch(() => {
+        if (!isParseIdentityCurrent(this, identity)) {
+          return { accepted: false, code: 'ANSWER_REVIEW_STALE', questionId: question.questionId };
+        }
+        invalidateActiveParseIdentity(this);
+        clearParseProgress(this);
+        const blockedState = buildSafeBlockedAnswerState(
+          confirmationState,
+          'ASSISTANT_REVIEW_FAILED'
+        );
+        setConversationData(this, Object.assign({}, blockedState, {
+          parsing: false,
+          parseButtonText: '生成确认卡',
+          showParseProgress: false
+        }));
+        return { accepted: true, code: 'ASSISTANT_REVIEW_FAILED', questionId: question.questionId };
+      });
+    return trackParseOperation(this, identity, operation);
   },
 
   requestDeepReview() {
@@ -3296,6 +3564,12 @@ Page({
         value: this.data.assistantAnswerValue
       }
     });
+    if (result && typeof result.then === 'function') {
+      return result.then((settled) => {
+        if (settled && settled.accepted) setConversationData(this, { assistantAnswerValue: '' });
+        return settled;
+      });
+    }
     if (result && result.accepted) this.setData({ assistantAnswerValue: '' });
     return result;
   },
@@ -3411,7 +3685,15 @@ Page({
       || !questionRiskIds.every((riskId) => committedProofState.resolvedRiskIds.includes(riskId))) {
       return { accepted: false, code: 'ANSWER_PROOF_REJECTED' };
     }
-    this.setData(Object.assign({}, confirmationState, {
+    if (['AI_DEEP', 'AUTO_DEEP'].includes(String(nextRequestedRoute || '').toUpperCase())) {
+      this.startTrustedAssistantAnswerDeepReview(confirmationState, question);
+      return {
+        accepted: true,
+        questionId: question.questionId,
+        reviewRequested: true
+      };
+    }
+    setConversationData(this, Object.assign({}, confirmationState, {
       intent: confirmationState.parseResult.intent,
       intentLabel: INTENT_LABELS[confirmationState.parseResult.intent],
       parsing: false,
@@ -4216,10 +4498,10 @@ Page({
   },
 
   returnToInput() {
-    if (!this.data.parseResult) return;
     invalidateRawInputCapture(this, 'RETURN_TO_RAW_INPUT');
     const source = this.data.source || 'typed';
     advanceDraftRevision(this, { newSession: true });
+    clearParseProgress(this);
     this.setData(Object.assign(getEmptyConfirmationData(), {
       text: this.data.text,
       source,
@@ -4230,7 +4512,9 @@ Page({
   },
 
   saveFormal() {
-    if (!this.data.parseResult) return;
+    if (!this.data.parseResult || !canRunConfirmationSave(this)) {
+      return { accepted: false, code: 'CONVERSATION_NOT_CONFIRMING' };
+    }
     const state = getState();
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: this.data.parseResult.missing_fields || [],
@@ -4270,9 +4554,18 @@ Page({
       });
       return;
     }
+    this.savingInProgress = true;
+    setConversationData(this, {
+      saving: true,
+      showParseProgress: true,
+      parseProgressTitle: '正在保存',
+      parseProgressDetail: '请稍等，这笔记录只会保存一次'
+    });
     const result = confirmationState.parseResult;
     const saved = saveConfirmedDraft(state, result);
     if (saved.type === 'error') {
+      this.savingInProgress = false;
+      setConversationData(this, { saving: false, showParseProgress: false });
       wx.showToast({ title: saved.error || '订单没有更新，请核对后重试', icon: 'none' });
       return;
     }
@@ -4289,11 +4582,14 @@ Page({
       title: saved.type === 'pending' ? '已存到待整理' : '已保存',
       icon: 'success'
     });
+    this.savingInProgress = false;
     this.setData(getEmptyConfirmationData());
   },
 
   savePending() {
-    if (!this.data.parseResult) return;
+    if (!this.data.parseResult || !canRunPendingSave(this)) {
+      return { accepted: false, code: 'CONVERSATION_PENDING_UNAVAILABLE' };
+    }
     const state = getState();
     const baseResult = Object.assign({}, this.data.parseResult, {
       missing_fields: this.data.parseResult.missing_fields || [],
@@ -4319,11 +4615,19 @@ Page({
         code: 'PENDING_SAVE_NOT_ELIGIBLE'
       };
     }
+    this.savingInProgress = true;
+    setConversationData(this, {
+      saving: true,
+      showParseProgress: true,
+      parseProgressTitle: '正在保存',
+      parseProgressDetail: '请稍等，这笔内容只会保存一次'
+    });
     const reason = confirmationState.parseResult.history_warning_text || '用户选择稍后整理';
     const existingPending = updatePendingNote(state, this.data.editingPendingId, confirmationState.parseResult, reason);
     if (!existingPending) savePendingNote(state, confirmationState.parseResult, reason);
     saveState(state, { writerSource: 'INPUT_PENDING' });
     wx.showToast({ title: '已存到待整理', icon: 'success' });
+    this.savingInProgress = false;
     this.setData(getEmptyConfirmationData());
   }
 });
