@@ -5,6 +5,10 @@ const { prewarmAiAuth } = require('../../utils/api-client');
 const { buildParseEvidence } = require('../../utils/parse-evidence');
 const { buildRecentRecords, buildTodayTasks } = require('../../utils/home-workbench');
 const { requestOrderFilterReset, setNextOrderFilter, setNextRecordFilter } = require('../../utils/navigation-state');
+const {
+  invalidateRecordEntryHandoff,
+  publishRecordEntryHandoff
+} = require('../../utils/record-entry-handoff');
 const { getRecordDetailUrl } = require('../../utils/record-detail');
 const { applyFinalParseSafety } = require('../../utils/parse-safety');
 const {
@@ -26,7 +30,6 @@ const {
   analyzeClipboardText,
   buildNoBusinessPasteResult,
   getClipboardDiagnostics,
-  getClipboardDisplayText,
   getPasteMeta,
   getSingleMessagePasteTip,
   isSingleMessageClipboard,
@@ -86,6 +89,32 @@ const VOICE_HOLD_DELAY_MS = 260;
 function hasResolvedAiFallback(parseResult = {}) {
   const aiFallback = parseResult.ai_fallback || {};
   return aiFallback.status === 'used' && aiFallback.business_result_valid === true;
+}
+
+function handoffRecordEntryToInput(page, originalText, source) {
+  let handle;
+  try {
+    handle = publishRecordEntryHandoff({
+      autoParse: true,
+      originSurface: 'HOME_QUICK',
+      originalText,
+      source
+    });
+    wx.switchTab({
+      url: '/pages/input/input',
+      fail: () => {
+        if (!invalidateRecordEntryHandoff(handle)) return;
+        page.setData({ voiceTip: '没能打开记一笔，请再试一次。' });
+        wx.showToast({ title: '没能打开记一笔，请再试一次', icon: 'none' });
+      }
+    });
+    return true;
+  } catch (error) {
+    if (handle) invalidateRecordEntryHandoff(handle);
+    page.setData({ voiceTip: '没能打开记一笔，请再试一次。' });
+    wx.showToast({ title: '没能打开记一笔，请再试一次', icon: 'none' });
+    return false;
+  }
 }
 const activeReceivableStatuses = ['待收', '部分收款'];
 const activeOrderStatuses = ['待生产', '生产中', '待发货', '已发货'];
@@ -799,14 +828,11 @@ Page({
           : null;
         this.setData({
           voiceRecording: false,
+          voiceOverlayVisible: false,
           composerText: text,
-          voiceTip: '已识别成文字，请确认后保存。'
+          voiceTip: '已识别成文字，正在打开记一笔。'
         });
-        this.runQuickParse(text, 'voice', null, 'standard', {
-          entrySurface: 'HOME_QUICK',
-          inputChannel: 'VOICE_TRANSCRIPT',
-          voiceCompletionEvidence: this.voiceCompletionEvidence
-        });
+        handoffRecordEntryToInput(this, text, 'voice');
       },
       onError: (error) => {
         this.voiceCompletionEvidence = null;
@@ -954,61 +980,29 @@ Page({
     }
     wx.getClipboardData({
       success: (res) => {
-        const analysis = analyzeClipboardText(res.data || '');
-        if (!analysis.rawText) {
+        const originalText = String(res.data || '');
+        if (!originalText.trim()) {
           wx.showToast({ title: '剪贴板是空的', icon: 'none' });
           return;
         }
-        const diagnosticText = getClipboardDiagnostics(analysis);
         this.setData({
-          composerText: getClipboardDisplayText(analysis),
-          voiceTip: isSingleMessageClipboard(analysis)
-            ? `${diagnosticText}\n${getSingleMessagePasteTip()}`
-            : ([diagnosticText, analysis.warning || '正在识别有效业务内容。'].filter(Boolean).join('\n'))
+          composerText: originalText,
+          voiceTip: '正在打开记一笔。'
         });
-        if (analysis.status === 'ok') {
-          this.runQuickParse(analysis.extractedText, 'paste', analysis);
-          return;
-        }
-        if (isSingleMessageClipboard(analysis)) {
-          wx.showToast({ title: '只读到1条消息', icon: 'none' });
-          return;
-        }
-        const confirmState = buildHomeConfirmState(buildNoBusinessPasteResult(analysis));
-        this.setData(Object.assign({}, confirmState, {
-          parsing: false,
-          voiceOverlayVisible: false,
-          voiceTip: analysis.warning
-        }));
+        handoffRecordEntryToInput(this, originalText, 'paste');
       }
     });
   },
 
   submitComposer() {
-    const text = this.data.composerText.trim();
-    if (!text) {
+    const originalText = String(this.data.composerText || '');
+    if (!originalText.trim()) {
       wx.showToast({ title: '先输入一句话', icon: 'none' });
       return;
     }
-    if (isWechatChatText(text)) {
-      const analysis = analyzeClipboardText(text);
-      const diagnosticText = getClipboardDiagnostics(analysis);
-      this.setData({
-        voiceTip: [diagnosticText, analysis.warning].filter(Boolean).join('\n')
-      });
-      if (analysis.status === 'ok') {
-        this.runQuickParse(analysis.extractedText, 'paste', analysis);
-        return;
-      }
-      const confirmState = buildHomeConfirmState(buildNoBusinessPasteResult(analysis));
-      this.setData(Object.assign({}, confirmState, {
-        parsing: false,
-        voiceOverlayVisible: false,
-        voiceTip: analysis.warning
-      }));
-      return;
-    }
-    this.runQuickParse(text, 'typed');
+    const source = isWechatChatText(originalText) ? 'paste' : 'typed';
+    this.setData({ voiceTip: '正在打开记一笔。' });
+    handoffRecordEntryToInput(this, originalText, source);
   },
 
   runQuickParse(text, source, pasteAnalysis, reviewMode = 'standard', sourceContext = null) {

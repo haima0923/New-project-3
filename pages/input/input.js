@@ -16,6 +16,10 @@ const { normalizeNumberText, numberPattern, parseChineseNumber } = require('../.
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
 const {
+  consumeRecordEntryHandoff,
+  hasPendingRecordEntryHandoff
+} = require('../../utils/record-entry-handoff');
+const {
   applyFinalParseSafety,
   collectUserResolvableAiRisks,
   createTrustedAssistantAnswerChallenge,
@@ -2464,6 +2468,7 @@ function beginRawInputCapture(page, source, options = {}) {
     captureId: `raw-input-capture-${Date.now()}-${page.rawInputCaptureSequence}`,
     captureRevision: Number(page.rawInputCaptureRevision || 0),
     source: String(source || ''),
+    startOriginalText: getCurrentOriginalText(page),
     startRawText: String(page.data && page.data.text || '')
   });
   rawInputCaptureRegistry.set(page, capture);
@@ -2538,12 +2543,21 @@ function attachClientConfirmationContext(result, identity) {
   });
 }
 
+function getCurrentOriginalText(page) {
+  if (!page || !page.data) return '';
+  return String(
+    page.data.source === 'paste' && page.pasteOriginalText
+      ? page.pasteOriginalText
+      : page.data.text || ''
+  );
+}
+
 function getCurrentConfirmationIdentity(page) {
   return {
     businessDate: ensureConfirmationBusinessDate(page),
     confirmationSessionId: ensureConfirmationSession(page),
     draftRevision: String(page.draftRevision || ''),
-    originalTextFingerprint: getOriginalTextFingerprint(page.data.text),
+    originalTextFingerprint: getOriginalTextFingerprint(getCurrentOriginalText(page)),
     requestedRoute: page.currentRequestedRoute || 'ROUTE_UNDECIDED'
   };
 }
@@ -2824,19 +2838,66 @@ Page({
     prewarmAiAuth();
     const pendingId = wx.getStorageSync('pending_to_edit');
     if (pendingId) {
+      if (hasPendingRecordEntryHandoff()) consumeRecordEntryHandoff();
       wx.removeStorageSync('pending_to_edit');
       this.loadPendingForEdit(pendingId);
       return;
     }
     const recordToEdit = wx.getStorageSync('record_to_edit');
     if (recordToEdit && recordToEdit.type === 'order' && recordToEdit.id) {
+      if (hasPendingRecordEntryHandoff()) consumeRecordEntryHandoff();
       wx.removeStorageSync('record_to_edit');
       this.loadOrderForEdit(recordToEdit.id);
       return;
     }
+    if (hasPendingRecordEntryHandoff()) {
+      const handoff = consumeRecordEntryHandoff();
+      const originalText = String(handoff && handoff.originalText || '');
+      const source = String(handoff && handoff.source || '');
+      if (handoff
+        && handoff.autoParse === true
+        && handoff.originSurface === 'HOME_QUICK'
+        && originalText.trim()
+        && ['typed', 'paste', 'voice'].includes(source)) {
+        wx.removeStorageSync('force_text_input');
+        wx.removeStorageSync('draft_to_input');
+        invalidateRawInputCapture(this, 'DASHBOARD_ENTRY_HANDOFF');
+        invalidateActiveParseIdentity(this);
+        if (this.voiceCompletionEvidence) {
+          invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'DASHBOARD_ENTRY_HANDOFF');
+          this.voiceCompletionEvidence = null;
+        }
+        clearParseProgress(this);
+        advanceDraftRevision(this, { newSession: true });
+        this.currentRequestedRoute = 'ROUTE_UNDECIDED';
+        this.pasteOriginalText = source === 'paste' ? originalText : '';
+        setConversationData(this, Object.assign({}, getEmptyConfirmationData(), {
+          text: originalText,
+          source,
+          sourceLabel: INPUT_SOURCE_LABELS[source],
+          fields: {},
+          confirmItems: [],
+          pasteAnalysis: source === 'paste' ? analyzeClipboardText(originalText) : null,
+          parseButtonText: '生成确认卡',
+          parseAssistText: '',
+          showFormalSaveButton: false,
+          showPendingButton: false,
+          showParseProgress: false
+        }, getSourceState(source)), () => {
+          this.runParse('standard', {
+            entrySurface: 'FULL_PAGE',
+            inputChannel: source === 'voice'
+              ? 'VOICE_TRANSCRIPT'
+              : (source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT')
+          });
+        });
+        return;
+      }
+    }
     const forceTextInput = wx.getStorageSync('force_text_input');
     if (forceTextInput) {
       invalidateRawInputCapture(this, 'FORCE_TEXT_INPUT');
+      this.pasteOriginalText = '';
       wx.removeStorageSync('force_text_input');
       this.setData(Object.assign(getEmptyConfirmationData(), {
         source: 'typed',
@@ -2851,6 +2912,7 @@ Page({
       invalidateRawInputCapture(this, 'DRAFT_TO_INPUT');
       wx.removeStorageSync('draft_to_input');
       const source = draft.source || 'typed';
+      this.pasteOriginalText = source === 'paste' ? String(draft.text || '') : '';
       this.setData(Object.assign(getEmptyConfirmationData(), {
         text: draft.text,
         source,
@@ -2901,6 +2963,7 @@ Page({
     if (note) {
       invalidateRawInputCapture(this, 'PENDING_DRAFT_LOADED');
       const source = note.source || 'typed';
+      this.pasteOriginalText = source === 'paste' ? String(note.originalText || '') : '';
       this.setData(Object.assign(getEmptyConfirmationData(), {
         text: note.originalText,
         source,
@@ -2918,6 +2981,7 @@ Page({
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'INPUT_SOURCE_CHANGED');
       this.voiceCompletionEvidence = null;
     }
+    this.pasteOriginalText = source === 'paste' ? String(this.data.text || '') : '';
     setConversationData(this, Object.assign({}, getEmptyConfirmationData(), {
       text: this.data.text,
       source,
@@ -2938,6 +3002,7 @@ Page({
     if (String(text || '').trim()) prewarmAiAuth();
     if (isWechatChatText(text)) {
       const analysis = analyzeClipboardText(text);
+      this.pasteOriginalText = String(text || '');
       const diagnosticText = getClipboardDiagnostics(analysis);
       setConversationData(this, Object.assign({
         source: 'paste',
@@ -2960,6 +3025,7 @@ Page({
       } : {}, getSourceState('paste')));
       return;
     }
+    this.pasteOriginalText = '';
     setConversationData(this, Object.assign({
       text,
       source: 'typed',
@@ -2991,7 +3057,8 @@ Page({
     wx.getClipboardData({
       success: (res) => {
         if (!isRawInputCaptureCurrent(this, capture, { verifyStartText: true })) return;
-        const analysis = analyzeClipboardText(res.data || '');
+        const clipboardText = String(res.data || '');
+        const analysis = analyzeClipboardText(clipboardText);
         if (!analysis.rawText) {
           completeRawInputCapture(this, capture);
           wx.showToast({ title: '剪贴板是空的', icon: 'none' });
@@ -2999,9 +3066,13 @@ Page({
         }
         const displayText = getClipboardDisplayText(analysis);
         const currentText = append ? capture.startRawText.trim() : '';
+        const currentOriginalText = append ? capture.startOriginalText : '';
         const nextText = currentText && displayText
           ? `${currentText}\n\n${displayText}`
           : displayText;
+        this.pasteOriginalText = append && currentOriginalText.trim()
+          ? `${currentOriginalText}\n\n${clipboardText}`
+          : clipboardText;
         const nextAnalysis = append ? analyzeClipboardText(nextText) : analysis;
         const singleMessage = isSingleMessageClipboard(analysis);
         const diagnosticText = getClipboardDiagnostics(nextAnalysis);
@@ -3060,6 +3131,7 @@ Page({
     // 录音期间预先完成登录；失败不打断录音，真正解析时会给出明确原因。
     prewarmAiAuth();
     const capture = beginRawInputCapture(this, 'voice');
+    this.pasteOriginalText = '';
     this.voiceCancelled = false;
     advanceDraftRevision(this, { newSession: true });
     if (this.voiceCompletionEvidence) {
@@ -3149,6 +3221,7 @@ Page({
 
   loadOrderForEdit(orderId) {
     invalidateRawInputCapture(this, 'ORDER_DRAFT_LOADED');
+    this.pasteOriginalText = '';
     const state = getState();
     const parseResult = buildOrderEditDraft(state, orderId);
     if (!parseResult) {
@@ -3193,25 +3266,34 @@ Page({
     let text = this.data.text.trim();
     let pasteAnalysis = null;
     let source = this.data.source;
+    const sourceOriginalText = source === 'paste'
+      ? String(this.pasteOriginalText || this.data.text || '')
+      : String(this.data.text || '');
     if (text && (this.data.source === 'paste' || isWechatChatText(text))) {
-      pasteAnalysis = this.data.pasteAnalysis && (
-        this.data.pasteAnalysis.rawText === this.data.text
-        || this.data.pasteAnalysis.extractedText === this.data.text
-      )
-        ? this.data.pasteAnalysis
-        : analyzeClipboardText(this.data.text);
-      if (pasteAnalysis.status !== 'ok') {
-        this.showNoBusinessPaste(pasteAnalysis);
-        return;
+      if (this.data.source === 'paste' && !isWechatChatText(this.data.text)) {
+        text = sourceOriginalText.trim();
+        source = 'paste';
+      } else {
+        pasteAnalysis = this.data.pasteAnalysis && (
+          this.data.pasteAnalysis.rawText === this.data.text
+          || this.data.pasteAnalysis.extractedText === this.data.text
+        )
+          ? this.data.pasteAnalysis
+          : analyzeClipboardText(this.data.text);
+        if (pasteAnalysis.status !== 'ok') {
+          this.showNoBusinessPaste(pasteAnalysis);
+          return;
+        } else {
+          text = pasteAnalysis.extractedText;
+          source = 'paste';
+        }
       }
-      text = pasteAnalysis.extractedText;
-      source = 'paste';
     }
     if (!this.data.text.trim()) {
       wx.showToast({ title: '先输入一句话或粘贴聊天', icon: 'none' });
       return;
     }
-    const currentFingerprint = getOriginalTextFingerprint(this.data.text);
+    const currentFingerprint = getOriginalTextFingerprint(sourceOriginalText);
     const currentBusinessDate = ensureConfirmationBusinessDate(this);
     const currentSessionId = ensureConfirmationSession(this);
     const existing = this.inFlightParseOperation;
@@ -3324,7 +3406,7 @@ Page({
       payload.entrySurface = 'FULL_PAGE';
     }
     if (pasteAnalysis) {
-      payload.rawText = pasteAnalysis.rawText;
+      payload.rawText = sourceOriginalText;
       payload.extractedText = pasteAnalysis.extractedText;
       payload.pasteMeta = getPasteMeta(pasteAnalysis);
     }
@@ -3333,6 +3415,13 @@ Page({
         if (!isParseIdentityCurrent(this, identity)) return;
         invalidateActiveParseIdentity(this);
         clearParseProgress(this);
+        if (sourceOriginalText) {
+          parseResult = Object.assign({}, parseResult, {
+            original_text: sourceOriginalText
+          }, source === 'paste' ? {
+            raw_text: sourceOriginalText
+          } : {});
+        }
         const contextualResult = attachClientConfirmationContext(parseResult, identity);
         const confirmationState = buildConfirmationState(
           state,
@@ -3386,12 +3475,13 @@ Page({
     const committedFields = confirmationState && confirmationState.fields
       || committedResult.fields
       || {};
+    const currentOriginalText = getCurrentOriginalText(this);
     const canonicalText = buildTrustedAmountReviewText(
-      this.data.text,
+      currentOriginalText,
       question,
       committedFields.amount
     );
-    const originalTextFingerprint = getOriginalTextFingerprint(this.data.text);
+    const originalTextFingerprint = getOriginalTextFingerprint(currentOriginalText);
     const context = committedResult.client_confirmation_context || {};
     const identityValid = canonicalText
       && String(question.confirmationSessionId || '') === String(this.confirmationSessionId || '')
@@ -3477,7 +3567,7 @@ Page({
       originalTextFingerprint: identity.originalTextFingerprint,
       pasteMeta: null,
       rawMessages: [],
-      rawText: this.data.text,
+      rawText: currentOriginalText,
       requestId: identity.requestId,
       requestedRoute: identity.requestedRoute
     });
@@ -3587,7 +3677,7 @@ Page({
     const incomingField = String(incomingTarget.field || dataset.field || '');
     const incomingFieldPath = String(incomingTarget.fieldPath || dataset.fieldPath || '');
     const incomingItemKey = String(incomingTarget.itemKey || dataset.itemKey || '');
-    const currentFingerprint = getOriginalTextFingerprint(this.data.text);
+    const currentFingerprint = getOriginalTextFingerprint(getCurrentOriginalText(this));
     const currentSessionId = String(this.confirmationSessionId || '');
     const currentBusinessDate = String(this.confirmationBusinessDate || '');
     const valid = questionId === String(question.questionId || '')
