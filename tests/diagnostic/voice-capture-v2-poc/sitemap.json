@@ -1,0 +1,9 @@
+{
+  "desc": "DIAGNOSTIC_ONLY",
+  "rules": [
+    {
+      "action": "disallow",
+      "page": "*"
+    }
+  ]
+}

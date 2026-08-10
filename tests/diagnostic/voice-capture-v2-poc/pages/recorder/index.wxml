@@ -1,0 +1,53 @@
+<view class="page">
+  <view class="card hero-card">
+    <view class="eyebrow">DIAGNOSTIC_ONLY</view>
+    <view class="title">Independent Recorder Onset POC</view>
+    <view class="subtitle">只听原始录音，不做 ASR，不进入货小玲业务。</view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">1. 先预先授权</view>
+    <button type="primary" bindtap="authorizeMicrophone">预先授权麦克风</button>
+    <view class="permission">授权状态：{{authorized ? '已授权' : '未授权'}}</view>
+    <button class="reset-button" bindtap="resetRecorderTap">重置录音占用</button>
+    <view class="permission">Recorder：{{recorderReady ? '可用' : '清理中'}}</view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">2. 选择成对测试</view>
+    <view class="test-row">
+      <button class="test-button {{activeTest === 'A' ? 'selected' : ''}}" data-test="A" bindtap="chooseTest">TEST-A 立即说</button>
+      <button class="test-button {{activeTest === 'B' ? 'selected' : ''}}" data-test="B" bindtap="chooseTest">TEST-B 等1秒</button>
+    </view>
+    <view class="phrase">冯总订水杯137个，每个5元，8月15日交</view>
+  </view>
+
+  <view class="card capture-card">
+    <view class="section-title">3. {{activeTestLabel}}</view>
+    <view
+      class="hold-zone {{isPressing ? 'hold-zone-active' : ''}}"
+      bindtouchstart="touchStart"
+      bindtouchend="touchEnd"
+      bindtouchcancel="touchCancel"
+    >
+      <view class="hold-title">{{isPressing ? '正在录原始音频' : '按住录音，松手结束'}}</view>
+      <view class="hold-subtitle">touchstart 直接调用 wx.getRecorderManager().start()</view>
+    </view>
+    <view class="status status-{{status}}">{{statusText}}</view>
+    <view wx:if="{{lastErrorText}}" class="evidence error-evidence">{{lastErrorText}}</view>
+  </view>
+
+  <view class="card">
+    <view class="section-title">4. 播放原音并比较</view>
+    <button data-test="A" bindtap="playTest">播放 TEST-A 原音</button>
+    <view class="evidence">{{testASummary}}</view>
+    <button data-test="B" bindtap="playTest">播放 TEST-B 原音</button>
+    <view class="evidence">{{testBSummary}}</view>
+    <button type="primary" bindtap="copyEvidence">复制两条证据</button>
+  </view>
+
+  <view class="card config-card">
+    <view class="section-title">Recorder 配置</view>
+    <view class="config">{{recorderOptionsText}}</view>
+  </view>
+</view>

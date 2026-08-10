@@ -1,0 +1,18 @@
+{
+  "pages": [
+    "pages/recorder/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "Recorder Onset POC",
+    "navigationBarBackgroundColor": "#1677ff",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f5f7fb"
+  },
+  "permission": {
+    "scope.record": {
+      "desc": "仅用于验证录音开头是否完整"
+    }
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}
