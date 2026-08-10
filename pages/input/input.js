@@ -2247,6 +2247,9 @@ function getEmptyConfirmationData() {
     assistantQuestionState: 'IDLE',
     assistantQuestions: [],
     saving: false,
+    showParseProgress: false,
+    parseProgressTitle: '',
+    parseProgressDetail: '',
     showParseEvidence: false,
     showDeepReviewButton: false,
     showFormalSaveButton: false,
@@ -2641,6 +2644,61 @@ function canRunPendingSave(page) {
     && !page.activeParseIdentity
     && !(inFlight && inFlight.settled !== true)
     && page.savingInProgress !== true;
+}
+
+function formalSaveExitPatch() {
+  return {
+    saving: false,
+    showParseProgress: false,
+    parseProgressTitle: '',
+    parseProgressDetail: ''
+  };
+}
+
+function commitFormalSaveExitSnapshot(page, patch) {
+  const projection = withConversationPhase(page.data || {}, patch);
+  if (page.data && typeof page.data === 'object') {
+    Object.assign(page.data, projection);
+  }
+  return projection;
+}
+
+function finalizeFormalSavePresentation(page, committed) {
+  page.savingInProgress = false;
+  const patch = committed
+    ? Object.assign(getEmptyConfirmationData(), formalSaveExitPatch())
+    : formalSaveExitPatch();
+  try {
+    if (committed) page.setData(patch);
+    else setConversationData(page, patch);
+    return true;
+  } catch (error) {
+    // setData 包装层若只抛一次，重试同一纯展示投影即可恢复；这里绝不重放业务保存。
+    try {
+      if (committed) page.setData(patch);
+      else setConversationData(page, patch);
+      return true;
+    } catch (ignored) {
+      // 连续的展示层异常也不能把保存权威状态留在 SAVING。先同步释放 Page
+      // 状态，再做一次纯展示投影；这里始终不会重放 business/storage 保存。
+      const fallbackProjection = commitFormalSaveExitSnapshot(page, patch);
+      try {
+        page.setData(fallbackProjection);
+        return true;
+      } catch (finalProjectionError) {
+        return false;
+      }
+    }
+  }
+}
+
+function showFormalSaveToast(payload) {
+  try {
+    wx.showToast(payload);
+    return true;
+  } catch (ignored) {
+    return false;
+  }
 }
 
 function buildTrustedAmountReviewText(originalText, question, canonicalAmount) {
@@ -4645,35 +4703,46 @@ Page({
       return;
     }
     this.savingInProgress = true;
-    setConversationData(this, {
-      saving: true,
-      showParseProgress: true,
-      parseProgressTitle: '正在保存',
-      parseProgressDetail: '请稍等，这笔记录只会保存一次'
-    });
-    const result = confirmationState.parseResult;
-    const saved = saveConfirmedDraft(state, result);
-    if (saved.type === 'error') {
-      this.savingInProgress = false;
-      setConversationData(this, { saving: false, showParseProgress: false });
-      wx.showToast({ title: saved.error || '订单没有更新，请核对后重试', icon: 'none' });
-      return;
-    }
-    if (saved.type === 'pending' && this.data.editingPendingId) {
-      const original = updatePendingNote(state, this.data.editingPendingId, result, (saved.record && saved.record.reason) || '信息仍不完整，需要稍后整理');
-      if (original && saved.record && saved.record.id && saved.record.id !== original.id) {
-        state.pendingNotes = (state.pendingNotes || []).filter((item) => item.id !== saved.record.id);
+    let committed = false;
+    try {
+      setConversationData(this, {
+        saving: true,
+        showParseProgress: true,
+        parseProgressTitle: '正在保存',
+        parseProgressDetail: '请稍等，这笔记录只会保存一次'
+      });
+      const result = confirmationState.parseResult;
+      const saved = saveConfirmedDraft(state, result);
+      if (saved.type === 'error') {
+        wx.showToast({
+          title: saved.error || '订单没有更新，请核对后重试',
+          icon: 'none'
+        });
+        return;
       }
-    } else {
-      markPendingNoteConverted(state, this.data.editingPendingId, saved);
+      if (saved.type === 'pending' && this.data.editingPendingId) {
+        const original = updatePendingNote(state, this.data.editingPendingId, result, (saved.record && saved.record.reason) || '信息仍不完整，需要稍后整理');
+        if (original && saved.record && saved.record.id && saved.record.id !== original.id) {
+          state.pendingNotes = (state.pendingNotes || []).filter((item) => item.id !== saved.record.id);
+        }
+      } else {
+        markPendingNoteConverted(state, this.data.editingPendingId, saved);
+      }
+      saveState(state, { writerSource: 'INPUT_FORMAL' });
+      committed = true;
+      wx.showToast({
+        title: saved.type === 'pending' ? '已存到待整理' : '已保存',
+        icon: 'success'
+      });
+    } catch (error) {
+      showFormalSaveToast({
+        title: committed ? '已保存，可到记录里查看' : '保存失败，请稍后重试',
+        icon: committed ? 'success' : 'none'
+      });
+      throw error;
+    } finally {
+      finalizeFormalSavePresentation(this, committed);
     }
-    saveState(state, { writerSource: 'INPUT_FORMAL' });
-    wx.showToast({
-      title: saved.type === 'pending' ? '已存到待整理' : '已保存',
-      icon: 'success'
-    });
-    this.savingInProgress = false;
-    this.setData(getEmptyConfirmationData());
   },
 
   savePending() {
