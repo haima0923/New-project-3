@@ -386,21 +386,110 @@ function lease014() {
 }
 
 function lease015() {
-  return withHarness({ caseId: 'LEASE-015', origin: 'records' }, (harness) => {
+  const recovered = withHarness({ caseId: 'LEASE-015-RECOVERED', origin: 'records' }, (harness) => {
     start(harness, 'hero', 1);
     const tabAcceptedWhileA = start(harness, 'tab', 2);
     const pending = snapshot(harness);
     cancel(harness, 'hero', 1);
     harness.recorder.emitStop(0, audioPayload('A'));
-    const tabAcceptedAfterA = start(harness, 'tab', 3);
-    const settled = snapshot(harness);
-    return [
-      check('LEASE015.HERO_TAB_SHARE_ONE_NATIVE_LEASE', tabAcceptedWhileA === false
-        && pending.recorder.startCount === 1, pending),
-      check('LEASE015.TAB_STARTS_AFTER_HERO_SETTLES', tabAcceptedAfterA === true
-        && settled.recorder.startCount === 2, settled)
-    ];
+    const desync = snapshot(harness);
+    const tabAcceptedAfterEarlyStop = start(harness, 'tab', 3);
+    const blockedAfterEarlyStop = snapshot(harness);
+    harness.recorder.emitStart(0);
+    const cleanupPending = snapshot(harness);
+    const tabAcceptedBeforeCleanupTerminal = start(harness, 'tab', 4);
+    harness.recorder.emitStop(0, audioPayload('A-CLEANUP'));
+    const drained = snapshot(harness);
+    const cAccepted = start(harness, 'tab', 5);
+    harness.recorder.emitStart(1);
+    const cReady = snapshot(harness);
+    end(harness, 'tab', 5);
+    harness.recorder.emitStop(1, audioPayload('C'));
+    return {
+      blockedAfterEarlyStop,
+      cAccepted,
+      cReady,
+      cleanupPending,
+      desync,
+      drained,
+      final: snapshot(harness),
+      pending,
+      tabAcceptedAfterEarlyStop,
+      tabAcceptedBeforeCleanupTerminal,
+      tabAcceptedWhileA
+    };
   });
+  const missingLateStart = withHarness({ caseId: 'LEASE-015-MISSING-LATE-START', origin: 'records' }, (harness) => {
+    start(harness, 'hero', 11);
+    cancel(harness, 'hero', 11);
+    harness.recorder.emitStop(0, audioPayload('A-MISSING'));
+    harness.scheduler.advanceBy(100);
+    harness.scheduler.advanceBy(500);
+    harness.scheduler.advanceBy(1000);
+    harness.dashboard.page.onHide();
+    harness.dashboard.page.onShow();
+    const heroAccepted = start(harness, 'hero', 12);
+    const tabAccepted = start(harness, 'tab', 13);
+    return { heroAccepted, state: snapshot(harness), tabAccepted };
+  });
+  const cleanupError = withHarness({ caseId: 'LEASE-015-CLEANUP-ERROR', origin: 'records' }, (harness) => {
+    start(harness, 'hero', 21);
+    cancel(harness, 'hero', 21);
+    harness.recorder.emitStop(0, audioPayload('A-ERROR'));
+    const tabAcceptedBeforeLateStart = start(harness, 'tab', 22);
+    harness.recorder.emitStart(0);
+    harness.recorder.emitError(0, 'operateRecorder:fail cleanup error');
+    const heroAcceptedAfterError = start(harness, 'hero', 23);
+    const tabAcceptedAfterError = start(harness, 'tab', 24);
+    return {
+      heroAcceptedAfterError,
+      state: snapshot(harness),
+      tabAcceptedAfterError,
+      tabAcceptedBeforeLateStart
+    };
+  });
+  return [
+    check('LEASE015.HERO_TAB_SHARE_ONE_NATIVE_LEASE', recovered.tabAcceptedWhileA === false
+      && recovered.pending.recorder.startCount === 1, recovered.pending),
+    check('LEASE015.EARLY_STOP_ENTERS_DESYNC_AND_BLOCKS_B', recovered.tabAcceptedAfterEarlyStop === false
+      && /DESYNC|DRAIN|ERROR/.test(recovered.desync.phase)
+      && recovered.desync.audio === null
+      && recovered.blockedAfterEarlyStop.recorder.startCount === 1,
+    { blocked: recovered.blockedAfterEarlyStop, desync: recovered.desync }),
+    check('LEASE015.LATE_START_ZERO_READY_AND_CLEANUP_STOP_ONCE', recovered.cleanupPending.phase !== 'READY_RECORDING'
+      && recovered.cleanupPending.vibrationCount === 0
+      && recovered.cleanupPending.recorder.stopCount === 2
+      && recovered.tabAcceptedBeforeCleanupTerminal === false
+      && recovered.cleanupPending.audio === null, recovered.cleanupPending),
+    check('LEASE015.C_STARTS_ONLY_AFTER_CLEANUP_TERMINAL', recovered.drained.phase === 'IDLE'
+      && recovered.cAccepted === true
+      && recovered.cReady.phase === 'READY_RECORDING'
+      && recovered.cReady.recorder.startCount === 2, recovered),
+    check('LEASE015.C_AUDIO_OWNS_C_FILE_AND_DUAL_IDENTITY', recovered.final.phase === 'AUDIO_READY'
+      && recovered.final.audio
+      && Boolean(recovered.final.audio.captureId)
+      && Boolean(recovered.final.audio.nativeLeaseId)
+      && recovered.final.audio.tempFilePath === audioPayload('C').tempFilePath
+      && recovered.final.audio.duration === audioPayload('C').duration
+      && recovered.final.audio.fileSize === audioPayload('C').fileSize
+      && recovered.final.audio.tempFilePath !== audioPayload('A').tempFilePath,
+    recovered.final),
+    check('LEASE015.MISSING_LATE_START_NEVER_AUTO_RELEASES', missingLateStart.heroAccepted === false
+      && missingLateStart.tabAccepted === false
+      && missingLateStart.state.recorder.startCount === 1
+      && /DESYNC|DRAIN|ERROR/.test(missingLateStart.state.phase)
+      && missingLateStart.state.audio === null
+      && zeroAuthority(missingLateStart.state), missingLateStart),
+    check('LEASE015.CLEANUP_ERROR_POISONS_CURRENT_PROCESS', cleanupError.tabAcceptedBeforeLateStart === false
+      && cleanupError.heroAcceptedAfterError === false
+      && cleanupError.tabAcceptedAfterError === false
+      && cleanupError.state.recorder.startCount === 1
+      && cleanupError.state.recorder.stopCount === 2
+      && /ERROR|POISON|DESYNC|DRAIN/.test(cleanupError.state.phase)
+      && cleanupError.state.audio === null
+      && cleanupError.state.vibrationCount === 0
+      && zeroAuthority(cleanupError.state), cleanupError)
+  ];
 }
 
 function stopFailureScenario(caseId, mode) {

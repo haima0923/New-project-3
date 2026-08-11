@@ -1,6 +1,8 @@
+const fs = require('fs');
 const { stableHash } = require('../../../utils/record-state-diff');
 const { CASES } = require('./contract-cases');
 const { executeCase } = require('./execute-case');
+const { CONTROLLER_PATH } = require('./runtime');
 
 function fingerprint(result) {
   return stableHash({
@@ -49,15 +51,27 @@ async function runSuite(repeat = 2) {
     if (!values.every((value) => value === values[0])) unstable.push(contract.id);
   });
   const results = rounds[rounds.length - 1];
+  const profile = fs.existsSync(CONTROLLER_PATH)
+    ? 'VOICE_CAPTURE_V2_WORKTREE'
+    : 'PARENT_CAPABILITY_MISSING';
   const runnerErrors = results.filter((entry) => entry.status === 'RUNNER_ERROR');
   const drift = results.filter((entry) => {
     const contract = CASES.find((candidate) => candidate.id === entry.id);
-    const expectedStatus = contract.expected === 'GREEN' ? 'PASS' : 'CASE_FAIL';
-    return entry.status !== expectedStatus || entry.firstFailure !== contract.firstFailure;
+    const capabilityMissing = profile === 'PARENT_CAPABILITY_MISSING'
+      && !contract.id.startsWith('GREEN-')
+      && contract.id !== 'VCAP-024';
+    const expectedStatus = capabilityMissing ? 'CASE_FAIL' : 'PASS';
+    const expectedFirstFailure = capabilityMissing
+      ? contract.capabilityMissingFirstFailure
+      : contract.firstFailure;
+    return entry.status !== expectedStatus || entry.firstFailure !== expectedFirstFailure;
   });
   const greenFailures = results.filter((entry) => {
     const contract = CASES.find((candidate) => candidate.id === entry.id);
-    return contract.expected === 'GREEN' && entry.status !== 'PASS';
+    const capabilityMissing = profile === 'PARENT_CAPABILITY_MISSING'
+      && !contract.id.startsWith('GREEN-')
+      && contract.id !== 'VCAP-024';
+    return !capabilityMissing && contract.expected === 'GREEN' && entry.status !== 'PASS';
   });
   const passCount = results.filter((entry) => entry.status === 'PASS').length;
   const failCount = results.filter((entry) => entry.status === 'CASE_FAIL').length;
@@ -80,6 +94,7 @@ async function runSuite(repeat = 2) {
     gate,
     greenFailures: greenFailures.map((entry) => entry.id),
     passCount,
+    profile,
     repeat,
     results,
     runnerErrorCount: runnerErrors.length,

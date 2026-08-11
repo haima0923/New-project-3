@@ -27,6 +27,7 @@ async function main() {
   process.stdout.write(`PASS=${report.passCount}\n`);
   process.stdout.write(`CASE_FAIL=${report.failCount}\n`);
   process.stdout.write(`RUNNER_ERROR=${report.runnerErrorCount}\n`);
+  process.stdout.write(`BASELINE_PROFILE=${report.profile}\n`);
   if (report.drift.length) process.stdout.write(`BASELINE_DRIFT=${report.drift.join(',')}\n`);
   if (report.greenFailures.length) process.stdout.write(`GREEN_FAILURE=${report.greenFailures.join(',')}\n`);
   if (report.unstable.length) process.stdout.write(`UNSTABLE_CASES=${report.unstable.join(',')}\n`);

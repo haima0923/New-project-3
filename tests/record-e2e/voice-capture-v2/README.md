@@ -55,13 +55,13 @@ IDLE
 | VCAP-013 | Hero / Tab READY、配置和震动语义一致 |
 | VCAP-014 | Hero / Tab 单 owner，非 owner 不终止 |
 | VCAP-015 | stop/onStop 终态恰好一次 |
-| VCAP-016 | 旧 capture Recorder 回调不得污染新 capture |
+| VCAP-016 | A STOP_PENDING 时拒绝重叠 B；A terminal 后用户重新发起 B，fileA 不得绑定 B |
 | VCAP-017 | audio metadata 与 capture identity/时间绑定，不入 Storage |
 | VCAP-018 | 260ms 不能制造 READY 或震动 |
 | VCAP-019 | PREPARING UI 不能伪装“可以说了” |
 | VCAP-020 | 真实 onStart 后 READY + vibrateShort once |
 | VCAP-021 | FINALIZING_AUDIO 文案只说处理录音，不冒充识别 |
-| VCAP-022 | start error 回 IDLE，可重试 |
+| VCAP-022 | Recorder onError 使当前进程 POISONED；同进程拒绝复用，新进程完整恢复 |
 | VCAP-023 | stop error / 缺 tempFilePath 回 IDLE，可重试 |
 | VCAP-024 | 冻结第一台真机 A/B 时间线、原音和 warmup 裁决 |
 
@@ -75,6 +75,22 @@ IDLE
 
 KEEP 只表示安全意图继续成立；未来实现仍须由 VCAP 的 Recorder session 身份重验，不能直接
 把旧 WechatSI 运行结果当作文件录音正控。
+
+## Native Lease 安全合同迁移
+
+`RecorderManager.onStart/onStop/onError` 没有 callback session identity，因此不能把
+“User Capture 已结束”当作“原生 Recorder 已结算”。本轮迁移三条旧语义：
+
+- LEASE-015：prestart early `onStop` 进入 DESYNC；late `onStart` 触发 cleanup stop，
+  新 terminal 后才允许新的 C；缺失 callback 时不能靠 timer/lifecycle 猜恢复。
+- VCAP-016：A `STOP_PENDING` 期间 B `Recorder.start()` 增量必须为 0；A terminal 后由
+  用户重新发起 B，B 的 captureId/nativeLeaseId/fileB 必须一致，fileA 不能进入 B。
+- VCAP-022：任何原生 `onError` 都隔离当前进程的 recorder epoch；timer、页面生命周期、
+  owner release 和迟到 callback 均不能解除，只有全新 runtime/manager 可恢复。
+
+这不是 production regression，也不是放宽 expected。安全模型已从“用户 capture 结束即可
+复用 Recorder”升级为“Native Lease 明确结算后才可复用 Recorder”。宁可拒绝下一次录音，
+也不能把旧录音文件串绑到下一笔业务。
 
 ## 证据边界
 
@@ -91,9 +107,10 @@ Controlled Recorder 能证明状态、身份和零业务 mutation，不能证明
 node tests/record-e2e/voice-capture-v2/run.js --repeat 2
 ```
 
-- exit `1`：稳定预期 RED，所有 GREEN 正控通过；
+- exit `1`：干净父提交缺少 V2 controller 时的稳定预期 RED；
 - exit `2`：Runner error、GREEN failure、不稳定或 baseline drift；
 - exit `0`：未来生产实现全部转绿且已显式迁移 baseline。
 
-当前 failure-first 基线为 `23 CASE_FAIL + 4 PASS + 0 RUNNER_ERROR`。VCAP-011 还会揭示
-权限拒绝前错误震动的问题；READY 震动只能来自真实 Recorder `onStart`。
+当前 V2 工作树目标为 `27 PASS + 0 CASE_FAIL + 0 RUNNER_ERROR`。候选 test-only commit
+在干净父提交缺少未提交 controller 时，按能力分层保持稳定预期红而不是 Runner error。
+READY 震动仍只能来自真实 Recorder `onStart`。

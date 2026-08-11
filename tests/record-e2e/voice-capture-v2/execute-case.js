@@ -339,18 +339,56 @@ function vcap015() {
 function vcap016() {
   return withHarness({ caseId: 'VCAP-016' }, (harness) => {
     dispatchStart(harness, 'hero', 1);
-    harness.dispatch('hero', 'cancel', harness.touch.touchEnd(1, 200, 400));
-    dispatchStart(harness, 'hero', 2);
+    harness.recorder.emitStart(0);
+    const aReady = harness.audit();
+    dispatchEnd(harness, 'hero', 1);
+    const aFinalizing = harness.audit();
+    const bAcceptedWhileAStopping = dispatchStart(harness, 'hero', 2);
+    const bBlocked = harness.audit();
+    harness.recorder.emitStop(0, {
+      duration: 1111,
+      fileSize: 11111,
+      tempFilePath: 'wxfile://file-a.mp3'
+    });
+    const aSettled = harness.audit();
+    const bAcceptedAfterASettled = dispatchStart(harness, 'hero', 3);
     harness.recorder.emitStart(1);
-    harness.recorder.emitStop(0, { tempFilePath: 'wxfile://stale-a.mp3' });
-    const afterStale = harness.audit();
-    dispatchEnd(harness, 'hero', 2);
-    harness.recorder.emitStop(1, { tempFilePath: 'wxfile://current-b.mp3' });
+    const bReady = harness.audit();
+    dispatchEnd(harness, 'hero', 3);
+    harness.recorder.emitStop(1, {
+      duration: 2222,
+      fileSize: 22222,
+      tempFilePath: 'wxfile://file-b.mp3'
+    });
     const final = harness.audit();
+    const audioA = aSettled.controller.audio || {};
+    const audioB = final.controller.audio || {};
     return [
-      check('STALE_RECORDER_CALLBACK_IGNORED', afterStale.view.phase === 'READY_RECORDING'
-        && final.view.phase === 'AUDIO_READY', { afterStale, final }),
-      check('STALE_CALLBACK_ZERO_AUTHORITY', zeroAuthority(final), final)
+      check('VCAP016.A_STOP_PENDING_BLOCKS_B_NATIVE_START', aReady.view.phase === 'READY_RECORDING'
+        && aFinalizing.view.phase === 'FINALIZING_AUDIO'
+        && aFinalizing.recorder.stopCount === 1
+        && bAcceptedWhileAStopping === false
+        && bBlocked.recorder.startCount === 1
+        && bBlocked.view.phase === 'FINALIZING_AUDIO'
+        && !bBlocked.controller.audio, { aFinalizing, bBlocked }),
+      check('VCAP016.B_REQUIRES_NEW_USER_GESTURE_AFTER_A_TERMINAL', aSettled.view.phase === 'AUDIO_READY'
+        && audioA.tempFilePath === 'wxfile://file-a.mp3'
+        && bAcceptedAfterASettled === true
+        && bReady.view.phase === 'READY_RECORDING'
+        && bReady.recorder.startCount === 2
+        && bReady.vibrationCount === aReady.vibrationCount + 1,
+      { aReady, aSettled, bReady }),
+      check('VCAP016.B_AUDIO_READY_OWNS_B_FILE_AND_IDS', final.view.phase === 'AUDIO_READY'
+        && Boolean(audioB.captureId)
+        && Boolean(audioB.nativeLeaseId)
+        && audioB.captureId !== audioA.captureId
+        && audioB.nativeLeaseId !== audioA.nativeLeaseId
+        && audioB.tempFilePath === 'wxfile://file-b.mp3'
+        && Number(audioB.duration) === 2222
+        && Number(audioB.fileSize) === 22222
+        && audioB.tempFilePath !== audioA.tempFilePath, { audioA, audioB }),
+      check('VCAP016.SERIAL_CAPTURE_ZERO_BUSINESS_AUTHORITY', zeroAuthority(final)
+        && final.storageMutations.length === 0, final)
     ];
   });
 }
@@ -439,18 +477,87 @@ function vcap021() {
 }
 
 function vcap022() {
-  return withHarness({ caseId: 'VCAP-022' }, (harness) => {
+  const poisoned = withHarness({ caseId: 'VCAP-022-POISONED' }, (harness) => {
     dispatchStart(harness, 'hero', 1);
+    harness.recorder.emitStart(0);
     harness.recorder.emitError(0, 'operateRecorder:fail controlled start');
     const afterError = harness.audit();
-    dispatchStart(harness, 'hero', 2);
-    const retry = harness.audit();
-    return [
-      check('START_ERROR_RECOVERS_IDLE', afterError.view.phase === 'IDLE'
-        && retry.recorder.startCount === 2, { afterError, retry }),
-      check('START_ERROR_VISIBLE', hasText(afterError, /录音.*失败|请重试/), afterError)
-    ];
+    const heroAcceptedImmediately = dispatchStart(harness, 'hero', 2);
+    const tabAcceptedImmediately = dispatchStart(harness, 'tab', 3);
+    harness.scheduler.advanceBy(100);
+    harness.scheduler.advanceBy(500);
+    harness.scheduler.advanceBy(1000);
+    harness.dashboard.page.onHide();
+    harness.dashboard.page.onShow();
+    harness.tab.__detach();
+    harness.tab.__attach();
+    harness.recorder.emitStart(0);
+    harness.recorder.emitStop(0, {
+      duration: 1111,
+      fileSize: 11111,
+      tempFilePath: 'wxfile://poisoned-a.mp3'
+    });
+    harness.recorder.emitError(0, 'operateRecorder:fail late poisoned callback');
+    const heroAcceptedAfterLifecycle = dispatchStart(harness, 'hero', 4);
+    const tabAcceptedAfterLifecycle = dispatchStart(harness, 'tab', 5);
+    harness.dashboard.page.onUnload();
+    const tabAcceptedAfterSourceOwnerRelease = dispatchStart(harness, 'tab', 6);
+    return {
+      afterError,
+      heroAcceptedAfterLifecycle,
+      heroAcceptedImmediately,
+      state: harness.audit(),
+      tabAcceptedAfterLifecycle,
+      tabAcceptedAfterSourceOwnerRelease,
+      tabAcceptedImmediately
+    };
   });
+  const newProcess = withHarness({ caseId: 'VCAP-022-NEW-PROCESS' }, (harness) => {
+    const cAccepted = dispatchStart(harness, 'hero', 7);
+    harness.recorder.emitStart(0);
+    const cReady = harness.audit();
+    dispatchEnd(harness, 'hero', 7);
+    harness.recorder.emitStop(0, {
+      duration: 3333,
+      fileSize: 33333,
+      tempFilePath: 'wxfile://file-c.mp3'
+    });
+    return { cAccepted, cReady, final: harness.audit() };
+  });
+  const audioC = newProcess.final.controller.audio || {};
+  return [
+    check('VCAP022.RECORDER_ERROR_POISONS_CURRENT_PROCESS', /ERROR|POISON|DESYNC|DRAIN/.test(
+      poisoned.afterError.view.phase
+    )
+      && poisoned.heroAcceptedImmediately === false
+      && poisoned.tabAcceptedImmediately === false
+      && poisoned.heroAcceptedAfterLifecycle === false
+      && poisoned.tabAcceptedAfterLifecycle === false
+      && poisoned.tabAcceptedAfterSourceOwnerRelease === false
+      && poisoned.state.recorder.startCount === 1
+      && !poisoned.state.controller.audio, poisoned),
+    check('VCAP022.POISON_IS_NOT_TIMER_OR_LIFECYCLE_RECOVERY', /ERROR|POISON|DESYNC|DRAIN/.test(
+      poisoned.state.view.phase
+    ) && poisoned.state.recorder.startCount === 1, poisoned.state),
+    check('VCAP022.POISONED_UI_REQUIRES_PROCESS_RESTART', hasText(
+      poisoned.afterError,
+      /录音.*(暂时不可用|失败).*重新(进入|打开).*小程序|重新进入小程序/
+    ), poisoned.afterError),
+    check('VCAP022.ERROR_ZERO_AUDIO_AND_AUTHORITY', zeroAuthority(poisoned.state)
+      && poisoned.state.storageMutations.length === 0
+      && poisoned.state.businessMutation === false, poisoned.state),
+    check('VCAP022.NEW_PROCESS_RECOVERS_FULL_AUDIO_PATH', newProcess.cAccepted === true
+      && newProcess.cReady.view.phase === 'READY_RECORDING'
+      && newProcess.cReady.vibrationCount === 1
+      && newProcess.final.view.phase === 'AUDIO_READY'
+      && Boolean(audioC.captureId)
+      && Boolean(audioC.nativeLeaseId)
+      && audioC.tempFilePath === 'wxfile://file-c.mp3'
+      && Number(audioC.duration) === 3333
+      && Number(audioC.fileSize) === 33333, newProcess),
+    check('VCAP022.NEW_PROCESS_ZERO_BUSINESS_AUTHORITY', zeroAuthority(newProcess.final)
+      && newProcess.final.storageMutations.length === 0, newProcess.final)
+  ];
 }
 
 function vcap023() {
