@@ -135,5 +135,6 @@ WechatSI adapter 无法提供 session-bound onStart/final 时，才应先停止�
 node tests/record-e2e/wxvoice-readiness-v1/run.js --repeat 2
 ```
 
-产品差异为 exit 1；runner/fixture/不稳定/基线漂移为 exit 2。生产修复后7条 RED 转绿会
-先表现为 baseline drift，需在独立测试冻结轮迁移 expected，不能在生产轮改断言迎合。
+产品差异为 exit 1；runner/fixture/不稳定或部分基线漂移为 exit 2。只有14条行为合同全部
+通过时，failure-first runner才直接报告 `CONTRACT_GATE=PASS`；不能靠单独放宽某条expected
+或改变首失败来掩盖未完成实现。

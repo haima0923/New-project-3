@@ -475,6 +475,7 @@ async function wx009() {
     probe.invokeAtDue(timerA);
     const afterStale = surface(harness, 'tab');
     const auditAfterStale = harness.audit();
+    const vibrationAfterStale = probe.vibrationCount();
     harness.scheduler.advanceBy(300);
     const readyB = surface(harness, 'tab');
     end(harness, 'tab', 2);
@@ -486,8 +487,13 @@ async function wx009() {
       check('WX009.A_TIMER_WAS_REVOKED', timerA.cancelled === true, probe.timerView(timerA)),
       check('WX009.STALE_A_TIMER_CANNOT_AUTHORIZE_B', isStabilizing(beforeStale)
         && isStabilizing(afterStale)
-        && probe.vibrationCount() === 0
-        && auditAfterStale.handoff.publishCount === 0, { beforeStale, afterStale, auditAfterStale }),
+        && vibrationAfterStale === 0
+        && auditAfterStale.handoff.publishCount === 0, {
+        beforeStale,
+        afterStale,
+        auditAfterStale,
+        vibrationAfterStale
+      }),
       check('WX009.B_OWN_TIMER_AUTHORIZES_B', isListening(readyB), readyB),
       check('WX009.B_FINAL_ONLY', audit.handoff.publishCount === 1
         && exactHandoff(audit.handoff.publishPayloads[0], OTHER_TRANSCRIPT)

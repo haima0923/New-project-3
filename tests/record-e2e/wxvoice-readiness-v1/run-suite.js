@@ -66,12 +66,12 @@ async function runSuite(repeat = 2) {
   if (runnerErrors.length || unstable.length || greenFailures.length) {
     gate = 'HARNESS_FAILURE';
     exitCode = 2;
-  } else if (drift.length) {
-    gate = 'CONTRACT_DRIFT';
-    exitCode = 2;
   } else if (failCount === 0) {
     gate = 'PASS';
     exitCode = 0;
+  } else if (drift.length) {
+    gate = 'CONTRACT_DRIFT';
+    exitCode = 2;
   }
   return {
     drift: drift.map((entry) => entry.id),
