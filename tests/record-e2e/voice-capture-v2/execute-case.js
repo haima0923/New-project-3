@@ -51,6 +51,12 @@ function dispatchEnd(harness, surface = 'hero', identifier = 1) {
   return harness.dispatch(surface, 'end', harness.touch.touchEnd(identifier, 200, 400));
 }
 
+function emitStartAndReachReady(harness, recorderIndex = 0) {
+  harness.recorder.emitStart(recorderIndex);
+  harness.scheduler.advanceBy(700);
+  return harness.audit();
+}
+
 function withHarness(options, callback) {
   const harness = createVcapHarness(options);
   try {
@@ -112,7 +118,7 @@ function vcap003() {
 
 function completeReadyRecording(harness, surface = 'hero') {
   dispatchStart(harness, surface);
-  harness.recorder.emitStart(0);
+  emitStartAndReachReady(harness, 0);
   dispatchEnd(harness, surface);
   harness.recorder.emitStop(0, {
     duration: 2400,
@@ -172,7 +178,7 @@ function vcap006() {
 function vcap007() {
   return withHarness({ caseId: 'VCAP-007' }, (harness) => {
     dispatchStart(harness);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     harness.dispatch('hero', 'move', harness.touch.touchMove([
       harness.touch.point(1, 200, 340)
     ]));
@@ -190,7 +196,7 @@ function vcap007() {
 function vcap008() {
   return withHarness({ caseId: 'VCAP-008' }, (harness) => {
     dispatchStart(harness);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     harness.dispatch('hero', 'move', harness.touch.touchMove([
       harness.touch.point(1, 200, 340)
     ]));
@@ -235,7 +241,7 @@ function vcap010() {
   });
   const ready = withHarness({ caseId: 'VCAP-010-READY', origin: 'records' }, (harness) => {
     dispatchStart(harness, 'tab');
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     harness.tab.__detach();
     harness.recorder.emitStop(0);
     return harness.audit();
@@ -284,7 +290,7 @@ function vcap012() {
 function vcap013() {
   const capture = (surface, origin) => withHarness({ caseId: `VCAP-013-${surface}`, origin }, (harness) => {
     dispatchStart(harness, surface);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     return harness.audit();
   });
   const hero = capture('hero', 'dashboard');
@@ -321,7 +327,7 @@ function vcap014() {
 function vcap015() {
   return withHarness({ caseId: 'VCAP-015' }, (harness) => {
     dispatchStart(harness);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     dispatchEnd(harness);
     dispatchEnd(harness);
     harness.dispatch('hero', 'cancel', harness.touch.touchEnd(1, 200, 400));
@@ -339,7 +345,7 @@ function vcap015() {
 function vcap016() {
   return withHarness({ caseId: 'VCAP-016' }, (harness) => {
     dispatchStart(harness, 'hero', 1);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     const aReady = harness.audit();
     dispatchEnd(harness, 'hero', 1);
     const aFinalizing = harness.audit();
@@ -352,7 +358,7 @@ function vcap016() {
     });
     const aSettled = harness.audit();
     const bAcceptedAfterASettled = dispatchStart(harness, 'hero', 3);
-    harness.recorder.emitStart(1);
+    emitStartAndReachReady(harness, 1);
     const bReady = harness.audit();
     dispatchEnd(harness, 'hero', 3);
     harness.recorder.emitStop(1, {
@@ -396,7 +402,7 @@ function vcap016() {
 function vcap017() {
   return withHarness({ caseId: 'VCAP-017' }, (harness) => {
     dispatchStart(harness);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     dispatchEnd(harness);
     harness.recorder.emitStop(0, {
       duration: 5729.857921600342,
@@ -450,13 +456,21 @@ function vcap020() {
   return withHarness({ caseId: 'VCAP-020' }, (harness) => {
     dispatchStart(harness);
     harness.recorder.emitStart(0);
+    const afterOnStart = harness.audit();
     harness.recorder.emitStart(0);
-    const audit = harness.audit();
+    harness.scheduler.advanceBy(699);
+    const beforeBoundary = harness.audit();
+    harness.scheduler.advanceBy(1);
+    const atBoundary = harness.audit();
     return [
-      check('ONSTART_READY_VIBRATE_ONCE', audit.view.phase === 'READY_RECORDING'
-        && audit.vibrationCount === 1, audit),
-      check('READY_VISIBLE_COPY', /可以说了/.test(audit.view.title)
-        && /松开发送/.test(audit.view.subtitle), audit.view)
+      check('ONSTART_ALONE_NOT_READY', afterOnStart.view.phase === 'POST_ONSTART_STABILIZING'
+        && afterOnStart.vibrationCount === 0, afterOnStart),
+      check('ONSTART_699MS_NOT_READY', beforeBoundary.view.phase === 'POST_ONSTART_STABILIZING'
+        && beforeBoundary.vibrationCount === 0, beforeBoundary),
+      check('ONSTART_700MS_READY_VIBRATE_ONCE', atBoundary.view.phase === 'READY_RECORDING'
+        && atBoundary.vibrationCount === 1, atBoundary),
+      check('READY_VISIBLE_COPY', /可以说了/.test(atBoundary.view.title)
+        && /松开发送/.test(atBoundary.view.subtitle), atBoundary.view)
     ];
   });
 }
@@ -464,7 +478,7 @@ function vcap020() {
 function vcap021() {
   return withHarness({ caseId: 'VCAP-021' }, (harness) => {
     dispatchStart(harness);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     dispatchEnd(harness);
     const audit = harness.audit();
     return [
@@ -514,7 +528,7 @@ function vcap022() {
   });
   const newProcess = withHarness({ caseId: 'VCAP-022-NEW-PROCESS' }, (harness) => {
     const cAccepted = dispatchStart(harness, 'hero', 7);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     const cReady = harness.audit();
     dispatchEnd(harness, 'hero', 7);
     harness.recorder.emitStop(0, {
@@ -563,7 +577,7 @@ function vcap022() {
 function vcap023() {
   return withHarness({ caseId: 'VCAP-023' }, (harness) => {
     dispatchStart(harness, 'hero', 1);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     dispatchEnd(harness, 'hero', 1);
     harness.recorder.emitStop(0, { tempFilePath: '' });
     const afterMissingPath = harness.audit();
@@ -590,8 +604,494 @@ function vcap024() {
       && /reportedDuration`: `8978\.640794754028ms`/.test(source)
       && /fileSize`: `53520 bytes`/.test(source)
       && /原音开头实际听到：`冯总订水杯137个`/.test(source), source),
-    check('DEVICE_WARMUP_VERDICT_FROZEN', source.includes('DEVICE_RECORDER_WARMUP_REQUIRED')
-      && source.includes('DEVICE_COVERAGE_PENDING'), source)
+    check('REAL_DEVICE_G_H_700MS_EXACT', /约611ms/.test(source)
+      && /约704ms/.test(source)
+      && /约328ms/.test(source)
+      && /约702ms/.test(source)
+      && /POST_ONSTART_STABILIZATION_SUPPORTED/.test(source)
+      && /HAPTIC_ALLOWED/.test(source), source),
+    check('SECOND_IPHONE_H_EXACT', /第二台 iPhone TEST-H（最终验收成功 run）/.test(source)
+      && /约170ms/.test(source)
+      && /约8756ms/.test(source)
+      && /约8745ms/.test(source)
+      && /约10\.8ms/.test(source)
+      && /52436 bytes/.test(source)
+      && /原音开头实际听到：`冯总订水杯137个`/.test(source), source),
+    check('DEVICE_COVERAGE_MINIMUM_PASS_FROZEN', source.includes(
+      'DEVICE_COVERAGE_MINIMUM_PASS = PASS'
+    ) && source.includes('ANDROID_COVERAGE = PENDING'), source),
+    check('ANDROID_COVERAGE_NOT_OVERCLAIMED', /当前证据仅覆盖两台 iPhone/.test(source)
+      && /不能表述为跨平台完成/.test(source), source)
+  ];
+}
+
+function ready001() {
+  return withHarness({ caseId: 'VCAP-READY-001' }, (harness) => {
+    dispatchStart(harness);
+    const afterTouchStart = harness.audit();
+    harness.scheduler.advanceBy(260);
+    const afterLegacyThreshold = harness.audit();
+    harness.scheduler.advanceBy(740);
+    const afterTouchStart1000 = harness.audit();
+    harness.scheduler.advanceBy(1000);
+    const afterTouchStart2000 = harness.audit();
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const afterOnStart = harness.audit();
+    harness.recorder.emitFrame(0, { frameBuffer: new ArrayBuffer(1024) });
+    const afterFirstFrame = harness.audit();
+    harness.recorder.emitFrame(0, { frameBuffer: new ArrayBuffer(1024) });
+    harness.recorder.emitFrame(0, { frameBuffer: new ArrayBuffer(1024) });
+    const afterThirdFrame = harness.audit();
+    for (let index = 3; index < 32; index += 1) {
+      harness.recorder.emitFrame(0, { frameBuffer: new ArrayBuffer(1024) });
+    }
+    const afterFrameBurst = harness.audit();
+    harness.scheduler.advanceBy(699);
+    const at699 = harness.audit();
+    const timerSnapshots = harness.scheduler.snapshotsAfter(checkpoint);
+    return [
+      check('READY001.ONSTART_699MS_NOT_READY', at699.view.phase === 'POST_ONSTART_STABILIZING'
+        && at699.vibrationCount === 0, at699),
+      check('READY001.OLD_READY_AUTHORITIES_REJECTED', afterTouchStart.view.phase === 'PREPARING'
+        && afterLegacyThreshold.view.phase === 'PREPARING'
+        && afterTouchStart1000.view.phase === 'PREPARING'
+        && afterTouchStart1000.vibrationCount === 0
+        && afterTouchStart2000.view.phase === 'PREPARING'
+        && afterTouchStart2000.vibrationCount === 0
+        && afterOnStart.view.phase === 'POST_ONSTART_STABILIZING'
+        && at699.view.phase === 'POST_ONSTART_STABILIZING', {
+        afterLegacyThreshold,
+        afterOnStart,
+        afterTouchStart,
+        afterTouchStart1000,
+        afterTouchStart2000,
+        at699
+      }),
+      check('READY001.ARBITRARY_FRAME_BURST_HAS_ZERO_READY_AUTHORITY', [
+        afterFirstFrame,
+        afterThirdFrame,
+        afterFrameBurst
+      ].every((entry) => entry.view.phase === 'POST_ONSTART_STABILIZING'
+        && entry.vibrationCount === 0), {
+        afterFirstFrame,
+        afterFrameBurst,
+        afterThirdFrame
+      }),
+      check('READY001.ONE_700MS_TIMER_FROM_LEGAL_ONSTART', timerSnapshots.length === 1
+        && timerSnapshots[0].dueAt - harness.scheduler.now() === 1, timerSnapshots)
+    ];
+  });
+}
+
+function ready002() {
+  return withHarness({ caseId: 'VCAP-READY-002' }, (harness) => {
+    dispatchStart(harness);
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    harness.scheduler.advanceBy(699);
+    const beforeBoundary = harness.audit();
+    harness.scheduler.advanceBy(1);
+    const atBoundary = harness.audit();
+    const timerSnapshots = harness.scheduler.snapshotsAfter(checkpoint);
+    return [
+      check('READY002.BEFORE_700MS_NOT_READY', beforeBoundary.view.phase === 'POST_ONSTART_STABILIZING'
+        && beforeBoundary.vibrationCount === 0, beforeBoundary),
+      check('READY002.EXACT_700MS_READY', atBoundary.view.phase === 'READY_RECORDING'
+        && atBoundary.vibrationCount === 1, atBoundary),
+      check('READY002.TIMER_BOUNDARY_EXACT', timerSnapshots.length === 1
+        && Number(timerSnapshots[0].dueAt) === 700, timerSnapshots)
+    ];
+  });
+}
+
+function ready003() {
+  return withHarness({ caseId: 'VCAP-READY-003' }, (harness) => {
+    dispatchStart(harness);
+    const firstCheckpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const firstTimers = harness.scheduler.snapshotsAfter(firstCheckpoint);
+    harness.scheduler.advanceBy(300);
+    const duplicateCheckpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const duplicateTimers = harness.scheduler.snapshotsAfter(duplicateCheckpoint);
+    harness.scheduler.advanceBy(399);
+    const at699 = harness.audit();
+    harness.scheduler.advanceBy(1);
+    const at700 = harness.audit();
+    harness.scheduler.advanceBy(700);
+    const final = harness.audit();
+    return [
+      check('READY003.DUPLICATE_ONSTART_DOES_NOT_RESTART_TIMER', firstTimers.length === 1
+        && duplicateTimers.length === 0
+        && at699.view.phase === 'POST_ONSTART_STABILIZING'
+        && at699.vibrationCount === 0, { at699, duplicateTimers, firstTimers }),
+      check('READY003.READY_AND_HAPTIC_EXACTLY_ONCE', at700.view.phase === 'READY_RECORDING'
+        && at700.vibrationCount === 1
+        && final.view.phase === 'READY_RECORDING'
+        && final.vibrationCount === 1, { at700, final })
+    ];
+  });
+}
+
+function ready004() {
+  return withHarness({ caseId: 'VCAP-READY-004' }, (harness) => {
+    dispatchStart(harness);
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timer = harness.scheduler.snapshotsAfter(checkpoint)[0] || null;
+    harness.scheduler.advanceBy(300);
+    const beforeRelease = harness.audit();
+    dispatchEnd(harness);
+    const afterRelease = harness.audit();
+    harness.scheduler.invokeSnapshotAtDue(timer);
+    harness.recorder.emitStop(0, {
+      duration: 1111,
+      fileSize: 11111,
+      tempFilePath: 'wxfile://pre-ready-a.mp3'
+    });
+    const final = harness.audit();
+    return [
+      check('READY004.PRE_READY_RELEASE_INVALIDATES_TIMER', Boolean(timer)
+        && timer.cancelled === true
+        && beforeRelease.view.phase === 'POST_ONSTART_STABILIZING'
+        && beforeRelease.vibrationCount === 0
+        && afterRelease.recorder.stopCount === 1
+        && afterRelease.vibrationCount === 0, { afterRelease, beforeRelease, timer }),
+      check('READY004.CLEARED_TIMER_ZERO_READY', final.view.phase !== 'READY_RECORDING'
+        && final.vibrationCount === 0
+        && !final.controller.audio, final),
+      check('READY004.PRE_READY_FILE_ZERO_AUTHORITY', zeroAuthority(final)
+        && final.storageMutations.length === 0, final)
+    ];
+  });
+}
+
+function ready005() {
+  return withHarness({ caseId: 'VCAP-READY-005' }, (harness) => {
+    dispatchStart(harness);
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timer = harness.scheduler.snapshotsAfter(checkpoint)[0] || null;
+    harness.scheduler.advanceBy(300);
+    const beforeMove = harness.audit();
+    const moveAccepted = harness.dispatch('hero', 'move', harness.touch.touchMove([
+      harness.touch.point(1, 200, 340)
+    ]));
+    const afterMove = harness.audit();
+    harness.scheduler.invokeSnapshotAtDue(timer);
+    const afterDue = harness.audit();
+    dispatchEnd(harness);
+    const afterCancel = harness.audit();
+    harness.recorder.emitStop(0, {
+      duration: 1222,
+      fileSize: 12222,
+      tempFilePath: 'wxfile://cancelled-before-ready.mp3'
+    });
+    const final = harness.audit();
+    return [
+      check('READY005.STABILIZING_SWIPE_CANCEL_ZERO_READY', Boolean(timer)
+        && timer.cancelled === true
+        && moveAccepted === true
+        && beforeMove.view.phase === 'POST_ONSTART_STABILIZING'
+        && (afterMove.view.gesture === 'cancel'
+          || afterMove.view.phase === 'CANCEL_PENDING'
+          || afterMove.view.phase === 'IDLE')
+        && afterDue.view.phase !== 'READY_RECORDING'
+        && afterDue.vibrationCount === 0
+        && afterCancel.vibrationCount === 0
+        && afterCancel.recorder.stopCount === 1, {
+        afterCancel,
+        afterDue,
+        afterMove,
+        beforeMove,
+        moveAccepted,
+        timer
+      }),
+      check('READY005.CANCELLED_TIMER_AND_FILE_DISCARDED', final.vibrationCount === 0
+        && final.view.phase !== 'READY_RECORDING'
+        && !final.controller.audio
+        && zeroAuthority(final), final)
+    ];
+  });
+}
+
+function ready006() {
+  const runLifecycle = (kind) => withHarness({
+    caseId: `VCAP-READY-006-${kind}`,
+    origin: kind === 'DETACH' ? 'records' : 'dashboard'
+  }, (harness) => {
+    const surface = kind === 'DETACH' ? 'tab' : 'hero';
+    dispatchStart(harness, surface);
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timer = harness.scheduler.snapshotsAfter(checkpoint)[0] || null;
+    harness.scheduler.advanceBy(300);
+    if (kind === 'HIDE') harness.dashboard.page.onHide();
+    if (kind === 'UNLOAD') harness.dashboard.page.onUnload();
+    if (kind === 'DETACH') harness.tab.__detach();
+    const afterLifecycle = harness.audit();
+    harness.scheduler.invokeSnapshotAtDue(timer);
+    harness.recorder.emitStop(0);
+    return { afterLifecycle, final: harness.audit(), timer };
+  });
+  const hide = runLifecycle('HIDE');
+  const unload = runLifecycle('UNLOAD');
+  const detach = runLifecycle('DETACH');
+  return [
+    check('READY006.LIFECYCLE_REVOKES_STABILIZATION', [hide, unload, detach].every((entry) => (
+      Boolean(entry.timer)
+      && entry.timer.cancelled === true
+      && entry.afterLifecycle.view.phase === 'IDLE'
+      && entry.afterLifecycle.recorder.stopCount === 1
+      && entry.afterLifecycle.vibrationCount === 0
+    )), { detach, hide, unload }),
+    check('READY006.LIFECYCLE_STALE_TIMER_ZERO_AUTHORITY', [hide, unload, detach].every((entry) => (
+      entry.final.vibrationCount === 0
+      && entry.final.view.phase !== 'READY_RECORDING'
+      && !entry.final.controller.audio
+      && zeroAuthority(entry.final)
+    )), { detach, hide, unload })
+  ];
+}
+
+function ready007() {
+  const poisoned = withHarness({ caseId: 'VCAP-READY-007-POISON' }, (harness) => {
+    dispatchStart(harness);
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timer = harness.scheduler.snapshotsAfter(checkpoint)[0] || null;
+    harness.scheduler.advanceBy(300);
+    harness.recorder.emitError(0, 'operateRecorder:fail poison during stabilization');
+    const afterPoison = harness.audit();
+    harness.scheduler.invokeSnapshotAtDue(timer);
+    harness.scheduler.advanceBy(1000);
+    return { afterPoison, final: harness.audit(), timer };
+  });
+  const desync = withHarness({ caseId: 'VCAP-READY-007-DESYNC' }, (harness) => {
+    dispatchStart(harness, 'hero', 1);
+    harness.recorder.emitStop(0, { tempFilePath: 'wxfile://early-stop.mp3' });
+    const afterEarlyStop = harness.audit();
+    const bAccepted = dispatchStart(harness, 'tab', 2);
+    harness.recorder.emitStart(0);
+    const cleanupPending = harness.audit();
+    harness.scheduler.advanceBy(1000);
+    harness.recorder.emitStop(0);
+    return { afterEarlyStop, bAccepted, cleanupPending, final: harness.audit() };
+  });
+  return [
+    check('READY007.POISON_REVOKES_STABILIZATION_TIMER', Boolean(poisoned.timer)
+      && poisoned.timer.cancelled === true
+      && poisoned.afterPoison.vibrationCount === 0
+      && poisoned.final.vibrationCount === 0
+      && poisoned.final.view.phase !== 'READY_RECORDING', poisoned),
+    check('READY007.DESYNC_NEVER_GAINS_READY_AUTHORITY', desync.bAccepted === false
+      && desync.afterEarlyStop.vibrationCount === 0
+      && desync.cleanupPending.vibrationCount === 0
+      && desync.final.vibrationCount === 0
+      && !desync.final.controller.audio, desync),
+    check('READY007.NATIVE_FAILURE_ZERO_BUSINESS_AUTHORITY', zeroAuthority(poisoned.final)
+      && zeroAuthority(desync.final), { desync, poisoned })
+  ];
+}
+
+function ready008() {
+  return withHarness({ caseId: 'VCAP-READY-008' }, (harness) => {
+    dispatchStart(harness, 'hero', 1);
+    const aCheckpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timerA = harness.scheduler.snapshotsAfter(aCheckpoint)[0] || null;
+    harness.scheduler.advanceBy(300);
+    dispatchEnd(harness, 'hero', 1);
+    harness.recorder.emitStop(0, {
+      duration: 1111,
+      fileSize: 11111,
+      tempFilePath: 'wxfile://stale-a.mp3'
+    });
+    const aSettled = harness.audit();
+
+    dispatchStart(harness, 'hero', 2);
+    const bCheckpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(1);
+    const timerB = harness.scheduler.snapshotsAfter(bCheckpoint)[0] || null;
+    const bBeforeStale = harness.audit();
+    harness.scheduler.invokeSnapshotAtDue(timerA);
+    const bAfterStale = harness.audit();
+    harness.scheduler.advanceBy(Math.max(0, Number(timerB && timerB.dueAt)
+      - harness.scheduler.now()));
+    const bReady = harness.audit();
+    dispatchEnd(harness, 'hero', 2);
+    harness.recorder.emitStop(1, {
+      duration: 2222,
+      fileSize: 22222,
+      tempFilePath: 'wxfile://fresh-b.mp3'
+    });
+    const final = harness.audit();
+    const audioB = final.controller.audio || {};
+    return [
+      check('READY008.STALE_A_TIMER_CANNOT_AUTHORIZE_B', Boolean(timerA)
+        && Boolean(timerB)
+        && timerA.cancelled === true
+        && !aSettled.controller.audio
+        && bBeforeStale.view.phase === 'POST_ONSTART_STABILIZING'
+        && bBeforeStale.vibrationCount === 0
+        && bAfterStale.view.phase === 'POST_ONSTART_STABILIZING'
+        && bAfterStale.vibrationCount === 0
+        && bAfterStale.controller.captureId === bBeforeStale.controller.captureId
+        && bAfterStale.controller.nativeLeaseId === bBeforeStale.controller.nativeLeaseId,
+      { aSettled, bAfterStale, bBeforeStale, timerA, timerB }),
+      check('READY008.ONLY_B_TIMER_AUTHORIZES_B', bReady.view.phase === 'READY_RECORDING'
+        && bReady.vibrationCount === 1, bReady),
+      check('READY008.B_AUDIO_OWNS_B_IDENTITIES', final.view.phase === 'AUDIO_READY'
+        && audioB.tempFilePath === 'wxfile://fresh-b.mp3'
+        && audioB.captureId === bReady.controller.captureId
+        && audioB.nativeLeaseId === bReady.controller.nativeLeaseId
+        && zeroAuthority(final), { audioB, bReady, final })
+    ];
+  });
+}
+
+function ready009() {
+  return withHarness({ caseId: 'VCAP-READY-009', vibrationThrows: true }, (harness) => {
+    dispatchStart(harness);
+    harness.recorder.emitStart(0);
+    harness.scheduler.advanceBy(700);
+    const afterReady = harness.audit();
+    harness.recorder.emitStart(0);
+    harness.scheduler.advanceBy(700);
+    const afterDuplicate = harness.audit();
+    dispatchEnd(harness);
+    harness.recorder.emitStop(0, {
+      duration: 2900,
+      fileSize: 17400,
+      tempFilePath: 'wxfile://haptic-throw.mp3'
+    });
+    const final = harness.audit();
+    return [
+      check('READY009.HAPTIC_THROW_DOES_NOT_REVOKE_READY', afterReady.view.phase === 'READY_RECORDING'
+        && afterReady.vibrationCount === 1, afterReady),
+      check('READY009.HAPTIC_ATTEMPT_EXACTLY_ONCE', afterDuplicate.view.phase === 'READY_RECORDING'
+        && afterDuplicate.vibrationCount === 1, afterDuplicate),
+      check('READY009.HAPTIC_FAILURE_AUDIO_PATH_SURVIVES', final.view.phase === 'AUDIO_READY'
+        && final.recorder.stopCount === 1
+        && Boolean(final.controller.audio)
+        && zeroAuthority(final), final)
+    ];
+  });
+}
+
+function ready010() {
+  return withHarness({ caseId: 'VCAP-READY-010' }, (harness) => {
+    dispatchStart(harness);
+    harness.recorder.emitStart(0);
+    harness.scheduler.advanceBy(700);
+    const ready = harness.audit();
+    dispatchEnd(harness);
+    dispatchEnd(harness);
+    harness.dispatch('hero', 'cancel', harness.touch.touchEnd(1, 200, 400));
+    const finalizing = harness.audit();
+    harness.recorder.emitStop(0, {
+      duration: 3333,
+      fileSize: 33333,
+      tempFilePath: 'wxfile://ready-010.mp3'
+    });
+    const final = harness.audit();
+    const audio = final.controller.audio || {};
+    return [
+      check('READY010.READY_RELEASE_STOP_EXACTLY_ONCE', ready.view.phase === 'READY_RECORDING'
+        && ready.vibrationCount === 1
+        && finalizing.view.phase === 'FINALIZING_AUDIO'
+        && finalizing.recorder.stopCount === 1, { finalizing, ready }),
+      check('READY010.AUDIO_READY_DOUBLE_IDENTITY', final.view.phase === 'AUDIO_READY'
+        && audio.captureId === ready.controller.captureId
+        && audio.nativeLeaseId === ready.controller.nativeLeaseId
+        && audio.tempFilePath === 'wxfile://ready-010.mp3'
+        && Number(audio.duration) === 3333
+        && Number(audio.fileSize) === 33333, { audio, ready }),
+      check('READY010.ZERO_BUSINESS_AUTHORITY', zeroAuthority(final)
+        && final.storageMutations.length === 0, final)
+    ];
+  });
+}
+
+function ready011() {
+  const preparing = withHarness({ caseId: 'VCAP-READY-011-PREPARING' }, (harness) => {
+    dispatchStart(harness);
+    dispatchEnd(harness);
+    const afterRelease = harness.audit();
+    harness.recorder.emitStart(0);
+    harness.recorder.emitStop(0, {
+      duration: 900,
+      fileSize: 9000,
+      tempFilePath: 'wxfile://preparing-discard.mp3'
+    });
+    return { afterRelease, final: harness.audit() };
+  });
+  const stabilizing = withHarness({ caseId: 'VCAP-READY-011-STABILIZING' }, (harness) => {
+    dispatchStart(harness);
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timer = harness.scheduler.snapshotsAfter(checkpoint)[0] || null;
+    harness.scheduler.advanceBy(699);
+    const beforeRelease = harness.audit();
+    dispatchEnd(harness);
+    const afterRelease = harness.audit();
+    harness.scheduler.invokeSnapshotAtDue(timer);
+    harness.recorder.emitStop(0, {
+      duration: 1999,
+      fileSize: 19999,
+      tempFilePath: 'wxfile://stabilizing-discard.mp3'
+    });
+    return { afterRelease, beforeRelease, final: harness.audit(), timer };
+  });
+  return [
+    check('READY011.STABILIZING_RELEASE_DISCARDS_VALID_NATIVE_FILE', Boolean(stabilizing.timer)
+      && stabilizing.timer.cancelled === true
+      && stabilizing.beforeRelease.view.phase === 'POST_ONSTART_STABILIZING'
+      && stabilizing.afterRelease.vibrationCount === 0
+      && stabilizing.afterRelease.recorder.stopCount === 1
+      && !stabilizing.final.controller.audio
+      && stabilizing.final.view.phase !== 'AUDIO_READY', stabilizing),
+    check('READY011.PREPARING_RELEASE_DISCARDS_VALID_NATIVE_FILE', preparing.afterRelease.recorder.stopCount === 1
+      && preparing.afterRelease.vibrationCount === 0
+      && !preparing.final.controller.audio
+      && preparing.final.view.phase !== 'AUDIO_READY', preparing),
+    check('READY011.VISIBLE_WAIT_FOR_HAPTIC_PROMPT', hasText(preparing.afterRelease, /请等震动后再说/)
+      && hasText(stabilizing.afterRelease, /请等震动后再说/), { preparing, stabilizing }),
+    check('READY011.PRE_READY_ZERO_AUTHORITY', zeroAuthority(preparing.final)
+      && zeroAuthority(stabilizing.final), { preparing, stabilizing })
+  ];
+}
+
+function ready012() {
+  const capture = (surface, origin) => withHarness({
+    caseId: `VCAP-READY-012-${surface}`,
+    origin
+  }, (harness) => {
+    dispatchStart(harness, surface);
+    harness.recorder.emitStart(0);
+    const afterOnStart = harness.audit();
+    harness.scheduler.advanceBy(699);
+    const at699 = harness.audit();
+    harness.scheduler.advanceBy(1);
+    const at700 = harness.audit();
+    return { afterOnStart, at699, at700 };
+  });
+  const hero = capture('hero', 'dashboard');
+  const tab = capture('tab', 'records');
+  return [
+    check('READY012.HERO_TAB_699MS_NOT_READY', hero.afterOnStart.view.phase === 'POST_ONSTART_STABILIZING'
+      && tab.afterOnStart.view.phase === 'POST_ONSTART_STABILIZING'
+      && hero.at699.view.phase === 'POST_ONSTART_STABILIZING'
+      && tab.at699.view.phase === 'POST_ONSTART_STABILIZING'
+      && hero.at699.vibrationCount === 0
+      && tab.at699.vibrationCount === 0, { hero, tab }),
+    check('READY012.HERO_TAB_700MS_READY_EQUAL', hero.at700.view.phase === 'READY_RECORDING'
+      && tab.at700.view.phase === 'READY_RECORDING'
+      && hero.at700.vibrationCount === 1
+      && tab.at700.vibrationCount === 1
+      && JSON.stringify(hero.at700.recorder.options) === JSON.stringify(tab.at700.recorder.options),
+    { hero, tab })
   ];
 }
 
@@ -667,6 +1167,18 @@ const EXECUTORS = {
   'VCAP-022': vcap022,
   'VCAP-023': vcap023,
   'VCAP-024': vcap024,
+  'VCAP-READY-001': ready001,
+  'VCAP-READY-002': ready002,
+  'VCAP-READY-003': ready003,
+  'VCAP-READY-004': ready004,
+  'VCAP-READY-005': ready005,
+  'VCAP-READY-006': ready006,
+  'VCAP-READY-007': ready007,
+  'VCAP-READY-008': ready008,
+  'VCAP-READY-009': ready009,
+  'VCAP-READY-010': ready010,
+  'VCAP-READY-011': ready011,
+  'VCAP-READY-012': ready012,
   'GREEN-VCAP-001': green001,
   'GREEN-VCAP-002': green002,
   'GREEN-VCAP-003': green003

@@ -1,9 +1,10 @@
 function createControlledRecorderManager() {
   const calls = { starts: [], stops: [] };
-  const listeners = { error: null, start: null, stop: null };
+  const listeners = { error: null, frame: null, start: null, stop: null };
 
   const manager = {
     onError(callback) { listeners.error = callback; },
+    onFrameRecorded(callback) { listeners.frame = callback; },
     onStart(callback) { listeners.start = callback; },
     onStop(callback) { listeners.stop = callback; },
     start(options = {}) {
@@ -39,6 +40,12 @@ function createControlledRecorderManager() {
     },
     emitError(index, errMsg = 'operateRecorder:fail controlled error') {
       return emit(index, 'error', { errMsg });
+    },
+    emitFrame(index, payload = {}) {
+      return emit(index, 'frame', Object.assign({
+        frameBuffer: new ArrayBuffer(1024),
+        isLastFrame: false
+      }, payload));
     },
     emitStart(index) {
       return emit(index, 'start', {});

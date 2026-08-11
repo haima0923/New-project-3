@@ -182,6 +182,11 @@ function createVcapHarness(options = {}) {
   fakeWx.wx.getRecorderManager = () => recorder.manager;
   fakeWx.wx.vibrateShort = (payload = {}) => {
     vibrationEvents.push({ type: String(payload.type || '') });
+    if (options.vibrationThrows === true && fs.existsSync(CONTROLLER_PATH)) {
+      throw Object.assign(new Error('vibrateShort:fail controlled'), {
+        code: 'CONTROLLED_HAPTIC_FAILURE'
+      });
+    }
     if (typeof payload.success === 'function') payload.success({});
   };
   const app = { globalData: { userId: 'vcap-contract-user', apiBaseUrl: 'memory://vcap' } };

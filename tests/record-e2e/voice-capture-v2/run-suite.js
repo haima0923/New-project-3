@@ -60,10 +60,12 @@ async function runSuite(repeat = 2) {
     const capabilityMissing = profile === 'PARENT_CAPABILITY_MISSING'
       && !contract.id.startsWith('GREEN-')
       && contract.id !== 'VCAP-024';
-    const expectedStatus = capabilityMissing ? 'CASE_FAIL' : 'PASS';
+    const expectedStatus = capabilityMissing || contract.expected === 'RED'
+      ? 'CASE_FAIL'
+      : 'PASS';
     const expectedFirstFailure = capabilityMissing
       ? contract.capabilityMissingFirstFailure
-      : contract.firstFailure;
+      : (contract.expected === 'RED' ? contract.firstFailure : '');
     return entry.status !== expectedStatus || entry.firstFailure !== expectedFirstFailure;
   });
   const greenFailures = results.filter((entry) => {
