@@ -34,10 +34,16 @@ function result(contract, checks) {
   };
 }
 
+function emitStartAndReachReady(harness, recorderIndex = 0) {
+  harness.recorder.emitStart(recorderIndex);
+  harness.scheduler.advanceBy(700);
+  return snapshot(harness);
+}
+
 function lease001() {
   return withHarness({ caseId: 'LEASE-001' }, (harness) => {
     start(harness, 'hero', 1);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     end(harness, 'hero', 1);
     harness.recorder.emitStop(0, audioPayload('A'));
     const afterA = snapshot(harness);
@@ -156,14 +162,14 @@ function lease005() {
 function lease006() {
   return withHarness({ caseId: 'LEASE-006' }, (harness) => {
     start(harness, 'hero', 1);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     harness.recorder.emitStart(0);
     end(harness, 'hero', 1);
     harness.recorder.emitStop(0, audioPayload('A'));
     harness.recorder.emitStop(0, audioPayload('A'));
     const afterA = snapshot(harness);
     const bAccepted = start(harness, 'hero', 2);
-    harness.recorder.emitStart(1);
+    emitStartAndReachReady(harness, 1);
     end(harness, 'hero', 2);
     harness.recorder.emitStop(1, audioPayload('B'));
     const final = snapshot(harness);
@@ -211,8 +217,7 @@ function lease008() {
     harness.recorder.emitStop(0, audioPayload('A-CLEANUP'));
     const drained = snapshot(harness);
     const cAccepted = start(harness, 'hero', 4);
-    harness.recorder.emitStart(1);
-    const cReady = snapshot(harness);
+    const cReady = emitStartAndReachReady(harness, 1);
     end(harness, 'hero', 4);
     harness.recorder.emitStop(1, audioPayload('C'));
     const recovered = snapshot(harness);
@@ -273,8 +278,7 @@ function lease009() {
   });
   const newProcess = withHarness({ caseId: 'LEASE-009-NEW-PROCESS' }, (harness) => {
     const cAccepted = start(harness, 'hero', 3);
-    harness.recorder.emitStart(0);
-    const ready = snapshot(harness);
+    const ready = emitStartAndReachReady(harness, 0);
     end(harness, 'hero', 3);
     harness.recorder.emitStop(0, audioPayload('C'));
     return { cAccepted, ready, state: snapshot(harness) };
@@ -333,8 +337,7 @@ function lease012() {
   return withHarness({ caseId: 'LEASE-012' }, (harness) => {
     start(harness, 'hero', 1);
     const beforeStart = snapshot(harness);
-    harness.recorder.emitStart(0);
-    const ready = snapshot(harness);
+    const ready = emitStartAndReachReady(harness, 0);
     end(harness, 'hero', 1);
     harness.recorder.emitStop(0, audioPayload('A'));
     const audioReady = snapshot(harness);
@@ -401,8 +404,7 @@ function lease015() {
     harness.recorder.emitStop(0, audioPayload('A-CLEANUP'));
     const drained = snapshot(harness);
     const cAccepted = start(harness, 'tab', 5);
-    harness.recorder.emitStart(1);
-    const cReady = snapshot(harness);
+    const cReady = emitStartAndReachReady(harness, 1);
     end(harness, 'tab', 5);
     harness.recorder.emitStop(1, audioPayload('C'));
     return {
@@ -495,7 +497,7 @@ function lease015() {
 function stopFailureScenario(caseId, mode) {
   return withHarness({ caseId }, (harness) => {
     start(harness, 'hero', 1);
-    harness.recorder.emitStart(0);
+    emitStartAndReachReady(harness, 0);
     if (mode === 'THROW') {
       harness.recorder.manager.stop = () => {
         throw new Error('operateRecorder:fail controlled stop throw');
@@ -532,8 +534,7 @@ function stopFailureScenario(caseId, mode) {
 function freshProcessAudioScenario(caseId) {
   return withHarness({ caseId }, (harness) => {
     const accepted = start(harness, 'hero', 9);
-    harness.recorder.emitStart(0);
-    const ready = snapshot(harness);
+    const ready = emitStartAndReachReady(harness, 0);
     end(harness, 'hero', 9);
     harness.recorder.emitStop(0, audioPayload('C'));
     return { accepted, ready, state: snapshot(harness) };

@@ -1,7 +1,7 @@
-# Voice Capture V2 failure-first contracts
+# Voice Capture V2 readiness contracts
 
-这是 `PREPARING / READY 震动 / 文件录音` 的失败优先合同，只冻结下一阶段正式行为，
-不实现生产语音、不接 ASR、不进入 Input、parser、business 或 storage。
+这是 `PREPARING / READY 震动 / 文件录音` 的正式绿色合同。生产技术基础只到
+`AUDIO_READY`，不接 ASR，不进入 Input、parser、business 或 storage。
 
 ## 真机根因
 
@@ -63,8 +63,8 @@ IDLE
 700ms只能由合法当前 `Recorder.onStart` 启动。touchstart、permission、first frame、third frame
 均无权启动该窗口；hide、cancel、detach、early release 或 native lease失效必须使 timer失效。
 
-这是基于两台真实 iPhone 原始 MP3 的正式测试候选，不是凭空增加延迟。当前只迁移测试合同，
-不迁移生产状态机，也不接 ASR。
+这是基于两台真实 iPhone 原始 MP3 的正式产品合同，不是凭空增加延迟。生产状态机已实现
+合法当前 `Recorder.onStart + 700ms`，但仍不接 ASR。
 
 ## 正式 READY 测试状态机
 
@@ -131,21 +131,21 @@ IDLE
 
 | ID | 冻结内容 | 当前生产 |
 | --- | --- | --- |
-| READY-001 | touchstart/start/260ms/onStart/first/third/任意frame及onStart后699ms均不READY | RED |
-| READY-002 | fake timer精确累计700ms才READY，震动一次 | RED（同时锁699ms负边界） |
-| READY-003 | duplicate onStart不重启窗口，READY和震动各一次 | RED |
-| READY-004 | stabilizing提前松手清timer；有效native文件仍discard | RED |
-| READY-005 | stabilizing上滑取消，迟到timer与文件均无权 | RED |
-| READY-006 | hide/unload/detach撤销timer，不改变Native Lease cleanup归属 | RED |
-| READY-007 | POISON撤销timer；DESYNC绝不由timer取得或恢复READY权威 | RED |
-| READY-008 | 已清理的stale A timer不能授权新B；绑定captureId+nativeLeaseId+generation | RED |
+| READY-001 | touchstart/start/260ms/onStart/first/third/任意frame及onStart后699ms均不READY | PASS |
+| READY-002 | fake timer精确累计700ms才READY，震动一次 | PASS（同时锁699ms负边界） |
+| READY-003 | duplicate onStart不重启窗口，READY和震动各一次 | PASS |
+| READY-004 | stabilizing提前松手清timer；有效native文件仍discard | PASS |
+| READY-005 | PREPARING / stabilizing 上滑取消，双入口迟到 onStart、timer 与文件均无权 | PASS |
+| READY-006 | hide/unload/detach撤销timer，不改变Native Lease cleanup归属 | PASS |
+| READY-007 | POISON撤销timer；DESYNC绝不由timer取得或恢复READY权威 | PASS |
+| READY-008 | 已清理的stale A timer不能授权新B；绑定captureId+nativeLeaseId+generation | PASS |
 | READY-009 | vibrateShort抛错不撤销READY，震动attempt exactly once | PASS安全正控 |
 | READY-010 | 合法700ms READY后stop once→AUDIO_READY，双身份和metadata完整 | PASS安全正控 |
-| READY-011 | PREPARING/STABILIZING松手均discard并提示“请等震动后再说” | RED |
-| READY-012 | Hero与Custom Tab均为699ms不READY、700ms READY | RED |
+| READY-011 | PREPARING/STABILIZING松手均discard并提示“请等震动后再说” | PASS |
+| READY-012 | Hero与Custom Tab均为699ms不READY、700ms READY | PASS |
 
-当前生产仍在onStart内立即READY，故本轮稳定为11条预期RED（迁移后的VCAP-020 + 10条新
-READY差异）和28条PASS；这是真实生产缺口，不是runner失败。
+当前生产已稳定为39条PASS、0条CASE_FAIL、0条RUNNER_ERROR；READY-001～012与
+VCAP-001～024全部按正式绿色基线冻结。
 
 ## 旧 Hold 合同迁移
 
@@ -189,10 +189,10 @@ Controlled Recorder 能证明状态、身份和零业务 mutation，不能证明
 node tests/record-e2e/voice-capture-v2/run.js --repeat 2
 ```
 
-- exit `1`：当前生产READY差异或干净父提交缺少V2 controller时的稳定预期 RED；
+- exit `1`：干净父提交缺少V2 controller时的稳定能力缺失 RED；
 - exit `2`：Runner error、GREEN failure、不稳定或 baseline drift；
-- exit `0`：未来生产实现全部转绿且已显式迁移 baseline。
+- exit `0`：生产实现全部转绿且绿色 baseline 一致。
 
-当前未修生产的冻结结果为 `28 PASS + 11 CASE_FAIL + 0 RUNNER_ERROR`、两轮稳定、
-`EXPECTED_RED`。候选 test-only commit在干净父提交缺少未提交controller时，按能力分层保持
-稳定预期红而不是Runner error。未来生产实现转绿后必须另行显式迁移failure-first baseline。
+当前正式生产结果为 `39 PASS + 0 CASE_FAIL + 0 RUNNER_ERROR`、两轮稳定、`PASS`。
+测试迁移提交在干净父提交缺少未提交controller时，仍按能力分层保持稳定预期红而不是
+Runner error；production commit落地后转为全绿。

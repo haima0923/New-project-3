@@ -768,7 +768,57 @@ function ready004() {
 }
 
 function ready005() {
-  return withHarness({ caseId: 'VCAP-READY-005' }, (harness) => {
+  const runPreparingSwipeCancel = (surface) => withHarness({
+    caseId: `VCAP-READY-005-PREPARING-${surface.toUpperCase()}`,
+    origin: surface === 'tab' ? 'records' : 'dashboard'
+  }, (harness) => {
+    dispatchStart(harness, surface);
+    const beforeMove = harness.audit();
+    const moveAccepted = harness.dispatch(surface, 'move', harness.touch.touchMove([
+      harness.touch.point(1, 200, 340)
+    ]));
+    const afterMove = harness.audit();
+    const slideBackBeforeStartAccepted = harness.dispatch(surface, 'move', harness.touch.touchMove([
+      harness.touch.point(1, 200, 400)
+    ]));
+    const afterSlideBackBeforeStart = harness.audit();
+    const checkpoint = harness.scheduler.checkpoint();
+    harness.recorder.emitStart(0);
+    const timersAfterStart = harness.scheduler.snapshotsAfter(checkpoint);
+    const pendingAfterStart = harness.scheduler.pendingCount();
+    const afterStart = harness.audit();
+    const slideBackAfterStartAccepted = harness.dispatch(surface, 'move', harness.touch.touchMove([
+      harness.touch.point(1, 200, 400)
+    ]));
+    const afterSlideBackAfterStart = harness.audit();
+    harness.scheduler.advanceBy(700);
+    const afterDue = harness.audit();
+    dispatchEnd(harness, surface);
+    const afterCancel = harness.audit();
+    harness.recorder.emitStop(0, {
+      duration: 1211,
+      fileSize: 12111,
+      tempFilePath: `wxfile://preparing-cancelled-${surface}.mp3`
+    });
+    return {
+      afterCancel,
+      afterDue,
+      afterMove,
+      afterSlideBackAfterStart,
+      afterSlideBackBeforeStart,
+      afterStart,
+      beforeMove,
+      final: harness.audit(),
+      moveAccepted,
+      pendingAfterStart,
+      slideBackAfterStartAccepted,
+      slideBackBeforeStartAccepted,
+      timersAfterStart
+    };
+  });
+  const heroPreparing = runPreparingSwipeCancel('hero');
+  const tabPreparing = runPreparingSwipeCancel('tab');
+  const stabilizing = withHarness({ caseId: 'VCAP-READY-005-STABILIZING' }, (harness) => {
     dispatchStart(harness);
     const checkpoint = harness.scheduler.checkpoint();
     harness.recorder.emitStart(0);
@@ -789,31 +839,53 @@ function ready005() {
       tempFilePath: 'wxfile://cancelled-before-ready.mp3'
     });
     const final = harness.audit();
-    return [
-      check('READY005.STABILIZING_SWIPE_CANCEL_ZERO_READY', Boolean(timer)
-        && timer.cancelled === true
-        && moveAccepted === true
-        && beforeMove.view.phase === 'POST_ONSTART_STABILIZING'
-        && (afterMove.view.gesture === 'cancel'
-          || afterMove.view.phase === 'CANCEL_PENDING'
-          || afterMove.view.phase === 'IDLE')
-        && afterDue.view.phase !== 'READY_RECORDING'
-        && afterDue.vibrationCount === 0
-        && afterCancel.vibrationCount === 0
-        && afterCancel.recorder.stopCount === 1, {
-        afterCancel,
-        afterDue,
-        afterMove,
-        beforeMove,
-        moveAccepted,
-        timer
-      }),
-      check('READY005.CANCELLED_TIMER_AND_FILE_DISCARDED', final.vibrationCount === 0
-        && final.view.phase !== 'READY_RECORDING'
-        && !final.controller.audio
-        && zeroAuthority(final), final)
-    ];
+    return {
+      afterCancel,
+      afterDue,
+      afterMove,
+      beforeMove,
+      final,
+      moveAccepted,
+      timer
+    };
   });
+  return [
+    check('READY005.STABILIZING_SWIPE_CANCEL_ZERO_READY', Boolean(stabilizing.timer)
+      && stabilizing.timer.cancelled === true
+      && stabilizing.moveAccepted === true
+      && stabilizing.beforeMove.view.phase === 'POST_ONSTART_STABILIZING'
+      && (stabilizing.afterMove.view.gesture === 'cancel'
+        || stabilizing.afterMove.view.phase === 'CANCEL_PENDING'
+        || stabilizing.afterMove.view.phase === 'IDLE')
+      && stabilizing.afterDue.view.phase !== 'READY_RECORDING'
+      && stabilizing.afterDue.vibrationCount === 0
+      && stabilizing.afterCancel.vibrationCount === 0
+      && stabilizing.afterCancel.recorder.stopCount === 1, stabilizing),
+    check('READY005.PREPARING_SWIPE_CANCEL_ZERO_READY_BOTH_SURFACES', [
+      heroPreparing,
+      tabPreparing
+    ].every((entry) => entry.moveAccepted === true
+      && entry.slideBackBeforeStartAccepted === true
+      && entry.slideBackAfterStartAccepted === true
+      && entry.beforeMove.view.phase === 'PREPARING'
+      && entry.afterMove.controller.gesture === 'cancel'
+      && entry.afterSlideBackBeforeStart.controller.gesture === 'cancel'
+      && entry.afterStart.controller.phase === 'POST_ONSTART_STABILIZING'
+      && entry.afterStart.controller.gesture === 'cancel'
+      && entry.afterSlideBackAfterStart.controller.gesture === 'cancel'
+      && entry.timersAfterStart.length === 0
+      && entry.pendingAfterStart === 0
+      && entry.afterDue.controller.phase !== 'READY_RECORDING'
+      && entry.afterDue.vibrationCount === 0
+      && entry.afterCancel.recorder.stopCount === 1
+      && entry.final.view.phase !== 'READY_RECORDING'
+      && !entry.final.controller.audio
+      && zeroAuthority(entry.final)), { heroPreparing, tabPreparing }),
+    check('READY005.CANCELLED_TIMER_AND_FILE_DISCARDED', stabilizing.final.vibrationCount === 0
+      && stabilizing.final.view.phase !== 'READY_RECORDING'
+      && !stabilizing.final.controller.audio
+      && zeroAuthority(stabilizing.final), stabilizing.final)
+  ];
 }
 
 function ready006() {
