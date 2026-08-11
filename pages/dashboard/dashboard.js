@@ -18,12 +18,20 @@ const {
 } = require('../../utils/record-domain-preflight');
 const { getState, saveState } = require('../../utils/storage');
 const {
-  cancelVoiceRecognition,
   invalidateVoiceCompletionEvidence,
-  startVoiceRecognition,
-  stopVoiceRecognition,
   validateVoiceCompletionEvidence
 } = require('../../utils/voice-recognition');
+const {
+  beginHold,
+  beginHoldImmediately,
+  cancelHold,
+  endHold,
+  invalidateActiveHoldToTalk,
+  invalidateHoldToTalk,
+  moveHold,
+  registerHoldToTalkOwner,
+  releaseHoldToTalkOwner
+} = require('../../utils/hold-to-talk-controller');
 const { getFieldLabel, isVisibleField } = require('../../utils/display');
 const { normalizeUnit, unitsMatch } = require('../../utils/units');
 const {
@@ -85,7 +93,6 @@ const digitFields = ['quantity', 'unitPrice', 'amount', 'depositAmount', 'paymen
 const dateFields = ['dueDate'];
 const homePrimaryItemEditableFields = ['productName', 'quantity', 'unit', 'unitPrice', 'amount'];
 const homePrimaryItemProjectionFields = ['productName', 'quantity', 'unit', 'unitPrice'];
-const VOICE_HOLD_DELAY_MS = 260;
 function hasResolvedAiFallback(parseResult = {}) {
   const aiFallback = parseResult.ai_fallback || {};
   return aiFallback.status === 'used' && aiFallback.business_result_valid === true;
@@ -580,15 +587,6 @@ function buildHomeConfirmState(parseResult, state = getState()) {
   };
 }
 
-function vibrateOnVoiceStart() {
-  if (typeof wx === 'undefined' || typeof wx.vibrateShort !== 'function') return;
-  try {
-    wx.vibrateShort({ type: 'light' });
-  } catch (error) {
-    wx.vibrateShort();
-  }
-}
-
 function refreshTabBarSelected(page) {
   if (!page || typeof page.getTabBar !== 'function') return;
   const tabBar = page.getTabBar();
@@ -648,6 +646,43 @@ function finishParseProgress(page) {
   page.setData({ voiceOverlayVisible: false });
 }
 
+function projectDashboardHoldState(page, state = {}) {
+  page.setData({
+    voiceCapturePhase: String(state.phase || 'IDLE'),
+    voiceRecording: state.recording === true,
+    voiceOverlayVisible: state.overlayVisible === true,
+    voiceOverlayMode: String(state.overlayMode || 'listening'),
+    voiceOverlayTitle: String(state.overlayTitle || ''),
+    voiceOverlaySubtitle: String(state.overlaySubtitle || ''),
+    voiceOverlayHint: String(state.overlayHint || ''),
+    voiceGesture: state.gesture === 'cancel' ? 'cancel' : 'send',
+    voiceTip: String(state.voiceTip || '')
+  });
+}
+
+function ensureDashboardHoldOwner(page) {
+  if (page.dashboardHoldOwnerToken) return page.dashboardHoldOwnerToken;
+  page.dashboardHoldOwnerToken = registerHoldToTalkOwner({
+    surface: 'DASHBOARD_HERO',
+    project: (state) => projectDashboardHoldState(page, state),
+    message: (message) => page.setData({ voiceTip: String(message || '') }),
+    startRequested: () => {
+      prewarmAiAuth();
+      page.activeQuickParseRequestToken = null;
+      if (page.voiceCompletionEvidence) {
+        invalidateVoiceCompletionEvidence(page.voiceCompletionEvidence, 'NEW_VOICE_SESSION_STARTED');
+        page.voiceCompletionEvidence = null;
+      }
+    },
+    audioReady: () => page.setData({ voiceTip: '录音已完成' }),
+    transcript: (text) => page.setData({
+      composerText: text,
+      voiceTip: '已识别成文字，正在打开记一笔。'
+    })
+  });
+  return page.dashboardHoldOwnerToken;
+}
+
 Page({
   data: {
     tasks: [],
@@ -655,6 +690,7 @@ Page({
     recentRecords: [],
     composerText: '',
     parsing: false,
+    voiceCapturePhase: 'IDLE',
     voiceRecording: false,
     voiceOverlayVisible: false,
     voiceOverlayMode: 'listening',
@@ -690,6 +726,7 @@ Page({
   },
 
   onShow() {
+    ensureDashboardHoldOwner(this);
     refreshTabBarSelected(this);
     requestOrderFilterReset();
     // 先准备微信登录，避免用户说完后才把登录时间挤进 8 秒快速核对。
@@ -704,22 +741,23 @@ Page({
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'HOME_QUICK_HIDDEN');
       this.voiceCompletionEvidence = null;
     }
-    cancelVoiceRecognition('HOME_QUICK_HIDDEN');
+    if (this.dashboardHoldOwnerToken) {
+      invalidateHoldToTalk(this.dashboardHoldOwnerToken, 'DASHBOARD_HIDDEN');
+    }
     this.setData({ parsing: false });
   },
 
   onUnload() {
     this.activeQuickParseRequestToken = null;
     clearParseProgress(this);
-    if (this.voicePressTimer) {
-      clearTimeout(this.voicePressTimer);
-      this.voicePressTimer = null;
-    }
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'HOME_QUICK_UNLOAD');
       this.voiceCompletionEvidence = null;
     }
-    cancelVoiceRecognition('HOME_QUICK_UNLOAD');
+    if (this.dashboardHoldOwnerToken) {
+      releaseHoldToTalkOwner(this.dashboardHoldOwnerToken, 'DASHBOARD_UNLOADED');
+      this.dashboardHoldOwnerToken = null;
+    }
   },
 
   load() {
@@ -733,230 +771,36 @@ Page({
   },
 
   startVoice(event) {
-    if (this.data.voiceRecording || this.voicePressTimer) return;
-    const touch = event && event.touches && event.touches[0];
-    this.voiceTouchStartX = touch ? touch.clientX : 0;
-    this.voiceTouchStartY = touch ? touch.clientY : 0;
-    this.voiceGestureTarget = 'send';
-    this.voiceCanceling = false;
-    this.voicePartialText = '';
-    this.voicePressTimer = setTimeout(() => {
-      this.voicePressTimer = null;
-      this.beginVoiceRecognition();
-    }, VOICE_HOLD_DELAY_MS);
+    return beginHold(ensureDashboardHoldOwner(this), event);
   },
 
+  // DEAD_COMPAT: legacy headless entry contracts call this method directly.
+  // No WXML or Custom Tab path binds it; capture still uses the shared controller.
   beginVoiceRecognition() {
-    if (this.data.voiceRecording) return;
-    // 登录准备和录音并行，不占用户松手后生成确认卡的 8 秒。
-    prewarmAiAuth();
-    vibrateOnVoiceStart();
-    this.activeQuickParseRequestToken = null;
-    if (this.voiceCompletionEvidence) {
-      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'NEW_VOICE_SESSION_STARTED');
-      this.voiceCompletionEvidence = null;
-    }
-    this.setData({
-      voiceRecording: true,
-      voiceOverlayVisible: true,
-      voiceOverlayMode: 'listening',
-      voiceOverlayTitle: '正在听你说...',
-      voiceOverlaySubtitle: '松开发送',
-      voiceOverlayHint: '左上滑取消 · 右上滑转文字',
-      voiceGesture: 'send',
-      voiceTip: '正在听你说，松开后识别。'
-    });
-    const started = startVoiceRecognition({
-      duration: 60000,
-      lang: 'zh_CN',
-      onStart: () => {
-        this.setData({
-          voiceRecording: true,
-          voiceOverlayVisible: true,
-          voiceOverlayMode: 'listening',
-          voiceOverlayTitle: '正在听你说...',
-          voiceOverlaySubtitle: '松开发送',
-          voiceOverlayHint: '左上滑取消 · 右上滑转文字',
-          voiceGesture: 'send',
-          voiceTip: '正在听你说，松开后识别。'
-        });
-      },
-      onStop: () => {
-        if (this.voiceCanceling) return;
-        this.setData({
-          voiceRecording: false,
-          voiceOverlayVisible: true,
-          voiceOverlayMode: 'processing',
-          voiceOverlayTitle: '正在整理...',
-          voiceOverlaySubtitle: '我在判断这条记录，直接给你确认结果',
-          voiceTip: '录音已结束，正在识别。'
-        });
-      },
-      onRecognize: (result) => {
-        const text = String((result && result.text) || '').trim();
-        if (!text) return;
-        this.voicePartialText = text;
-        if (this.voiceGestureTarget !== 'send') return;
-        this.setData({
-          voiceOverlaySubtitle: '听到了，继续说完整句'
-        });
-      },
-      onResult: (result) => {
-        if (this.voiceCanceling) {
-          this.voiceCanceling = false;
-          this.voiceGestureTarget = 'send';
-          return;
-        }
-        const text = String(result && result.text || '').trim();
-        if (!text) {
-          this.setData({
-            voiceRecording: false,
-            voiceOverlayVisible: false,
-            voiceTip: '没有听清楚，请再说一次或改用打字。'
-          });
-          wx.showToast({ title: '没有听清楚', icon: 'none' });
-          return;
-        }
-        const voiceCompletionEvidence = result && result.voiceCompletionEvidence || null;
-        const validation = validateVoiceCompletionEvidence(
-          voiceCompletionEvidence,
-          text,
-          { inputChannel: 'VOICE_TRANSCRIPT' }
-        );
-        this.voiceCompletionEvidence = validation.valid
-          ? voiceCompletionEvidence
-          : null;
-        this.setData({
-          voiceRecording: false,
-          voiceOverlayVisible: false,
-          composerText: text,
-          voiceTip: '已识别成文字，正在打开记一笔。'
-        });
-        handoffRecordEntryToInput(this, text, 'voice');
-      },
-      onError: (error) => {
-        this.voiceCompletionEvidence = null;
-        if (this.voiceCanceling) {
-          this.voiceCanceling = false;
-          this.voiceGestureTarget = 'send';
-          return;
-        }
-        this.setData({
-          voiceRecording: false,
-          voiceOverlayVisible: false,
-          voiceTip: error.message || '语音识别失败，请改用打字或粘贴。'
-        });
-        wx.showToast({ title: '语音识别失败', icon: 'none' });
-      }
-    });
-    if (!started) this.setData({ voiceRecording: false, voiceOverlayVisible: false });
+    return beginHoldImmediately(ensureDashboardHoldOwner(this));
   },
 
-  stopVoice() {
-    if (this.voicePressTimer) {
-      clearTimeout(this.voicePressTimer);
-      this.voicePressTimer = null;
-      this.voiceGestureTarget = 'send';
-      return;
-    }
-    if (this.voiceGestureTarget === 'cancel') {
-      this.cancelVoice();
-      return;
-    }
-    if (this.voiceGestureTarget === 'input') {
-      this.switchVoiceToTextInput();
-      return;
-    }
-    if (this.data.voiceRecording) {
-      this.setData({
-        voiceOverlayVisible: true,
-        voiceOverlayMode: 'processing',
-        voiceOverlayTitle: '正在整理...',
-        voiceOverlaySubtitle: '我在判断这条记录，直接给你确认结果',
-        voiceTip: '录音已结束，正在识别。'
-      });
-      stopVoiceRecognition();
-    }
+  stopVoice(event) {
+    return endHold(ensureDashboardHoldOwner(this), event);
   },
 
   moveVoice(event) {
-    if (!this.data.voiceRecording || !this.voiceTouchStartY) return;
-    const touch = event && event.touches && event.touches[0];
-    if (!touch) return;
-    const dx = touch.clientX - (this.voiceTouchStartX || touch.clientX);
-    const dy = touch.clientY - this.voiceTouchStartY;
-    let nextGesture = 'send';
-    if (dy < -55 && dx < -45) nextGesture = 'cancel';
-    if (dy < -55 && dx > 45) nextGesture = 'input';
-    if (nextGesture === this.voiceGestureTarget) return;
-    this.voiceGestureTarget = nextGesture;
-    const overlayText = {
-      send: {
-        title: '正在听你说...',
-        subtitle: '松开发送',
-        hint: '左上滑取消 · 右上滑转文字'
-      },
-      cancel: {
-        title: '松手取消',
-        subtitle: '这次不会保存',
-        hint: '松手取消本次录音'
-      },
-      input: {
-        title: '转文字输入',
-        subtitle: '松手去记一笔页面',
-        hint: '松手后改用打字输入'
-      }
-    }[nextGesture];
-    this.setData({
-      voiceOverlayTitle: overlayText.title,
-      voiceOverlaySubtitle: overlayText.subtitle,
-      voiceOverlayHint: overlayText.hint,
-      voiceGesture: nextGesture
-    });
+    return moveHold(ensureDashboardHoldOwner(this), event);
   },
 
-  cancelVoice() {
-    if (this.voicePressTimer) {
-      clearTimeout(this.voicePressTimer);
-      this.voicePressTimer = null;
-      this.voiceGestureTarget = 'send';
-      return;
-    }
-    if (!this.data.voiceRecording) return;
-    this.voiceCanceling = true;
-    this.voiceGestureTarget = 'send';
-    this.setData({
-      voiceRecording: false,
-      voiceOverlayVisible: false,
-      voiceTip: ''
-    });
-    if (this.voiceCompletionEvidence) {
-      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'HOME_QUICK_VOICE_CANCELLED');
-      this.voiceCompletionEvidence = null;
-    }
-    cancelVoiceRecognition('HOME_QUICK_VOICE_CANCELLED');
+  cancelVoice(event) {
+    return cancelHold(ensureDashboardHoldOwner(this), event, 'DASHBOARD_TOUCH_CANCELLED');
   },
 
   switchVoiceToTextInput() {
-    if (!this.data.voiceRecording) return;
-    this.voiceCanceling = true;
-    this.voiceGestureTarget = 'send';
-    this.setData({
-      voiceRecording: false,
-      voiceOverlayVisible: false,
-      voiceTip: ''
-    });
-    if (this.voiceCompletionEvidence) {
-      invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'VOICE_SWITCHED_TO_TEXT_INPUT');
-      this.voiceCompletionEvidence = null;
-    }
-    cancelVoiceRecognition('VOICE_SWITCHED_TO_TEXT_INPUT');
+    invalidateActiveHoldToTalk('VOICE_SWITCHED_TO_TEXT_INPUT');
     wx.setStorageSync('force_text_input', true);
     wx.switchTab({ url: '/pages/input/input' });
   },
 
   onComposerInput(event) {
     const composerText = event.detail.value;
+    invalidateActiveHoldToTalk('MANUAL_INPUT_REPLACED_VOICE');
     this.activeQuickParseRequestToken = null;
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'MANUAL_EDIT_AFTER_VOICE');
@@ -973,6 +817,7 @@ Page({
   },
 
   pasteClipboard() {
+    invalidateActiveHoldToTalk('PASTE_REPLACED_VOICE_INPUT');
     this.activeQuickParseRequestToken = null;
     if (this.voiceCompletionEvidence) {
       invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'PASTE_REPLACED_VOICE_INPUT');
@@ -995,6 +840,7 @@ Page({
   },
 
   submitComposer() {
+    invalidateActiveHoldToTalk('MANUAL_SUBMIT_REPLACED_VOICE');
     const originalText = String(this.data.composerText || '');
     if (!originalText.trim()) {
       wx.showToast({ title: '先输入一句话', icon: 'none' });

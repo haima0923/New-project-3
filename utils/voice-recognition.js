@@ -1,5 +1,9 @@
 const { stableHash } = require('./record-state-diff');
 
+// LEGACY_NOT_USED_BY_CAPTURE_V2: the RecorderManager capture path does not use
+// this WechatSI adapter. Keep it only for existing compatibility contracts
+// until the file-ASR V2 flow is complete and legacy cleanup can be assessed.
+
 const VOICE_EVIDENCE_VERSION = 'voice-completion-evidence-v1';
 const VOICE_FINAL_STATUS = 'COMPLETED';
 const VOICE_TERMINAL_STATUSES = Object.freeze([

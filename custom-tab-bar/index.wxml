@@ -1,3 +1,14 @@
+<view
+  wx:if="{{centerVoiceOverlayVisible}}"
+  class="tab-voice-overlay tab-voice-overlay-{{centerVoiceOverlayMode}} tab-voice-gesture-{{centerVoiceGesture}}"
+>
+  <view class="tab-voice-panel">
+    <view class="tab-voice-title">{{centerVoiceOverlayTitle}}</view>
+    <view class="tab-voice-subtitle">{{centerVoiceOverlaySubtitle}}</view>
+    <view wx:if="{{centerVoiceOverlayMode === 'listening'}}" class="tab-voice-cancel-hint">上滑取消</view>
+  </view>
+</view>
+
 <view class="tab-shell">
   <view class="tab-safe">
     <block wx:for="{{list}}" wx:key="pagePath">

@@ -1,5 +1,14 @@
 const { getState } = require('../utils/storage');
 const { today } = require('../utils/date');
+const {
+  beginHold,
+  cancelHold,
+  endHold,
+  invalidateHoldToTalk,
+  moveHold,
+  registerHoldToTalkOwner,
+  releaseHoldToTalkOwner
+} = require('../utils/hold-to-talk-controller');
 
 const routeMap = {
   'pages/dashboard/dashboard': 0,
@@ -44,21 +53,63 @@ function buildList() {
   }));
 }
 
+function projectCenterVoiceState(component, state = {}) {
+  component.setData({
+    centerVoicePhase: String(state.phase || 'IDLE'),
+    centerVoiceGesture: state.gesture === 'cancel' ? 'cancel' : 'send',
+    centerVoiceOverlayMode: String(state.overlayMode || 'listening'),
+    centerVoiceOverlaySubtitle: String(state.overlaySubtitle || ''),
+    centerVoiceOverlayTitle: String(state.overlayTitle || ''),
+    centerVoiceOverlayVisible: state.overlayVisible === true,
+    centerVoiceRecording: state.recording === true
+  });
+}
+
+function ensureCenterVoiceOwner(component) {
+  if (component.centerVoiceOwnerToken) return component.centerVoiceOwnerToken;
+  component.centerVoiceOwnerToken = registerHoldToTalkOwner({
+    surface: 'CUSTOM_TAB_CENTER',
+    project: (state) => projectCenterVoiceState(component, state),
+    message: (message) => component.setData({ centerVoiceMessage: String(message || '') }),
+    audioReady: () => component.setData({ centerVoiceMessage: '录音已完成' }),
+    transcript: () => component.setData({ centerVoiceMessage: '正在打开记一笔' })
+  });
+  return component.centerVoiceOwnerToken;
+}
+
 Component({
   data: {
     selected: 0,
-    list: buildList()
+    list: buildList(),
+    centerVoicePhase: 'IDLE',
+    centerVoiceGesture: 'send',
+    centerVoiceMessage: '',
+    centerVoiceOverlayMode: 'listening',
+    centerVoiceOverlaySubtitle: '',
+    centerVoiceOverlayTitle: '',
+    centerVoiceOverlayVisible: false,
+    centerVoiceRecording: false
   },
 
   lifetimes: {
     attached() {
+      ensureCenterVoiceOwner(this);
       this.updateSelected();
+    },
+    detached() {
+      if (!this.centerVoiceOwnerToken) return;
+      releaseHoldToTalkOwner(this.centerVoiceOwnerToken, 'CUSTOM_TAB_DETACHED');
+      this.centerVoiceOwnerToken = null;
     }
   },
 
   pageLifetimes: {
     show() {
       this.updateSelected();
+    },
+    hide() {
+      if (!this.centerVoiceOwnerToken) return;
+      invalidateHoldToTalk(this.centerVoiceOwnerToken, 'CUSTOM_TAB_PAGE_HIDDEN');
     }
   },
 
@@ -95,45 +146,19 @@ Component({
     },
 
     startCenterVoice(event) {
-      this.centerPressing = true;
-      const current = this.getCurrentPage();
-      if (current && current.route === 'pages/dashboard/dashboard' && typeof current.startVoice === 'function') {
-        current.startVoice(event);
-        return;
-      }
-      wx.switchTab({
-        url: '/pages/dashboard/dashboard',
-        success: () => {
-          setTimeout(() => {
-            if (!this.centerPressing) return;
-            const page = this.getCurrentPage();
-            if (page && typeof page.startVoice === 'function') page.startVoice();
-          }, 120);
-        }
-      });
+      return beginHold(ensureCenterVoiceOwner(this), event);
     },
 
     moveCenterVoice(event) {
-      const current = this.getCurrentPage();
-      if (current && typeof current.moveVoice === 'function') {
-        current.moveVoice(event);
-      }
+      return moveHold(ensureCenterVoiceOwner(this), event);
     },
 
-    stopCenterVoice() {
-      this.centerPressing = false;
-      const current = this.getCurrentPage();
-      if (current && typeof current.stopVoice === 'function') {
-        current.stopVoice();
-      }
+    stopCenterVoice(event) {
+      return endHold(ensureCenterVoiceOwner(this), event);
     },
 
-    cancelCenterVoice() {
-      this.centerPressing = false;
-      const current = this.getCurrentPage();
-      if (current && typeof current.cancelVoice === 'function') {
-        current.cancelVoice();
-      }
+    cancelCenterVoice(event) {
+      return cancelHold(ensureCenterVoiceOwner(this), event, 'CUSTOM_TAB_TOUCH_CANCELLED');
     },
 
     noop() {

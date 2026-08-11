@@ -22,7 +22,7 @@
             aria-hidden="true"
           />
         </view>
-        <view class="hero-voice-hint">{{voiceRecording ? '小玲在听' : '按住和小玲说'}}</view>
+        <view class="hero-voice-hint">{{voiceCapturePhase === 'PREPARING' ? '麦克风准备中' : (voiceRecording ? '小玲在听' : '按住和小玲说')}}</view>
       </view>
     </view>
 
@@ -134,7 +134,7 @@
   <view wx:if="{{voiceOverlayVisible}}" class="voice-overlay voice-overlay-{{voiceOverlayMode}} voice-gesture-{{voiceGesture}}">
     <view class="voice-overlay-panel">
       <view class="voice-overlay-title">{{voiceOverlayTitle}}</view>
-      <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-overlay-subtitle">{{voiceOverlaySubtitle}}</view>
+      <view wx:if="{{voiceOverlayMode === 'listening' || voiceOverlayMode === 'preparing'}}" class="voice-overlay-subtitle">{{voiceOverlaySubtitle}}</view>
       <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-overlay-mic">
         <view class="voice-overlay-wave voice-overlay-wave-left"></view>
         <view class="voice-overlay-wave voice-overlay-wave-right"></view>
@@ -146,15 +146,14 @@
           </view>
         </view>
       </view>
-      <view wx:else class="voice-progress-box">
+      <view wx:elif="{{voiceOverlayMode === 'processing'}}" class="voice-progress-box">
         <view class="voice-progress-track">
           <view class="voice-progress-line"></view>
         </view>
       </view>
       <view wx:if="{{voiceOverlayMode === 'processing'}}" class="voice-processing-note">{{voiceOverlaySubtitle}}</view>
       <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-slide-targets">
-        <view class="voice-slide-target voice-slide-cancel">取消输入</view>
-        <view class="voice-slide-target voice-slide-input">转到文字输入</view>
+        <view class="voice-slide-target voice-slide-cancel">上滑取消</view>
       </view>
     </view>
   </view>
