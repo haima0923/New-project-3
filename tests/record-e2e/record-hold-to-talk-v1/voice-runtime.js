@@ -4,10 +4,11 @@ function createPermissionController(wx, mode = 'GRANTED') {
   const pendingSettings = [];
   const pendingAuthorizations = [];
   const audit = [];
+  let permissionGranted = mode === 'GRANTED';
 
   wx.getSetting = (callbacks = {}) => {
     audit.push({ type: 'GET_SETTING', mode });
-    if (mode === 'GRANTED') {
+    if (permissionGranted) {
       if (typeof callbacks.success === 'function') {
         callbacks.success({ authSetting: { 'scope.record': true } });
       }
@@ -46,11 +47,13 @@ function createPermissionController(wx, mode = 'GRANTED') {
     releaseGranted() {
       const setting = pendingSettings.shift();
       if (setting && typeof setting.success === 'function') {
+        permissionGranted = true;
         setting.success({ authSetting: { 'scope.record': true } });
         return true;
       }
       const authorization = pendingAuthorizations.shift();
       if (authorization && typeof authorization.success === 'function') {
+        permissionGranted = true;
         authorization.success({});
         return true;
       }
@@ -73,6 +76,39 @@ function createPermissionController(wx, mode = 'GRANTED') {
       const setting = pendingSettings.shift();
       if (!setting || typeof setting.success !== 'function') return false;
       setting.success({ authSetting: {} });
+      return true;
+    },
+    // Page/Input construction probes permission before the current gesture.
+    // Readiness contracts must release the capture's newest callback, never an
+    // unrelated page-initialization probe left at the head of the queue.
+    releaseLatestNeedsAuthorize() {
+      const setting = pendingSettings.pop();
+      if (!setting || typeof setting.success !== 'function') return false;
+      setting.success({ authSetting: {} });
+      return true;
+    },
+    releaseLatestGranted() {
+      const authorization = pendingAuthorizations.pop();
+      if (authorization && typeof authorization.success === 'function') {
+        permissionGranted = true;
+        authorization.success({});
+        return true;
+      }
+      const setting = pendingSettings.pop();
+      if (!setting || typeof setting.success !== 'function') return false;
+      permissionGranted = true;
+      setting.success({ authSetting: { 'scope.record': true } });
+      return true;
+    },
+    releaseLatestDenied() {
+      const authorization = pendingAuthorizations.pop();
+      if (authorization && typeof authorization.fail === 'function') {
+        authorization.fail({ errMsg: 'authorize:fail controlled denial' });
+        return true;
+      }
+      const setting = pendingSettings.pop();
+      if (!setting || typeof setting.success !== 'function') return false;
+      setting.success({ authSetting: { 'scope.record': false } });
       return true;
     },
     restore() {

@@ -109,6 +109,14 @@ function loadCustomTabComponent(fakeWx) {
     const detached = definition.lifetimes && definition.lifetimes.detached;
     if (typeof detached === 'function') detached.call(component);
   };
+  component.__pageHide = () => {
+    const hide = definition.pageLifetimes && definition.pageLifetimes.hide;
+    if (typeof hide === 'function') hide.call(component);
+  };
+  component.__pageShow = () => {
+    const show = definition.pageLifetimes && definition.pageLifetimes.show;
+    if (typeof show === 'function') show.call(component);
+  };
   component.__audit = () => ({ calls: Object.assign({}, calls) });
   component.__attach();
   return component;

@@ -1,9 +1,12 @@
 const { stableHash } = require('../../../utils/record-state-diff');
+const { createTranscriptFingerprint } = require('../../../utils/voice-recognition');
 const { createHoldHarness, flushAsync } = require('./runtime');
 const { point } = require('./gesture-runtime');
 const { extractVoiceBindings } = require('./tab-runtime');
 
 const TRANSCRIPT = '王总周三交500个5元';
+const ONSET_TRANSCRIPT = '冯总订水杯137个，每个5元，8月15日交';
+const POST_ONSTART_STABILIZATION_MS = 700;
 
 function check(code, pass, actual) {
   return { code, pass: pass === true, actual };
@@ -17,14 +20,14 @@ function inputNavigations(audit) {
   return (audit.navigation || []).filter((entry) => entry.url === '/pages/input/input');
 }
 
-function validVoicePayload(payload) {
+function validVoicePayload(payload, expectedText = TRANSCRIPT) {
   return payload
     && JSON.stringify(Object.keys(payload).sort()) === JSON.stringify([
       'autoParse', 'originSurface', 'originalText', 'source'
     ])
     && payload.autoParse === true
     && payload.originSurface === 'HOME_QUICK'
-    && payload.originalText === TRANSCRIPT
+    && payload.originalText === expectedText
     && payload.source === 'voice';
 }
 
@@ -41,18 +44,23 @@ function shortPromptSnapshot(harness) {
   };
 }
 
-function shortPromptObserved(before, after, options = {}) {
+function preReadyPromptObserved(before, after, options = {}) {
   const newUiTitles = after.uiTitles.slice(before.uiTitles.length);
-  if (newUiTitles.includes('请按住说话')) return true;
+  if (newUiTitles.includes('请等震动后再说')) return true;
   return options.allowDashboardTip === true
-    && after.tip === '请按住说话'
+    && after.tip === '麦克风准备中，请等震动后再说。'
     && after.tip !== before.tip;
+}
+
+function emitProviderOnStart(harness, index) {
+  if (!harness.voice.audit().startCount) return false;
+  return harness.voice.emitStart(index);
 }
 
 function activeHero(harness, event) {
   harness.dispatchHero('start', event || harness.touch.touchStart());
-  harness.scheduler.advanceBy(260);
-  harness.voice.emitStart();
+  emitProviderOnStart(harness);
+  harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
 }
 
 function releaseHero(harness, event) {
@@ -67,9 +75,10 @@ async function completeHero(harness, transcript = TRANSCRIPT) {
   return harness.audit();
 }
 
-function startTabAtThreshold(harness) {
-  harness.dispatchTab('start', harness.touch.touchStart());
-  harness.scheduler.advanceBy(260);
+function activeTab(harness, event) {
+  harness.dispatchTab('start', event || harness.touch.touchStart());
+  emitProviderOnStart(harness);
+  harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
 }
 
 function semanticInput(audit) {
@@ -92,14 +101,16 @@ async function p0Hold001() {
   return withHarness({ caseId: 'P0-HOLD-001' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
     harness.dashboard.page.onHide();
-    harness.scheduler.advanceBy(261);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     if (harness.voice.audit().startCount) {
       harness.voice.emitStart();
       harness.voice.emitFinal(undefined, TRANSCRIPT);
     }
     const audit = harness.audit();
     return [
-      check('HIDDEN_TIMER_PROVIDER_ZERO', audit.voice.manager.startCount === 0, audit.voice.manager),
+      check('HIDDEN_ONSET_PROVIDER_STARTED', audit.voice.manager.startCount === 1, audit.voice.manager),
+      check('HIDDEN_ONSET_PROVIDER_CANCELLED_ONCE', audit.voice.manager.stopCount === 1
+        && audit.voice.session && audit.voice.session.status === 'CANCELLED', audit.voice),
       check('HIDDEN_TIMER_HANDOFF_ZERO', audit.handoff.publishCount === 0, audit.handoff),
       check('HIDDEN_TIMER_NAV_ZERO', inputNavigations(audit).length === 0, audit.navigation),
       check('HIDDEN_TIMER_PARSE_ZERO', audit.parser.hybridCount === 0, audit.parser),
@@ -123,7 +134,8 @@ async function p0Hold002() {
     const dataAfterLate = safeVoiceData(harness);
     harness.dashboard.page.onShow();
     harness.dispatchHero('start', harness.touch.touchStart(2, 210, 410));
-    harness.scheduler.advanceBy(260);
+    emitProviderOnStart(harness, 1);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     const audit = harness.audit();
     return [
       check('ACTIVE_HIDE_UI_IDLE', dataAfterLate.recording === false
@@ -134,7 +146,8 @@ async function p0Hold002() {
         && auditAfterLate.parser.hybridCount === 0, auditAfterLate),
       check('ACTIVE_HIDE_ONSHOW_REUSABLE', audit.voice.manager.startCount === 2
         && harness.dashboard.page.data.voiceRecording === true
-        && harness.dashboard.page.data.voiceOverlayVisible === true, {
+        && harness.dashboard.page.data.voiceOverlayVisible === true
+        && harness.dashboard.page.data.voiceCapturePhase === 'READY_RECORDING', {
         data: safeVoiceData(harness),
         manager: audit.voice.manager
       }),
@@ -149,44 +162,45 @@ async function tab001() {
   return withHarness({ caseId: 'TAB-001', origin: 'records' }, async (harness) => {
     harness.dispatchTab('start', harness.touch.touchStart());
     const atStart = harness.audit();
-    harness.scheduler.advanceBy(260);
-    const atThreshold = harness.audit();
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
+    const beforeProviderStart = harness.audit();
     return [
       check('TAB_NO_DASHBOARD_NAV_AT_START', dashboardNavigations(atStart).length === 0, atStart.navigation),
-      check('TAB_NO_DASHBOARD_NAV_AT_THRESHOLD', dashboardNavigations(atThreshold).length === 0, atThreshold.navigation),
-      check('TAB_OWNS_PROVIDER_START', atThreshold.voice.manager.startCount === 1, atThreshold.voice.manager)
+      check('TAB_NO_DASHBOARD_NAV_BEFORE_PROVIDER_START', dashboardNavigations(beforeProviderStart).length === 0, beforeProviderStart.navigation),
+      check('TAB_OWNS_PROVIDER_START_AT_TOUCHSTART', atStart.voice.manager.startCount === 1, atStart.voice.manager)
     ];
   });
 }
 
 async function tab002() {
-  const matrix = [];
-  for (const milliseconds of [259, 260, 261]) {
-    matrix.push(await withHarness({ caseId: `TAB-002-${milliseconds}`, origin: 'records' }, async (harness) => {
-      harness.dispatchTab('start', harness.touch.touchStart());
-      harness.scheduler.advanceBy(milliseconds);
-      return { milliseconds, startCount: harness.voice.audit().startCount };
-    }));
-  }
+  const timing = await withHarness({ caseId: 'TAB-002-TIMING', origin: 'records' }, async (harness) => {
+    harness.dispatchTab('start', harness.touch.touchStart());
+    const atTouchStart = { audit: harness.audit(), phase: currentHoldState().phase };
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS - 1);
+    const at699 = { audit: harness.audit(), phase: currentHoldState().phase };
+    harness.scheduler.advanceBy(1);
+    const at700 = { audit: harness.audit(), phase: currentHoldState().phase };
+    return { at699, at700, atTouchStart };
+  });
   const release = await withHarness({ caseId: 'TAB-002-RELEASE', origin: 'records' }, async (harness) => {
-    startTabAtThreshold(harness);
-    if (harness.voice.audit().startCount) harness.voice.emitStart();
+    activeTab(harness);
     harness.dispatchTab('end', harness.touch.touchEnd());
     return harness.audit();
   });
   return [
-    check('TAB_THRESHOLD_259_ZERO', matrix[0].startCount === 0, matrix),
-    check('TAB_ONE_GESTURE_START_ONCE', matrix[1].startCount === 1, matrix),
-    check('TAB_THRESHOLD_261_STILL_ONCE', matrix[2].startCount === 1, matrix),
-    check('TAB_FIRST_RELEASE_STOP_ONCE', release.voice.manager.stopCount === 1, release.voice.manager),
+    check('TAB_ONSET_STARTS_IMMEDIATELY', timing.atTouchStart.audit.voice.manager.startCount === 1
+      && timing.atTouchStart.phase === 'PREPARING', timing.atTouchStart),
+    check('TAB_ONSTART_699_STILL_STABILIZING', timing.at699.phase === 'POST_ONSTART_STABILIZING', timing.at699),
+    check('TAB_ONSTART_700_READY', timing.at700.phase === 'READY_RECORDING', timing.at700),
+    check('TAB_READY_RELEASE_STOP_ONCE', release.voice.manager.stopCount === 1, release.voice.manager),
     check('TAB_NO_SECOND_ACTION_OR_DASHBOARD', dashboardNavigations(release).length === 0, release.navigation)
   ];
 }
 
 async function tab003() {
   return withHarness({ caseId: 'TAB-003', origin: 'records', text: TRANSCRIPT }, async (harness) => {
-    startTabAtThreshold(harness);
-    if (harness.voice.audit().startCount) harness.voice.emitStart();
+    activeTab(harness);
     harness.dispatchTab('end', harness.touch.touchEnd());
     if (harness.voice.audit().startCount) harness.voice.emitFinal(undefined, TRANSCRIPT);
     await harness.followInput();
@@ -213,8 +227,7 @@ async function tab003() {
 
 async function tab004() {
   return withHarness({ caseId: 'TAB-004', origin: 'records' }, async (harness) => {
-    startTabAtThreshold(harness);
-    if (harness.voice.audit().startCount) harness.voice.emitStart();
+    activeTab(harness);
     harness.dispatchTab('move', harness.touch.touchMove([point(1, 200, 340)]));
     harness.dispatchTab('end', harness.touch.touchEnd(1, 200, 340));
     if (harness.voice.audit().startCount) harness.voice.emitFinal(undefined, TRANSCRIPT);
@@ -234,14 +247,18 @@ async function tab005() {
   return withHarness({ caseId: 'TAB-005', origin: 'records' }, async (harness) => {
     const promptBefore = shortPromptSnapshot(harness);
     harness.dispatchTab('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(259);
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS - 1);
     harness.dispatchTab('end', harness.touch.touchEnd());
+    harness.voice.emitFinal(undefined, TRANSCRIPT);
     harness.scheduler.advanceBy(200);
     const audit = harness.audit();
     const promptAfter = shortPromptSnapshot(harness);
     return [
-      check('TAB_SHORT_PROVIDER_ZERO', audit.voice.manager.startCount === 0, audit.voice.manager),
-      check('TAB_SHORT_PROMPT', shortPromptObserved(promptBefore, promptAfter, { allowDashboardTip: false }), { promptBefore, promptAfter }),
+      check('TAB_SHORT_PROVIDER_STARTED', audit.voice.manager.startCount === 1, audit.voice.manager),
+      check('TAB_SHORT_PROVIDER_CANCELLED_ONCE', audit.voice.manager.stopCount === 1
+        && audit.voice.session && audit.voice.session.status === 'CANCELLED', audit.voice),
+      check('TAB_PRE_READY_PROMPT', preReadyPromptObserved(promptBefore, promptAfter, { allowDashboardTip: false }), { promptBefore, promptAfter }),
       check('TAB_SHORT_STAYS_ORIGIN', audit.navigation.length === 0, audit.navigation),
       check('TAB_SHORT_SIDE_EFFECT_ZERO', audit.handoff.publishCount === 0
         && !audit.businessMutation
@@ -253,8 +270,7 @@ async function tab005() {
 
 async function tab006() {
   return withHarness({ caseId: 'TAB-006', origin: 'records' }, async (harness) => {
-    startTabAtThreshold(harness);
-    if (harness.voice.audit().startCount) harness.voice.emitStart();
+    activeTab(harness);
     harness.dispatchTab('cancel', harness.touch.touchCancel());
     if (harness.voice.audit().startCount) harness.voice.emitFinal(undefined, TRANSCRIPT);
     const audit = harness.audit();
@@ -275,15 +291,19 @@ async function hold001() {
   return withHarness({ caseId: 'HOLD-001' }, async (harness) => {
     const promptBefore = shortPromptSnapshot(harness);
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(259);
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS - 1);
     harness.dispatchHero('end', harness.touch.touchEnd());
+    harness.voice.emitFinal(undefined, TRANSCRIPT);
     harness.scheduler.advanceBy(10);
     const audit = harness.audit();
     const promptAfter = shortPromptSnapshot(harness);
     return [
-      check('HERO_SHORT_PROVIDER_ZERO', audit.voice.manager.startCount === 0, audit.voice.manager),
+      check('HERO_SHORT_PROVIDER_STARTED', audit.voice.manager.startCount === 1, audit.voice.manager),
+      check('HERO_SHORT_PROVIDER_CANCELLED_ONCE', audit.voice.manager.stopCount === 1
+        && audit.voice.session && audit.voice.session.status === 'CANCELLED', audit.voice),
       check('HERO_SHORT_HANDOFF_ZERO', audit.handoff.publishCount === 0, audit.handoff),
-      check('HERO_SHORT_PROMPT', shortPromptObserved(promptBefore, promptAfter, {
+      check('HERO_PRE_READY_PROMPT', preReadyPromptObserved(promptBefore, promptAfter, {
         allowDashboardTip: harness.bindings.dashboardTipProjected === true
       }), { bindings: harness.bindings, promptBefore, promptAfter }),
       check('HERO_SHORT_MUTATION_ZERO', !audit.businessMutation
@@ -294,18 +314,21 @@ async function hold001() {
 }
 
 async function hold002() {
-  const evidence = [];
-  for (const milliseconds of [259, 260, 261]) {
-    evidence.push(await withHarness({ caseId: `HOLD-002-${milliseconds}` }, async (harness) => {
-      harness.dispatchHero('start', harness.touch.touchStart());
-      harness.scheduler.advanceBy(milliseconds);
-      return { milliseconds, startCount: harness.voice.audit().startCount };
-    }));
-  }
+  const timing = await withHarness({ caseId: 'HOLD-002-TIMING' }, async (harness) => {
+    harness.dispatchHero('start', harness.touch.touchStart());
+    const atTouchStart = { audit: harness.audit(), phase: currentHoldState().phase };
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS - 1);
+    const at699 = { audit: harness.audit(), phase: currentHoldState().phase };
+    harness.scheduler.advanceBy(1);
+    const at700 = { audit: harness.audit(), phase: currentHoldState().phase };
+    return { at699, at700, atTouchStart };
+  });
   return [
-    check('THRESHOLD_259_NOT_STARTED', evidence[0].startCount === 0, evidence),
-    check('THRESHOLD_260_STARTED_ONCE', evidence[1].startCount === 1, evidence),
-    check('THRESHOLD_261_STILL_ONCE', evidence[2].startCount === 1, evidence)
+    check('HERO_ONSET_STARTS_IMMEDIATELY', timing.atTouchStart.audit.voice.manager.startCount === 1
+      && timing.atTouchStart.phase === 'PREPARING', timing.atTouchStart),
+    check('HERO_ONSTART_699_STILL_STABILIZING', timing.at699.phase === 'POST_ONSTART_STABILIZING', timing.at699),
+    check('HERO_ONSTART_700_READY', timing.at700.phase === 'READY_RECORDING', timing.at700)
   ];
 }
 
@@ -346,9 +369,7 @@ async function hold004() {
       evidence.push(await withHarness({ caseId: `HOLD-004-${origin}-${position.label}`, origin: 'dashboard' }, async (harness) => {
       if (origin === 'hero') activeHero(harness);
       else {
-        harness.dispatchTab('start', harness.touch.touchStart());
-        harness.scheduler.advanceBy(260);
-        harness.voice.emitStart();
+        activeTab(harness);
       }
       if (origin === 'hero') {
         harness.dispatchHero('move', harness.touch.touchMove([point(1, position.x, position.y)]));
@@ -384,9 +405,7 @@ async function hold005() {
   const run = (origin) => withHarness({ caseId: `HOLD-005-${origin}`, origin: 'dashboard' }, async (harness) => {
     if (origin === 'hero') activeHero(harness);
     else {
-      harness.dispatchTab('start', harness.touch.touchStart());
-      harness.scheduler.advanceBy(260);
-      harness.voice.emitStart();
+      activeTab(harness);
     }
     const dispatch = (kind, event) => (origin === 'hero'
       ? harness.dispatchHero(kind, event)
@@ -408,9 +427,9 @@ async function hold005() {
   return [
     check('SLIDE_BACK_ENTERED_CANCEL', hero.cancelled, hero),
     check('SLIDE_BACK_RESTORED_SEND', hero.restored, hero),
-    check('SLIDE_BACK_STOPPED_ONCE', hero.audit.voice.manager.stopCount === 1
+    check('SLIDE_BACK_READY_STOPPED_ONCE', hero.audit.voice.manager.stopCount === 1
       && hero.audit.voice.session && hero.audit.voice.session.status === 'STOP_REQUESTED', hero.audit.voice),
-    check('TAB_SLIDE_BACK_RESTORED_SEND', tab.audit.voice.manager.stopCount === 1
+    check('TAB_SLIDE_BACK_READY_STOPPED_ONCE', tab.audit.voice.manager.stopCount === 1
       && tab.audit.voice.session && tab.audit.voice.session.status === 'STOP_REQUESTED', tab.audit.voice)
   ];
 }
@@ -420,8 +439,8 @@ async function touchIdentityScenario(origin) {
     const start = harness.touch.touchStart(1, 200, 400, [point(2, 300, 400)]);
     if (origin === 'hero') harness.dispatchHero('start', start);
     else harness.dispatchTab('start', start);
-    harness.scheduler.advanceBy(260);
-    harness.voice.emitStart();
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     const reordered = harness.touch.touchMove([point(2, 100, 300), point(1, 200, 400)]);
     if (origin === 'hero') harness.dispatchHero('move', reordered);
     else harness.dispatchTab('move', reordered);
@@ -450,8 +469,8 @@ async function hold006() {
   const tab = await touchIdentityScenario('tab');
   const zeroHero = await withHarness({ caseId: 'HOLD-006-ZERO-HERO' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart(1, 0, 0));
-    harness.scheduler.advanceBy(260);
-    harness.voice.emitStart();
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     harness.dispatchHero('move', harness.touch.touchMove([point(1, 0, -60)]));
     harness.dispatchHero('end', harness.touch.touchEnd(1, 0, -60));
     const audit = harness.audit();
@@ -459,8 +478,8 @@ async function hold006() {
   });
   const zeroTab = await withHarness({ caseId: 'HOLD-006-ZERO-TAB', origin: 'dashboard' }, async (harness) => {
     harness.dispatchTab('start', harness.touch.touchStart(1, 0, 0));
-    harness.scheduler.advanceBy(260);
-    harness.voice.emitStart();
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     harness.dispatchTab('move', harness.touch.touchMove([point(1, 0, -60)]));
     harness.dispatchTab('end', harness.touch.touchEnd(1, 0, -60));
     const audit = harness.audit();
@@ -484,27 +503,32 @@ async function hold006() {
 async function hold007() {
   const quick = await withHarness({ caseId: 'HOLD-007-QUICK' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
+    emitProviderOnStart(harness);
     harness.scheduler.advanceBy(100);
     harness.dispatchHero('end', harness.touch.touchEnd());
+    harness.voice.emitFinal(undefined, TRANSCRIPT);
     harness.scheduler.advanceBy(300);
     return harness.audit();
   });
   const hidden = await withHarness({ caseId: 'HOLD-007-HIDE' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
     harness.dashboard.page.onHide();
-    harness.scheduler.advanceBy(300);
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     return harness.audit();
   });
   const detached = await withHarness({ caseId: 'HOLD-007-DETACHED', origin: 'records' }, async (harness) => {
     harness.dispatchTab('start', harness.touch.touchStart());
     harness.tab.__detach();
-    harness.scheduler.advanceBy(400);
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     return harness.audit();
   });
   const unloaded = await withHarness({ caseId: 'HOLD-007-UNLOAD' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
     harness.dashboard.page.onUnload();
-    harness.scheduler.advanceBy(300);
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     return harness.audit();
   });
   const activeUnload = await withHarness({ caseId: 'HOLD-007-ACTIVE-UNLOAD' }, async (harness) => {
@@ -514,10 +538,14 @@ async function hold007() {
     return harness.audit();
   });
   return [
-    check('QUICK_RELEASE_TIMER_DEAD', quick.voice.manager.startCount === 0, quick.voice),
-    check('HIDE_TIMER_DEAD', hidden.voice.manager.startCount === 0, hidden.voice),
-    check('DETACHED_TIMER_DEAD', detached.voice.manager.startCount === 0, detached.voice),
-    check('UNLOAD_TIMER_DEAD', unloaded.voice.manager.startCount === 0, unloaded.voice),
+    check('QUICK_RELEASE_CAPTURE_DISCARDED', quick.voice.manager.startCount === 1
+      && quick.voice.manager.stopCount === 1 && quick.voice.session.status === 'CANCELLED', quick.voice),
+    check('HIDE_ONSET_CAPTURE_CANCELLED', hidden.voice.manager.startCount === 1
+      && hidden.voice.manager.stopCount === 1 && hidden.voice.session.status === 'CANCELLED', hidden.voice),
+    check('DETACHED_ONSET_CAPTURE_CANCELLED', detached.voice.manager.startCount === 1
+      && detached.voice.manager.stopCount === 1 && detached.voice.session.status === 'CANCELLED', detached.voice),
+    check('UNLOAD_ONSET_CAPTURE_CANCELLED', unloaded.voice.manager.startCount === 1
+      && unloaded.voice.manager.stopCount === 1 && unloaded.voice.session.status === 'CANCELLED', unloaded.voice),
     check('ACTIVE_UNLOAD_LATE_FINAL_ZERO', activeUnload.handoff.publishCount === 0
       && inputNavigations(activeUnload).length === 0, activeUnload)
   ];
@@ -526,34 +554,28 @@ async function hold007() {
 async function hold008() {
   const release = await withHarness({ caseId: 'HOLD-008-RELEASE', permissionMode: 'PENDING' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(260);
     harness.dispatchHero('end', harness.touch.touchEnd());
-    harness.permission.releaseGranted();
+    harness.permission.releaseLatestGranted();
     return harness.audit();
   });
   const hidden = await withHarness({ caseId: 'HOLD-008-HIDE', permissionMode: 'PENDING' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(260);
     harness.dashboard.page.onHide();
-    harness.permission.releaseGranted();
+    harness.permission.releaseLatestGranted();
     return { audit: harness.audit(), data: safeVoiceData(harness) };
   });
   const authorize = await withHarness({ caseId: 'HOLD-008-AUTHORIZE', permissionMode: 'PENDING' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(260);
-    harness.dispatchHero('end', harness.touch.touchEnd());
-    const enteredAuthorize = harness.permission.releaseNeedsAuthorize();
+    const enteredAuthorize = harness.permission.releaseLatestNeedsAuthorize();
     const pending = harness.permission.audit();
-    const released = harness.permission.releaseGranted();
+    const released = harness.permission.releaseLatestGranted();
     return { audit: harness.audit(), enteredAuthorize, pending, released };
   });
   const authorizeDenied = await withHarness({ caseId: 'HOLD-008-AUTHORIZE-DENIED', permissionMode: 'PENDING' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(260);
-    harness.dispatchHero('end', harness.touch.touchEnd());
-    const enteredAuthorize = harness.permission.releaseNeedsAuthorize();
+    const enteredAuthorize = harness.permission.releaseLatestNeedsAuthorize();
     const pending = harness.permission.audit();
-    const denied = harness.permission.releaseDenied();
+    const denied = harness.permission.releaseLatestDenied();
     return { audit: harness.audit(), denied, enteredAuthorize, pending, voiceData: safeVoiceData(harness) };
   });
   return [
@@ -561,11 +583,11 @@ async function hold008() {
     check('PERMISSION_AFTER_HIDE_NO_START', hidden.audit.voice.manager.startCount === 0, hidden),
     check('PERMISSION_AFTER_HIDE_IDLE', hidden.data.recording === false && hidden.data.overlay === false, hidden.data),
     check('AUTHORIZE_PATH_WAS_REAL', authorize.enteredAuthorize === true
-      && authorize.pending.pendingAuthorizations === 1
+      && authorize.pending.pendingAuthorizations >= 1
       && authorize.released === true, authorize),
     check('AUTHORIZE_AFTER_RELEASE_NO_START', authorize.audit.voice.manager.startCount === 0, authorize.audit.voice),
     check('AUTHORIZE_DENIAL_PATH_WAS_REAL', authorizeDenied.enteredAuthorize === true
-      && authorizeDenied.pending.pendingAuthorizations === 1
+      && authorizeDenied.pending.pendingAuthorizations >= 1
       && authorizeDenied.denied === true, authorizeDenied),
     check('AUTHORIZE_DENIAL_NO_START', authorizeDenied.audit.voice.manager.startCount === 0
       && authorizeDenied.voiceData.recording === false
@@ -585,46 +607,43 @@ function safeVoiceData(harness) {
 async function hold009() {
   const released = await withHarness({ caseId: 'HOLD-009-RELEASED', permissionMode: 'PENDING' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(260);
     harness.dispatchHero('end', harness.touch.touchEnd());
     const before = safeVoiceData(harness);
-    harness.permission.releaseGranted();
-    harness.voice.emitStart();
+    harness.permission.releaseLatestGranted();
     const after = safeVoiceData(harness);
     const audit = harness.audit();
     return { after, audit, before, permission: harness.permission.audit() };
   });
   const cancelled = await withHarness({ caseId: 'HOLD-009-CANCELLED', permissionMode: 'PENDING' }, async (harness) => {
     harness.dispatchHero('start', harness.touch.touchStart());
-    harness.scheduler.advanceBy(260);
     harness.dispatchHero('move', harness.touch.touchMove([point(1, 140, 340)]));
     const beforeStart = {
       gesture: harness.dashboard.page.data.voiceGesture,
       subtitle: harness.dashboard.page.data.voiceOverlaySubtitle,
       title: harness.dashboard.page.data.voiceOverlayTitle
     };
-    harness.permission.releaseGranted();
-    harness.voice.emitStart();
+    harness.permission.releaseLatestGranted();
     const afterStart = {
       gesture: harness.dashboard.page.data.voiceGesture,
       subtitle: harness.dashboard.page.data.voiceOverlaySubtitle,
       title: harness.dashboard.page.data.voiceOverlayTitle
     };
     harness.dispatchHero('end', harness.touch.touchEnd(1, 140, 340));
-    harness.voice.emitFinal(0, TRANSCRIPT, 2);
     return { afterStart, audit: harness.audit(), beforeStart };
   });
   return [
     check('LATE_ONSTART_NOT_LISTENING', released.after.mode !== 'listening'
       && !/正在听|松开发送|松开取消/.test(`${released.after.title}`), released),
     check('LATE_ONSTART_NOT_ACTIVE', released.after.recording === false, released),
-    check('LATE_ONSTART_PROVIDER_STOP_ONCE', released.audit.voice.manager.stopCount === 1, released.audit.voice.manager),
-    check('LATE_ONSTART_PERMISSION_RESOLVED', released.permission.pendingSettings === 0, released.permission),
+    check('LATE_PERMISSION_CALLBACK_DOES_NOT_TOUCH_PROVIDER', released.audit.voice.manager.startCount === 0
+      && released.audit.voice.manager.stopCount === 0, released.audit.voice.manager),
+    check('LATE_PERMISSION_CALLBACK_STAYS_FAIL_CLOSED', released.audit.handoff.publishCount === 0
+      && inputNavigations(released.audit).length === 0, released.audit),
     check('CANCEL_INTENT_VISIBLE_BEFORE_START', cancelled.beforeStart.gesture === 'cancel'
       && /取消/.test(`${cancelled.beforeStart.title} ${cancelled.beforeStart.subtitle}`), cancelled.beforeStart),
-    check('CANCEL_INTENT_SURVIVES_LATE_START', cancelled.afterStart.gesture === 'cancel'
-      && /取消/.test(`${cancelled.afterStart.title} ${cancelled.afterStart.subtitle}`), cancelled.afterStart),
-    check('CANCEL_AFTER_LATE_START_ZERO_HANDOFF', cancelled.audit.voice.manager.stopCount === 1
+    check('CANCEL_INTENT_PERMISSION_GRANT_NO_PROVIDER', cancelled.audit.voice.manager.startCount === 0
+      && cancelled.audit.voice.manager.stopCount === 0, cancelled.audit.voice.manager),
+    check('CANCEL_AFTER_PERMISSION_GRANT_ZERO_HANDOFF', cancelled.audit.voice.manager.stopCount === 0
       && cancelled.audit.handoff.publishCount === 0
       && inputNavigations(cancelled.audit).length === 0, cancelled.audit)
   ];
@@ -677,11 +696,11 @@ async function hold012() {
     harness.dispatchHero('move', harness.touch.touchMove([point(1, 140, 340)]));
     releaseHero(harness, harness.touch.touchEnd(1, 140, 340));
     harness.dispatchHero('start', harness.touch.touchStart(2, 220, 420));
-    harness.scheduler.advanceBy(260);
     const beforeOldFinal = harness.audit();
     harness.voice.emitFinal(0, '旧语音A', 2);
     const afterOldFinal = harness.audit();
-    harness.voice.emitStart(1);
+    emitProviderOnStart(harness, 1);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     harness.dispatchHero('end', harness.touch.touchEnd(2, 220, 420));
     harness.voice.emitFinal(1, '新语音B', 2);
     const afterNewFinal = harness.audit();
@@ -777,7 +796,7 @@ async function hold015() {
     return [
       check('FINALIZING_REPRESS_NO_PROVIDER', audit.voice.manager.startCount === 1, audit.voice.manager),
       check('FINALIZING_REPRESS_FEEDBACK', newMessages.some((message) => (
-        /上一条正在整理|请稍候|请等上一条|稍等上一条/.test(message)
+        /上一条正在整理|上一条正在处理录音|请稍候|请等上一条|稍等上一条/.test(message)
       )), { after, before, newMessages })
     ];
   });
@@ -811,8 +830,8 @@ async function hold017() {
   });
   const tabOwner = await withHarness({ caseId: 'HOLD-017-TAB', origin: 'records' }, async (harness) => {
     harness.dispatchTab('start', harness.touch.touchStart(1, 200, 400));
-    harness.scheduler.advanceBy(380);
-    harness.voice.emitStart();
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     harness.dispatchHero('start', harness.touch.touchStart(2, 300, 400));
     harness.dispatchHero('end', harness.touch.touchEnd(2, 300, 400));
     const afterForeignEnd = harness.audit();
@@ -827,8 +846,8 @@ async function hold017() {
   });
   const tabForeignCancel = await withHarness({ caseId: 'HOLD-017-TAB-CANCEL', origin: 'records' }, async (harness) => {
     harness.dispatchTab('start', harness.touch.touchStart(1, 200, 400));
-    harness.scheduler.advanceBy(380);
-    harness.voice.emitStart();
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
     harness.dispatchHero('cancel', harness.touch.touchCancel(2, 300, 400, [point(1, 200, 400)]));
     return harness.audit();
   });
@@ -855,9 +874,7 @@ async function finalFrom(origin) {
     if (origin === 'dashboard') {
       await completeHero(harness);
     } else {
-      harness.dispatchTab('start', harness.touch.touchStart());
-      harness.scheduler.advanceBy(380);
-      harness.voice.emitStart();
+      activeTab(harness);
       harness.dispatchTab('end', harness.touch.touchEnd());
       harness.voice.emitFinal(undefined, TRANSCRIPT, 2);
       await harness.followInput();
@@ -877,6 +894,174 @@ async function hold018() {
     check('TWO_ENTRY_NO_AUTO_SAVE', !hero.audit.businessMutation && !tab.audit.businessMutation
       && allZeroAuthority(hero.audit) && allZeroAuthority(tab.audit), { hero: hero.audit.dashboardAuthority, tab: tab.audit.dashboardAuthority })
   ];
+}
+
+function currentHoldState() {
+  return require('../../../utils/hold-to-talk-controller').getHoldToTalkState();
+}
+
+async function onset001() {
+  return withHarness({ caseId: 'ONSET-001' }, async (harness) => {
+    harness.dispatchHero('start', harness.touch.touchStart());
+    const immediate = { audit: harness.audit(), state: currentHoldState() };
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS - 1);
+    const stabilizing = { audit: harness.audit(), state: currentHoldState() };
+    harness.scheduler.advanceBy(1);
+    const ready = { audit: harness.audit(), state: currentHoldState() };
+    harness.dispatchHero('cancel', harness.touch.touchCancel());
+    return [
+      check('ONSET001.STARTS_WITHOUT_THRESHOLD', immediate.audit.voice.manager.startCount === 1, immediate),
+      check('ONSET001.PREPARING_AT_TOUCHSTART', immediate.state.phase === 'PREPARING'
+        && immediate.state.gestureQualified === false, immediate.state),
+      check('ONSET001.STABILIZING_AT_699', stabilizing.state.phase === 'POST_ONSTART_STABILIZING'
+        && stabilizing.state.gestureQualified === false, stabilizing),
+      check('ONSET001.READY_ONLY_AT_ONSTART_PLUS_700', ready.state.phase === 'READY_RECORDING'
+        && ready.state.gestureQualified === true
+        && ready.audit.voice.manager.startCount === 1, ready)
+    ];
+  });
+}
+
+async function onset002() {
+  const run = (origin) => withHarness({ caseId: `ONSET-002-${origin}`, origin }, async (harness) => {
+    const dispatch = origin === 'dashboard' ? harness.dispatchHero : harness.dispatchTab;
+    dispatch('start', harness.touch.touchStart());
+    const audit = harness.audit();
+    dispatch('cancel', harness.touch.touchCancel());
+    return audit;
+  });
+  const hero = await run('dashboard');
+  const tab = await run('records');
+  return [
+    check('ONSET002.HERO_IMMEDIATE_START', hero.voice.manager.startCount === 1, hero.voice.manager),
+    check('ONSET002.TAB_IMMEDIATE_START', tab.voice.manager.startCount === 1, tab.voice.manager),
+    check('ONSET002.TAB_NO_DASHBOARD_HOP', dashboardNavigations(tab).length === 0, tab.navigation)
+  ];
+}
+
+async function onset003() {
+  const run = (origin) => withHarness({ caseId: `ONSET-003-${origin}`, origin }, async (harness) => {
+    const dispatch = origin === 'dashboard' ? harness.dispatchHero : harness.dispatchTab;
+    const promptBefore = shortPromptSnapshot(harness);
+    dispatch('start', harness.touch.touchStart());
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(100);
+    dispatch('end', harness.touch.touchEnd());
+    harness.voice.emitFinal(undefined, ONSET_TRANSCRIPT);
+    const audit = harness.audit();
+    const promptAfter = shortPromptSnapshot(harness);
+    return { audit, promptAfter, promptBefore };
+  });
+  const hero = await run('dashboard');
+  const tab = await run('records');
+  const valid = (probe) => probe.audit.voice.manager.startCount === 1
+    && probe.audit.voice.manager.stopCount === 1
+    && probe.audit.voice.session && probe.audit.voice.session.status === 'CANCELLED'
+    && probe.audit.handoff.publishCount === 0
+    && probe.audit.parser.hybridCount === 0
+    && !probe.audit.businessMutation
+    && probe.audit.storageMutations.length === 0;
+  return [
+    check('ONSET003.HERO_SHORT_DISCARDED', valid(hero), hero),
+    check('ONSET003.TAB_SHORT_DISCARDED', valid(tab), tab),
+    check('ONSET003.HERO_SHORT_PROMPT', preReadyPromptObserved(hero.promptBefore, hero.promptAfter, {
+      allowDashboardTip: true
+    }), hero),
+    check('ONSET003.TAB_SHORT_PROMPT', preReadyPromptObserved(tab.promptBefore, tab.promptAfter, {
+      allowDashboardTip: false
+    }), tab)
+  ];
+}
+
+async function onset004() {
+  return withHarness({ caseId: 'ONSET-004', text: ONSET_TRANSCRIPT }, async (harness) => {
+    harness.dispatchHero('start', harness.touch.touchStart());
+    const immediateStartCount = harness.voice.audit().startCount;
+    emitProviderOnStart(harness);
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
+    harness.dispatchHero('end', harness.touch.touchEnd());
+    harness.voice.emitFinal(undefined, ONSET_TRANSCRIPT);
+    await harness.followInput();
+    const audit = harness.audit();
+    const session = audit.voice.session || {};
+    const evidence = session.evidence || {};
+    const payload = audit.handoff.publishPayloads[0] || {};
+    return [
+      check('ONSET004.IMMEDIATE_START_ONCE', immediateStartCount === 1
+        && audit.voice.manager.startCount === 1, audit.voice.manager),
+      check('ONSET004.STOP_FINAL_HANDOFF_ONCE', audit.voice.manager.stopCount === 1
+        && session.acceptedFinalCount === 1
+        && audit.handoff.publishCount === 1
+        && inputNavigations(audit).length === 1, audit),
+      check('ONSET004.PROVIDER_FINAL_EXACT', evidence.transcriptLength === ONSET_TRANSCRIPT.length
+        && evidence.transcriptFingerprint === createTranscriptFingerprint(session.sessionId, ONSET_TRANSCRIPT), evidence),
+      check('ONSET004.CONTROLLER_HANDOFF_EXACT', validVoicePayload(payload, ONSET_TRANSCRIPT), payload),
+      check('ONSET004.INPUT_ORIGINAL_EXACT', audit.input.originalText === ONSET_TRANSCRIPT
+        && audit.input.source === 'voice', audit.input),
+      check('ONSET004.INPUT_PARSE_ONCE_ZERO_WRITER', audit.input.runParseCount === 1
+        && audit.parser.hybridCount === 1
+        && Object.values(audit.input.writerCalls).every((value) => value === 0)
+        && !audit.businessMutation, audit.input)
+    ];
+  });
+}
+
+async function onset005() {
+  const run = (origin) => withHarness({ caseId: `ONSET-005-${origin}`, origin }, async (harness) => {
+    const dispatch = origin === 'dashboard' ? harness.dispatchHero : harness.dispatchTab;
+    dispatch('start', harness.touch.touchStart());
+    emitProviderOnStart(harness);
+    if (origin === 'dashboard') harness.dashboard.page.onHide();
+    else harness.tab.__pageHide();
+    harness.scheduler.advanceBy(POST_ONSTART_STABILIZATION_MS);
+    harness.voice.emitFinal(undefined, ONSET_TRANSCRIPT);
+    return harness.audit();
+  });
+  const hero = await run('dashboard');
+  const tab = await run('records');
+  const valid = (audit) => audit.voice.manager.startCount === 1
+    && audit.voice.manager.stopCount === 1
+    && audit.voice.session && audit.voice.session.status === 'CANCELLED'
+    && audit.handoff.publishCount === 0
+    && inputNavigations(audit).length === 0
+    && audit.parser.hybridCount === 0;
+  return [
+    check('ONSET005.HERO_HIDE_CANCELS_STARTED_CAPTURE', valid(hero), hero),
+    check('ONSET005.TAB_HIDE_CANCELS_STARTED_CAPTURE', valid(tab), tab)
+  ];
+}
+
+async function onset006() {
+  return withHarness({ caseId: 'ONSET-006', permissionMode: 'PENDING' }, async (harness) => {
+    const before = shortPromptSnapshot(harness);
+    harness.dispatchHero('start', harness.touch.touchStart());
+    const requested = harness.permission.audit();
+    const enteredAuthorize = harness.permission.releaseLatestNeedsAuthorize();
+    const awaitingAuthorize = harness.permission.audit();
+    const granted = harness.permission.releaseLatestGranted();
+    const afterGrant = {
+      audit: harness.audit(),
+      prompt: shortPromptSnapshot(harness),
+      state: currentHoldState()
+    };
+    harness.dispatchHero('start', harness.touch.touchStart(2, 210, 410));
+    const second = { audit: harness.audit(), state: currentHoldState() };
+    harness.dispatchHero('cancel', harness.touch.touchCancel(2, 210, 410));
+    return [
+      check('ONSET006.FIRST_PERMISSION_PATH_REAL', requested.pendingSettings >= 1
+        && enteredAuthorize === true
+        && awaitingAuthorize.pendingAuthorizations >= 1
+        && granted === true, { awaitingAuthorize, enteredAuthorize, granted, requested }),
+      check('ONSET006.FIRST_GESTURE_NEVER_STARTS', afterGrant.audit.voice.manager.startCount === 0
+        && afterGrant.audit.handoff.publishCount === 0
+        && afterGrant.state.phase === 'IDLE', afterGrant),
+      check('ONSET006.REHOLD_PROMPT_VISIBLE', afterGrant.prompt.tip === '麦克风已开启，请重新按住说话'
+        && afterGrant.prompt.tip !== before.tip, afterGrant.prompt),
+      check('ONSET006.NEXT_GESTURE_STARTS_IMMEDIATELY', second.audit.voice.manager.startCount === 1
+        && second.state.gestureQualified === false, second)
+    ];
+  });
 }
 
 const EXECUTORS = {
@@ -905,7 +1090,13 @@ const EXECUTORS = {
   'HOLD-015': hold015,
   'HOLD-016': hold016,
   'HOLD-017': hold017,
-  'HOLD-018': hold018
+  'HOLD-018': hold018,
+  'ONSET-001': onset001,
+  'ONSET-002': onset002,
+  'ONSET-003': onset003,
+  'ONSET-004': onset004,
+  'ONSET-005': onset005,
+  'ONSET-006': onset006
 };
 
 async function executeCase(contract) {

@@ -223,8 +223,11 @@ async function createVoicePrepared(origin, caseId) {
     ? harness.dispatchHero
     : harness.dispatchTab;
   dispatch('start', harness.touch.touchStart());
-  harness.scheduler.advanceBy(260);
   harness.voice.emitStart();
+  // A voice final is legal only after the production provider has started and
+  // the frozen post-onStart readiness window has elapsed. The former 260 ms
+  // helper released a pre-ready gesture and then falsely blamed save flow.
+  harness.scheduler.advanceBy(700);
   dispatch('end', harness.touch.touchEnd());
   harness.voice.emitFinal(undefined, ORDER_TEXT);
   const followed = await harness.followInput();
