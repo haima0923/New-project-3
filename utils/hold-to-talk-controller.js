@@ -855,7 +855,7 @@ function startWechatSiForCapture(capture) {
         || !capture.stopIssued
         || capture.phase !== PHASES.FINALIZING_AUDIO) return;
       resetCapture(capture);
-      publishLegacyTranscript(owner, result && result.text);
+      publishLegacyTranscript(owner, result);
     },
     onError: (error) => {
       if (!isCurrentCapture(capture)) return;
@@ -881,8 +881,8 @@ function isNodeHeadlessCompatibilityRuntime() {
     && Boolean(process.versions.node);
 }
 
-function publishLegacyTranscript(owner, transcript) {
-  const text = String(transcript || '').trim();
+function publishLegacyTranscript(owner, result) {
+  const text = String(result && result.text || '').trim();
   if (!text) {
     showMessage(owner, '没有听清楚，请再说一次或改用打字。');
     return;
@@ -892,9 +892,10 @@ function publishLegacyTranscript(owner, transcript) {
   try {
     handle = recordEntryHandoff.publishRecordEntryHandoff({
       autoParse: true,
-      originSurface: 'HOME_QUICK',
+      originSurface: owner && owner.surface || 'HOME_QUICK',
       originalText: text,
-      source: 'voice'
+      source: 'voice',
+      voiceCompletionEvidence: result && result.voiceCompletionEvidence || null
     });
     wx.switchTab({
       url: INPUT_PAGE_URL,
@@ -925,7 +926,7 @@ function startLegacyCompatibility(ownerToken) {
       if (!session.valid) return;
       session.valid = false;
       finish();
-      publishLegacyTranscript(owner, result && result.text);
+      publishLegacyTranscript(owner, result);
     },
     onError: (error) => {
       if (!session.valid) return;

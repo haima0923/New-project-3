@@ -2921,11 +2921,23 @@ Page({
       const handoff = consumeRecordEntryHandoff();
       const originalText = String(handoff && handoff.originalText || '');
       const source = String(handoff && handoff.source || '');
+      const inputChannel = String(handoff && handoff.inputChannel || '');
+      const originSurface = String(handoff && handoff.originSurface || '');
+      const expectedInputChannel = source === 'voice'
+        ? 'VOICE_TRANSCRIPT'
+        : (source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT');
+      const handoffVoiceCompletionEvidence = source === 'voice'
+        ? handoff && handoff.voiceCompletionEvidence || null
+        : null;
+      const allowedOriginSurface = source === 'voice'
+        ? ['DASHBOARD_HERO', 'CUSTOM_TAB_CENTER', 'HOME_QUICK'].includes(originSurface)
+        : originSurface === 'HOME_QUICK';
       if (handoff
         && handoff.autoParse === true
-        && handoff.originSurface === 'HOME_QUICK'
+        && allowedOriginSurface
         && originalText.trim()
-        && ['typed', 'paste', 'voice'].includes(source)) {
+        && ['typed', 'paste', 'voice'].includes(source)
+        && inputChannel === expectedInputChannel) {
         wx.removeStorageSync('force_text_input');
         wx.removeStorageSync('draft_to_input');
         invalidateRawInputCapture(this, 'DASHBOARD_ENTRY_HANDOFF');
@@ -2933,6 +2945,16 @@ Page({
         if (this.voiceCompletionEvidence) {
           invalidateVoiceCompletionEvidence(this.voiceCompletionEvidence, 'DASHBOARD_ENTRY_HANDOFF');
           this.voiceCompletionEvidence = null;
+        }
+        if (source === 'voice') {
+          const validation = validateVoiceCompletionEvidence(
+            handoffVoiceCompletionEvidence,
+            originalText,
+            { inputChannel }
+          );
+          this.voiceCompletionEvidence = validation.valid
+            ? validation.evidence
+            : null;
         }
         clearParseProgress(this);
         advanceDraftRevision(this, { newSession: true });
@@ -2952,10 +2974,12 @@ Page({
           showParseProgress: false
         }, getSourceState(source)), () => {
           this.runParse('standard', {
-            entrySurface: 'FULL_PAGE',
-            inputChannel: source === 'voice'
-              ? 'VOICE_TRANSCRIPT'
-              : (source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT')
+            entrySurface: source === 'voice' ? 'HOME_QUICK' : 'FULL_PAGE',
+            inputChannel,
+            originSurface,
+            voiceCompletionEvidence: source === 'voice'
+              ? handoffVoiceCompletionEvidence
+              : null
           });
         });
         return;
@@ -3465,8 +3489,12 @@ Page({
       );
       payload.inputChannel = 'VOICE_TRANSCRIPT';
       payload.entrySurface = sourceContext && sourceContext.entrySurface || 'FULL_PAGE';
-      if (validation.valid) {
-        payload.voiceCompletionEvidence = validation.evidence;
+      payload.originSurface = sourceContext && sourceContext.originSurface
+        || payload.entrySurface;
+      if (requestedEvidence) {
+        payload.voiceCompletionEvidence = validation.valid
+          ? validation.evidence
+          : requestedEvidence;
       }
     } else {
       payload.inputChannel = source === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT';
