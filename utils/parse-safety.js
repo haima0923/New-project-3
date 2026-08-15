@@ -18,6 +18,8 @@ const CUSTOMER_BAD_INSIDE = /(?:报给|报价|报架|下单|订单|货款|欠款
 const CUSTOMER_GENERIC = /^(?:客户|老客户|这个客户|那个客户|老板(?:今|明|昨|后|早|晚|今天|明天|后天|大后天)?|今天|明天|后天|刚才|刚刚|义乌|那笔|上一笔|这单|那单)$/;
 const PRODUCT_PRICE_LIKE = /^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩壹贰貳叁參肆伍陆陸柒捌玖拾佰仟萬]+)\s*(?:块|元|毛|角|分|钱)/;
 const PRODUCT_BAD_PATTERN = /(?:价格|单价|报价|报架|多少钱|贵了|便宜|上次|上回|之前|原价|老价|照旧|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|尽快|月底|月末|明天|后天|明早|本周|下周|上周|周[一二三四五六日天]|星期[一二三四五六日天]|交期|到期|交$)/;
+const PRODUCT_BUSINESS_REFERENCE = /^(?:单|订单|这单|那单|这个订单|那个订单|货款|欠款|尾款|款项|收款|付款|定金|订金|预付款)$/;
+const PRODUCT_FINANCIAL_CLAUSE = /(?:还欠|尚欠|未收|没收|待收|应收|还差|已收|收到|付了|付款了)/;
 const OPTIONAL_CONFIRM_FIELDS = ['phone'];
 const FINAL_RECHECK_CLEARABLE_LOW_FIELDS = ['customerName', 'productName', 'quantity', 'unitPrice', 'priceUnit', 'dueDate'];
 const SEMANTIC_AI_PATTERN = /(?:上次|上回|上图|之前|原价|老价|旧价|照旧|按老|按上|价格不变|还是|最终|最后|确认价|改成|改为|改价|不是|不对|写错|算了|贵了|便宜|就按|客户说|他说|她说|颜色|色差|包装(?!袋|盒)|外箱|内盒|logo|LOGO|特殊|要求|备注|淡一点|浅一点|深一点|不要太|换成|替换|取消|别做|先别|等确认|撤回)/i;
@@ -1034,6 +1036,12 @@ function isPackagingProductName(product) {
   return /(?:包装袋|包装盒|礼品盒|收纳盒|饰品盒|文具套装|箱包|箱子)$/.test(product);
 }
 
+function isBusinessReferenceProductName(product) {
+  const compactProduct = compact(product);
+  return PRODUCT_BUSINESS_REFERENCE.test(compactProduct)
+    || PRODUCT_FINANCIAL_CLAUSE.test(compactProduct);
+}
+
 function validateCustomerName(fields, sourceText, issues) {
   const name = compact(fields.customerName);
   if (!name) return;
@@ -1054,7 +1062,7 @@ function validateCustomerName(fields, sourceText, issues) {
   }
 }
 
-function validateProductName(fields, issues) {
+function validateProductName(result, fields, issues) {
   const product = compact(fields.productName);
   if (!product) return;
   const customer = compact(fields.customerName);
@@ -1064,6 +1072,9 @@ function validateProductName(fields, issues) {
   if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
     addIssue(issues, 'productName', `产品“${product}”疑似备注、价格或时间信息`);
   }
+  if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && isBusinessReferenceProductName(product)) {
+    addIssue(issues, 'productName', `产品“${product}”只是业务指代，不能作为商品保存`);
+  }
   if (customer && product.includes(customer)) {
     addIssue(issues, 'productName', `产品“${product}”混入了客户称呼`);
   }
@@ -1072,7 +1083,7 @@ function validateProductName(fields, issues) {
   }
 }
 
-function validateItems(fields, issues) {
+function validateItems(result, fields, issues) {
   const items = getItems(fields);
   if (!items.length) return;
   items.forEach((item, index) => {
@@ -1086,6 +1097,9 @@ function validateItems(fields, issues) {
       }
       if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
         addIssue(issues, 'productName', `${label}“${product}”疑似备注、价格或时间信息`);
+      }
+      if (PRODUCT_REQUIRED_INTENTS.includes(result.intent) && isBusinessReferenceProductName(product)) {
+        addIssue(issues, 'productName', `${label}“${product}”只是业务指代，不能作为商品保存`);
       }
     }
 
@@ -1250,8 +1264,8 @@ function evaluateLocalParseSafety(result, options = {}) {
     .some((field) => hasFieldValue(fields, field));
 
   validateCustomerName(fields, sourceText, issues);
-  validateProductName(fields, issues);
-  validateItems(fields, issues);
+  validateProductName(result, fields, issues);
+  validateItems(result, fields, issues);
   validateQuantity(fields, issues);
   validateUnitPrice(fields, issues);
   validateAmountConsistency(fields, issues);

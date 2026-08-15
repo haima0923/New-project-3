@@ -1,4 +1,4 @@
-const { addDays, diffDays, today } = require('./date');
+const { diffDays, today } = require('./date');
 const { applyFinalParseSafety } = require('./parse-safety');
 const { ensureProductCatalog, learnProductCatalogFromRecord } = require('./product-catalog');
 const {
@@ -332,6 +332,10 @@ function getPaymentAmount(fields) {
   return fields.paymentAmount || fields.amount || '';
 }
 
+function getPaymentBusinessDate(fields = {}) {
+  return String(fields.paymentDate || fields.dueDate || '').trim();
+}
+
 function getOrderDepositAmount(state, orderId) {
   return calculateOrderDepositAmount(state, orderId);
 }
@@ -348,7 +352,7 @@ function createPaymentRecord(state, {
   kind = 'receivable_payment',
   remark = '',
   originalText = '',
-  paidAt = today()
+  paidAt = ''
 }) {
   const payment = {
     id: generateId('pay'),
@@ -358,7 +362,7 @@ function createPaymentRecord(state, {
     receivableId,
     kind,
     amount: String(amount || ''),
-    paidAt,
+    paidAt: String(paidAt || ''),
     remark,
     originalText: originalText || '',
     createdAt: new Date().toISOString()
@@ -522,6 +526,7 @@ function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCust
       receivableId: '',
       amount: paymentAmount,
       kind: 'unlinked_deposit',
+      paidAt: String(fields.paymentDate || '').trim(),
       originalText,
       remark: fields.remark || parseResult.original_text || '未关联订单定金'
     });
@@ -552,6 +557,7 @@ function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCust
     ? recordPayment(state, linkedReceivable.id, paymentAmount, {
       internalPaymentPurpose: INTERNAL_ORDER_DEPOSIT_PAYMENT,
       kind: 'deposit',
+      paidAt: String(fields.paymentDate || '').trim(),
       originalText,
       remark: fields.remark || parseResult.original_text || '订单定金'
     })
@@ -561,6 +567,7 @@ function saveOrderDeposit(state, parseResult, explicitOrder = null, explicitCust
       receivableId: '',
       amount: paymentAmount,
       kind: 'deposit',
+      paidAt: String(fields.paymentDate || '').trim(),
       originalText,
       remark: fields.remark || parseResult.original_text || '订单定金'
     });
@@ -722,7 +729,7 @@ function saveQuotation(state, parseResult) {
     followupDays: fields.followupDays || '',
     deliveryDate: fields.dueDate || '',
     quoteDate: fields.quoteDate || today(),
-    validUntil: addDays(today(), 7),
+    validUntil: fields.validUntil || '',
     status: '待确认',
     remark: fields.remark || '',
     createdAt: new Date().toISOString(),
@@ -858,9 +865,8 @@ function saveOrder(state, parseResult) {
     priceUnit: legacyFields.priceUnit,
     totalAmount: draftTotalAmount,
     items,
-    originalText: sourceQuotation
-      ? (sourceQuotation.originalText || '')
-      : getOriginalTextFromDraft(parseResult),
+    originalText: getOriginalTextFromDraft(parseResult)
+      || (sourceQuotation ? (sourceQuotation.originalText || '') : ''),
     paymentMethod: fields.paymentMethod || '',
     orderDate: today(),
     requiredDeliveryDate: fields.dueDate || '',
@@ -1033,6 +1039,7 @@ function saveReceivableWithPayment(state, parseResult) {
       kind: getReceivableSourceFromDraft(parseResult) === 'legacy'
         ? 'legacy_payment'
         : (fields.orderId ? 'final_payment' : 'receivable_payment'),
+      paidAt: String(fields.paymentDate || '').trim(),
       originalText,
       remark: fields.remark || '由记一笔新建应收时记录'
     });
@@ -1097,6 +1104,7 @@ function savePayment(state, parseResult) {
       customerId: customer.id,
       amount: paymentAmount,
       kind: 'unlinked_payment',
+      paidAt: getPaymentBusinessDate(fields),
       originalText,
       remark: fields.remark || '未关联收款'
     });
@@ -1104,6 +1112,7 @@ function savePayment(state, parseResult) {
     return payment;
   }
   const payment = recordPayment(state, activeReceivable.id, paymentAmount, {
+    paidAt: getPaymentBusinessDate(fields),
     originalText,
     remark: fields.remark || ''
   });
@@ -1117,7 +1126,7 @@ function saveTodo(state, parseResult) {
   const originalText = getOriginalTextFromDraft(parseResult);
   state.todos = state.todos || [];
   let customer = null;
-  if (fields.customerName || fields.customerId || fields.phone) {
+  if (fields.customerName || fields.customerId) {
     customer = findOrCreateCustomer(state, fields);
     if (!customer) return null;
   }
@@ -1141,6 +1150,7 @@ function saveTodo(state, parseResult) {
     updatedAt: new Date().toISOString(),
     completedAt: ''
   };
+  if (fields.phone) todo.phone = fields.phone;
   state.todos.unshift(todo);
   appendParseLog(state, parseResult, 'save_todo');
   return todo;
@@ -1546,7 +1556,9 @@ function convertQuotationToOrder(state, quotationId, options = {}) {
     priceUnit: legacyFields.priceUnit,
     totalAmount: quotation.totalAmount,
     items,
-    originalText: quotation.originalText || '',
+    originalText: String(options.originalText || options.original_text || '').trim()
+      || quotation.originalText
+      || '',
     paymentMethod: quotation.paymentMethod,
     orderDate: today(),
     requiredDeliveryDate,
@@ -1576,15 +1588,16 @@ function generateReceivableFromOrder(state, orderId) {
   if (!order || order.status === '已取消') return null;
   const existing = state.receivables.find((item) => item.orderId === orderId);
   if (existing) return existing.customerId === order.customerId ? existing : null;
+  if (!hasMoneyValue(order.totalAmount) || toMoney(order.totalAmount) <= 0) return null;
   const depositAmount = getOrderDepositAmount(state, orderId);
-  const totalAmount = toMoney(order.totalAmount || '0');
+  const totalAmount = toMoney(order.totalAmount);
   const paidAmount = Math.min(depositAmount, totalAmount);
   const receivable = {
     id: generateId('rec'),
     userId: order.userId,
     customerId: order.customerId,
     orderId: order.id,
-    amount: order.totalAmount || '0',
+    amount: String(order.totalAmount),
     dueDate: order.requiredDeliveryDate || '',
     status: paidAmount <= 0 ? '待收' : (paidAmount >= totalAmount ? '已结清' : '部分收款'),
     source: 'order',
@@ -1715,6 +1728,7 @@ function recordPayment(state, receivableId, amount, options = {}) {
     kind: options.internalPaymentPurpose === INTERNAL_ORDER_DEPOSIT_PAYMENT
       ? 'deposit'
       : classification.kind,
+    paidAt: options.paidAt || '',
     originalText: options.originalText || '',
     remark: options.remark || ''
   });

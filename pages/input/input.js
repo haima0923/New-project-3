@@ -1427,7 +1427,7 @@ function getFieldVisibility(intent, operation, fields = {}) {
   const todoHasProductInfo = todo && Boolean(fields.productName || fields.quantity || fields.unit || fields.unitPrice || fields.amount);
   return {
     showCustomerFields: editableBusiness,
-    showPhoneField: ['create_quotation', 'create_order', 'update_quotation', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment', 'record_order_deposit'].includes(operation),
+    showPhoneField: ['create_quotation', 'create_order', 'update_quotation', 'update_order', 'create_receivable', 'create_receivable_with_payment', 'record_payment', 'record_order_deposit', 'create_todo'].includes(operation),
     showTodoTitleField: todo,
     showFollowupDaysField: quoteOperation,
     showItemList: quoteOrOrder,
@@ -1437,7 +1437,7 @@ function getFieldVisibility(intent, operation, fields = {}) {
     showAmountField: createReceivable,
     showPaymentAmountField: recordPayment || recordOrderDeposit || (intent === 'order' && Boolean(fields.paymentAmount || fields.depositAmount)),
     showRemainingAmountField: operation === 'create_receivable_with_payment',
-    showDueDateField: ['create_order', 'update_order', 'create_receivable', 'create_todo'].includes(operation),
+    showDueDateField: ['create_order', 'update_order', 'create_receivable', 'record_payment', 'create_todo'].includes(operation),
     showRemarkField: editableBusiness,
     showGenericDraft: !editableBusiness
   };
@@ -2030,6 +2030,13 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     missingFields = mergeMissing(intent, nextFields, parseResult.missing_fields || [], operation);
   }
 
+  if (intent === 'payment' && operation === 'record_payment') {
+    const paymentDate = String(nextFields.paymentDate || nextFields.dueDate || '').trim();
+    if (paymentDate) {
+      nextFields.dueDate = paymentDate;
+    }
+  }
+
   customerMatchState = buildCustomerMatchState(state, nextFields, operation);
   nextFields = customerMatchState.fields;
 
@@ -2158,7 +2165,9 @@ function buildConfirmationState(state, parseResult, intent, fields) {
     paymentAmountLabel: operation === 'record_order_deposit'
       ? '本次定金'
       : (intent === 'order' && (nextFields.depositAmount || nextFields.paymentKind === 'deposit') ? '定金金额' : '本次收款'),
-    dueDateLabel: ['todo', 'dunning'].includes(intent) ? '提醒日期' : (['receivable', 'payment'].includes(intent) ? '到期日' : (intent === 'quotation' ? '跟进日期' : '交期')),
+    dueDateLabel: operation === 'record_payment'
+      ? '收款日期'
+      : (['todo', 'dunning'].includes(intent) ? '提醒日期' : (intent === 'receivable' ? '到期日' : (intent === 'quotation' ? '跟进日期' : '交期'))),
     selectedFollowupDayIndex: getFollowupDayIndex(nextFields.followupDays),
     followupWarningText: nextFields.dueDate
       ? `已设置跟进日期：${nextFields.dueDate}。`
@@ -4132,6 +4141,9 @@ Page({
       const nextFields = Object.assign({}, sourceFields, {
         [field]: value
       });
+      if (field === 'dueDate' && this.data.operation === 'record_payment') {
+        nextFields.paymentDate = value;
+      }
       let baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
         missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
           .filter((item) => item !== field),
