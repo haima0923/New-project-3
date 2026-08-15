@@ -1,11 +1,22 @@
 <view
   wx:if="{{centerVoiceOverlayVisible}}"
-  class="tab-voice-overlay tab-voice-overlay-{{centerVoiceOverlayMode}} tab-voice-gesture-{{centerVoiceGesture}}"
+  class="tab-voice-overlay tab-voice-overlay-{{centerVoiceOverlayMode}} tab-voice-gesture-{{centerVoiceGesture}} {{centerVoicePhase === 'READY_RECORDING' ? 'tab-voice-ready' : ''}}"
 >
   <view class="tab-voice-panel">
     <view class="tab-voice-title">{{centerVoiceOverlayTitle}}</view>
     <view class="tab-voice-subtitle">{{centerVoiceOverlaySubtitle}}</view>
-    <view wx:if="{{centerVoiceOverlayMode === 'listening'}}" class="tab-voice-cancel-hint">上滑取消</view>
+    <view wx:if="{{centerVoiceOverlayMode === 'preparing' || centerVoiceOverlayMode === 'listening'}}" class="tab-voice-readiness-shell">
+      <view
+        wx:if="{{centerVoicePhase === 'POST_ONSTART_STABILIZING' || centerVoicePhase === 'READY_RECORDING'}}"
+        class="voice-readiness-fill tab-readiness-fill {{centerVoicePhase === 'POST_ONSTART_STABILIZING' ? 'voice-readiness-fill-filling' : 'voice-readiness-fill-full'}}"
+      ></view>
+      <view class="tab-readiness-mic">
+        <view class="tab-readiness-mic-body"></view>
+        <view class="tab-readiness-mic-stem"></view>
+        <view class="tab-readiness-mic-base"></view>
+      </view>
+    </view>
+    <view wx:if="{{centerVoiceOverlayMode === 'listening' || centerVoiceOverlayMode === 'preparing'}}" class="tab-voice-cancel-hint">上滑取消</view>
   </view>
 </view>
 

@@ -55,6 +55,8 @@
   height: 168rpx;
   justify-content: center;
   position: relative;
+  transform: translateY(-18rpx);
+  transition: transform 0.2s ease;
   width: 148rpx;
 }
 
@@ -78,9 +80,45 @@
 .hero-assistant-image {
   display: block;
   height: 100%;
+  position: relative;
   transform: scale(1.02);
   transition: filter 0.2s ease, transform 0.2s ease;
   width: 100%;
+  z-index: 2;
+}
+
+.voice-readiness-fill {
+  background: linear-gradient(180deg, rgba(123, 196, 255, 0.72) 0%, rgba(22, 119, 255, 0.94) 100%);
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform: translateY(100%);
+  z-index: 3;
+}
+
+.voice-readiness-fill-filling {
+  animation: voiceReadinessFillUp 700ms linear forwards;
+}
+
+.voice-readiness-fill-full {
+  transform: translateY(0);
+}
+
+.hero-readiness-fill {
+  mix-blend-mode: multiply;
+  opacity: 0.42;
+}
+
+@keyframes voiceReadinessFillUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
 }
 
 .voice-ripple {
@@ -118,6 +156,16 @@
 .hero-wave-active .hero-assistant-image {
   filter: saturate(1.06) brightness(1.02);
   transform: scale(1.055);
+}
+
+.hero-wave-ready .hero-wave-core {
+  box-shadow: 0 16rpx 36rpx rgba(22, 119, 255, 0.34), 0 0 0 14rpx rgba(22, 119, 255, 0.16);
+}
+
+.hero-wave-ready .hero-voice-hint {
+  color: #0B61D0;
+  font-size: 22rpx;
+  transform: translateY(-2rpx);
 }
 
 .hero-voice-hint {
@@ -1035,6 +1083,7 @@
   justify-content: center;
   min-height: 560rpx;
   text-align: center;
+  transform: translateY(-52rpx);
   width: 100%;
 }
 
@@ -1060,9 +1109,9 @@
   display: flex;
   height: 260rpx;
   justify-content: center;
-  margin-top: 86rpx;
+  margin-top: 64rpx;
   position: relative;
-  transform: translateY(34rpx);
+  transform: translateY(0);
   width: 300rpx;
 }
 
@@ -1080,13 +1129,43 @@
   display: flex;
   height: 160rpx;
   justify-content: center;
+  overflow: hidden;
   position: relative;
   width: 160rpx;
   z-index: 2;
 }
 
+.overlay-readiness-fill {
+  opacity: 0.72;
+  z-index: 2;
+}
+
+.voice-overlay-mic-core .mic-symbol {
+  position: relative;
+  z-index: 3;
+}
+
 .voice-overlay-listening .voice-overlay-mic-core {
   animation: voiceMicPulse 1.35s ease-in-out infinite;
+}
+
+.voice-overlay-ready .voice-overlay-title {
+  font-size: 42rpx;
+  font-weight: 900;
+  text-shadow: 0 6rpx 20rpx rgba(15, 23, 42, 0.28);
+}
+
+.voice-overlay-ready .voice-overlay-subtitle {
+  color: rgba(255, 255, 255, 0.94);
+  font-size: 27rpx;
+  font-weight: 800;
+}
+
+.voice-overlay-ready .voice-overlay-mic-core {
+  box-shadow:
+    0 20rpx 48rpx rgba(22, 119, 255, 0.66),
+    0 0 0 17rpx rgba(22, 119, 255, 0.3),
+    0 0 0 34rpx rgba(22, 119, 255, 0.13);
 }
 
 .voice-overlay-wave {

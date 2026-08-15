@@ -1,6 +1,7 @@
 const recordEntryHandoff = require('./record-entry-handoff');
 const {
   cancelVoiceRecognition,
+  getVoiceRecognitionAudit,
   startVoiceRecognition,
   stopVoiceRecognition
 } = require('./voice-recognition');
@@ -8,7 +9,8 @@ const {
 // DEAD_COMPAT: retained only for callers that still display the former hold
 // threshold. Recorder V2 never uses a timer to start capture or grant READY.
 const HOLD_DELAY_MS = 260;
-const POST_ONSTART_STABILIZATION_MS = 700;
+const POST_PROVIDER_ONSTART_STABILIZATION_MS = 700;
+const POST_ONSTART_STABILIZATION_MS = POST_PROVIDER_ONSTART_STABILIZATION_MS;
 const CANCEL_DISTANCE_PX = 55;
 const INPUT_PAGE_URL = '/pages/input/input';
 const RECORDER_OPTIONS = Object.freeze({
@@ -48,6 +50,18 @@ const PERMISSION = Object.freeze({
   NEEDS_AUTHORIZATION: 'NEEDS_AUTHORIZATION',
   DENIED: 'DENIED'
 });
+
+const CAPTURE_MODES = Object.freeze({
+  NATIVE_RECORDER: 'NATIVE_RECORDER',
+  WECHATSI: 'WECHATSI'
+});
+const WECHATSI_TERMINAL_STATUSES = Object.freeze([
+  'CANCELLED',
+  'COMPLETED',
+  'FAILED',
+  'SUPERSEDED',
+  'TIMED_OUT'
+]);
 
 const owners = new Map();
 let activeCapture = null;
@@ -140,16 +154,17 @@ function surfaceSnapshot(capture, phaseOverride) {
     });
   }
   if (phase === PHASES.FINALIZING_AUDIO) {
+    const isWechatSi = Boolean(capture && capture.captureMode === CAPTURE_MODES.WECHATSI);
     return Object.freeze({
       gesture: 'send',
       overlayHint: '',
       overlayMode: 'processing',
-      overlaySubtitle: '正在生成原始录音文件',
-      overlayTitle: '正在处理录音…',
+      overlaySubtitle: isWechatSi ? '正在整理你刚才说的话' : '正在生成原始录音文件',
+      overlayTitle: isWechatSi ? '小玲正在听写…' : '正在处理录音…',
       overlayVisible: true,
       phase,
       recording: false,
-      voiceTip: '录音已结束，正在生成原始录音。'
+      voiceTip: isWechatSi ? '小玲正在听写…' : '录音已结束，正在生成原始录音。'
     });
   }
   if (phase === PHASES.AUDIO_READY) {
@@ -184,16 +199,20 @@ function surfaceSnapshot(capture, phaseOverride) {
     return surfaceSnapshot(null, PHASES.IDLE);
   }
   const cancelling = phase === PHASES.CANCEL_PENDING;
+  const isWechatSi = Boolean(capture && capture.captureMode === CAPTURE_MODES.WECHATSI);
+  const readyTitle = isWechatSi ? '我在听' : '可以说了';
   return Object.freeze({
     gesture: cancelling ? 'cancel' : 'send',
     overlayHint: cancelling ? '松手取消本次录音' : '上滑取消',
     overlayMode: 'listening',
     overlaySubtitle: cancelling ? '这次不会发送' : '松开发送',
-    overlayTitle: cancelling ? '松手取消' : '可以说了',
+    overlayTitle: cancelling ? '松手取消' : readyTitle,
     overlayVisible: true,
     phase,
     recording: true,
-    voiceTip: cancelling ? '松手取消本次录音。' : '可以说了，松开发送。'
+    voiceTip: cancelling
+      ? '松手取消本次录音。'
+      : `${readyTitle}，松开发送。`
   });
 }
 
@@ -225,7 +244,7 @@ function vibrateReadyOnce(capture) {
   capture.readyVibrated = true;
   if (typeof wx === 'undefined' || typeof wx.vibrateShort !== 'function') return true;
   try {
-    wx.vibrateShort({ type: 'light' });
+    wx.vibrateShort({ type: 'medium' });
   } catch (error) {
     // READY is owned by the post-onStart stabilization gate. Haptic failure
     // must never revoke the already-established capture authority.
@@ -242,7 +261,7 @@ function revokeStabilizationTimer(capture) {
   return Boolean(timer);
 }
 
-function startStabilizationTimer(capture, lease) {
+function startNativeStabilizationTimer(capture, lease) {
   if (!capture || !lease) return false;
   revokeStabilizationTimer(capture);
   stabilizationGenerationSequence += 1;
@@ -281,7 +300,82 @@ function startStabilizationTimer(capture, lease) {
     capture.phase = PHASES.READY_RECORDING;
     vibrateReadyOnce(capture);
     projectCapture(capture);
-  }, POST_ONSTART_STABILIZATION_MS);
+  }, POST_PROVIDER_ONSTART_STABILIZATION_MS);
+  capture.stabilizationTimer = timer;
+  if (timer && typeof timer.unref === 'function') timer.unref();
+  return true;
+}
+
+function currentWechatSiSessionMatches(capture, expectedSessionId) {
+  if (!capture || capture.captureMode !== CAPTURE_MODES.WECHATSI) return false;
+  const audit = getVoiceRecognitionAudit();
+  return Boolean(audit
+    && audit.sessionId === expectedSessionId
+    && capture.voiceSessionId === expectedSessionId
+    && !WECHATSI_TERMINAL_STATUSES.includes(audit.status));
+}
+
+function ownsCurrentWechatSiSession(capture) {
+  const expectedSessionId = String(capture && capture.voiceSessionId || '');
+  return Boolean(expectedSessionId
+    && currentWechatSiSessionMatches(capture, expectedSessionId));
+}
+
+function hasNonTerminalWechatSiSession() {
+  const audit = getVoiceRecognitionAudit();
+  return Boolean(audit
+    && audit.sessionId
+    && !WECHATSI_TERMINAL_STATUSES.includes(audit.status));
+}
+
+function authorizeWechatSiReady(capture, expectedSessionId) {
+  if (!isCurrentCapture(capture)
+    || capture.phase !== PHASES.POST_ONSTART_STABILIZING
+    || !capture.pressActive
+    || capture.discard
+    || capture.stopIssued
+    || capture.gesture === 'cancel'
+    || !owners.has(capture.ownerToken)
+    || !currentWechatSiSessionMatches(capture, expectedSessionId)) return false;
+  capture.stabilizationElapsed = true;
+  capture.readyAt = now();
+  capture.phase = PHASES.READY_RECORDING;
+  vibrateReadyOnce(capture);
+  projectCapture(capture);
+  return true;
+}
+
+function startWechatSiStabilizationTimer(capture, providerStart = {}) {
+  if (!capture) return false;
+  const expectedSessionId = String(providerStart.sessionId || capture.voiceSessionId || '');
+  if (!expectedSessionId || !currentWechatSiSessionMatches(capture, expectedSessionId)) return false;
+  revokeStabilizationTimer(capture);
+  stabilizationGenerationSequence += 1;
+  const generation = stabilizationGenerationSequence;
+  const capturedCaptureId = capture.captureId;
+  const capturedOwnerToken = capture.ownerToken;
+  capture.stabilizationElapsed = false;
+  capture.stabilizationGeneration = generation;
+  const timer = setTimeout(() => {
+    if (activeCapture !== capture
+      || !isCurrentCapture(capture)
+      || capture.captureId !== capturedCaptureId
+      || capture.ownerToken !== capturedOwnerToken
+      || capture.voiceSessionId !== expectedSessionId
+      || capture.stabilizationGeneration !== generation
+      || capture.stabilizationTimer !== timer
+      || capture.phase !== PHASES.POST_ONSTART_STABILIZING
+      || !capture.pressActive
+      || capture.discard
+      || capture.stopIssued
+      || !owners.has(capturedOwnerToken)
+      || !currentWechatSiSessionMatches(capture, expectedSessionId)) return;
+    capture.stabilizationTimer = null;
+    capture.stabilizationGeneration = 0;
+    capture.stabilizationElapsed = true;
+    if (capture.gesture === 'cancel') return;
+    authorizeWechatSiReady(capture, expectedSessionId);
+  }, POST_PROVIDER_ONSTART_STABILIZATION_MS);
   capture.stabilizationTimer = timer;
   if (timer && typeof timer.unref === 'function') timer.unref();
   return true;
@@ -435,7 +529,7 @@ function handleRecorderStart() {
   }
   lease.nativeState = NATIVE_STATES.STARTED;
   if (!capture || !isCurrentCapture(capture)
-    || capture.captureMode !== 'RECORDER'
+    || capture.captureMode !== CAPTURE_MODES.NATIVE_RECORDER
     || capture.phase !== PHASES.PREPARING
     || !capture.pressActive
     || capture.discard
@@ -455,7 +549,7 @@ function handleRecorderStart() {
     projectCapture(capture);
     return;
   }
-  if (!startStabilizationTimer(capture, lease)) {
+  if (!startNativeStabilizationTimer(capture, lease)) {
     lease.discard = true;
     requestNativeRecorderStopOnce(lease, { cleanup: true });
     resetCapture(capture, {
@@ -580,8 +674,13 @@ function issueRecorderStopOnce(capture) {
 
 function issueCaptureStopOnce(capture) {
   if (!capture || capture.stopIssued) return false;
-  if (capture.captureMode === 'RECORDER') return issueRecorderStopOnce(capture);
-  if (capture.captureMode !== 'LEGACY' || !capture.legacyRequested || capture.cancelIssued) {
+  if (capture.captureMode === CAPTURE_MODES.NATIVE_RECORDER) return issueRecorderStopOnce(capture);
+  if (capture.captureMode !== CAPTURE_MODES.WECHATSI || !capture.legacyRequested || capture.cancelIssued) {
+    return false;
+  }
+  if (!ownsCurrentWechatSiSession(capture)) {
+    capture.discard = true;
+    resetCapture(capture, { reasonCode: 'WECHATSI_SESSION_REPLACED_BEFORE_STOP' });
     return false;
   }
   capture.stopIssued = true;
@@ -593,10 +692,15 @@ function cancelCapture(capture, reasonCode, options = {}) {
   revokeStabilizationTimer(capture);
   capture.discard = true;
   capture.pressActive = false;
-  if (capture.captureMode === 'RECORDER') issueRecorderStopOnce(capture);
-  if (capture.captureMode === 'LEGACY' && capture.legacyRequested && !capture.cancelIssued) {
+  if (capture.captureMode === CAPTURE_MODES.NATIVE_RECORDER) issueRecorderStopOnce(capture);
+  if (capture.captureMode === CAPTURE_MODES.WECHATSI
+    && capture.legacyRequested
+    && !capture.cancelIssued
+    && !capture.stopIssued) {
     capture.cancelIssued = true;
-    cancelVoiceRecognition(reasonCode || 'HOLD_TO_TALK_CANCELLED');
+    if (ownsCurrentWechatSiSession(capture)) {
+      cancelVoiceRecognition(reasonCode || 'HOLD_TO_TALK_CANCELLED');
+    }
   }
   resetCapture(capture, Object.assign({}, options, { reasonCode }));
   return true;
@@ -682,7 +786,7 @@ function startNativeRecorder(capture) {
   if (hasPendingNativeRecorderLease()) return false;
   const manager = getRecorderManager();
   if (!manager || typeof manager.start !== 'function') return false;
-  capture.captureMode = 'RECORDER';
+  capture.captureMode = CAPTURE_MODES.NATIVE_RECORDER;
   capture.recorderRequested = true;
   capture.recorderStartCalledAt = now();
   const lease = createNativeRecorderLease(capture);
@@ -702,11 +806,11 @@ function startNativeRecorder(capture) {
   }
 }
 
-function startLegacyForCapture(capture) {
+function startWechatSiForCapture(capture) {
   if (!isCurrentCapture(capture) || !capture.pressActive) return false;
   const owner = ownerFor(capture);
   if (!owner) return false;
-  capture.captureMode = 'LEGACY';
+  capture.captureMode = CAPTURE_MODES.WECHATSI;
   capture.legacyRequested = true;
   if (typeof owner.startRequested === 'function') owner.startRequested();
   const started = startVoiceRecognition({
@@ -716,21 +820,29 @@ function startLegacyForCapture(capture) {
       if (!isCurrentCapture(capture)) return;
       capture.voiceSessionId = String(session && session.sessionId || '');
     },
-    onStart: () => {
-      if (!isCurrentCapture(capture) || !capture.pressActive || capture.discard) return;
-      capture.readyAt = now();
-      capture.phase = capture.gesture === 'cancel'
-        ? PHASES.CANCEL_PENDING
-        : PHASES.READY_RECORDING;
-      vibrateReadyOnce(capture);
+    onStart: (providerStart) => {
+      if (!isCurrentCapture(capture)
+        || capture.captureMode !== CAPTURE_MODES.WECHATSI
+        || !capture.pressActive
+        || capture.discard
+        || String(providerStart && providerStart.sessionId || '') !== capture.voiceSessionId) return;
+      capture.providerOnStartAt = now();
+      capture.readyAt = null;
+      capture.phase = PHASES.POST_ONSTART_STABILIZING;
+      if (!startWechatSiStabilizationTimer(capture, providerStart)) {
+        cancelCapture(capture, 'WECHATSI_STABILIZATION_START_FAILED', {
+          message: '语音准备失败，请重新按住说话。'
+        });
+        return;
+      }
       projectCapture(capture);
     },
     onStop: () => {
-      if (!isCurrentCapture(capture) || capture.discard) return;
-      if (capture.phase !== PHASES.FINALIZING_AUDIO) {
-        capture.phase = PHASES.FINALIZING_AUDIO;
-        projectCapture(capture);
-      }
+      if (!isCurrentCapture(capture)
+        || capture.discard
+        || !capture.stopIssued
+        || capture.phase !== PHASES.FINALIZING_AUDIO) return;
+      projectCapture(capture);
     },
     onRecognize: (partial) => {
       if (!isCurrentCapture(capture) || capture.phase !== PHASES.READY_RECORDING) return;
@@ -740,6 +852,7 @@ function startLegacyForCapture(capture) {
     onResult: (result) => {
       if (!isCurrentCapture(capture)
         || capture.discard
+        || !capture.stopIssued
         || capture.phase !== PHASES.FINALIZING_AUDIO) return;
       resetCapture(capture);
       publishLegacyTranscript(owner, result && result.text);
@@ -748,14 +861,14 @@ function startLegacyForCapture(capture) {
       if (!isCurrentCapture(capture)) return;
       resetCapture(capture, {
         message: error && error.message || '语音识别失败，请改用打字或粘贴。',
-        reasonCode: 'LEGACY_VOICE_ERROR'
+        reasonCode: 'WECHATSI_VOICE_ERROR'
       });
     }
   });
   if (!started) {
     resetCapture(capture, {
       message: '当前暂时不能使用语音，请改用打字或粘贴。',
-      reasonCode: 'LEGACY_VOICE_START_FAILED'
+      reasonCode: 'WECHATSI_VOICE_START_FAILED'
     });
   }
   return started;
@@ -878,6 +991,7 @@ function newCapture(ownerToken, event) {
     permissionEpoch: 0,
     phase: PHASES.PREPARING,
     pressActive: true,
+    providerOnStartAt: null,
     readyAt: null,
     readyVibrated: false,
     recorderOnStartAt: null,
@@ -889,6 +1003,7 @@ function newCapture(ownerToken, event) {
     startX,
     startY,
     stabilizationGeneration: 0,
+    stabilizationElapsed: false,
     stabilizationTimer: null,
     stopIssued: false,
     terminalReasonCode: '',
@@ -912,6 +1027,10 @@ function beginHold(ownerToken, event) {
         : '正在录音，请先完成上一条'));
     return false;
   }
+  if (hasNonTerminalWechatSiSession()) {
+    showMessage(owner, '正在录音，请先完成上一条');
+    return false;
+  }
   if (hasPendingNativeRecorderLease()) {
     showMessage(owner, nativeRecorderBusyMessage());
     return false;
@@ -924,19 +1043,20 @@ function beginHold(ownerToken, event) {
     authorizeForNextGesture(capture);
     return true;
   }
-  if (startNativeRecorder(capture)) return true;
-  // DEAD_COMPAT: legacy Node-only runners do not expose wx.getRecorderManager.
-  // Real mini-program runtimes never enter this branch; V2 UI capture remains
-  // RecorderManager-only and fail-closed when a native manager is unavailable.
+  // RecorderManager V2 remains available to its isolated Node contract suite,
+  // but the real Hero/Custom Tab product gesture selects WechatSI exclusively.
+  // A single touch can never start both providers.
   if (isNodeHeadlessCompatibilityRuntime()
-    && (typeof wx === 'undefined' || typeof wx.getRecorderManager !== 'function')) {
-    return startLegacyForCapture(capture);
+    && typeof wx !== 'undefined'
+    && typeof wx.getRecorderManager === 'function') {
+    if (startNativeRecorder(capture)) return true;
+    resetCapture(capture, {
+      message: '当前暂时不能录音，请稍后再试。',
+      reasonCode: 'NATIVE_RECORDER_COMPATIBILITY_START_FAILED'
+    });
+    return false;
   }
-  resetCapture(capture, {
-    message: '当前暂时不能录音，请稍后再试。',
-    reasonCode: 'NATIVE_RECORDER_UNAVAILABLE'
-  });
-  return false;
+  return startWechatSiForCapture(capture);
 }
 
 function beginHoldImmediately(ownerToken) {
@@ -955,11 +1075,23 @@ function moveHold(ownerToken, event) {
   if (currentY === null) return false;
   const cancel = capture.startY - currentY > CANCEL_DISTANCE_PX;
   if ([PHASES.PREPARING, PHASES.POST_ONSTART_STABILIZING].includes(capture.phase)) {
-    if (capture.gesture === 'cancel') return true;
-    if (!cancel) return true;
-    capture.gesture = 'cancel';
-    revokeStabilizationTimer(capture);
+    if (capture.captureMode === CAPTURE_MODES.NATIVE_RECORDER) {
+      if (capture.gesture === 'cancel') return true;
+      if (!cancel) return true;
+      capture.gesture = 'cancel';
+      revokeStabilizationTimer(capture);
+      projectCapture(capture);
+      return true;
+    }
+    const nextGesture = cancel ? 'cancel' : 'send';
+    if (capture.gesture === nextGesture) return true;
+    capture.gesture = nextGesture;
     projectCapture(capture);
+    if (nextGesture === 'send'
+      && capture.phase === PHASES.POST_ONSTART_STABILIZING
+      && capture.stabilizationElapsed) {
+      authorizeWechatSiReady(capture, capture.voiceSessionId);
+    }
     return true;
   }
   if (capture.phase === PHASES.CANCEL_PENDING && !capture.readyAt) return true;
@@ -1059,6 +1191,7 @@ function getHoldToTalkState() {
     // diagnostic snapshot exposes capture-relative offsets so contract output
     // is deterministic and cannot be mistaken for business time authority.
     audio,
+    captureMode: activeCapture.captureMode,
     captureId: activeCapture.captureId,
     gesture: activeCapture.gesture,
     gestureQualified: [PHASES.READY_RECORDING, PHASES.CANCEL_PENDING,
@@ -1073,8 +1206,10 @@ function getHoldToTalkState() {
 }
 
 module.exports = {
+  CAPTURE_MODES,
   CANCEL_DISTANCE_PX,
   HOLD_DELAY_MS,
+  POST_PROVIDER_ONSTART_STABILIZATION_MS,
   POST_ONSTART_STABILIZATION_MS,
   PHASES,
   RECORDER_OPTIONS,

@@ -6,7 +6,7 @@
         <view class="hero-subtitle">按住说一句，我来帮你记、查、提醒。</view>
       </view>
       <view
-        class="hero-wave {{voiceRecording ? 'hero-wave-active' : ''}}"
+        class="hero-wave {{voiceRecording ? 'hero-wave-active' : ''}} {{voiceCapturePhase === 'READY_RECORDING' ? 'hero-wave-ready' : ''}}"
         bindtouchstart="startVoice"
         bindtouchmove="moveVoice"
         bindtouchend="stopVoice"
@@ -15,6 +15,10 @@
         <view class="voice-ripple voice-ripple-left"></view>
         <view class="voice-ripple voice-ripple-right"></view>
         <view class="hero-wave-core">
+          <view
+            wx:if="{{voiceCapturePhase === 'POST_ONSTART_STABILIZING' || voiceCapturePhase === 'READY_RECORDING'}}"
+            class="voice-readiness-fill hero-readiness-fill {{voiceCapturePhase === 'POST_ONSTART_STABILIZING' ? 'voice-readiness-fill-filling' : 'voice-readiness-fill-full'}}"
+          ></view>
           <image
             class="hero-assistant-image"
             src="/assets/characters/xiaoling/xiaoling-home-listening-v1.jpg"
@@ -22,7 +26,7 @@
             aria-hidden="true"
           />
         </view>
-        <view class="hero-voice-hint">{{voiceCapturePhase === 'PREPARING' ? '麦克风准备中' : (voiceRecording ? '小玲在听' : '按住和小玲说')}}</view>
+        <view class="hero-voice-hint">{{voiceCapturePhase === 'PREPARING' || voiceCapturePhase === 'POST_ONSTART_STABILIZING' ? '准备中…' : (voiceCapturePhase === 'READY_RECORDING' || voiceCapturePhase === 'CANCEL_PENDING' ? '我在听' : '按住和小玲说')}}</view>
       </view>
     </view>
 
@@ -131,14 +135,18 @@
     </view>
   </view>
 
-  <view wx:if="{{voiceOverlayVisible}}" class="voice-overlay voice-overlay-{{voiceOverlayMode}} voice-gesture-{{voiceGesture}}">
+  <view wx:if="{{voiceOverlayVisible}}" class="voice-overlay voice-overlay-{{voiceOverlayMode}} voice-gesture-{{voiceGesture}} {{voiceCapturePhase === 'READY_RECORDING' ? 'voice-overlay-ready' : ''}}">
     <view class="voice-overlay-panel">
       <view class="voice-overlay-title">{{voiceOverlayTitle}}</view>
       <view wx:if="{{voiceOverlayMode === 'listening' || voiceOverlayMode === 'preparing'}}" class="voice-overlay-subtitle">{{voiceOverlaySubtitle}}</view>
-      <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-overlay-mic">
+      <view wx:if="{{voiceOverlayMode === 'listening' || voiceOverlayMode === 'preparing'}}" class="voice-overlay-mic">
         <view class="voice-overlay-wave voice-overlay-wave-left"></view>
         <view class="voice-overlay-wave voice-overlay-wave-right"></view>
         <view class="voice-overlay-mic-core">
+          <view
+            wx:if="{{voiceCapturePhase === 'POST_ONSTART_STABILIZING' || voiceCapturePhase === 'READY_RECORDING'}}"
+            class="voice-readiness-fill overlay-readiness-fill {{voiceCapturePhase === 'POST_ONSTART_STABILIZING' ? 'voice-readiness-fill-filling' : 'voice-readiness-fill-full'}}"
+          ></view>
           <view class="mic-symbol mic-symbol-large">
             <view class="mic-body"></view>
             <view class="mic-stem"></view>
@@ -152,7 +160,7 @@
         </view>
       </view>
       <view wx:if="{{voiceOverlayMode === 'processing'}}" class="voice-processing-note">{{voiceOverlaySubtitle}}</view>
-      <view wx:if="{{voiceOverlayMode === 'listening'}}" class="voice-slide-targets">
+      <view wx:if="{{voiceOverlayMode === 'listening' || voiceOverlayMode === 'preparing'}}" class="voice-slide-targets">
         <view class="voice-slide-target voice-slide-cancel">上滑取消</view>
       </view>
     </view>

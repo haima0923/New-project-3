@@ -5,7 +5,7 @@
   display: flex;
   justify-content: center;
   left: 0;
-  padding: 0 36rpx calc(170rpx + env(safe-area-inset-bottom));
+  padding: 0 36rpx calc(238rpx + env(safe-area-inset-bottom));
   pointer-events: none;
   position: fixed;
   right: 0;
@@ -42,9 +42,100 @@
   background: rgba(180, 35, 24, 0.92);
 }
 
+.tab-voice-ready .tab-voice-panel {
+  background: rgba(8, 78, 175, 0.95);
+  box-shadow: 0 20rpx 50rpx rgba(9, 92, 206, 0.38);
+}
+
+.tab-voice-ready .tab-voice-title {
+  font-size: 38rpx;
+  font-weight: 900;
+}
+
+.tab-voice-ready .tab-voice-subtitle {
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 25rpx;
+  font-weight: 800;
+}
+
 .tab-voice-gesture-cancel .tab-voice-cancel-hint {
   color: #FFFFFF;
   font-weight: 800;
+}
+
+.tab-voice-readiness-shell {
+  align-items: center;
+  background: rgba(22, 119, 255, 0.2);
+  border: 4rpx solid rgba(255, 255, 255, 0.74);
+  border-radius: 999rpx;
+  display: flex;
+  height: 112rpx;
+  justify-content: center;
+  margin: 26rpx auto 0;
+  overflow: hidden;
+  position: relative;
+  width: 112rpx;
+}
+
+.voice-readiness-fill {
+  background: linear-gradient(180deg, rgba(123, 196, 255, 0.72) 0%, rgba(22, 119, 255, 0.96) 100%);
+  bottom: 0;
+  left: 0;
+  pointer-events: none;
+  position: absolute;
+  right: 0;
+  top: 0;
+  transform: translateY(100%);
+  z-index: 1;
+}
+
+.voice-readiness-fill-filling {
+  animation: tabVoiceReadinessFillUp 700ms linear forwards;
+}
+
+.voice-readiness-fill-full {
+  transform: translateY(0);
+}
+
+@keyframes tabVoiceReadinessFillUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+.tab-readiness-mic {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  position: relative;
+  z-index: 2;
+}
+
+.tab-readiness-mic-body {
+  background: #FFFFFF;
+  border-radius: 999rpx;
+  height: 48rpx;
+  width: 28rpx;
+}
+
+.tab-readiness-mic-stem {
+  background: #FFFFFF;
+  border-radius: 999rpx;
+  height: 14rpx;
+  margin-top: 2rpx;
+  width: 6rpx;
+}
+
+.tab-readiness-mic-base {
+  background: #FFFFFF;
+  border-radius: 999rpx;
+  height: 5rpx;
+  margin-top: -1rpx;
+  width: 31rpx;
 }
 
 .tab-shell {
