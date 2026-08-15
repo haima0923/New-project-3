@@ -1,0 +1,38 @@
+{
+  "schemaVersion": "record-e2e-trust-failure-taxonomy-v1",
+  "domains": [
+    "BOUNDARY",
+    "ORIGINAL_TEXT",
+    "INTENT",
+    "CUSTOMER",
+    "ITEM",
+    "QUANTITY",
+    "UNIT",
+    "PRICE",
+    "AMOUNT",
+    "DATE",
+    "RELATION",
+    "SAFETY",
+    "CONFIRMATION",
+    "EDIT_STATE",
+    "SAVE_MAPPING",
+    "DUPLICATE_SAVE",
+    "PENDING_POLICY",
+    "SPEC_CONFLICT",
+    "TEST_INFRA"
+  ],
+  "readinessStatuses": [
+    "PASS",
+    "EXPECTED_RED",
+    "UNEXPECTED_RED",
+    "SPEC_REQUIRED",
+    "RUNNER_ERROR"
+  ],
+  "testLayers": {
+    "L1": "Record Intake Boundary",
+    "L2": "Business Understanding",
+    "L3": "Confirmation Contract",
+    "L4": "Save Integrity",
+    "L5": "Full Record E2E Simulation"
+  }
+}
