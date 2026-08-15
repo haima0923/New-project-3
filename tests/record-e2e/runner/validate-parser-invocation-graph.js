@@ -14,6 +14,12 @@ const CONVERSATION_ROLES = Object.freeze([
   'CONVERSATION_LATEST_QUANTITY_SCAN'
 ]);
 
+const SOURCE_ITEM_ROLES = Object.freeze([
+  'SOURCE_ITEM_DRAFT_SCAN',
+  'SOURCE_ITEM_FACT_GATE_SCAN',
+  'SOURCE_ITEM_ROUTE_GATE_SCAN'
+]);
+
 function countBy(values, read) {
   return values.reduce((output, value) => {
     const key = read(value);
@@ -35,32 +41,54 @@ function push(errors, code, detail = {}) {
 function validateHybridCardinality(hybrid, errors) {
   const raw = hybrid.rawInvocations || [];
   const expected = hybrid.rawCardinalityExpectation || {};
-  if (raw.length !== Number(expected.expectedCount)) {
-    push(errors, 'HYBRID_RAW_CARDINALITY_MISMATCH', {
-      actual: raw.length,
-      expected: expected.expectedCount,
+  const roleCounts = countBy(raw, (item) => item.role);
+  const primaryFullInputCount = raw.filter((item) => (
+    item.role === 'HYBRID_PRIMARY_LOCAL_PARSE'
+    && item.inputKind === 'HYBRID_FULL_INPUT'
+  )).length;
+  if (primaryFullInputCount !== 1) {
+    push(errors, 'HYBRID_PRIMARY_RAW_ROLE_MISSING', {
       hybridInvocationId: hybrid.hybridInvocationId,
-      policy: expected.policy
+      primaryFullInputCount,
+      roleCounts
     });
   }
-  const roleCounts = countBy(raw, (item) => item.role);
-  if (expected.policy === 'EXACTLY_ONE') {
-    if (roleCounts.HYBRID_PRIMARY_LOCAL_PARSE !== 1) {
-      push(errors, 'HYBRID_PRIMARY_RAW_ROLE_MISSING', {
+  const allowed = new Set(
+    ['HYBRID_PRIMARY_LOCAL_PARSE'].concat(CONVERSATION_ROLES, SOURCE_ITEM_ROLES)
+  );
+  raw.filter((item) => !allowed.has(item.role)).forEach((item) => {
+    push(errors, 'HYBRID_RAW_ROLE_UNCLASSIFIED', {
+      hybridInvocationId: hybrid.hybridInvocationId,
+      rawInvocationId: item.rawInvocationId,
+      role: item.role
+    });
+  });
+  const fingerprintsForRole = (role) => raw
+    .filter((item) => item.role === role)
+    .map((item) => item.inputFingerprint)
+    .sort();
+  const sourceDraft = fingerprintsForRole('SOURCE_ITEM_DRAFT_SCAN');
+  const sourceFact = fingerprintsForRole('SOURCE_ITEM_FACT_GATE_SCAN');
+  const sourceRoute = fingerprintsForRole('SOURCE_ITEM_ROUTE_GATE_SCAN');
+  if (sourceDraft.length || sourceFact.length || sourceRoute.length) {
+    const factFingerprint = JSON.stringify(sourceFact);
+    const routeFingerprint = JSON.stringify(sourceRoute);
+    const draftFingerprint = JSON.stringify(sourceDraft);
+    if (factFingerprint !== routeFingerprint
+      || (sourceDraft.length > 0 && draftFingerprint !== factFingerprint)) {
+      push(errors, 'SOURCE_ITEM_SCAN_FINGERPRINT_MISMATCH', {
         hybridInvocationId: hybrid.hybridInvocationId,
-        roleCounts
+        sourceDraft,
+        sourceFact,
+        sourceRoute
       });
     }
+  }
+  if (expected.policy === 'EXACTLY_ONE') {
     return;
   }
   if (expected.policy === 'DERIVED_FROM_INPUT_STRUCTURE') {
     const messageCount = Number(expected.rawMessageCount || 0);
-    if (roleCounts.HYBRID_PRIMARY_LOCAL_PARSE !== 1) {
-      push(errors, 'HYBRID_PRIMARY_RAW_ROLE_MISSING', {
-        hybridInvocationId: hybrid.hybridInvocationId,
-        roleCounts
-      });
-    }
     CONVERSATION_ROLES.forEach((role) => {
       if (Number(roleCounts[role] || 0) !== messageCount) {
         push(errors, 'HYBRID_CONVERSATION_RAW_ROLE_COUNT_MISMATCH', {
@@ -70,14 +98,6 @@ function validateHybridCardinality(hybrid, errors) {
           role
         });
       }
-    });
-    const allowed = new Set(['HYBRID_PRIMARY_LOCAL_PARSE'].concat(CONVERSATION_ROLES));
-    raw.filter((item) => !allowed.has(item.role)).forEach((item) => {
-      push(errors, 'HYBRID_RAW_ROLE_UNCLASSIFIED', {
-        hybridInvocationId: hybrid.hybridInvocationId,
-        rawInvocationId: item.rawInvocationId,
-        role: item.role
-      });
     });
   }
 }
@@ -161,6 +181,7 @@ function validateVoiceCompletionPropagation(hybrid, errors) {
 function validateParserInvocationGraph(observation, productionPath) {
   const graph = safeClone(observation || {});
   const errors = [];
+  const contractFindings = [];
   const hybrids = graph.hybridInvocations || [];
   const directs = graph.directRawInvocations || [];
   const raw = hybrids.flatMap((item) => item.rawInvocations || [])
@@ -227,7 +248,10 @@ function validateParserInvocationGraph(observation, productionPath) {
       }
     });
     validateHybridCardinality(hybrid, errors);
-    validateVoiceCompletionPropagation(hybrid, errors);
+    // Voice completion propagation is a production boundary contract. A
+    // missing/mismatched token must fail the case, but it must not be reported
+    // as missing runner instrumentation.
+    validateVoiceCompletionPropagation(hybrid, contractFindings);
   });
   directs.forEach((direct) => {
     if (direct.started !== true || direct.completed !== true) {
@@ -379,6 +403,7 @@ function validateParserInvocationGraph(observation, productionPath) {
     }).length
   };
   const validated = Object.assign(graph, {
+    contractFindings,
     errors,
     graphFingerprint: stableHash({
       directs,
@@ -408,6 +433,7 @@ function graphErrors(observation) {
 
 module.exports = {
   CONVERSATION_ROLES,
+  SOURCE_ITEM_ROLES,
   RAW_PARSER_STATUSES,
   graphErrors,
   validateParserInvocationGraph

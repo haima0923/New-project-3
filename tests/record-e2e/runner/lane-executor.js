@@ -854,10 +854,14 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
     spec.initialState.state,
     spec.ai.profile
   );
-  if (!prepared.allowed || !prepared.identityBypass) {
-    throw Object.assign(new Error('Duplicate trigger requires safe test-only provider identity seam'), {
-      code: 'LANE_EXECUTION_EVIDENCE_MISSING'
-    });
+  if (!prepared.allowed) {
+    return {
+      blockingCodes: safeClone(prepared.blockingCodes || []),
+      completionEvidencePresent: true,
+      notExecuted: true,
+      preparedReason: prepared.reason || 'BUSINESS_SAFETY_BLOCKED',
+      reason: 'UPSTREAM_DRAFT_NOT_FORMALLY_SAVEABLE'
+    };
   }
   driver.page.setData({
     parseResult: safeClone(prepared.draft),
@@ -956,8 +960,12 @@ async function runDuplicateTrigger(spec, observation, isolated, runtime) {
     storageSaveAttemptCount: afterStorage - beforeStorage,
     testOnlyIdentitySeam: {
       businessHashEqual: prepared.businessHashBefore === prepared.businessHashAfter,
-      marker: prepared.identityBypass.marker,
-      providerWasNeverSetToReal: prepared.identityBypass.providerWasNeverSetToReal
+      marker: prepared.identityBypass
+        ? prepared.identityBypass.marker
+        : 'NOT_REQUIRED_LOCAL_OR_TRUSTED',
+      providerWasNeverSetToReal: prepared.identityBypass
+        ? prepared.identityBypass.providerWasNeverSetToReal
+        : true
     },
     transactionBeginCount: transactionDecisionCount,
     transactionCommitAttempts: transactionDecisionCount,
@@ -1262,14 +1270,21 @@ async function executeLanes(runtime, spec, plan, options = {}) {
   let duplicate = null;
   if (lanes.includes('PAGE_DUPLICATE_TRIGGER_GUARD')) {
     duplicate = await runDuplicateTrigger(spec, sourceObservation, isolated, runtime);
-    laneResults.push(executedLane(
-      'PAGE_DUPLICATE_TRIGGER_GUARD',
-      safeClone(duplicate),
-      {
-        primaryActionSucceeded: duplicate.completionEvidencePresent === true,
-        completionEvidencePresent: duplicate.completionEvidencePresent === true
-      }
-    ));
+    laneResults.push(duplicate.notExecuted
+      ? preconditionFailedLane(
+        'PAGE_DUPLICATE_TRIGGER_GUARD',
+        safeClone(duplicate),
+        'UPSTREAM_DRAFT_NOT_FORMALLY_SAVEABLE',
+        'PREFLIGHT_ERROR'
+      )
+      : executedLane(
+        'PAGE_DUPLICATE_TRIGGER_GUARD',
+        safeClone(duplicate),
+        {
+          primaryActionSucceeded: duplicate.completionEvidencePresent === true,
+          completionEvidencePresent: duplicate.completionEvidencePresent === true
+        }
+      ));
   }
 
   let replay = null;

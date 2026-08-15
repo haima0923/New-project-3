@@ -71,7 +71,23 @@ const PRODUCTION_PATH_OBSERVATION_REGISTRY = Object.freeze({
     rawInvocationRolePolicy: 'PRIMARY_OR_CONVERSATION_REVIEW_ROLES',
     semanticResultSource: 'PAGE_CONFIRMED_DRAFT'
   }),
+  'FULL_PAGE|CLIPBOARD_CHAT|runParse': Object.freeze({
+    directRawInvocationPolicy: 'FORBIDDEN',
+    hybridInvocationPolicy: 'AT_LEAST_ONE_OR_NO_BUSINESS_CONFIRMATION',
+    parserContract: PARSER_PATH_CONTRACTS.BRANCH_DEPENDENT,
+    rawInvocationCardinality: 'DERIVED_FROM_HYBRID_INPUT_STRUCTURE',
+    rawInvocationRolePolicy: 'PRIMARY_OR_CONVERSATION_REVIEW_ROLES',
+    semanticResultSource: 'PAGE_CONFIRMED_DRAFT'
+  }),
   'FULL_PAGE|VOICE_TRANSCRIPT|startVoice': Object.freeze({
+    directRawInvocationPolicy: 'FORBIDDEN',
+    hybridInvocationPolicy: 'AT_LEAST_ONE',
+    parserContract: PARSER_PATH_CONTRACTS.REQUIRED,
+    rawInvocationCardinality: 'DERIVED_FROM_HYBRID_INPUT_STRUCTURE',
+    rawInvocationRolePolicy: 'PRIMARY_OR_CONVERSATION_REVIEW_ROLES',
+    semanticResultSource: 'PAGE_CONFIRMED_DRAFT'
+  }),
+  'FULL_PAGE|VOICE_TRANSCRIPT|runParse': Object.freeze({
     directRawInvocationPolicy: 'FORBIDDEN',
     hybridInvocationPolicy: 'AT_LEAST_ONE',
     parserContract: PARSER_PATH_CONTRACTS.REQUIRED,

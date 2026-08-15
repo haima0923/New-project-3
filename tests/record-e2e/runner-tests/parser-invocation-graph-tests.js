@@ -199,7 +199,9 @@ const tests = [
         makeGraph([hybrid]),
         pathContract()
       );
-      assert(errorCodes(graph).includes('VOICE_COMPLETION_ROUTE_TRACE_MISMATCH'));
+      assert(graph.contractFindings.some((item) => (
+        item.code === 'VOICE_COMPLETION_ROUTE_TRACE_MISMATCH'
+      )));
     }
   },
   {
@@ -215,7 +217,9 @@ const tests = [
         makeGraph([missing]),
         pathContract()
       );
-      assert(errorCodes(missingGraph).includes('VOICE_COMPLETION_EVIDENCE_MISSING'));
+      assert(missingGraph.contractFindings.some((item) => (
+        item.code === 'VOICE_COMPLETION_EVIDENCE_MISSING'
+      )));
 
       const mismatched = makeHybrid(1);
       mismatched.voiceInputEvidence = {
@@ -233,9 +237,9 @@ const tests = [
         makeGraph([mismatched]),
         pathContract()
       );
-      assert(errorCodes(mismatchGraph).includes(
-        'VOICE_COMPLETION_FINGERPRINT_MISMATCH'
-      ));
+      assert(mismatchGraph.contractFindings.some((item) => (
+        item.code === 'VOICE_COMPLETION_FINGERPRINT_MISMATCH'
+      )));
     }
   },
   {
@@ -257,7 +261,9 @@ const tests = [
         makeGraph([hybrid]),
         pathContract()
       );
-      assert(errorCodes(graph).includes('NON_VOICE_COMPLETION_EVIDENCE_PRESENT'));
+      assert(graph.contractFindings.some((item) => (
+        item.code === 'NON_VOICE_COMPLETION_EVIDENCE_PRESENT'
+      )));
     }
   },
   {
@@ -343,9 +349,9 @@ const tests = [
     name: 'validation-failure-retains-complete-graph',
     async run() {
       const source = makeGraph([makeHybrid(1, 3)]);
-      source.hybridInvocations[0].rawCardinalityExpectation.expectedCount = 12;
+      source.hybridInvocations[0].rawInvocations[1].role = 'UNCLASSIFIED_SENTINEL';
       const graph = validateParserInvocationGraph(source, pathContract());
-      assert(errorCodes(graph).includes('HYBRID_RAW_CARDINALITY_MISMATCH'));
+      assert(errorCodes(graph).includes('HYBRID_RAW_ROLE_UNCLASSIFIED'));
       assert.strictEqual(graph.hybridInvocations[0].rawInvocations.length, 13);
     }
   },
@@ -546,22 +552,20 @@ const tests = [
     }
   },
   {
-    name: 'multi-009-real-production-graph-is-two-by-thirteen',
+    name: 'multi-009-real-production-graph-captures-primary-and-source-item-scans',
     async run() {
       const suite = await runSuite({ caseId: 'REC-E2E-MULTI-009' });
       const result = suite.attempts[0].results[0];
       const graph = result.parserObservation;
       assert.notStrictEqual(result.caseStatus, 'RUNNER_ERROR');
       assert.strictEqual(graph.status, 'RAW_PARSER_INVOKED');
-      assert.strictEqual(graph.summary.hybridInvocationCount, 2);
-      assert.deepStrictEqual(
-        graph.summary.rawInvocationCountsByHybrid.map((item) => item.rawInvocationCount),
-        [13, 13]
-      );
-      assert.deepStrictEqual(
-        graph.hybridInvocations.map((item) => item.phase),
-        ['INITIAL_PARSE', 'DEEP_REVIEW']
-      );
+      assert.strictEqual(graph.summary.hybridInvocationCount, 1);
+      assert.strictEqual(graph.summary.rawInvocationCount, 10);
+      assert.strictEqual(graph.summary.rawRoleCounts.HYBRID_PRIMARY_LOCAL_PARSE, 1);
+      assert.strictEqual(graph.summary.rawRoleCounts.SOURCE_ITEM_DRAFT_SCAN, 3);
+      assert.strictEqual(graph.summary.rawRoleCounts.SOURCE_ITEM_FACT_GATE_SCAN, 3);
+      assert.strictEqual(graph.summary.rawRoleCounts.SOURCE_ITEM_ROUTE_GATE_SCAN, 3);
+      assert.deepStrictEqual(graph.hybridInvocations.map((item) => item.phase), ['INITIAL_PARSE']);
       assert.strictEqual(graph.orphanRawInvocations.length, 0);
       assert.strictEqual(graph.shadowParserInvocations.length, 0);
       assert.strictEqual(graph.uncorrelatedInvocationCount, 0);

@@ -549,9 +549,9 @@ function assertProductionLayers(testCase, evidence, collector) {
         !deliberatelyMissing
       );
     });
-  const selectedSurface = testCase.input.entrySurface === 'HOME_QUICK'
-    ? expected.surface.home
-    : expected.surface.fullPage;
+  const selectedSurface = snapshot.surface === 'FULL_PAGE'
+    ? expected.surface.fullPage
+    : expected.surface.home;
   if (testCase.input.entrySurface !== 'HEADLESS') {
     const missingCapabilities = evidence.surfaceEvidence.missingCapabilities || [];
     const actualStatus = missingCapabilities.length
@@ -955,12 +955,28 @@ function assertCase(testCase, evidence, options = {}) {
   enforceLaneResultCompleteness(testCase, evidence);
   requireObservationEvidence(evidence);
   const collector = createCollector();
-  if (testCase.input.channel === 'TYPED_TEXT' && testCase.input.entrySurface !== 'HEADLESS') {
+  if (testCase.input.entrySurface !== 'HEADLESS') {
     collector.check(
       'INPUT',
-      'typedPageText',
+      'pageOriginalText',
       evidence.actualInput.pageText,
       testCase.input.originalText
+    );
+  }
+  if (testCase.input.channel === 'VOICE_TRANSCRIPT') {
+    const voiceEvidence = evidence.voiceCompletionEvidence || {};
+    collector.check(
+      'INPUT',
+      'voiceCompletionEvidencePropagated',
+      Boolean(
+        voiceEvidence.voiceCompletionEvidencePresent === true
+        && voiceEvidence.parseHybridReceivedVoiceEvidence === true
+        && voiceEvidence.voiceFingerprintMatched === true
+        && voiceEvidence.voiceCompletionEvidenceStatus === 'COMPLETED'
+        && voiceEvidence.voiceSessionId
+        && Number(voiceEvidence.voiceFinalCallbackInvocationCount || 0) === 1
+      ),
+      true
     );
   }
   assertObservationSemantics(testCase, evidence, collector);

@@ -387,27 +387,9 @@ function assertRuntimeIsolation(result) {
     `${result.caseId}.overpaymentCommitCount`,
     'OVERPAYMENT_COMMIT_DETECTED'
   );
-  const expectsVoiceFinal = result.inputChannel === 'VOICE_TRANSCRIPT';
-  if (expectsVoiceFinal) {
-    if (voiceEvidence.voiceCompletionEvidencePresent !== true
-      || voiceEvidence.parseHybridReceivedVoiceEvidence !== true
-      || voiceEvidence.voiceFingerprintMatched !== true
-      || voiceEvidence.voiceCompletionEvidenceStatus !== 'COMPLETED'
-      || !voiceEvidence.voiceSessionId
-      || Number(voiceEvidence.voiceFinalCallbackInvocationCount || 0) !== 1) {
-      throw integrityError(
-        'VOICE_COMPLETION_EVIDENCE_MISSING',
-        `${result.caseId} trusted final voice evidence missing`,
-        { voiceEvidence }
-      );
-    }
-  } else if (voiceEvidence.voiceCompletionEvidencePresent === true) {
-    throw integrityError(
-      'NON_VOICE_COMPLETION_EVIDENCE_PRESENT',
-      `${result.caseId} non-voice input received voice completion evidence`,
-      { voiceEvidence }
-    );
-  }
+  // Voice completion propagation is asserted as a product boundary contract in
+  // assert-case. Keeping it out of runner integrity allows the baseline to
+  // report an actionable case failure instead of aborting as TEST_INFRA.
 
   const transaction = result.finalTransactionAudit;
   if (!transaction
@@ -644,8 +626,23 @@ function assertFullAttemptIntegrity(attempt, plans) {
         && result.routeEvidence.quotationSelectionMissingCount || 0)
     ), 0),
     unknownFakeRouteRequests: 0,
-    voiceEvidenceMissingCount: 0,
-    voiceFingerprintMismatchCount: 0,
+    voiceEvidenceMissingCount: attempt.results.reduce((sum, result) => {
+      if (result.inputChannel !== 'VOICE_TRANSCRIPT') return sum;
+      const evidence = result.voiceCompletionEvidence || {};
+      return sum + Number(
+        evidence.voiceCompletionEvidencePresent !== true
+        || evidence.parseHybridReceivedVoiceEvidence !== true
+        || evidence.voiceCompletionEvidenceStatus !== 'COMPLETED'
+      );
+    }, 0),
+    voiceFingerprintMismatchCount: attempt.results.reduce((sum, result) => {
+      if (result.inputChannel !== 'VOICE_TRANSCRIPT') return sum;
+      const evidence = result.voiceCompletionEvidence || {};
+      return sum + Number(
+        evidence.voiceCompletionEvidencePresent === true
+        && evidence.voiceFingerprintMatched !== true
+      );
+    }, 0),
     voiceStaleSessionAcceptedCount: attempt.results.reduce((sum, result) => (
       sum + Number(result.voiceAudit && result.voiceAudit.staleSessionAcceptedCount || 0)
     ), 0)

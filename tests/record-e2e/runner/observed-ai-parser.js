@@ -168,6 +168,16 @@ function rawRoleFromCallSite(callSite) {
     && joined.includes('applyLatestLocalQuantity')) {
     return 'CONVERSATION_LATEST_QUANTITY_SCAN';
   }
+  if (joined.includes('sourceItemClauseCandidates')
+    && joined.includes('applyClientSourceItemDrafts')) {
+    return 'SOURCE_ITEM_DRAFT_SCAN';
+  }
+  if (joined.includes('sourceItemClauseCandidates')
+    && joined.includes('evaluateClientAutoDeepFactGate')) {
+    return joined.includes('getParseRouteDecision')
+      ? 'SOURCE_ITEM_ROUTE_GATE_SCAN'
+      : 'SOURCE_ITEM_FACT_GATE_SCAN';
+  }
   if (joined.includes('prepareHybridLocalStage')) return 'HYBRID_PRIMARY_LOCAL_PARSE';
   return 'UNCLASSIFIED_PRODUCTION_RAW_CALL';
 }

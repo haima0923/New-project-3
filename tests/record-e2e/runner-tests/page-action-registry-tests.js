@@ -203,24 +203,33 @@ const tests = [
     }
   },
   {
-    name: 'basic-019-old-cross-surface-mapping-is-regression-locked',
+    name: 'basic-019-home-handoff-saves-on-real-full-page-handler',
     async run() {
       const result = await executeOne(bundle('REC-E2E-BASIC-019'));
       assert.notStrictEqual(result.caseStatus, 'RUNNER_ERROR');
       assert.notStrictEqual(result.caseStatus, 'BLOCKED');
       assertRuntimeIsolation(result);
       assert(result.isolatedCommitEvidence);
-      assert.strictEqual(result.isolatedCommitEvidence.pageMethod, 'savePendingFromConfirm');
+      assert.strictEqual(result.entrySurface, 'HOME_QUICK');
       assert.strictEqual(
-        result.isolatedCommitEvidence.pageActionEvidence.invocation.actualMethodName,
-        'savePendingFromConfirm'
+        result.pageEvidence.pageDriverEvidence.entryHandoff.destinationSurface,
+        'FULL_PAGE'
       );
       assert.strictEqual(
-        result.pageEvidence.pageDriverEvidence.pageMethodCalls.savePendingFromConfirm,
+        result.pageEvidence.pageDriverEvidence.pagePath,
+        'pages/input/input.js'
+      );
+      assert.strictEqual(result.isolatedCommitEvidence.pageMethod, 'savePending');
+      assert.strictEqual(
+        result.isolatedCommitEvidence.pageActionEvidence.invocation.actualMethodName,
+        'savePending'
+      );
+      assert.strictEqual(
+        result.pageEvidence.pageDriverEvidence.pageMethodCalls.savePending,
         1
       );
       assert.strictEqual(
-        Number(result.pageEvidence.pageDriverEvidence.pageMethodCalls.savePending || 0),
+        Number(result.pageEvidence.pageDriverEvidence.pageMethodCalls.savePendingFromConfirm || 0),
         0
       );
       assert.strictEqual(result.isolatedCommitEvidence.committed, true);

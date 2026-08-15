@@ -124,6 +124,52 @@ function collectValidatedPageParserObservation(driver, actualPageMethod, surface
   return { parserObservation, productionPathObservation };
 }
 
+function followedRecordEntryNavigation(runtime, navigationCursor) {
+  const events = runtime.fakeWx.audit().navigationEvents.slice(navigationCursor);
+  return events.find((event) => (
+    event
+    && event.type === 'SWITCH_TAB'
+    && event.url === '/pages/input/input'
+  )) || null;
+}
+
+async function followRecordEntryHandoff(entryDriver, runtime, spec, entryPageMethod, navigationCursor) {
+  if (entryDriver.surface !== 'HOME_QUICK') {
+    return {
+      driver: entryDriver,
+      pageMethod: entryPageMethod,
+      surface: entryDriver.surface
+    };
+  }
+  const navigation = followedRecordEntryNavigation(runtime, navigationCursor);
+  if (!navigation) {
+    return {
+      driver: entryDriver,
+      pageMethod: entryPageMethod,
+      surface: entryDriver.surface
+    };
+  }
+  const destinationDriver = loadProductionPage('FULL_PAGE', runtime, spec, {
+    runLifecycle: true
+  });
+  await waitForPageParse(destinationDriver.page);
+  await flushAsync();
+  destinationDriver.evidence.entryHandoff = {
+    acquisitionPageMethod: entryPageMethod,
+    acquisitionPagePath: entryDriver.evidence.pagePath,
+    acquisitionPageMethodCalls: safeClone(entryDriver.evidence.pageMethodCalls),
+    acquisitionSurface: entryDriver.surface,
+    destinationPageMethod: 'runParse',
+    destinationSurface: destinationDriver.surface,
+    navigation: safeClone(navigation)
+  };
+  return {
+    driver: destinationDriver,
+    pageMethod: 'runParse',
+    surface: destinationDriver.surface
+  };
+}
+
 async function submitTyped(driver, text, hooks = {}) {
   const { page, surface } = driver;
   if (hooks.skipInputMethod === true) {
@@ -277,14 +323,16 @@ async function executePageObservation(runtime, spec, options = {}) {
   if (spec.input.channel === 'PENDING_EDIT') {
     runtime.fakeWx.wx.setStorageSync('pending_to_edit', spec.input.pendingNoteId);
   }
-  const surface = options.surface || spec.input.entrySurface;
-  const driver = loadProductionPage(surface, runtime, spec, {
+  const entrySurface = options.surface || spec.input.entrySurface;
+  let driver = loadProductionPage(entrySurface, runtime, spec, {
     runLifecycle: true
   });
   const rawBefore = pageSnapshot(driver);
   const routeStageStateBefore = runtime.fakeWx.getValue(BUSINESS_STORAGE_KEY);
   const routeStageNetworkCursor = runtime.network.audit().events.length;
-  let actualPageMethod = expectedPageInputMethod(surface, spec.input.channel);
+  const navigationCursor = runtime.fakeWx.audit().navigationEvents.length;
+  let actualPageMethod = expectedPageInputMethod(entrySurface, spec.input.channel);
+  let observationSurface = entrySurface;
   try {
     if (spec.input.channel === 'TYPED_TEXT') {
       await submitTyped(driver, spec.input.originalText, options.hooks);
@@ -305,6 +353,16 @@ async function executePageObservation(runtime, spec, options = {}) {
         code: 'AUTOMATION_DRIVER_ERROR'
       });
     }
+    const followed = await followRecordEntryHandoff(
+      driver,
+      runtime,
+      spec,
+      actualPageMethod,
+      navigationCursor
+    );
+    driver = followed.driver;
+    actualPageMethod = followed.pageMethod;
+    observationSurface = followed.surface;
     await waitForPageParse(driver.page);
     await flushAsync();
     const beforeEdits = pageSnapshot(driver);
@@ -321,7 +379,7 @@ async function executePageObservation(runtime, spec, options = {}) {
     const collected = collectValidatedPageParserObservation(
       driver,
       actualPageMethod,
-      surface,
+      observationSurface,
       spec
     );
     const pageEditConsistency = collectPageEditConsistency(
@@ -365,7 +423,7 @@ async function executePageObservation(runtime, spec, options = {}) {
       const collected = collectValidatedPageParserObservation(
         driver,
         actualPageMethod,
-        surface,
+        observationSurface,
         spec
       );
       error.parserObservation = safeClone(collected.parserObservation);
