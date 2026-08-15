@@ -20,15 +20,27 @@ function inputNavigations(audit) {
   return (audit.navigation || []).filter((entry) => entry.url === '/pages/input/input');
 }
 
-function validVoicePayload(payload, expectedText = TRANSCRIPT) {
+function validVoicePayload(payload, expectedText = TRANSCRIPT, expectedSurface = 'DASHBOARD_HERO') {
+  const evidence = payload && payload.voiceCompletionEvidence;
   return payload
     && JSON.stringify(Object.keys(payload).sort()) === JSON.stringify([
-      'autoParse', 'originSurface', 'originalText', 'source'
+      'autoParse', 'originSurface', 'originalText', 'source', 'voiceCompletionEvidence'
     ])
     && payload.autoParse === true
-    && payload.originSurface === 'HOME_QUICK'
+    && payload.originSurface === expectedSurface
     && payload.originalText === expectedText
-    && payload.source === 'voice';
+    && payload.source === 'voice'
+    && evidence
+    && evidence.version === 'voice-completion-evidence-v1'
+    && evidence.status === 'COMPLETED'
+    && evidence.isFinal === true
+    && evidence.source === 'VOICE_TRANSCRIPT'
+    && evidence.callbackName === 'onStop'
+    && evidence.transcriptLength === expectedText.length
+    && evidence.transcriptFingerprint === createTranscriptFingerprint(
+      evidence.sessionId,
+      expectedText
+    );
 }
 
 function dashboardNavigations(audit) {
@@ -211,7 +223,7 @@ async function tab003() {
       check('TAB_DIRECT_INPUT_NAV_ONLY', dashboardNavigations(audit).length === 0
         && inputNavigations(audit).length === 1, audit.navigation),
       check('TAB_FINAL_HANDOFF_ONCE', audit.handoff.publishCount === 1
-        && validVoicePayload(audit.handoff.publishPayloads[0]), audit.handoff),
+        && validVoicePayload(audit.handoff.publishPayloads[0], TRANSCRIPT, 'CUSTOM_TAB_CENTER'), audit.handoff),
       check('TAB_DASHBOARD_AUTHORITY_ZERO', allZeroAuthority(audit), audit.dashboardAuthority),
       check('TAB_INPUT_WRITER_ZERO', Object.values(audit.input.writerCalls).every((value) => value === 0)
         && !audit.businessMutation, audit.input.writerCalls),

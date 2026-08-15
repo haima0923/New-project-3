@@ -25,15 +25,27 @@ function allZeroDashboardAuthority(audit) {
   return Object.values(audit.dashboardAuthority || {}).every((value) => Number(value || 0) === 0);
 }
 
-function exactHandoff(payload, text = TRANSCRIPT) {
+function exactHandoff(payload, text = TRANSCRIPT, originSurface = 'DASHBOARD_HERO') {
+  const evidence = payload && payload.voiceCompletionEvidence;
   return payload
     && JSON.stringify(Object.keys(payload).sort()) === JSON.stringify([
-      'autoParse', 'originSurface', 'originalText', 'source'
+      'autoParse', 'originSurface', 'originalText', 'source', 'voiceCompletionEvidence'
     ])
     && payload.autoParse === true
-    && payload.originSurface === 'HOME_QUICK'
+    && payload.originSurface === originSurface
     && payload.originalText === text
-    && payload.source === 'voice';
+    && payload.source === 'voice'
+    && evidence
+    && evidence.version === 'voice-completion-evidence-v1'
+    && evidence.status === 'COMPLETED'
+    && evidence.isFinal === true
+    && evidence.source === 'VOICE_TRANSCRIPT'
+    && evidence.callbackName === 'onStop'
+    && evidence.transcriptLength === text.length
+    && evidence.transcriptFingerprint === createTranscriptFingerprint(
+      evidence.sessionId,
+      text
+    );
 }
 
 function surface(harness, origin = 'hero') {
@@ -496,7 +508,7 @@ async function wx009() {
       }),
       check('WX009.B_OWN_TIMER_AUTHORIZES_B', isListening(readyB), readyB),
       check('WX009.B_FINAL_ONLY', audit.handoff.publishCount === 1
-        && exactHandoff(audit.handoff.publishPayloads[0], OTHER_TRANSCRIPT)
+        && exactHandoff(audit.handoff.publishPayloads[0], OTHER_TRANSCRIPT, 'CUSTOM_TAB_CENTER')
         && audit.input.originalText === OTHER_TRANSCRIPT, audit)
     ];
   });
@@ -524,7 +536,7 @@ async function wx010() {
         && inputNavigations(afterA).length === 0
         && afterA.voice.manager.startCount === 2, afterA),
       check('WX010.B_FINAL_ONLY', audit.handoff.publishCount === 1
-        && exactHandoff(audit.handoff.publishPayloads[0], OTHER_TRANSCRIPT)
+        && exactHandoff(audit.handoff.publishPayloads[0], OTHER_TRANSCRIPT, 'CUSTOM_TAB_CENTER')
         && inputNavigations(audit).length === 1
         && audit.input.originalText === OTHER_TRANSCRIPT, audit)
     ];

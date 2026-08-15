@@ -1,4 +1,5 @@
 const { safeClone, stableHash } = require('../../../utils/record-state-diff');
+const { createTranscriptFingerprint } = require('../../../utils/voice-recognition');
 const { answerQuestion, inputEvent, questionState } = require('../record-confirm-interaction-v1/page-actions');
 const {
   collectParserObservationSince,
@@ -478,7 +479,9 @@ async function controlPlaneProbe(source, text) {
       const inputParser = collectParserObservationSince(inputParserCursor);
       const audit = harness.handoffObserver.audit();
       const payload = handoffPayload(audit);
-      const allowedKeys = ['autoParse', 'originSurface', 'originalText', 'source'];
+      const allowedKeys = source === 'voice'
+        ? ['autoParse', 'originSurface', 'originalText', 'source', 'voiceCompletionEvidence']
+        : ['autoParse', 'originSurface', 'originalText', 'source'];
       const topKeys = payload && typeof payload === 'object' ? Object.keys(payload).sort() : [];
       const unexpectedKeys = topKeys.filter((key) => !allowedKeys.includes(key));
       const missingKeys = allowedKeys.filter((key) => !topKeys.includes(key));
@@ -492,6 +495,18 @@ async function controlPlaneProbe(source, text) {
         'transcriptFingerprint', 'evidenceSource'
       ].filter((token) => authorityAudit.includes(token));
       const publishArgs = audit.publishCalls[0] && audit.publishCalls[0].args || [];
+      const voiceEvidence = payload && payload.voiceCompletionEvidence || null;
+      const voiceEvidenceValid = source !== 'voice' || Boolean(
+        voiceEvidence
+        && voiceEvidence.version === 'voice-completion-evidence-v1'
+        && voiceEvidence.status === 'COMPLETED'
+        && voiceEvidence.isFinal === true
+        && voiceEvidence.source === 'VOICE_TRANSCRIPT'
+        && voiceEvidence.transcriptFingerprint === createTranscriptFingerprint(
+          voiceEvidence.sessionId,
+          text
+        )
+      );
       return {
         cleanSemantic: semanticProjection(clean.input.page),
         inputSnapshot: inputSnapshot(harness),
@@ -503,15 +518,26 @@ async function controlPlaneProbe(source, text) {
           allowedKeys, { missingKeys, topKeys, unexpectedKeys }),
           check(`ENTRY013.${source.toUpperCase()}.BUSINESS_INPUT`, Boolean(payload)
             && payload.originalText === text && payload.source === source
-            && payload.originSurface === 'HOME_QUICK' && payload.autoParse === true,
-          { autoParse: true, originSurface: 'HOME_QUICK', originalText: text, source }, payload),
-          check(`ENTRY013.${source.toUpperCase()}.NO_ENUMERABLE_VOICE_AUTHORITY`, source !== 'voice'
-            || (publishArgs.length === 1 && voiceAuthorityTokens.length === 0
-              && inputParser.hybridInvocations.every((entry) => !(
-                entry.voiceInputEvidence && entry.voiceInputEvidence.present
-              ))), 'transcript-only voice handoff', {
+            && payload.originSurface === (source === 'voice' ? 'DASHBOARD_HERO' : 'HOME_QUICK')
+            && payload.autoParse === true,
+          {
+            autoParse: true,
+            originSurface: source === 'voice' ? 'DASHBOARD_HERO' : 'HOME_QUICK',
+            originalText: text,
+            source
+          }, payload),
+          check(`ENTRY013.${source.toUpperCase()}.VOICE_AUTHORITY_SCOPED`, source !== 'voice'
+            ? voiceAuthorityTokens.length === 0
+            : (publishArgs.length === 1 && voiceEvidenceValid
+              && !authorityAudit.includes('MALICIOUS_CONTROL')
+              && inputParser.hybridInvocations.every((entry) => (
+                entry.voiceInputEvidence
+                && entry.voiceInputEvidence.present === true
+                && entry.voiceInputEvidence.fingerprintMatched === true
+              ))), source === 'voice' ? 'session-issued voice evidence' : 'no voice evidence', {
               inputVoiceEvidence: inputParser.hybridInvocations.map((entry) => entry.voiceInputEvidence),
               publishArgCount: publishArgs.length,
+              voiceEvidenceValid,
               voiceAuthorityTokens
             }),
           check(`ENTRY013.${source.toUpperCase()}.CONTROL_NOT_ADOPTED`, !serialized.includes('MALICIOUS_CONTROL'),

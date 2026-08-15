@@ -25,7 +25,7 @@ const BASELINE_EXPECTED_STATUS = Object.freeze({
 });
 
 function sanitize(value, key = '') {
-  if (/^(?:(?:recordVoice|confirmation|request|session|handoff).*Id|session|createdAt|updatedAt|timestamp)$/i.test(key)) {
+  if (/^(?:(?:recordVoice|confirmation|request|session|handoff).*Id|session|sessionIds|utteranceId|createdAt|updatedAt|timestamp)$/i.test(key)) {
     return value ? '<present>' : '';
   }
   if (/fingerprint|signature/i.test(key)) return value ? '<present>' : '';

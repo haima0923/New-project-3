@@ -113,11 +113,24 @@ function installHandoffObserver() {
   return {
     audit() {
       const select = (pattern) => calls.filter((entry) => pattern.test(entry.key));
+      const publishEntries = select(/publish/i);
+      const consumeEntries = select(/consume/i);
+      const publishedEvidence = publishEntries[0]
+        && publishEntries[0].args[0]
+        && publishEntries[0].args[0].voiceCompletionEvidence;
+      const consumedEvidence = consumeEntries[0]
+        && consumeEntries[0].result
+        && consumeEntries[0].result.voiceCompletionEvidence;
       return {
-        consumeCount: select(/consume/i).length,
+        consumeCount: consumeEntries.length,
+        consumeEvidenceAudit: {
+          aliasesPublishInput: Boolean(consumedEvidence && consumedEvidence === publishedEvidence),
+          frozen: Boolean(consumedEvidence && Object.isFrozen(consumedEvidence))
+        },
+        consumePayloads: consumeEntries.map((entry) => safeClone(entry.result || null)),
         invalidateCount: select(/invalidate/i).length,
-        publishCount: select(/publish/i).length,
-        publishPayloads: select(/publish/i).map((entry) => safeClone(entry.args[0] || {}))
+        publishCount: publishEntries.length,
+        publishPayloads: publishEntries.map((entry) => safeClone(entry.args[0] || {}))
       };
     },
     restore() {
@@ -305,6 +318,7 @@ function createHoldHarness(options = {}) {
         safetyRiskCodes: (safety.risk_codes || []).slice().sort(),
         safetyStatus: String(safety.status || ''),
         source: String(input.page.data.source || ''),
+        text: String(input.page.data.text || ''),
         writerCalls: {
           saveConfirmed: Number(input.evidence.productionBusinessCalls.saveConfirmedDraft || 0),
           savePending: Number(input.evidence.productionBusinessCalls.savePendingNote || 0),
@@ -315,7 +329,8 @@ function createHoldHarness(options = {}) {
       parser: {
         hybridCount: parser.hybridInvocations.length,
         surfaces: parser.hybridInvocations.map((entry) => String(entry.surface || '')),
-        sources: parser.hybridInvocations.map((entry) => String(entry.payload && entry.payload.source || ''))
+        sources: parser.hybridInvocations.map((entry) => String(entry.payload && entry.payload.source || '')),
+        voiceInputEvidence: parser.hybridInvocations.map((entry) => safeClone(entry.voiceInputEvidence || {}))
       },
       storageMutations: (wxAudit.storageEvents || []).filter((event) => (
         ['SET', 'REMOVE'].includes(event.operation)
