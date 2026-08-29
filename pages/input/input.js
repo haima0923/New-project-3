@@ -147,6 +147,121 @@ const operationByIntent = {
   todo: 'create_todo',
   unknown: 'pending'
 };
+
+const TYPE_SWITCH_COMMON_FIELDS = [
+  'customerName', 'phone', 'customerId', 'company', 'region', 'wechatRemark',
+  'customerNote', 'forceNewCustomer', 'customerHistoryConfirmed',
+  'customerSelectionConfirmed', 'remark', 'originalText', 'original_text'
+];
+const TYPE_SWITCH_COMMERCIAL_ITEM_FIELDS = [
+  'items', 'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit',
+  'amount', 'totalAmount', 'calculatedAmount', 'statedAmount', 'paymentMethod'
+];
+const TYPE_SWITCH_TODO_FIELDS = [
+  'todoTitle', 'dueDate', 'productName', 'quantity', 'unit', 'unitPrice', 'amount'
+];
+const TYPE_SWITCH_TARGET_FIELDS = {
+  quotation: TYPE_SWITCH_COMMERCIAL_ITEM_FIELDS.concat([
+    'followupDays', 'dueDate', 'quoteDate', 'validUntil'
+  ]),
+  order: TYPE_SWITCH_COMMERCIAL_ITEM_FIELDS.concat([
+    'dueDate', 'depositAmount', 'paymentAmount', 'paymentKind'
+  ]),
+  receivable: ['amount', 'dueDate'],
+  payment: ['amount', 'paymentAmount', 'remainingAmount', 'paymentDate', 'dueDate'],
+  dunning: TYPE_SWITCH_TODO_FIELDS.concat(['todoType']),
+  todo: TYPE_SWITCH_TODO_FIELDS,
+  unknown: []
+};
+
+function copyTypeSwitchFieldValue(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => (
+      item && typeof item === 'object' && !Array.isArray(item)
+        ? Object.assign({}, item)
+        : item
+    ));
+  }
+  if (value && typeof value === 'object') return Object.assign({}, value);
+  return value;
+}
+
+function projectTypeSwitchFields(sourceIntent, targetIntent, fields) {
+  if (targetIntent === 'unknown') {
+    return Object.keys(fields || {}).reduce((next, field) => {
+      next[field] = copyTypeSwitchFieldValue(fields[field]);
+      return next;
+    }, {});
+  }
+
+  const quotationOrderTransition = ['quotation', 'order'].includes(sourceIntent)
+    && ['quotation', 'order'].includes(targetIntent);
+  const todoTransition = ['todo', 'dunning'].includes(sourceIntent)
+    && ['todo', 'dunning'].includes(targetIntent);
+  const sourceIsPending = sourceIntent === 'unknown';
+  let ownedFields = TYPE_SWITCH_COMMON_FIELDS;
+  if (quotationOrderTransition) {
+    ownedFields = ownedFields.concat(TYPE_SWITCH_COMMERCIAL_ITEM_FIELDS);
+  } else if (todoTransition) {
+    ownedFields = ownedFields.concat(TYPE_SWITCH_TODO_FIELDS);
+  } else if (sourceIsPending) {
+    ownedFields = ownedFields.concat(TYPE_SWITCH_TARGET_FIELDS[targetIntent] || []);
+  }
+
+  const projected = uniqueFields(ownedFields).reduce((next, field) => {
+    if (Object.prototype.hasOwnProperty.call(fields || {}, field)) {
+      next[field] = copyTypeSwitchFieldValue(fields[field]);
+    }
+    return next;
+  }, {});
+  if (targetIntent === 'dunning') projected.todoType = 'dunning';
+  return projected;
+}
+
+function transitionOwnsRiskField(fields, field) {
+  if (!field || ['intent', 'businessType'].includes(field)) return false;
+  if (Object.prototype.hasOwnProperty.call(fields, field)) return true;
+  return Array.isArray(fields.items) && MANUAL_ITEM_FIELDS.includes(field);
+}
+
+function projectTypeSwitchResult(parseResult, sourceIntent, targetIntent, fields) {
+  const projectedFields = projectTypeSwitchFields(sourceIntent, targetIntent, fields);
+  const keepField = (field) => transitionOwnsRiskField(projectedFields, field);
+  const projected = Object.assign({}, parseResult, {
+    intent: targetIntent,
+    operation: operationByIntent[targetIntent] || 'pending',
+    suggested_operation: '',
+    requires_existing_record: false,
+    fields: projectedFields,
+    missing_fields: uniqueFields(parseResult.missing_fields || []).filter(keepField),
+    low_confidence_fields: uniqueFields(parseResult.low_confidence_fields || []).filter(keepField),
+    field_conflicts: (Array.isArray(parseResult.field_conflicts)
+      ? parseResult.field_conflicts
+      : []).filter((conflict) => keepField(conflict && conflict.field)),
+    manual_fields: uniqueFields(parseResult.manual_fields || []).filter(keepField),
+    manual_item_fields: Array.isArray(projectedFields.items)
+      ? normalizeManualItemFields(parseResult.manual_item_fields, projectedFields.items)
+      : [],
+    user_manual_edits: (Array.isArray(parseResult.user_manual_edits)
+      ? parseResult.user_manual_edits
+      : []).filter((proof) => keepField(proof && proof.field)),
+    history_defaulted_fields: uniqueFields(parseResult.history_defaulted_fields || []).filter(keepField),
+    relation_references: {},
+    intent_evidence: {}
+  });
+  if (parseResult.field_suggestions && typeof parseResult.field_suggestions === 'object') {
+    projected.field_suggestions = Object.keys(parseResult.field_suggestions)
+      .filter(keepField)
+      .reduce((next, field) => {
+        next[field] = parseResult.field_suggestions[field];
+        return next;
+      }, {});
+  }
+  delete projected.edit_mode;
+  delete projected.existing_record_id;
+  return projected;
+}
+
 const operationTitles = {
   create_quotation: '保存为报价',
   create_order: '保存为订单',
@@ -3922,24 +4037,34 @@ Page({
     }
     const state = getState();
     const intentChanged = intent !== this.data.intent;
-    let baseResult = Object.assign({}, this.data.parseResult, {
-      intent,
-      operation: intentChanged
-        ? (operationByIntent[intent] || 'pending')
-        : this.data.parseResult.operation,
-      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
-        .filter((item) => item !== 'intent'),
-      low_confidence_fields: this.data.parseResult.low_confidence_fields || []
-    });
-    const fields = this.data.quotationSelectionRootFields
-      ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
-      : (this.data.quotationSelectionBaseFields
-        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
-        : (this.data.orderSelectionBaseFields
-          ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
-          : Object.assign({}, this.data.fields)));
-    delete fields.quotationId;
-    delete fields.quotationSelectionConfirmed;
+    let fields;
+    let baseResult;
+    if (intentChanged) {
+      fields = projectTypeSwitchFields(this.data.intent, intent, this.data.fields || {});
+      baseResult = projectTypeSwitchResult(
+        this.data.parseResult,
+        this.data.intent,
+        intent,
+        this.data.fields || {}
+      );
+    } else {
+      baseResult = Object.assign({}, this.data.parseResult, {
+        intent,
+        operation: this.data.parseResult.operation,
+        missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
+          .filter((item) => item !== 'intent'),
+        low_confidence_fields: this.data.parseResult.low_confidence_fields || []
+      });
+      fields = this.data.quotationSelectionRootFields
+        ? copyQuotationSelectionBaseFields(this.data.quotationSelectionRootFields)
+        : (this.data.quotationSelectionBaseFields
+          ? copyQuotationSelectionBaseFields(this.data.quotationSelectionBaseFields)
+          : (this.data.orderSelectionBaseFields
+            ? copyOrderSelectionBaseFields(this.data.orderSelectionBaseFields)
+            : Object.assign({}, this.data.fields)));
+      delete fields.quotationId;
+      delete fields.quotationSelectionConfirmed;
+    }
     baseResult = rebuildAfterClientDraftEdit(this, baseResult, fields);
     const confirmationState = buildConfirmationState(state, baseResult, intent, fields);
     this.setData(Object.assign({}, confirmationState, {
