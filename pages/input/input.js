@@ -1725,6 +1725,28 @@ function normalizeOrderDepositMissing(missingFields, fields) {
     .filter((field) => field !== 'orderId' && !hasFieldValue(fields, field)), 'payment', 'record_order_deposit');
 }
 
+function projectDepositAmountControlEdit(fields, intent, operation, field, value) {
+  if (field !== 'paymentAmount') return { fields, resolvedAliasFields: [] };
+  const standalone = intent === 'payment' && operation === 'record_order_deposit';
+  const createOrder = intent === 'order'
+    && operation === 'create_order'
+    && (fields.paymentKind === 'deposit' || hasFieldValue(fields, 'depositAmount'));
+  if (!standalone && !createOrder) return { fields, resolvedAliasFields: [] };
+
+  // The WXML deposit control currently posts paymentAmount. Promote that real
+  // page event to the canonical depositAmount fact first, then derive the
+  // compatibility alias from the canonical value. Raw Draft metadata never
+  // grants this authority.
+  const projectedFields = Object.assign({}, fields);
+  projectedFields.depositAmount = value;
+  projectedFields.paymentAmount = projectedFields.depositAmount;
+  if (standalone) delete projectedFields.amount;
+  return {
+    fields: projectedFields,
+    resolvedAliasFields: ['depositAmount'].concat(standalone ? ['amount'] : [])
+  };
+}
+
 function buildOrderDepositState(state, fields, aiMissingFields, lowConfidenceFields) {
   const nextFields = Object.assign({}, fields);
   let low = uniqueFields(lowConfidenceFields)
@@ -4253,6 +4275,14 @@ Page({
       let nextFields = Object.assign({}, sourceFields, {
         [field]: event.detail.value
       });
+      const depositControlEdit = projectDepositAmountControlEdit(
+        nextFields,
+        this.data.intent,
+        this.data.operation,
+        field,
+        event.detail.value
+      );
+      nextFields = depositControlEdit.fields;
       if (field === 'amount' && this.data.intent === 'order') {
         nextFields = recalculateOrderAmountFields(nextFields, event.detail.value);
       }
@@ -4280,9 +4310,11 @@ Page({
       }
       let baseResult = Object.assign({}, markManualField(this.data.parseResult, field, nextFields), {
         missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
-          .filter((item) => item !== field),
+          .filter((item) => item !== field && !depositControlEdit.resolvedAliasFields.includes(item)),
         low_confidence_fields: uniqueFields(this.data.parseResult.low_confidence_fields || [])
-          .filter((item) => item !== field)
+          .filter((item) => item !== field && !depositControlEdit.resolvedAliasFields.includes(item)),
+        field_conflicts: (this.data.parseResult.field_conflicts || [])
+          .filter((conflict) => !conflict || !depositControlEdit.resolvedAliasFields.includes(conflict.field))
       });
       baseResult = rebuildAfterClientDraftEdit(this, baseResult, nextFields);
       const state = getState();
