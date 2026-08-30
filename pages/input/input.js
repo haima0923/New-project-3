@@ -174,6 +174,148 @@ const TYPE_SWITCH_TARGET_FIELDS = {
   unknown: []
 };
 
+// Quotation business facts may enter a formal payload only through a real
+// confirmation control, a deterministic derivation, or technical metadata.
+// This is intentionally scoped to the CSI-035 cluster; unrelated business
+// types and the already-frozen quotation root-total gap keep their contracts.
+const QUOTATION_CONFIRMATION_AUTHORITY = Object.freeze({
+  customerName: { authority: 'VISIBLE_CONTROL', saveAllowed: true },
+  customerId: { authority: 'CUSTOMER_MATCH_OR_PICKER', saveAllowed: true },
+  phone: { authority: 'VISIBLE_CONTROL', saveAllowed: true },
+  items: { authority: 'VISIBLE_ITEM_CONTROLS', saveAllowed: true },
+  productName: { authority: 'DERIVED_FIRST_ITEM_ALIAS', saveAllowed: true },
+  spec: { authority: 'DERIVED_FIRST_ITEM_ALIAS', saveAllowed: true },
+  quantity: { authority: 'DERIVED_FIRST_ITEM_ALIAS', saveAllowed: true },
+  unit: { authority: 'DERIVED_FIRST_ITEM_ALIAS', saveAllowed: true },
+  unitPrice: { authority: 'DERIVED_FIRST_ITEM_ALIAS', saveAllowed: true },
+  priceUnit: { authority: 'DERIVED_FIRST_ITEM_ALIAS', saveAllowed: true },
+  amount: { authority: 'CONFIRMED_OR_DETERMINISTIC_TOTAL', saveAllowed: true },
+  totalAmount: { authority: 'CONFIRMED_OR_DETERMINISTIC_TOTAL', saveAllowed: true },
+  statedAmount: { authority: 'CONFIRMED_ROOT_TOTAL', saveAllowed: true },
+  calculatedAmount: { authority: 'DETERMINISTIC_ITEM_TOTAL', saveAllowed: true },
+  quoteDate: { authority: 'SYSTEM_BUSINESS_DATE', saveAllowed: true },
+  followupDays: { authority: 'VISIBLE_PICKER', saveAllowed: true },
+  dueDate: { authority: 'DETERMINISTIC_FOLLOWUP_DATE', saveAllowed: true },
+  remark: { authority: 'VISIBLE_CONTROL', saveAllowed: true },
+  quotationId: { authority: 'QUOTATION_PICKER', saveAllowed: true },
+  validUntil: {
+    authority: 'CONTROL_REQUIRED',
+    explicitTextPattern: /(?:报价|价格)?(?:有效期|有效至|有效到|截止|到期)/,
+    saveAllowed: false
+  },
+  paymentMethod: {
+    authority: 'CONTROL_REQUIRED',
+    explicitTextPattern: /(?:付款|支付|结算)(?:方式)?|月结|预付|定金|订金/,
+    saveAllowed: false
+  }
+});
+const CONFIRMATION_CONTROL_REQUIRED = 'CONFIRMATION_CONTROL_REQUIRED';
+
+function hasMeaningfulAuthorityEvidence(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'string') return Boolean(value.trim());
+  if (Array.isArray(value)) return value.some(hasMeaningfulAuthorityEvidence);
+  if (typeof value === 'object') {
+    return Object.keys(value).some((key) => hasMeaningfulAuthorityEvidence(value[key]));
+  }
+  return value === true || (typeof value === 'number' && Number.isFinite(value));
+}
+
+function hasExplicitAuthorityFieldSource(value) {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  return !/(?:default|history|legacy|hydrat|fallback|system)/i.test(value);
+}
+
+function hiddenQuotationFieldHasInputEvidence(parseResult, field, value) {
+  const rule = QUOTATION_CONFIRMATION_AUTHORITY[field] || {};
+  const originalText = String(parseResult.original_text || parseResult.raw_text || '').replace(/\s+/g, '');
+  const normalizedValue = String(value === undefined || value === null ? '' : value)
+    .replace(/\s+/g, '')
+    .trim();
+  if (normalizedValue && originalText.includes(normalizedValue)) return true;
+  if (rule.explicitTextPattern && rule.explicitTextPattern.test(originalText)) return true;
+  if (hasExplicitAuthorityFieldSource((parseResult.field_sources || {})[field])) return true;
+  if (hasMeaningfulAuthorityEvidence((parseResult.field_evidence || {})[field])) return true;
+  if ((parseResult.manual_fields || []).includes(field)) return true;
+  if ((parseResult.low_confidence_fields || []).includes(field)) return true;
+  if ((parseResult.field_conflicts || []).some((conflict) => conflict && conflict.field === field)) return true;
+  return (parseResult.user_manual_edits || []).some((proof) => proof && proof.field === field);
+}
+
+function omitAuthorityMetadataField(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const projected = Object.assign({}, value);
+  delete projected[field];
+  return projected;
+}
+
+function projectQuotationConfirmationAuthority(parseResult, intent, operation, fields) {
+  const previousIssues = (Array.isArray(parseResult.confirmation_authority_issues)
+    ? parseResult.confirmation_authority_issues
+    : []).filter((issue) => issue && issue.code === CONFIRMATION_CONTROL_REQUIRED);
+  const previousIssueFields = new Set(previousIssues.map((issue) => String(issue.field || '')));
+
+  if (intent !== 'quotation' || !['create_quotation', 'update_quotation'].includes(operation)) {
+    if (!previousIssues.length) return { fields, parseResult };
+    const nextResult = Object.assign({}, parseResult, {
+      low_confidence_fields: uniqueFields(parseResult.low_confidence_fields || [])
+        .filter((field) => !previousIssueFields.has(field))
+    });
+    delete nextResult.confirmation_authority_issues;
+    return { fields, parseResult: nextResult };
+  }
+
+  const projectedFields = Object.assign({}, fields);
+  const issuesByField = new Map(previousIssues.map((issue) => [String(issue.field || ''), issue]));
+  const noAuthorityFields = Object.keys(QUOTATION_CONFIRMATION_AUTHORITY)
+    .filter((field) => QUOTATION_CONFIRMATION_AUTHORITY[field].saveAllowed === false);
+
+  noAuthorityFields.forEach((field) => {
+    if (!hasFieldValue(projectedFields, field)) return;
+    const value = projectedFields[field];
+    if (hiddenQuotationFieldHasInputEvidence(parseResult, field, value)) {
+      issuesByField.set(field, {
+        authority: QUOTATION_CONFIRMATION_AUTHORITY[field].authority,
+        code: CONFIRMATION_CONTROL_REQUIRED,
+        field,
+        intent: 'quotation'
+      });
+    }
+    delete projectedFields[field];
+  });
+
+  const issues = Array.from(issuesByField.values())
+    .filter((issue) => noAuthorityFields.includes(issue.field))
+    .sort((left, right) => left.field.localeCompare(right.field));
+  const issueFields = new Set(issues.map((issue) => issue.field));
+  const nextResult = Object.assign({}, parseResult, {
+    fields: projectedFields,
+    manual_fields: uniqueFields(parseResult.manual_fields || [])
+      .filter((field) => !noAuthorityFields.includes(field)),
+    user_manual_edits: (Array.isArray(parseResult.user_manual_edits)
+      ? parseResult.user_manual_edits
+      : []).filter((proof) => !proof || !noAuthorityFields.includes(proof.field)),
+    history_defaulted_fields: uniqueFields(parseResult.history_defaulted_fields || [])
+      .filter((field) => !noAuthorityFields.includes(field)),
+    field_conflicts: (Array.isArray(parseResult.field_conflicts)
+      ? parseResult.field_conflicts
+      : []).filter((conflict) => !conflict || !noAuthorityFields.includes(conflict.field)),
+    low_confidence_fields: uniqueFields([].concat(
+      parseResult.low_confidence_fields || [],
+      Array.from(issueFields)
+    )),
+    confirmation_authority_issues: issues
+  });
+  ['field_sources', 'field_evidence', 'field_suggestions'].forEach((key) => {
+    if (!nextResult[key] || typeof nextResult[key] !== 'object' || Array.isArray(nextResult[key])) return;
+    noAuthorityFields.forEach((field) => {
+      nextResult[key] = omitAuthorityMetadataField(nextResult[key], field);
+    });
+  });
+  if (!issues.length) delete nextResult.confirmation_authority_issues;
+  return { fields: projectedFields, parseResult: nextResult };
+}
+
 function copyTypeSwitchFieldValue(value) {
   if (Array.isArray(value)) {
     return value.map((item) => (
@@ -290,6 +432,8 @@ const fieldLabels = {
   depositAmount: '定金金额',
   paymentAmount: '本次收款',
   remainingAmount: '剩余金额',
+  validUntil: '报价有效期',
+  paymentMethod: '付款方式',
   dueDate: '日期',
   remark: '备注'
 };
@@ -356,6 +500,8 @@ const surfaceUnplacedRiskMessages = {
   quotationId: '请确认关联报价',
   relationId: '请确认关联记录',
   remainingAmount: '请确认待收金额',
+  validUntil: '报价有效期还没有确认控件，请先放待整理',
+  paymentMethod: '付款方式还没有确认控件，请先放待整理',
   todoTitle: '请填写待办事项'
 };
 
@@ -2154,6 +2300,15 @@ function buildConfirmationState(state, parseResult, intent, fields) {
 
   customerMatchState = buildCustomerMatchState(state, nextFields, operation);
   nextFields = customerMatchState.fields;
+
+  const authorityProjection = projectQuotationConfirmationAuthority(
+    parseResult,
+    intent,
+    operation,
+    nextFields
+  );
+  parseResult = authorityProjection.parseResult;
+  nextFields = authorityProjection.fields;
 
   missingFields = getVisibleFields(filterRelevantWarningFields(uniqueFields(missingFields), intent, operation), nextFields);
   lowConfidenceFields = filterRelevantWarningFields(uniqueFields(lowConfidenceFields), intent, operation);
