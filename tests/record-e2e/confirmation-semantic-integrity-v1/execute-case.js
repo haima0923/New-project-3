@@ -535,14 +535,102 @@ function runDateSemantics(page, harness, check) {
 }
 
 function runDepositAliasEdit(page, harness, check) {
+  const initial = capture(page, harness);
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT.INITIAL_ORDER_TOTAL', initial.card.fields.amount, '1000');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT.INITIAL_PAYMENT_ALIAS', initial.card.fields.paymentAmount, '200');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT.INITIAL_CANONICAL', initial.card.fields.depositAmount, '200');
   editField(page, 'paymentAmount', '300');
   const snapshot = capture(page, harness);
   eq(check, 'AMOUNT_SYNC', 'DEPOSIT.CARD_PAYMENT', snapshot.card.fields.paymentAmount, '300');
   eq(check, 'AMOUNT_SYNC', 'DEPOSIT.CANONICAL_ALIAS', snapshot.card.fields.depositAmount, '300');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT.ORDER_TOTAL_UNCHANGED', snapshot.card.fields.amount, '1000');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT.PARSE_PAYMENT_ALIAS', valueAt(snapshot.parseResult, 'fields.paymentAmount'), '300');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT.PARSE_CANONICAL', valueAt(snapshot.parseResult, 'fields.depositAmount'), '300');
+  check('SAVE_SOURCE_OF_TRUTH', 'DEPOSIT.MANUAL_CONTROL_PROOF',
+    (snapshot.parseResult.manual_fields || []).includes('paymentAmount'), true,
+    snapshot.parseResult.manual_fields || []);
   const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT.FORMAL_SAVE_REACHED');
+  const order = latest(after.state, 'orders') || {};
   const payment = latest(after.state, 'paymentRecords') || {};
   eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT.PAYLOAD_ALIAS', valueAt(after.savePayload, 'fields.depositAmount'), '300');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT.PAYLOAD_PAYMENT_ALIAS', valueAt(after.savePayload, 'fields.paymentAmount'), '300');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT.PAYLOAD_ORDER_TOTAL', valueAt(after.savePayload, 'fields.amount'), '1000');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT.STORAGE_ORDER_TOTAL', order.totalAmount, '1000');
   eq(check, 'AMOUNT_SYNC', 'DEPOSIT.STORAGE_PAYMENT', payment.amount, '300');
+  eq(check, 'RELATION_LEAK', 'DEPOSIT.STORAGE_ORDER_RELATION', payment.orderId, order.id);
+  check('AMOUNT_SYNC', 'DEPOSIT.OLD_200_NOT_FORMAL', [
+    valueAt(after.savePayload, 'fields.depositAmount'),
+    valueAt(after.savePayload, 'fields.paymentAmount'),
+    payment.amount
+  ].every((value) => String(value) !== '200'), true, {
+    depositAmount: valueAt(after.savePayload, 'fields.depositAmount'),
+    paymentAmount: valueAt(after.savePayload, 'fields.paymentAmount'),
+    storageAmount: payment.amount
+  });
+}
+
+function runStandaloneDepositAliasEdit(page, harness, check) {
+  const initial = capture(page, harness);
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.INITIAL_AMOUNT_ALIAS', initial.card.fields.amount, '200');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.INITIAL_PAYMENT_ALIAS', initial.card.fields.paymentAmount, '200');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.INITIAL_CANONICAL', initial.card.fields.depositAmount, '200');
+  editField(page, 'paymentAmount', '300');
+  const snapshot = capture(page, harness);
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.CARD_CANONICAL', snapshot.card.fields.depositAmount, '300');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.CARD_PAYMENT_ALIAS', snapshot.card.fields.paymentAmount, '300');
+  absent(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.CARD_STALE_AMOUNT_REMOVED', snapshot.card, 'fields.amount');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.PARSE_CANONICAL', valueAt(snapshot.parseResult, 'fields.depositAmount'), '300');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.PARSE_PAYMENT_ALIAS', valueAt(snapshot.parseResult, 'fields.paymentAmount'), '300');
+  absent(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.PARSE_STALE_AMOUNT_REMOVED', snapshot.parseResult, 'fields.amount');
+  const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.FORMAL_SAVE_REACHED');
+  const payment = latest(after.state, 'paymentRecords') || {};
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.PAYLOAD_CANONICAL', valueAt(after.savePayload, 'fields.depositAmount'), '300');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.PAYLOAD_PAYMENT_ALIAS', valueAt(after.savePayload, 'fields.paymentAmount'), '300');
+  absent(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_STANDALONE.PAYLOAD_STALE_AMOUNT_REMOVED', after.savePayload, 'fields.amount');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_STANDALONE.STORAGE_AMOUNT', payment.amount, '300');
+  eq(check, 'RELATION_LEAK', 'DEPOSIT_STANDALONE.ORDER_RELATION', payment.orderId, 'ord-csi-open');
+  check('AMOUNT_SYNC', 'DEPOSIT_STANDALONE.OLD_200_NOT_FORMAL', [
+    valueAt(after.savePayload, 'fields.depositAmount'),
+    valueAt(after.savePayload, 'fields.paymentAmount'),
+    valueAt(after.savePayload, 'fields.amount'),
+    payment.amount
+  ].every((value) => String(value || '') !== '200'), true, {
+    depositAmount: valueAt(after.savePayload, 'fields.depositAmount'),
+    paymentAmount: valueAt(after.savePayload, 'fields.paymentAmount'),
+    amount: valueAt(after.savePayload, 'fields.amount'),
+    storageAmount: payment.amount
+  });
+}
+
+function runStandaloneDepositUnedited(page, harness, check) {
+  const snapshot = capture(page, harness);
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_UNEDITED.CARD_CANONICAL', snapshot.card.fields.depositAmount, '200');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_UNEDITED.CARD_PAYMENT_ALIAS', snapshot.card.fields.paymentAmount, '200');
+  const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_UNEDITED.FORMAL_SAVE_REACHED');
+  const payment = latest(after.state, 'paymentRecords') || {};
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_UNEDITED.PAYLOAD_CANONICAL', valueAt(after.savePayload, 'fields.depositAmount'), '200');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_UNEDITED.PAYLOAD_PAYMENT_ALIAS', valueAt(after.savePayload, 'fields.paymentAmount'), '200');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_UNEDITED.STORAGE_AMOUNT', payment.amount, '200');
+  eq(check, 'RELATION_LEAK', 'DEPOSIT_UNEDITED.ORDER_RELATION', payment.orderId, 'ord-csi-open');
+}
+
+function runDepositUnknownAmount(page, harness, check) {
+  const snapshot = capture(page, harness);
+  absent(check, 'AMOUNT_SYNC', 'DEPOSIT_UNKNOWN.NO_CANONICAL_ZERO', snapshot.card, 'fields.depositAmount');
+  absent(check, 'AMOUNT_SYNC', 'DEPOSIT_UNKNOWN.NO_PAYMENT_ZERO', snapshot.card, 'fields.paymentAmount');
+  absent(check, 'AMOUNT_SYNC', 'DEPOSIT_UNKNOWN.NO_AMOUNT_ZERO', snapshot.card, 'fields.amount');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_UNKNOWN.FORMAL_BLOCKED', page.data.disableFormalSave, true);
+  const beforePayments = (snapshot.state.paymentRecords || []).length;
+  const after = formalSave(page, harness);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_UNKNOWN.NO_BUSINESS_SAVE',
+    after.evidence.businessCalls.saveConfirmedDraft || 0, 0);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_UNKNOWN.NO_STORAGE_WRITE',
+    after.evidence.storageCalls.saveState || 0, 0);
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_UNKNOWN.NO_ZERO_PAYMENT_RECORD',
+    (after.state.paymentRecords || []).length, beforePayments);
 }
 
 function runQuotationRootTotal(page, harness, check) {
@@ -797,6 +885,9 @@ const SCENARIOS = {
   spec_sparse_order: runSpecSparseOrder,
   spec_dunning_required(page, harness, check) { runSpecObservation(page, harness, check, 'SPEC.DUNNING_REQUIRED'); },
   deposit_alias_edit: runDepositAliasEdit,
+  deposit_standalone_alias_edit: runStandaloneDepositAliasEdit,
+  deposit_standalone_unedited: runStandaloneDepositUnedited,
+  deposit_unknown_amount: runDepositUnknownAmount,
   quotation_root_total: runQuotationRootTotal,
   item_meta_editability: runItemMetaEditability,
   hidden_quotation_fields: runHiddenQuotationFields,
@@ -920,6 +1011,72 @@ function setupFor(spec) {
         originalText: '王总下单旧杯100个，每个10元，2026-08-20交货，总价1000元，定金200元。',
         fields: orderFields({ depositAmount: '200', paymentAmount: '200', paymentKind: 'deposit' })
       }) };
+    case 'deposit_standalone_alias_edit':
+      return {
+        draft: draft({
+          id: spec.id,
+          intent: 'payment',
+          operation: 'record_order_deposit',
+          suggestedOperation: 'record_order_deposit',
+          originalText: '王总旧杯订单交定金200元。',
+          fields: {
+            customerName: '王总',
+            customerId: 'cus-csi-wang',
+            productName: '旧杯',
+            orderId: 'ord-csi-open',
+            orderSelectionConfirmed: true,
+            paymentKind: 'deposit',
+            depositAmount: '200',
+            paymentAmount: '200',
+            amount: '200',
+            remark: ''
+          }
+        }),
+        stateKind: 'ALL_RELATIONS'
+      };
+    case 'deposit_standalone_unedited':
+      return {
+        draft: draft({
+          id: spec.id,
+          intent: 'payment',
+          operation: 'record_order_deposit',
+          suggestedOperation: 'record_order_deposit',
+          originalText: '王总旧杯订单交定金200元。',
+          fields: {
+            customerName: '王总',
+            customerId: 'cus-csi-wang',
+            productName: '旧杯',
+            orderId: 'ord-csi-open',
+            orderSelectionConfirmed: true,
+            paymentKind: 'deposit',
+            depositAmount: '200',
+            paymentAmount: '200',
+            remark: ''
+          }
+        }),
+        stateKind: 'ALL_RELATIONS'
+      };
+    case 'deposit_unknown_amount':
+      return {
+        draft: draft({
+          id: spec.id,
+          intent: 'payment',
+          operation: 'record_order_deposit',
+          suggestedOperation: 'record_order_deposit',
+          originalText: '王总旧杯订单交了定金，金额没说。',
+          fields: {
+            customerName: '王总',
+            customerId: 'cus-csi-wang',
+            productName: '旧杯',
+            orderId: 'ord-csi-open',
+            orderSelectionConfirmed: true,
+            paymentKind: 'deposit',
+            remark: ''
+          },
+          missingFields: ['paymentAmount']
+        }),
+        stateKind: 'ALL_RELATIONS'
+      };
     case 'edit_order_all':
       return { draft: draft({
         id: spec.id,

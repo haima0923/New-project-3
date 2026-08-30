@@ -50,7 +50,11 @@ const CASES = [
 
   { id: 'CSI-043', category: 'HIDDEN_FIELD', scenario: 'explicit_hidden_valid_until', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'HIDDEN_FIELD_LEAK', code: 'HIDDEN_QUOTE.EXPLICIT_VALID_UNTIL_PROJECTED' } },
   { id: 'CSI-044', category: 'HIDDEN_FIELD', scenario: 'explicit_hidden_payment_method', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'HIDDEN_FIELD_LEAK', code: 'HIDDEN_QUOTE.EXPLICIT_PAYMENT_METHOD_PROJECTED' } },
-  { id: 'CSI-045', category: 'HIDDEN_FIELD', scenario: 'quotation_authority_positive', baselineStatus: 'PASS' }
+  { id: 'CSI-045', category: 'HIDDEN_FIELD', scenario: 'quotation_authority_positive', baselineStatus: 'PASS' },
+
+  { id: 'CSI-046', category: 'AMOUNT', scenario: 'deposit_standalone_alias_edit', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'AMOUNT_SYNC', code: 'DEPOSIT_STANDALONE.CARD_CANONICAL' } },
+  { id: 'CSI-047', category: 'AMOUNT', scenario: 'deposit_standalone_unedited', baselineStatus: 'PASS' },
+  { id: 'CSI-048', category: 'AMOUNT', scenario: 'deposit_unknown_amount', baselineStatus: 'PASS' }
 ];
 
 module.exports = { CASES };

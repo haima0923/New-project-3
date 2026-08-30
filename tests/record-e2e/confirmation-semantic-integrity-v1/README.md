@@ -10,7 +10,7 @@
 - Fake Wx Storage 与真实 storage facade；
 - `businessCallLog` 捕获的正式 save payload。
 
-本版规模为 45 例：42 个 executable mutation/guard case + 3 个既有
+本版规模为 48 例：45 个 executable mutation/guard case + 3 个既有
 `SPEC_REQUIRED`。每题至少比较下列事实层中的相关字段：
 
 ```text
@@ -37,6 +37,11 @@ Hidden Field Confirmation Gate V1 追加 3 例：明确输入但无确认控件�
 同时正向锁定 quotation 的客户、商品、金额、业务日期、跟进日期、备注和严格原文
 仍经真实 Business 与 Fake Wx Storage 完整保存。既有 CSI-035 继续独立覆盖无原话
 证据的 stale/default hidden fields。
+
+Deposit Amount Alias Integrity V1 在既有 CSI-032 上加严新订单定金的
+Confirmation→Business→Storage 断言，并追加 3 例独立订单定金合同：旧
+`amount` / `paymentAmount` alias 不得覆盖用户最终确认金额、未编辑的 200 元继续保存、
+未知金额不得经 alias normalization 变成 0。订单总额始终独立于定金金额。
 
 ## 运行
 
