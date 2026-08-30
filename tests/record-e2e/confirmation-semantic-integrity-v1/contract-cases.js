@@ -46,7 +46,11 @@ const CASES = [
   { id: 'CSI-039', category: 'DATE', scenario: 'date_todo', baselineStatus: 'PASS' },
   { id: 'CSI-040', category: 'AMOUNT', scenario: 'payment_remaining_amount', baselineStatus: 'PASS' },
   { id: 'CSI-041', category: 'RELATION', scenario: 'quotation_relation_integrity', baselineStatus: 'PASS' },
-  { id: 'CSI-042', category: 'RELATION', scenario: 'order_relation_switch', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'TYPE_SWITCH_RESIDUE', code: 'ORDER_REL.CREATE_NOT_UPDATE' } }
+  { id: 'CSI-042', category: 'RELATION', scenario: 'order_relation_switch', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'TYPE_SWITCH_RESIDUE', code: 'ORDER_REL.CREATE_NOT_UPDATE' } },
+
+  { id: 'CSI-043', category: 'HIDDEN_FIELD', scenario: 'explicit_hidden_valid_until', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'HIDDEN_FIELD_LEAK', code: 'HIDDEN_QUOTE.EXPLICIT_VALID_UNTIL_PROJECTED' } },
+  { id: 'CSI-044', category: 'HIDDEN_FIELD', scenario: 'explicit_hidden_payment_method', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'HIDDEN_FIELD_LEAK', code: 'HIDDEN_QUOTE.EXPLICIT_PAYMENT_METHOD_PROJECTED' } },
+  { id: 'CSI-045', category: 'HIDDEN_FIELD', scenario: 'quotation_authority_positive', baselineStatus: 'PASS' }
 ];
 
 module.exports = { CASES };

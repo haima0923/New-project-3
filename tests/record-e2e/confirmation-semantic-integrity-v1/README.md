@@ -10,7 +10,7 @@
 - Fake Wx Storage 与真实 storage facade；
 - `businessCallLog` 捕获的正式 save payload。
 
-本版规模为 42 例：39 个 executable mutation/guard case + 3 个既有
+本版规模为 45 例：42 个 executable mutation/guard case + 3 个既有
 `SPEC_REQUIRED`。每题至少比较下列事实层中的相关字段：
 
 ```text
@@ -31,6 +31,12 @@ Confirmation→Business→Storage 的字段一致性，suite 在正式保存前�
 该 test-only seam 仅在没有 missing/low/conflict/domain blocker 时恢复确认阶段，不改
 字段、intent、operation、manual proof 或 Business preflight，也不会被报告成真实
 Provider 证据。
+
+Hidden Field Confirmation Gate V1 追加 3 例：明确输入但无确认控件的
+`validUntil` / `paymentMethod` 必须进入 CONTROL_REQUIRED，而不能静默正式保存；
+同时正向锁定 quotation 的客户、商品、金额、业务日期、跟进日期、备注和严格原文
+仍经真实 Business 与 Fake Wx Storage 完整保存。既有 CSI-035 继续独立覆盖无原话
+证据的 stale/default hidden fields。
 
 ## 运行
 

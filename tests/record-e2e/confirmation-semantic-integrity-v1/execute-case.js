@@ -585,6 +585,58 @@ function runHiddenQuotationFields(page, harness, check) {
   absent(check, 'HIDDEN_FIELD_LEAK', 'HIDDEN_QUOTE.STORAGE_PAYMENT_METHOD', quote, 'paymentMethod');
 }
 
+function runExplicitHiddenQuotationField(page, harness, check, field, code) {
+  const snapshot = capture(page, harness);
+  absent(check, 'HIDDEN_FIELD_LEAK', `HIDDEN_QUOTE.${code}_PROJECTED`, snapshot.parseResult, `fields.${field}`);
+  eq(check, 'HIDDEN_FIELD_LEAK', `HIDDEN_QUOTE.${code}_CONTROL_REQUIRED`, page.data.disableFormalSave, true);
+  eq(check, 'HIDDEN_FIELD_LEAK', `HIDDEN_QUOTE.${code}_PENDING_AVAILABLE`, page.data.showPendingButton, true);
+  check('HIDDEN_FIELD_LEAK', `HIDDEN_QUOTE.${code}_BLOCK_REASON`,
+    (page.data.preflightBlockingReasons || []).includes('LOW_CONFIDENCE_FIELD'),
+    'LOW_CONFIDENCE_FIELD', page.data.preflightBlockingReasons || []);
+  const beforeCollectionCounts = {
+    customers: (snapshot.state.customers || []).length,
+    quotations: (snapshot.state.quotations || []).length
+  };
+  const after = formalSave(page, harness);
+  eq(check, 'HIDDEN_FIELD_LEAK', `HIDDEN_QUOTE.${code}_NO_BUSINESS_SAVE`,
+    after.evidence.businessCalls.saveConfirmedDraft || 0, 0);
+  eq(check, 'HIDDEN_FIELD_LEAK', `HIDDEN_QUOTE.${code}_NO_STORAGE_MUTATION`,
+    {
+      customers: (after.state.customers || []).length,
+      quotations: (after.state.quotations || []).length
+    }, beforeCollectionCounts);
+}
+
+function runExplicitHiddenValidUntil(page, harness, check) {
+  runExplicitHiddenQuotationField(page, harness, check, 'validUntil', 'EXPLICIT_VALID_UNTIL');
+}
+
+function runExplicitHiddenPaymentMethod(page, harness, check) {
+  runExplicitHiddenQuotationField(page, harness, check, 'paymentMethod', 'EXPLICIT_PAYMENT_METHOD');
+}
+
+function runQuotationAuthorityPositive(page, harness, check) {
+  const before = capture(page, harness);
+  eq(check, 'DISPLAY_MAPPING', 'QUOTE_AUTH.CUSTOMER_VISIBLE', page.data.showCustomerFields, true);
+  eq(check, 'DISPLAY_MAPPING', 'QUOTE_AUTH.ITEMS_VISIBLE', page.data.showItemList, true);
+  eq(check, 'DISPLAY_MAPPING', 'QUOTE_AUTH.FOLLOWUP_VISIBLE', page.data.showFollowupDaysField, true);
+  eq(check, 'DISPLAY_MAPPING', 'QUOTE_AUTH.REMARK_VISIBLE', page.data.showRemarkField, true);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.DERIVED_TOTAL_BEFORE', before.card.fields.totalAmount, '2000');
+  const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.FORMAL_SAVE_REACHED');
+  const quote = latest(after.state, 'quotations') || {};
+  const customer = (after.state.customers || []).find((item) => item.id === quote.customerId) || {};
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.STORAGE_CUSTOMER', customer.name, '王总');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.STORAGE_ITEM_COUNT', (quote.items || []).length, 2);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.STORAGE_ITEM1_QUANTITY', valueAt(quote, 'items[0].quantity'), '100');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.STORAGE_ITEM2_PRICE', valueAt(quote, 'items[1].unitPrice'), '20');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.STORAGE_DERIVED_TOTAL', quote.totalAmount, '2000');
+  eq(check, 'DATE_SYNC', 'QUOTE_AUTH.STORAGE_BUSINESS_DATE', quote.quoteDate, '2026-08-15');
+  eq(check, 'DATE_SYNC', 'QUOTE_AUTH.STORAGE_FOLLOWUP_DATE', quote.deliveryDate, before.card.fields.dueDate);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_AUTH.STORAGE_REMARK', quote.remark, '备注A12');
+  eq(check, 'ORIGINAL_TEXT_MUTATION', 'QUOTE_AUTH.STORAGE_ORIGINAL', quote.originalText, QUOTE_TEXT);
+}
+
 function runDateQuotation(page, harness, check) {
   page.changeFollowupDays({ detail: { value: '4' } });
   const snapshot = capture(page, harness);
@@ -748,6 +800,9 @@ const SCENARIOS = {
   quotation_root_total: runQuotationRootTotal,
   item_meta_editability: runItemMetaEditability,
   hidden_quotation_fields: runHiddenQuotationFields,
+  explicit_hidden_valid_until: runExplicitHiddenValidUntil,
+  explicit_hidden_payment_method: runExplicitHiddenPaymentMethod,
+  quotation_authority_positive: runQuotationAuthorityPositive,
   date_quotation: runDateQuotation,
   date_receivable: runDateReceivable,
   date_payment: runDatePayment,
@@ -777,6 +832,27 @@ function setupFor(spec) {
       return { draft: draft({ id: spec.id, intent: 'quotation', originalText: QUOTE_TEXT, fields: quotationFields({
         validUntil: '2026-09-01', paymentMethod: '月结', quoteDate: '2026-08-15'
       }) }) };
+    case 'explicit_hidden_valid_until':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: '给王总报价旧杯100个每个10元，新杯50个每个20元，2026-08-18跟进，总价2000元，报价有效到2026-09-01。',
+        fields: quotationFields({ validUntil: '2026-09-01' })
+      }) };
+    case 'explicit_hidden_payment_method':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: '给王总报价旧杯100个每个10元，新杯50个每个20元，2026-08-18跟进，总价2000元，付款方式月结。',
+        fields: quotationFields({ paymentMethod: '月结' })
+      }) };
+    case 'quotation_authority_positive':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: QUOTE_TEXT,
+        fields: quotationFields({ remark: '备注A12' })
+      }) };
     case 'date_quotation':
       return { draft: draft({ id: spec.id, intent: 'quotation', originalText: QUOTE_DATE_TEXT, fields: quotationFields() }) };
     case 'draft_receivable':
