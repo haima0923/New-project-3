@@ -633,6 +633,19 @@ function runDepositUnknownAmount(page, harness, check) {
     (after.state.paymentRecords || []).length, beforePayments);
 }
 
+function runDepositMetadataNotControl(page, harness, check) {
+  const snapshot = capture(page, harness);
+  check('SAVE_SOURCE_OF_TRUTH', 'DEPOSIT_METADATA.RAW_MANUAL_FIELD_PRESENT',
+    (snapshot.parseResult.manual_fields || []).includes('paymentAmount'), true,
+    snapshot.parseResult.manual_fields || []);
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_METADATA.NO_CONTROL_CANONICALIZATION',
+    snapshot.card.fields.depositAmount, '200');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_METADATA.STALE_PAYMENT_NOT_AUTHORITY',
+    snapshot.card.fields.paymentAmount, '300');
+  eq(check, 'AMOUNT_SYNC', 'DEPOSIT_METADATA.ORDER_TOTAL_UNCHANGED',
+    snapshot.card.fields.amount, '1000');
+}
+
 function runQuotationRootTotal(page, harness, check) {
   editItem(page, 1, 'unitPrice', '30');
   const snapshot = capture(page, harness);
@@ -888,6 +901,7 @@ const SCENARIOS = {
   deposit_standalone_alias_edit: runStandaloneDepositAliasEdit,
   deposit_standalone_unedited: runStandaloneDepositUnedited,
   deposit_unknown_amount: runDepositUnknownAmount,
+  deposit_metadata_not_control: runDepositMetadataNotControl,
   quotation_root_total: runQuotationRootTotal,
   item_meta_editability: runItemMetaEditability,
   hidden_quotation_fields: runHiddenQuotationFields,
@@ -1076,6 +1090,20 @@ function setupFor(spec) {
           missingFields: ['paymentAmount']
         }),
         stateKind: 'ALL_RELATIONS'
+      };
+    case 'deposit_metadata_not_control':
+      return {
+        draft: draft({
+          id: spec.id,
+          intent: 'order',
+          originalText: '王总下单旧杯100个，总价1000元，定金200元。',
+          fields: orderFields({
+            depositAmount: '200',
+            paymentAmount: '300',
+            paymentKind: 'deposit'
+          }),
+          manualFields: ['paymentAmount']
+        })
       };
     case 'edit_order_all':
       return { draft: draft({

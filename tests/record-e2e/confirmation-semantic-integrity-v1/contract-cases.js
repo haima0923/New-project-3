@@ -54,7 +54,8 @@ const CASES = [
 
   { id: 'CSI-046', category: 'AMOUNT', scenario: 'deposit_standalone_alias_edit', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'AMOUNT_SYNC', code: 'DEPOSIT_STANDALONE.CARD_CANONICAL' } },
   { id: 'CSI-047', category: 'AMOUNT', scenario: 'deposit_standalone_unedited', baselineStatus: 'PASS' },
-  { id: 'CSI-048', category: 'AMOUNT', scenario: 'deposit_unknown_amount', baselineStatus: 'PASS' }
+  { id: 'CSI-048', category: 'AMOUNT', scenario: 'deposit_unknown_amount', baselineStatus: 'PASS' },
+  { id: 'CSI-049', category: 'AMOUNT', scenario: 'deposit_metadata_not_control', baselineStatus: 'PASS' }
 ];
 
 module.exports = { CASES };
