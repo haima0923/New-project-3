@@ -490,12 +490,26 @@ function runMultiRemoveAdd(page, harness, check) {
   let snapshot = capture(page, harness);
   eq(check, 'ITEM_SYNC', 'REMOVE.COUNT', snapshot.card.fields.items.length, 1);
   eq(check, 'FLATTENED_ITEM_CONFLICT', 'REMOVE.NEW_FIRST', snapshot.card.fields.productName, '新杯');
+  eq(check, 'ITEM_SYNC', 'REMOVE.SURVIVOR_QUANTITY',
+    valueAt(snapshot.card, 'fields.items[0].quantity'), '50');
+  eq(check, 'ITEM_SYNC', 'REMOVE.SURVIVOR_UNIT_PRICE',
+    valueAt(snapshot.card, 'fields.items[0].unitPrice'), '20');
   page.addConfirmItem();
   editItem(page, 1, 'productName', '饭盒');
   editItem(page, 1, 'quantity', '30');
   snapshot = capture(page, harness);
   eq(check, 'ITEM_SYNC', 'ADD.COUNT', snapshot.card.fields.items.length, 2);
   eq(check, 'ITEM_SYNC', 'ADD.ITEM2', valueAt(snapshot.card, 'fields.items[1].productName'), '饭盒');
+  eq(check, 'FLATTENED_ITEM_CONFLICT', 'ADD.CURRENT_FIRST_ALIAS',
+    snapshot.card.fields.productName, '新杯');
+  eq(check, 'FLATTENED_ITEM_CONFLICT', 'ADD.CURRENT_FIRST_QUANTITY_ALIAS',
+    snapshot.card.fields.quantity, '50');
+  eq(check, 'ORIGINAL_TEXT_MUTATION', 'ADD.ORIGINAL_UNCHANGED',
+    snapshot.parseResult.original_text, MULTI_REBUILD_TEXT);
+  check('ITEM_SYNC', 'ADD.REMOVED_ITEM_NOT_CURRENT',
+    !(snapshot.card.fields.items || []).some((item) => item.productName === '旧杯'),
+    'removed item absent from Current Confirmed Item Set',
+    (snapshot.card.fields.items || []).map((item) => item.productName));
   check('ITEM_SYNC', 'ADD.REMOVED_ITEM_RISK_CLEARED',
     !(snapshot.parseResult.low_confidence_fields || []).includes('productName'),
     'removed/replaced item does not retain productName risk',
@@ -504,6 +518,79 @@ function runMultiRemoveAdd(page, harness, check) {
   assertFormalReached(check, after, 'ITEM_SYNC', 'ADD.FORMAL_SAVE_REACHED');
   const quote = latest(after.state, 'quotations') || {};
   eq(check, 'ITEM_SYNC', 'ADD.STORAGE_COUNT', (quote.items || []).length, 2);
+  eq(check, 'ITEM_SYNC', 'ADD.STORAGE_PRODUCTS',
+    (quote.items || []).map((item) => item.productName), ['新杯', '饭盒']);
+  eq(check, 'ITEM_SYNC', 'ADD.STORAGE_QUANTITIES',
+    (quote.items || []).map((item) => item.quantity), ['50', '30']);
+  eq(check, 'ITEM_SYNC', 'ADD.STORAGE_UNIT_PRICES',
+    (quote.items || []).map((item) => item.unitPrice), ['20', '20']);
+  eq(check, 'FLATTENED_ITEM_CONFLICT', 'ADD.STORAGE_FIRST_ALIAS', quote.productName, '新杯');
+  eq(check, 'ORIGINAL_TEXT_MUTATION', 'ADD.STORAGE_ORIGINAL', quote.originalText, MULTI_REBUILD_TEXT);
+}
+
+function runItemRemoveRetainedRisk(page, harness, check) {
+  removeItem(page, 0);
+  const snapshot = capture(page, harness);
+  check('ITEM_SYNC', 'REMOVE.RETAINED_ITEM_STALE_ROOT_RISK_CLEARED',
+    !(snapshot.parseResult.low_confidence_fields || []).includes('productName'),
+    'removed first-item alias risk cleared after current-field revalidation',
+    snapshot.parseResult.low_confidence_fields || []);
+  const retained = (snapshot.parseResult.field_conflicts || []).find((conflict) => (
+    conflict && conflict.itemKey === 'csi-retained-item'
+  ));
+  eq(check, 'ITEM_SYNC', 'REMOVE.RETAINED_ITEM_CONFLICT_PRESERVED', Boolean(retained), true);
+  eq(check, 'ITEM_SYNC', 'REMOVE.RETAINED_ITEM_CONFLICT_INDEX', retained && retained.itemIndex, 0);
+  eq(check, 'ITEM_SYNC', 'REMOVE.RETAINED_ITEM_CONFLICT_PATH',
+    retained && retained.fieldPath, 'items[0].unitPrice');
+  eq(check, 'ITEM_SYNC', 'REMOVE.RETAINED_ITEM_CURRENT',
+    valueAt(snapshot.card, 'fields.items[0].productName'), '新杯');
+  const after = formalSave(page, harness);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'REMOVE.RETAINED_RISK_NO_BUSINESS_SAVE',
+    after.evidence.businessCalls.saveConfirmedDraft || 0, 0);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'REMOVE.RETAINED_RISK_NO_STORAGE_WRITE',
+    after.evidence.storageCalls.saveState || 0, 0);
+}
+
+function runItemRemoveWithoutValidReplacement(page, harness, check) {
+  removeItem(page, 0);
+  const snapshot = capture(page, harness);
+  eq(check, 'ITEM_SYNC', 'REMOVE.INVALID_REPLACEMENT_COUNT', snapshot.card.fields.items.length, 1);
+  absent(check, 'FLATTENED_ITEM_CONFLICT', 'REMOVE.INVALID_REPLACEMENT_PRODUCT_ABSENT',
+    snapshot.card.fields, 'productName');
+  absent(check, 'FLATTENED_ITEM_CONFLICT', 'REMOVE.INVALID_REPLACEMENT_QUANTITY_ABSENT',
+    snapshot.card.fields, 'quantity');
+  eq(check, 'ORIGINAL_TEXT_MUTATION', 'REMOVE.INVALID_REPLACEMENT_ORIGINAL',
+    snapshot.parseResult.original_text, '给王总报价旧杯100个每个10元。');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'REMOVE.INVALID_REPLACEMENT_BLOCKED',
+    page.data.disableFormalSave, true);
+  const after = formalSave(page, harness);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'REMOVE.INVALID_REPLACEMENT_NO_BUSINESS_SAVE',
+    after.evidence.businessCalls.saveConfirmedDraft || 0, 0);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'REMOVE.INVALID_REPLACEMENT_NO_STORAGE_WRITE',
+    after.evidence.storageCalls.saveState || 0, 0);
+}
+
+function runItemRemoveFlattenedProvenance(page, harness, check) {
+  removeItem(page, 0);
+  const snapshot = capture(page, harness);
+  check('ITEM_SYNC', 'REMOVE.STALE_MANUAL_ALIAS_CLEARED',
+    !(snapshot.parseResult.manual_fields || []).includes('productName'),
+    'removed first-item manual alias authority cleared',
+    snapshot.parseResult.manual_fields || []);
+  absent(check, 'ITEM_SYNC', 'REMOVE.STALE_FIELD_SOURCE_CLEARED',
+    snapshot.parseResult, 'field_sources.productName');
+  absent(check, 'ITEM_SYNC', 'REMOVE.STALE_FIELD_EVIDENCE_CLEARED',
+    snapshot.parseResult, 'field_evidence.productName');
+  absent(check, 'ITEM_SYNC', 'REMOVE.STALE_FIELD_SUGGESTION_CLEARED',
+    snapshot.parseResult, 'field_suggestions.productName');
+  check('ITEM_SYNC', 'REMOVE.STALE_HISTORY_DEFAULT_CLEARED',
+    !(snapshot.parseResult.history_defaulted_fields || []).includes('productName'),
+    'removed first-item history default authority cleared',
+    snapshot.parseResult.history_defaulted_fields || []);
+  eq(check, 'ITEM_SYNC', 'REMOVE.UNRELATED_SOURCE_PRESERVED',
+    valueAt(snapshot.parseResult, 'field_sources.customerName'), 'LOCAL_PARSER');
+  eq(check, 'ITEM_SYNC', 'REMOVE.FLATTENED_ALIAS_REPROJECTED',
+    snapshot.card.fields.productName, '新杯');
 }
 
 function runFlattenedConflict(page, harness, check) {
@@ -888,6 +975,9 @@ const SCENARIOS = {
   hidden_relation_payment_todo: runHiddenRelationPaymentTodo,
   multi_edit_isolation: runMultiEditIsolation,
   multi_remove_add: runMultiRemoveAdd,
+  item_remove_retained_risk: runItemRemoveRetainedRisk,
+  item_remove_without_valid_replacement: runItemRemoveWithoutValidReplacement,
+  item_remove_flattened_provenance: runItemRemoveFlattenedProvenance,
   flattened_conflict: runFlattenedConflict,
   amount_semantics: runAmountSemantics,
   date_semantics: runDateSemantics,
@@ -1139,6 +1229,69 @@ function setupFor(spec) {
         intent: 'quotation',
         originalText: MULTI_REBUILD_TEXT,
         fields: quotationFields()
+      }) };
+    case 'item_remove_retained_risk':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: MULTI_REBUILD_TEXT,
+        fields: quotationFields({
+          items: [
+            { confirmationItemKey: 'csi-removed-item', productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '', itemRemark: '' },
+            { confirmationItemKey: 'csi-retained-item', productName: '新杯', spec: '', quantity: '50', unit: '个', unitPrice: '20', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '', itemRemark: '' }
+          ]
+        }),
+        lowConfidenceFields: ['productName'],
+        fieldConflicts: [{
+          code: 'FIELD_CONFLICT',
+          field: 'items',
+          fieldPath: 'items[1].unitPrice',
+          itemField: 'unitPrice',
+          itemIndex: 1,
+          itemKey: 'csi-retained-item',
+          message: '当前商品单价仍需确认',
+          values: ['20', '21']
+        }]
+      }) };
+    case 'item_remove_without_valid_replacement':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: '给王总报价旧杯100个每个10元。',
+        fields: quotationFields({
+          productName: '旧杯',
+          quantity: '100',
+          unit: '个',
+          unitPrice: '10',
+          priceUnit: '个',
+          amount: '1000',
+          totalAmount: '1000',
+          calculatedAmount: '1000',
+          items: [
+            { confirmationItemKey: 'csi-only-valid-item', productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '', itemRemark: '' },
+            { confirmationItemKey: 'csi-incomplete-item', productName: '', spec: '', quantity: '', unit: '', unitPrice: '', priceUnit: '', totalAmount: '', itemDeliveryDate: '', itemRemark: '待补商品' }
+          ]
+        })
+      }) };
+    case 'item_remove_flattened_provenance':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: QUOTE_TEXT,
+        fields: quotationFields({
+          items: [
+            { confirmationItemKey: 'csi-provenance-removed', productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '', itemRemark: '' },
+            { confirmationItemKey: 'csi-provenance-retained', productName: '新杯', spec: '', quantity: '50', unit: '个', unitPrice: '20', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '', itemRemark: '' }
+          ]
+        }),
+        fieldEvidence: {
+          customerName: { sourceText: '王总' },
+          productName: { sourceText: '旧杯' }
+        },
+        fieldSources: { customerName: 'LOCAL_PARSER', productName: 'LOCAL_PARSER' },
+        fieldSuggestions: { customerName: '王总', productName: '旧杯建议' },
+        historyDefaultedFields: ['customerName', 'productName'],
+        manualFields: ['productName']
       }) };
     case 'amount_semantics':
       return { draft: draft({

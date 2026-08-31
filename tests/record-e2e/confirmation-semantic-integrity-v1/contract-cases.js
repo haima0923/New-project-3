@@ -55,7 +55,11 @@ const CASES = [
   { id: 'CSI-046', category: 'AMOUNT', scenario: 'deposit_standalone_alias_edit', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'AMOUNT_SYNC', code: 'DEPOSIT_STANDALONE.CARD_CANONICAL' } },
   { id: 'CSI-047', category: 'AMOUNT', scenario: 'deposit_standalone_unedited', baselineStatus: 'PASS' },
   { id: 'CSI-048', category: 'AMOUNT', scenario: 'deposit_unknown_amount', baselineStatus: 'PASS' },
-  { id: 'CSI-049', category: 'AMOUNT', scenario: 'deposit_metadata_not_control', baselineStatus: 'PASS' }
+  { id: 'CSI-049', category: 'AMOUNT', scenario: 'deposit_metadata_not_control', baselineStatus: 'PASS' },
+
+  { id: 'CSI-050', category: 'MULTI_ITEM', scenario: 'item_remove_retained_risk', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'ITEM_SYNC', code: 'REMOVE.RETAINED_ITEM_STALE_ROOT_RISK_CLEARED' } },
+  { id: 'CSI-051', category: 'MULTI_ITEM', scenario: 'item_remove_without_valid_replacement', baselineStatus: 'PASS' },
+  { id: 'CSI-052', category: 'MULTI_ITEM', scenario: 'item_remove_flattened_provenance', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'ITEM_SYNC', code: 'REMOVE.STALE_MANUAL_ALIAS_CLEARED' } }
 ];
 
 module.exports = { CASES };

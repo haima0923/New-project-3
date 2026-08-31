@@ -10,7 +10,7 @@
 - Fake Wx Storage 与真实 storage facade；
 - `businessCallLog` 捕获的正式 save payload。
 
-本版规模为 49 例：46 个 executable mutation/guard case + 3 个既有
+本版规模为 52 例：49 个 executable mutation/guard case + 3 个既有
 `SPEC_REQUIRED`。每题至少比较下列事实层中的相关字段：
 
 ```text
@@ -43,6 +43,11 @@ Confirmation→Business→Storage 断言，并追加 3 例独立订单定金合�
 `amount` / `paymentAmount` alias 不得覆盖用户最终确认金额、未编辑的 200 元继续保存、
 未知金额不得经 alias normalization 变成 0，并锁定 raw `manual_fields` 不能冒充真实
 页面确认事件。订单总额始终独立于定金金额。
+
+Item Mutation Provenance V1 加严 CSI-022 的删除 A → 新增 B → 正式保存链，
+并新增 3 例反回归：被删首项的 flattened provenance 必须失效、仍属于当前
+item 的真实 conflict 必须保留、删除后没有合法商品时不得由旧 alias 生成正式记录。
+Current Confirmed Item Set 是商品事实权威，root aliases 只能由当前首项派生。
 
 ## 运行
 
