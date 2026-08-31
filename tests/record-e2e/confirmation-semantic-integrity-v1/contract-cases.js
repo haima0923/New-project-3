@@ -59,7 +59,9 @@ const CASES = [
 
   { id: 'CSI-050', category: 'MULTI_ITEM', scenario: 'item_remove_retained_risk', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'ITEM_SYNC', code: 'REMOVE.RETAINED_ITEM_STALE_ROOT_RISK_CLEARED' } },
   { id: 'CSI-051', category: 'MULTI_ITEM', scenario: 'item_remove_without_valid_replacement', baselineStatus: 'PASS' },
-  { id: 'CSI-052', category: 'MULTI_ITEM', scenario: 'item_remove_flattened_provenance', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'ITEM_SYNC', code: 'REMOVE.STALE_MANUAL_ALIAS_CLEARED' } }
+  { id: 'CSI-052', category: 'MULTI_ITEM', scenario: 'item_remove_flattened_provenance', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'ITEM_SYNC', code: 'REMOVE.STALE_MANUAL_ALIAS_CLEARED' } },
+  { id: 'CSI-053', category: 'AMOUNT', scenario: 'quotation_root_total_fallback', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'DISPLAY_MAPPING', code: 'QUOTE_TOTAL.ROOT_ONLY_CONTROL' } },
+  { id: 'CSI-054', category: 'MULTI_ITEM', scenario: 'item_meta_mutation_identity', baselineStatus: 'EXPECTED_RED', baselineFirstFailure: { taxonomy: 'DISPLAY_MAPPING', code: 'ITEM_META.MULTI_CONTROL_BINDING' } }
 ];
 
 module.exports = { CASES };

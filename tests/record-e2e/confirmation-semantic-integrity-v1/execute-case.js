@@ -174,6 +174,55 @@ function absent(check, taxonomy, code, root, path) {
   check(taxonomy, code, actual === undefined || actual === null || actual === '', 'absent', actual);
 }
 
+function readInputWxml() {
+  return fs.readFileSync(path.join(__dirname, '../../../pages/input/input.wxml'), 'utf8');
+}
+
+function hasBoundControl(wxml, field, handler, tagPattern = '(?:input|textarea|picker)') {
+  const pattern = new RegExp(
+    `<${tagPattern}\\b(?=[^>]*data-field=["']${field}["'])(?=[^>]*bind(?:input|change)=["']${handler}["'])[^>]*>`,
+    'm'
+  );
+  return pattern.test(wxml);
+}
+
+function triggerWxmlItemControl(page, check, wxml, index, field, value, code) {
+  const controlPattern = new RegExp(
+    `<(?:input|textarea|picker)\\b(?=[^>]*data-field=["']${field}["'])(?=[^>]*data-index=["']\\{\\{itemIndex\\}\\}["'])(?=[^>]*data-item-key=["']\\{\\{item\\.itemKey\\}\\}["'])(?=[^>]*bind(?:input|change)=["']updateItemField["'])[^>]*>`,
+    'm'
+  );
+  const bound = controlPattern.test(wxml);
+  check('DISPLAY_MAPPING', code, bound, `stable item-bound ${field} WXML control`, bound ? 'bound' : 'absent');
+  if (!bound) return false;
+  const item = valueAt(page.data, `fields.items[${index}]`) || {};
+  page.updateItemField({
+    currentTarget: {
+      dataset: {
+        field,
+        index,
+        itemKey: item.confirmationItemKey || item.itemKey || ''
+      }
+    },
+    detail: { value: String(value) }
+  });
+  return true;
+}
+
+function triggerWxmlRootControl(page, check, wxml, field, value, code) {
+  const controlPattern = new RegExp(
+    `<input\\b(?=[^>]*data-surface-role=["']quotation-root-total-control["'])(?=[^>]*data-field=["']${field}["'])(?=[^>]*bindinput=["']updateField["'])[^>]*>`,
+    'm'
+  );
+  const bound = controlPattern.test(wxml);
+  check('DISPLAY_MAPPING', code, bound, `editable root ${field} WXML control`, bound ? 'bound' : 'absent');
+  if (!bound) return false;
+  page.updateField({
+    currentTarget: { dataset: { field } },
+    detail: { value: String(value) }
+  });
+  return true;
+}
+
 function fieldParity(check, snapshot, prefix = 'PARITY') {
   eq(check, 'SAVE_SOURCE_OF_TRUTH', `${prefix}.CARD_PARSE_FIELDS`, snapshot.card.fields,
     snapshot.parseResult.fields || {});
@@ -734,33 +783,119 @@ function runDepositMetadataNotControl(page, harness, check) {
 }
 
 function runQuotationRootTotal(page, harness, check) {
-  editItem(page, 1, 'unitPrice', '30');
-  const snapshot = capture(page, harness);
-  const itemTotal = Number(valueAt(snapshot.card, 'fields.items[0].totalAmount') || 0)
-    + Number(valueAt(snapshot.card, 'fields.items[1].totalAmount') || 0);
-  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.ITEM_SUM', String(itemTotal), '2500');
-  check('FLATTENED_ITEM_CONFLICT', 'QUOTE_TOTAL.ROOT_SYNC_OR_BLOCK',
-    String(snapshot.card.fields.amount || '') === '2500' || page.data.disableFormalSave === true,
-    'root total 2500 or formal blocked', {
-      disableFormalSave: page.data.disableFormalSave,
-      rootAmount: snapshot.card.fields.amount
-    });
+  const wxml = readInputWxml();
   check('DISPLAY_MAPPING', 'QUOTE_TOTAL.CONTROL_VISIBLE',
-    page.data.showOrderAmountSummary === true || page.data.showAmountField === true,
-    'visible root total confirmation control', {
-      showAmountField: page.data.showAmountField,
-      showOrderAmountSummary: page.data.showOrderAmountSummary
+    /data-surface-role=["']quotation-total["']/.test(wxml)
+      && page.data.showQuotationTotalSummary === true,
+    'visible quotation total confirmation surface', {
+      hasWxmlSurface: /data-surface-role=["']quotation-total["']/.test(wxml),
+      showQuotationTotalSummary: page.data.showQuotationTotalSummary
     });
+  eq(check, 'DISPLAY_MAPPING', 'QUOTE_TOTAL.DERIVED_READ_ONLY', page.data.quotationTotalMode, 'DERIVED_READ_ONLY');
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.INITIAL_UI_TOTAL', page.data.quotationTotalDisplay, '700');
+  triggerWxmlItemControl(page, check, wxml, 1, 'unitPrice', '2.5', 'QUOTE_TOTAL.ITEM_PRICE_EVENT');
+  const snapshot = capture(page, harness);
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.ITEM1_TOTAL', valueAt(snapshot.card, 'fields.items[0].totalAmount'), '300');
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.ITEM2_TOTAL', valueAt(snapshot.card, 'fields.items[1].totalAmount'), '500');
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.UPDATED_UI_TOTAL', page.data.quotationTotalDisplay, '800');
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.STALE_ROOT_REVOKED', snapshot.card.fields.amount, '800');
+  eq(check, 'ORIGINAL_TEXT_MUTATION', 'QUOTE_TOTAL.ORIGINAL_UNCHANGED', snapshot.card.surfaceOriginalText,
+    '给王总报价旧杯100个每个3元，新杯200个每个2元，总价700元。');
+  const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_TOTAL.FORMAL_SAVE_REACHED');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_TOTAL.PAYLOAD', valueAt(after.savePayload, 'fields.totalAmount'), '800');
+  const quote = latest(after.state, 'quotations') || {};
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_TOTAL.STORAGE', quote.totalAmount, '800');
 }
 
 function runItemMetaEditability(page, harness, check) {
-  const wxml = fs.readFileSync(path.join(__dirname, '../../../pages/input/input.wxml'), 'utf8');
+  const wxml = readInputWxml();
+  const deliveryBound = hasBoundControl(wxml, 'itemDeliveryDate', 'updateItemField');
+  const remarkBound = hasBoundControl(wxml, 'itemRemark', 'updateItemField');
   check('DISPLAY_MAPPING', 'ITEM_META.DELIVERY_EDITABLE',
-    /data-field=["']itemDeliveryDate["'][^>]*bind(?:input|change)=/.test(wxml),
-    'editable itemDeliveryDate control', 'read-only or absent');
+    deliveryBound,
+    'editable itemDeliveryDate control', deliveryBound ? 'bound' : 'read-only or absent');
   check('DISPLAY_MAPPING', 'ITEM_META.REMARK_EDITABLE',
-    /data-field=["']itemRemark["'][^>]*bind(?:input|change)=/.test(wxml),
-    'editable itemRemark control', 'read-only or absent');
+    remarkBound,
+    'editable itemRemark control', remarkBound ? 'bound' : 'read-only or absent');
+  triggerWxmlItemControl(page, check, wxml, 0, 'itemDeliveryDate', '2026-08-23', 'ITEM_META.ITEM1_DATE_EVENT');
+  triggerWxmlItemControl(page, check, wxml, 1, 'itemRemark', '二号独立包装', 'ITEM_META.ITEM2_REMARK_EVENT');
+  const snapshot = capture(page, harness);
+  eq(check, 'ITEM_SYNC', 'ITEM_META.ITEM1_DATE', valueAt(snapshot.card, 'fields.items[0].itemDeliveryDate'), '2026-08-23');
+  eq(check, 'ITEM_SYNC', 'ITEM_META.ITEM1_REMARK_UNCHANGED', valueAt(snapshot.card, 'fields.items[0].itemRemark'), '一号红色包装');
+  eq(check, 'ITEM_SYNC', 'ITEM_META.ITEM2_DATE_UNCHANGED', valueAt(snapshot.card, 'fields.items[1].itemDeliveryDate'), '2026-08-24');
+  eq(check, 'ITEM_SYNC', 'ITEM_META.ITEM2_REMARK', valueAt(snapshot.card, 'fields.items[1].itemRemark'), '二号独立包装');
+  const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.FORMAL_SAVE_REACHED');
+  const order = latest(after.state, 'orders') || {};
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.STORAGE_ITEM1_DATE', valueAt(order, 'items[0].itemDeliveryDate'), '2026-08-23');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.STORAGE_ITEM1_REMARK', valueAt(order, 'items[0].itemRemark'), '一号红色包装');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.STORAGE_ITEM2_DATE', valueAt(order, 'items[1].itemDeliveryDate'), '2026-08-24');
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.STORAGE_ITEM2_REMARK', valueAt(order, 'items[1].itemRemark'), '二号独立包装');
+}
+
+function runQuotationRootTotalFallback(page, harness, check) {
+  const wxml = readInputWxml();
+  check('DISPLAY_MAPPING', 'QUOTE_TOTAL.ROOT_ONLY_CONTROL',
+    /data-surface-role=["']quotation-root-total-control["']/.test(wxml)
+      && page.data.quotationTotalMode === 'ROOT_EDITABLE',
+    'root-only quotation total editable control', {
+      hasAmountControl: /data-surface-role=["']quotation-root-total-control["']/.test(wxml),
+      mode: page.data.quotationTotalMode
+    });
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.ROOT_ONLY_VISIBLE_VALUE', page.data.quotationTotalDisplay, '850');
+  triggerWxmlRootControl(page, check, wxml, 'amount', '', 'QUOTE_TOTAL.ROOT_CLEAR_EVENT');
+  let snapshot = capture(page, harness);
+  check('AMOUNT_SYNC', 'QUOTE_TOTAL.UNKNOWN_NOT_ZERO',
+    snapshot.card.fields.amount !== '0' && snapshot.card.fields.totalAmount !== '0',
+    'unknown total remains blank', {
+      amount: snapshot.card.fields.amount,
+      totalAmount: snapshot.card.fields.totalAmount
+    });
+  triggerWxmlRootControl(page, check, wxml, 'amount', '900', 'QUOTE_TOTAL.ROOT_EDIT_EVENT');
+  snapshot = capture(page, harness);
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.ROOT_EDIT_CARD', snapshot.card.fields.amount, '900');
+  eq(check, 'AMOUNT_SYNC', 'QUOTE_TOTAL.ROOT_EDIT_ALIAS', snapshot.card.fields.totalAmount, '900');
+  const after = formalSave(page, harness);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_TOTAL.ROOT_SPARSE_FAIL_CLOSED',
+    after.evidence.businessCalls.saveConfirmedDraft, 0);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'QUOTE_TOTAL.ROOT_SPARSE_NO_STORAGE',
+    after.evidence.storageCalls.saveState, 0);
+}
+
+function runItemMetaMutationIdentity(page, harness, check) {
+  const wxml = readInputWxml();
+  const controlsBound = hasBoundControl(wxml, 'itemDeliveryDate', 'updateItemField')
+    && hasBoundControl(wxml, 'itemRemark', 'updateItemField');
+  check('DISPLAY_MAPPING', 'ITEM_META.MULTI_CONTROL_BINDING', controlsBound,
+    'stable item-bound delivery and remark controls', controlsBound ? 'bound' : 'absent');
+  removeItem(page, 0);
+  page.addConfirmItem();
+  let snapshot = capture(page, harness);
+  eq(check, 'ITEM_SYNC', 'ITEM_META.REMOVED_AUTHORITY_GONE',
+    snapshot.card.fields.items.some((item) => item.itemRemark === '删除项备注'), false);
+  eq(check, 'ITEM_SYNC', 'ITEM_META.SURVIVOR_DATE', valueAt(snapshot.card, 'fields.items[0].itemDeliveryDate'), '2026-08-24');
+  eq(check, 'ITEM_SYNC', 'ITEM_META.SURVIVOR_REMARK', valueAt(snapshot.card, 'fields.items[0].itemRemark'), '保留项备注');
+  eq(check, 'ITEM_SYNC', 'ITEM_META.NEW_DATE_EMPTY', valueAt(snapshot.card, 'fields.items[1].itemDeliveryDate'), '');
+  eq(check, 'ITEM_SYNC', 'ITEM_META.NEW_REMARK_EMPTY', valueAt(snapshot.card, 'fields.items[1].itemRemark'), '');
+  triggerWxmlItemControl(page, check, wxml, 1, 'productName', '饭盒', 'ITEM_META.NEW_PRODUCT_EVENT');
+  triggerWxmlItemControl(page, check, wxml, 1, 'quantity', '30', 'ITEM_META.NEW_QUANTITY_EVENT');
+  triggerWxmlItemControl(page, check, wxml, 1, 'unit', '个', 'ITEM_META.NEW_UNIT_EVENT');
+  triggerWxmlItemControl(page, check, wxml, 1, 'unitPrice', '20', 'ITEM_META.NEW_PRICE_EVENT');
+  triggerWxmlItemControl(page, check, wxml, 1, 'itemDeliveryDate', '2026-08-26', 'ITEM_META.NEW_DATE_EVENT');
+  triggerWxmlItemControl(page, check, wxml, 1, 'itemRemark', '新项备注', 'ITEM_META.NEW_REMARK_EVENT');
+  snapshot = capture(page, harness);
+  eq(check, 'ORIGINAL_TEXT_MUTATION', 'ITEM_META.ORIGINAL_UNCHANGED', snapshot.card.surfaceOriginalText,
+    '王总下单旧杯100个每个10元、新杯50个每个20元、饭盒30个每个20元，整单2026-08-20交；旧杯2026-08-21交，删除项备注；新杯2026-08-24交，保留项备注；饭盒2026-08-26交，新项备注。整单备注：包装要求。');
+  const after = formalSave(page, harness);
+  assertFormalReached(check, after, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.MUTATION_FORMAL_SAVE_REACHED');
+  const order = latest(after.state, 'orders') || {};
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.MUTATION_STORAGE_PRODUCTS',
+    (order.items || []).map((item) => item.productName), ['新杯', '饭盒']);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.MUTATION_STORAGE_DATES',
+    (order.items || []).map((item) => item.itemDeliveryDate), ['2026-08-24', '2026-08-26']);
+  eq(check, 'SAVE_SOURCE_OF_TRUTH', 'ITEM_META.MUTATION_STORAGE_REMARKS',
+    (order.items || []).map((item) => item.itemRemark), ['保留项备注', '新项备注']);
 }
 
 function runHiddenQuotationFields(page, harness, check) {
@@ -994,6 +1129,8 @@ const SCENARIOS = {
   deposit_metadata_not_control: runDepositMetadataNotControl,
   quotation_root_total: runQuotationRootTotal,
   item_meta_editability: runItemMetaEditability,
+  quotation_root_total_fallback: runQuotationRootTotalFallback,
+  item_meta_mutation_identity: runItemMetaMutationIdentity,
   hidden_quotation_fields: runHiddenQuotationFields,
   explicit_hidden_valid_until: runExplicitHiddenValidUntil,
   explicit_hidden_payment_method: runExplicitHiddenPaymentMethod,
@@ -1015,14 +1152,57 @@ function setupFor(spec) {
       return { draft: draft({
         id: spec.id,
         intent: 'quotation',
-        originalText: QUOTE_TEXT,
-        fields: quotationFields({ statedAmount: '2000' }),
+        originalText: '给王总报价旧杯100个每个3元，新杯200个每个2元，总价700元。',
+        fields: quotationFields({
+          quantity: '100',
+          unitPrice: '3',
+          amount: '700',
+          totalAmount: '700',
+          calculatedAmount: '700',
+          statedAmount: '700',
+          items: [
+            { productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '3', priceUnit: '个', totalAmount: '300', itemDeliveryDate: '', itemRemark: '' },
+            { productName: '新杯', spec: '', quantity: '200', unit: '个', unitPrice: '2', priceUnit: '个', totalAmount: '400', itemDeliveryDate: '', itemRemark: '' }
+          ]
+        }),
         manualFields: ['amount']
       }) };
     case 'item_meta_editability':
       return { draft: draft({ id: spec.id, intent: 'order', originalText: ORDER_TEXT, fields: orderFields({
-        items: [{ productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '2026-08-21', itemRemark: '红色包装' }]
+        amount: '2000',
+        totalAmount: '2000',
+        calculatedAmount: '2000',
+        items: [
+          { productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '2026-08-21', itemRemark: '一号红色包装' },
+          { productName: '新杯', spec: '', quantity: '50', unit: '个', unitPrice: '20', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '2026-08-24', itemRemark: '二号普通包装' }
+        ]
       }) }) };
+    case 'quotation_root_total_fallback':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'quotation',
+        originalText: '给王总报价保温杯，总价850元。',
+        fields: quotationFields({
+          productName: '保温杯', quantity: '', unit: '', unitPrice: '', priceUnit: '',
+          amount: '850', totalAmount: '850', calculatedAmount: '', statedAmount: '850',
+          items: [{ productName: '保温杯', spec: '', quantity: '', unit: '', unitPrice: '', priceUnit: '', totalAmount: '', itemDeliveryDate: '', itemRemark: '' }]
+        }),
+        manualFields: ['amount']
+      }) };
+    case 'item_meta_mutation_identity':
+      return { draft: draft({
+        id: spec.id,
+        intent: 'order',
+        originalText: '王总下单旧杯100个每个10元、新杯50个每个20元、饭盒30个每个20元，整单2026-08-20交；旧杯2026-08-21交，删除项备注；新杯2026-08-24交，保留项备注；饭盒2026-08-26交，新项备注。整单备注：包装要求。',
+        fields: orderFields({
+          amount: '2000', totalAmount: '2000', calculatedAmount: '2000',
+          remark: '包装要求',
+          items: [
+            { confirmationItemKey: 'csi-meta-removed', productName: '旧杯', spec: '', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '2026-08-21', itemRemark: '删除项备注' },
+            { confirmationItemKey: 'csi-meta-survivor', productName: '新杯', spec: '', quantity: '50', unit: '个', unitPrice: '20', priceUnit: '个', totalAmount: '1000', itemDeliveryDate: '2026-08-24', itemRemark: '保留项备注' }
+          ]
+        })
+      }) };
     case 'hidden_quotation_fields':
       return { draft: draft({ id: spec.id, intent: 'quotation', originalText: QUOTE_TEXT, fields: quotationFields({
         validUntil: '2026-09-01', paymentMethod: '月结', quoteDate: '2026-08-15'

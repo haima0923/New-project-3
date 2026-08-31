@@ -10,7 +10,7 @@
 - Fake Wx Storage 与真实 storage facade；
 - `businessCallLog` 捕获的正式 save payload。
 
-本版规模为 52 例：49 个 executable mutation/guard case + 3 个既有
+本版规模为 54 例：51 个 executable mutation/guard case + 3 个既有
 `SPEC_REQUIRED`。每题至少比较下列事实层中的相关字段：
 
 ```text
@@ -22,7 +22,8 @@ controlled draft
 → persisted business object
 ```
 
-本套件明确不证明 Real WXML、微信开发者工具、真机、真实 AI 或 Parser 准确率，
+本套件读取真实 WXML 绑定并通过对应 PageVM handler 触发控件事件；它仍不证明
+微信开发者工具渲染、真机、真实 AI 或 Parser 准确率，
 也不修改 Golden Corpus 的业务含义。
 
 金融/改价类用户编辑会触发生产 Route 的 AI 复核政策。为了只审计
@@ -48,6 +49,11 @@ Item Mutation Provenance V1 加严 CSI-022 的删除 A → 新增 B → 正式�
 并新增 3 例反回归：被删首项的 flattened provenance 必须失效、仍属于当前
 item 的真实 conflict 必须保留、删除后没有合法商品时不得由旧 alias 生成正式记录。
 Current Confirmed Item Set 是商品事实权威，root aliases 只能由当前首项派生。
+
+Confirmation UI Completeness V1 加严 CSI-033/034，并追加 2 例：当前商品可完整
+计算时，报价合计必须只读显示并随真实 item 控件事件更新；无法由商品推导时，合法
+root total 使用简洁输入控件，未知值保持为空。`itemDeliveryDate` / `itemRemark`
+通过 stable item identity 绑定真实 WXML 事件，逐 item 保存，删除和新增后不得串项或继承。
 
 ## 运行
 
