@@ -642,7 +642,121 @@ function pruneItemProvenance(parseResult, items) {
   }, []);
   return Object.assign({}, parseResult, {
     manual_item_fields: normalizeManualItemFields(parseResult.manual_item_fields, items),
-    field_conflicts: fieldConflicts
+    field_conflicts: fieldConflicts,
+    user_manual_edits: (Array.isArray(parseResult.user_manual_edits)
+      ? parseResult.user_manual_edits
+      : []).filter((proof) => (
+      !proof || !proof.itemKey || itemIndexByKey.has(String(proof.itemKey))
+    ))
+  });
+}
+
+const FLATTENED_ITEM_ALIAS_FIELDS = [
+  'productName', 'spec', 'quantity', 'unit', 'unitPrice', 'priceUnit'
+];
+const LEGACY_ROOT_ITEM_ONLY_FIELDS = ['itemDeliveryDate', 'itemRemark'];
+
+function itemMutationValuesEqual(left, right) {
+  return String(left === undefined || left === null ? '' : left).trim()
+    === String(right === undefined || right === null ? '' : right).trim();
+}
+
+function rootConflictOnlyReferencesRemovedFact(conflict, field, removedValue, currentValue) {
+  if (!conflict || conflict.itemKey || conflict.field !== field) return false;
+  const values = Array.isArray(conflict.values) ? conflict.values : [];
+  return values.length > 0
+    && values.some((value) => itemMutationValuesEqual(value, removedValue))
+    && !values.some((value) => itemMutationValuesEqual(value, currentValue));
+}
+
+function projectRemovedFirstItemAuthority(parseResult, beforeFields, fields, removedItem, removedIndex, items) {
+  if (removedIndex !== 0) return { fields, parseResult, replacedAliasFields: [] };
+  const projectedFields = Object.assign({}, fields);
+  const currentFirst = items[0] || {};
+  const replacedAliasFields = FLATTENED_ITEM_ALIAS_FIELDS.filter((field) => (
+    hasFieldValue(beforeFields, field)
+    && itemMutationValuesEqual(beforeFields[field], removedItem[field])
+    && !itemMutationValuesEqual(beforeFields[field], projectedFields[field])
+  ));
+
+  LEGACY_ROOT_ITEM_ONLY_FIELDS.forEach((field) => {
+    if (!hasFieldValue(beforeFields, field)
+      || !itemMutationValuesEqual(beforeFields[field], removedItem[field])
+      || itemMutationValuesEqual(beforeFields[field], currentFirst[field])) return;
+    delete projectedFields[field];
+    replacedAliasFields.push(field);
+  });
+  if (!replacedAliasFields.length) {
+    return { fields: projectedFields, parseResult, replacedAliasFields: [] };
+  }
+
+  const replaced = new Set(replacedAliasFields);
+  const removedItemKey = String(removedItem.confirmationItemKey || '');
+  const projectedResult = Object.assign({}, parseResult, {
+    manual_fields: uniqueFields(parseResult.manual_fields || [])
+      .filter((field) => !replaced.has(field)),
+    history_defaulted_fields: uniqueFields(parseResult.history_defaulted_fields || [])
+      .filter((field) => !replaced.has(field)),
+    user_manual_edits: (Array.isArray(parseResult.user_manual_edits)
+      ? parseResult.user_manual_edits
+      : []).filter((proof) => (
+      !proof
+      || (proof.itemKey
+        ? String(proof.itemKey) !== removedItemKey
+        : !replaced.has(proof.field))
+    )),
+    field_conflicts: (Array.isArray(parseResult.field_conflicts)
+      ? parseResult.field_conflicts
+      : []).filter((conflict) => {
+      if (!conflict) return true;
+      if (conflict.itemKey) return String(conflict.itemKey) !== removedItemKey;
+      if (!replaced.has(conflict.field)) return true;
+      return !rootConflictOnlyReferencesRemovedFact(
+        conflict,
+        conflict.field,
+        removedItem[conflict.field],
+        projectedFields[conflict.field]
+      );
+    })
+  });
+  ['field_sources', 'field_evidence', 'field_suggestions'].forEach((key) => {
+    if (!projectedResult[key] || typeof projectedResult[key] !== 'object'
+      || Array.isArray(projectedResult[key])) return;
+    replacedAliasFields.forEach((field) => {
+      projectedResult[key] = omitAuthorityMetadataField(projectedResult[key], field);
+    });
+  });
+  return { fields: projectedFields, parseResult: projectedResult, replacedAliasFields };
+}
+
+function currentSafetyStillOwnsItemField(parseResult, field) {
+  if ((parseResult.field_conflicts || []).some((conflict) => (
+    conflict && (conflict.field === field || conflict.itemField === field)
+  ))) return true;
+  const safety = parseResult.final_parse_safety || {};
+  const validations = safety.field_validations || {};
+  if ([].concat(
+    safety.unsafe_fields || [],
+    safety.missing_fields || [],
+    safety.low_confidence_fields || [],
+    safety.evidence_missing_fields || [],
+    validations.invalid_fields || [],
+    validations.conflict_fields || [],
+    validations.semantic_low_fields || []
+  ).includes(field)) return true;
+  return (validations.issues || []).some((issue) => issue && issue.field === field);
+}
+
+function reconcileRemovedFirstItemRisks(parseResult, replacedAliasFields) {
+  const clearable = new Set((replacedAliasFields || []).filter((field) => (
+    !currentSafetyStillOwnsItemField(parseResult, field)
+  )));
+  if (!clearable.size) return parseResult;
+  return Object.assign({}, parseResult, {
+    missing_fields: uniqueFields(parseResult.missing_fields || [])
+      .filter((field) => !clearable.has(field)),
+    low_confidence_fields: uniqueFields(parseResult.low_confidence_fields || [])
+      .filter((field) => !clearable.has(field))
   });
 }
 
@@ -4858,7 +4972,8 @@ Page({
     const hasQuotationSelection = Boolean(
       this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
     );
-    const items = normalizeConfirmItems(this.data.parseResult.fields || {}, { ensureFirst: true });
+    const sourceFields = this.data.fields || this.data.parseResult.fields || {};
+    const items = normalizeConfirmItems(sourceFields, { ensureFirst: true });
     const previous = items[items.length - 1] || {};
     const addedItem = normalizeConfirmItem({
       productName: previous.productName || '',
@@ -4880,7 +4995,7 @@ Page({
       itemPatches.push(normalizedAddedItem);
       fields.items = itemPatches;
     } else {
-      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.parseResult.fields || {}, {
+      fields = syncFirstItemToLegacyFields(Object.assign({}, sourceFields, {
         items: normalizedItems
       }));
     }
@@ -4913,9 +5028,11 @@ Page({
     const hasQuotationSelection = Boolean(
       this.data.selectedQuotationId && this.data.quotationSelectionBaseFields
     );
-    const items = normalizeConfirmItems(this.data.parseResult.fields || {}, { ensureFirst: true });
+    const sourceFields = this.data.fields || this.data.parseResult.fields || {};
+    const items = normalizeConfirmItems(sourceFields, { ensureFirst: true });
     const index = resolveConfirmationItemIndex(items, event.currentTarget.dataset || {});
     if (items.length <= 1 || !items[index]) return;
+    const removedItem = items[index];
     const remainingItems = items.filter((item, itemIndex) => itemIndex !== index);
     let fields;
     if (hasQuotationSelection) {
@@ -4929,21 +5046,39 @@ Page({
       };
       fields.items = itemPatches;
     } else {
-      fields = syncFirstItemToLegacyFields(Object.assign({}, this.data.parseResult.fields || {}, {
+      fields = syncFirstItemToLegacyFields(Object.assign({}, sourceFields, {
         items: remainingItems
       }));
     }
     const normalizedItems = normalizeConfirmItems({ items: remainingItems }, { ensureFirst: true });
     let baseResult = pruneItemProvenance(this.data.parseResult, normalizedItems);
+    let replacedAliasFields = [];
+    if (!hasQuotationSelection) {
+      const authorityProjection = projectRemovedFirstItemAuthority(
+        baseResult,
+        sourceFields,
+        fields,
+        removedItem,
+        index,
+        normalizedItems
+      );
+      fields = authorityProjection.fields;
+      baseResult = authorityProjection.parseResult;
+      replacedAliasFields = authorityProjection.replacedAliasFields;
+    }
     baseResult = reconcileTrustedUserManualEditState(baseResult, fields, {
       action: 'REMOVE_ITEM',
-      itemKey: String(items[index].confirmationItemKey || '')
+      itemKey: String(removedItem.confirmationItemKey || '')
     });
     if (hasQuotationSelection) {
       advanceDraftRevision(this);
       baseResult = attachCurrentDraftContext(this, baseResult);
     } else {
       baseResult = rebuildAfterClientDraftEdit(this, baseResult, fields);
+      const riskReconciled = reconcileRemovedFirstItemRisks(baseResult, replacedAliasFields);
+      if (riskReconciled !== baseResult) {
+        baseResult = attachCurrentDraftContext(this, rerouteClientDraft(riskReconciled, fields));
+      }
     }
     this.setData(
       hasQuotationSelection
