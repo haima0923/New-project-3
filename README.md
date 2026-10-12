@@ -1,4 +1,4 @@
-# 义乌工厂老板 AI 助手 MVP
+# 货小玲 · 微信小程序
 
 这是一个原生微信小程序 MVP，产品心智是“老板的生意备忘秘书”：
 
@@ -58,3 +58,14 @@ API_BASE_URL=https://api.example.com node scripts/ai-contract-smoke.js
 4. 接入语音转文字。
 5. 接入订阅消息。
 6. 找真实老板小范围试用，按“录入是否麻烦、提醒是否有用、是否愿意每天打开”迭代。
+
+## 开发与验收状态
+
+项目以 Git 历史和 `candidate-*` tags 记录已验收基线。历史 Candidate 不应移动或覆盖。
+
+- 已冻结基线：`candidate-item-mutation-provenance-v1`，提交 `723ec69b798cae0c203548bef05e94aa225ac590`。
+- Confirmation UI Completeness V1：自动验收通过，生产修改仍未提交，等待界面人工验收；尚未冻结 Candidate。
+- Voice Capture V2 POC：独立诊断试验，存在未提交修改，不代表正式生产能力。
+- 本地业务数据、密钥、环境变量、微信私密配置、日志和构建产物不作为代码备份上传。GitHub 代码备份不等于小程序本地业务数据备份。
+
+项目规则见 [AGENTS.md](AGENTS.md)，文档入口见 [docs/DOC_INDEX.md](docs/DOC_INDEX.md)。
