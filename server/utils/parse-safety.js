@@ -1,3 +1,4 @@
+const { isCompoundNumericProductName, isQuantityOnlyProductName } = require('./product-name-rules');
 const { diffDays, parseChineseDateDetail, today } = require('./date');
 const { RAW_UNIT_PATTERN, UNIT_PATTERN, unitsMatch } = require('./units');
 
@@ -77,7 +78,8 @@ function validateProductName(fields, issues) {
   const product = compact(fields.productName);
   if (!product) return;
   const customer = compact(fields.customerName);
-  if (PRODUCT_PRICE_LIKE.test(product) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
+  if (isQuantityOnlyProductName(product)) addIssue(issues, 'productName', `产品“${product}”看起来是数量`);
+  if ((PRODUCT_PRICE_LIKE.test(product) && !isCompoundNumericProductName(product)) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
     addIssue(issues, 'productName', `产品“${product}”看起来是价格`);
   }
   if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
@@ -100,7 +102,8 @@ function validateItems(fields, issues) {
     if (!product) {
       addIssue(issues, 'productName', `${label}缺少商品名`, 'missing');
     } else {
-      if (PRODUCT_PRICE_LIKE.test(product) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
+      if (isQuantityOnlyProductName(product)) addIssue(issues, 'productName', `${label}“${product}”看起来是数量`);
+      if ((PRODUCT_PRICE_LIKE.test(product) && !isCompoundNumericProductName(product)) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
         addIssue(issues, 'productName', `${label}“${product}”看起来是价格`);
       }
       if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {

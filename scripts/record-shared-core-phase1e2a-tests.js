@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { withFixedTestClock } = require('./lib/fixed-test-clock');
 const {
   completeTodo,
   convertQuotationToOrder,
@@ -155,7 +156,7 @@ test('Storage拓扑完整区分单一业务bundle、登录态和五个页面交�
     fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) collectStorageSources(full);
-      else if (entry.isFile() && entry.name.endsWith('.js')) directStorageFiles.push(path.relative(root, full));
+      else if (entry.isFile() && entry.name.endsWith('.js')) directStorageFiles.push(path.relative(root, full).split(path.sep).join('/'));
     });
   }
   collectStorageSources(path.join(root, 'pages'));
@@ -289,7 +290,7 @@ test('Preview Commit只读执行共享Memory Commit，proposedWrites与nextState
   assert.strictEqual(gateway.getEntries().huoxiaoling_ai_auth_session_v1.token, 'synthetic-session');
 });
 
-test('Phase 1E.1的22个记一笔场景经Storage投影、Preview和重新投影仍与legacy完整bundle等价', async () => {
+test('Phase 1E.1的23个记一笔场景经Storage投影、Preview和重新投影仍与legacy完整bundle等价', async () => {
   let count = 0;
   await runLegacyEquivalenceWithVisitor(({ name, action, initialState, prepared, legacyState }) => {
     count += 1;
@@ -360,7 +361,7 @@ test('Phase 1E.1的22个记一笔场景经Storage投影、Preview和重新投影
       `${name}:full diff`
     );
   });
-  assert.strictEqual(count, 22);
+  assert.strictEqual(count, 23);
 });
 
 test('反投影不把原本缺失且未变化的可选空集合物化进旧bundle', () => {
@@ -437,7 +438,7 @@ test('全部物理业务bundle写入点均有生命周期分类，代表性边�
     fs.readdirSync(directory, { withFileTypes: true }).forEach((entry) => {
       const full = path.join(directory, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (entry.isFile() && entry.name.endsWith('.js')) writerFiles.push(path.relative(root, full));
+      else if (entry.isFile() && entry.name.endsWith('.js')) writerFiles.push(path.relative(root, full).split(path.sep).join('/'));
     });
   }
   walk(path.join(root, 'pages'));
@@ -450,8 +451,8 @@ test('全部物理业务bundle写入点均有生命周期分类，代表性边�
       + (item.source.match(/\bsaveState\s*\(/g) || []).length
       + (item.source.match(/\bupdateState\s*\(/g) || []).length
   ), 0);
-  assert.strictEqual(callCount, 23);
-  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 23);
+  assert.strictEqual(callCount, 24);
+  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 24);
   const classifiedFiles = new Set(LEGACY_PAGE_LIFECYCLE_INVENTORY.flatMap((item) => item.sourceFiles || []));
   writers.forEach((item) => assert(classifiedFiles.has(item.file), `unclassified bundle writer: ${item.file}`));
   const discoveredSites = writers.flatMap((item) => {
@@ -561,7 +562,7 @@ async function main() {
   let passed = 0;
   for (const item of tests) {
     try {
-      await item.fn();
+      await withFixedTestClock(fixedClock().now().toISOString(), 'Asia/Shanghai', item.fn);
       passed += 1;
       console.log(`PASS ${item.name}`);
     } catch (error) {

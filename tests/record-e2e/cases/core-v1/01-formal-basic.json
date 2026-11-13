@@ -259,7 +259,7 @@
               ],
               "conflictValues": {}
             },
-            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+            "operationSource": "DRAFT_OPERATION"
           },
           "outcome": {
             "disposition": "FORMAL_RECORD",
@@ -520,7 +520,7 @@
               ],
               "conflictValues": {}
             },
-            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+            "operationSource": "DRAFT_OPERATION"
           },
           "outcome": {
             "disposition": "FORMAL_RECORD",
@@ -1066,7 +1066,7 @@
               ],
               "conflictValues": {}
             },
-            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+            "operationSource": "DRAFT_OPERATION"
           },
           "outcome": {
             "disposition": "FORMAL_RECORD",
@@ -1332,7 +1332,7 @@
               ],
               "conflictValues": {}
             },
-            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+            "operationSource": "DRAFT_OPERATION"
           },
           "outcome": {
             "disposition": "FORMAL_RECORD",
@@ -1845,7 +1845,7 @@
               ],
               "conflictValues": {}
             },
-            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+            "operationSource": "DRAFT_OPERATION"
           },
           "outcome": {
             "disposition": "FORMAL_RECORD",
@@ -2376,7 +2376,7 @@
               ],
               "conflictValues": {}
             },
-            "operationSource": "DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION"
+            "operationSource": "DRAFT_OPERATION"
           },
           "outcome": {
             "disposition": "FORMAL_RECORD",

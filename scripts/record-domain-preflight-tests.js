@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { createRequire } = require('module');
+const { withFixedTestClock } = require('./lib/fixed-test-clock');
 const { createInitialState } = require('../utils/storage');
 const { simpleFingerprint } = require('../utils/storage');
 const { saveConfirmedDraft, savePendingNote } = require('../utils/business');
@@ -32,8 +33,16 @@ const { FLOW_MODES } = require('../utils/record-flow-contract');
 delete global.wx;
 
 const tests = [];
+const TEST_BUSINESS_DATE = '2026-07-22';
+const TEST_NOW_INSTANT = '2026-07-22T02:00:00.000Z';
+const TEST_TIMEZONE = 'Asia/Shanghai';
+
 function test(name, fn) {
   tests.push({ name, fn });
+}
+
+function withDomainTestClock(run) {
+  return withFixedTestClock(TEST_NOW_INSTANT, TEST_TIMEZONE, run);
 }
 
 function clone(value) {
@@ -164,7 +173,7 @@ function loadPageFunction(relativeFile, functionName) {
   const file = path.resolve(__dirname, relativeFile);
   const code = fs.readFileSync(file, 'utf8');
   const sandbox = {
-    require: createRequire(file), console, Page: () => {}, wx: {}, result: null
+    require: createRequire(file), console, Date: global.Date, Page: () => {}, wx: {}, result: null
   };
   vm.runInNewContext(`${code}\nresult = ${functionName};`, sandbox);
   return sandbox.result;
@@ -196,6 +205,35 @@ function assertFormalBlockedWithoutMutation(state, draft, name) {
   assert(saved.preflight && saved.preflight.domainCanSaveFormal === false, name);
   return saved;
 }
+
+test('领域测试固定业务日期且异步失败后恢复宿主时钟和时区', async () => {
+  const outerDate = global.Date;
+  const previousTimezone = process.env.TZ;
+  process.env.TZ = 'Pacific/Honolulu';
+  try {
+    await assert.rejects(withDomainTestClock(async () => {
+      await Promise.resolve();
+      assert.strictEqual(new Date().toISOString(), TEST_NOW_INSTANT);
+      assert.strictEqual(Date.now(), Date.parse(TEST_NOW_INSTANT));
+      assert.strictEqual(new Date('2026-08-01T00:00:00.000Z').getUTCDate(), 1);
+      assert.strictEqual(process.env.TZ, TEST_TIMEZONE);
+      assert.strictEqual(require('../utils/date').today(), TEST_BUSINESS_DATE);
+      throw new Error('clock-restoration-sentinel');
+    }), /clock-restoration-sentinel/);
+    assert.strictEqual(global.Date, outerDate);
+    assert.strictEqual(process.env.TZ, 'Pacific/Honolulu');
+  } finally {
+    process.env.TZ = previousTimezone;
+  }
+});
+
+test('固定时钟仍阻断早于业务日期的订单交期且正式业务零变化', () => {
+  const draft = applyFinalParseSafety(orderResult({ dueDate: '2026-07-21' }, {
+    original_text: '王总订礼品盒500个，单价3.8元，2026年7月21日交'
+  }));
+  assert(draft.low_confidence_fields.includes('dueDate'));
+  assertFormalBlockedWithoutMutation(stateWith(), draft, 'past delivery remains blocked');
+});
 
 test('领域预检纯函数稳定、可序列化、不修改输入且fingerprint随事实变化', () => {
   const state = stateWith({ customers: [customer('cus_wang', '王总')] });
@@ -1223,7 +1261,7 @@ async function main() {
   const failures = [];
   for (const current of tests) {
     try {
-      await current.fn();
+      await withDomainTestClock(current.fn);
       passed += 1;
       console.log(`PASS ${current.name}`);
     } catch (error) {

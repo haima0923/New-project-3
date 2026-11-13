@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 
@@ -179,6 +180,28 @@ const TESTS = Object.freeze({
   'ai-p0-safety': testEntry('scripts/ai-safety-regression-tests.js'),
   'corpus-validator': testEntry('scripts/validate-record-e2e-corpus.js'),
   'domain-preflight': testEntry('scripts/record-domain-preflight-tests.js'),
+  'confirmation-consistency': testEntry('scripts/record-confirmation-consistency-tests.js'),
+  'save-date-consistency': testEntry('scripts/record-save-date-consistency-tests.js'),
+  'user-journey': testEntry('scripts/record-user-journey-tests.js', ['--repeat', '2']),
+  'common-phrasing-parser': testEntry('scripts/record-common-phrasing-tests.js'),
+  'oral-quantity-parser': testEntry('scripts/record-oral-quantity-tests.js'),
+  'product-name-parser': testEntry('scripts/record-product-name-tests.js'),
+  'ai-source-coverage': testEntry('tests/record-e2e/multi-item-order-complete-save-v1/ai-source-coverage-tests.js'),
+  'assistant-proof-trust': testEntry('tests/record-e2e/record-confirm-interaction-v1/assistant-proof-trust-tests.js'),
+  'assistant-answer-types': testEntry('tests/record-e2e/record-confirm-interaction-v1/question-answer-type-trust-tests.js'),
+  'client-fact-gate': testEntry('tests/record-e2e/record-confirm-interaction-v1/client-auto-deep-fact-gate-tests.js'),
+  'input-capture-trust': testEntry('tests/record-e2e/record-confirm-interaction-v1/input-capture-trust-tests.js'),
+  'manual-field-trust': testEntry('tests/record-e2e/multi-item-order-complete-save-v1/manual-fields-trust-gate-tests.js'),
+  'confirm-route-contracts': testEntry('tests/record-e2e/record-confirm-interaction-v1/run-route-contracts.js'),
+  'entry-handoff': testEntry('scripts/record-entry-handoff-tests.js'),
+  'voice-hold-controller': testEntry('tests/record-e2e/record-hold-to-talk-v1/run.js', ['--repeat', '2']),
+  'voice-runtime-readiness': testEntry('tests/record-e2e/wxvoice-readiness-v1/run.js', ['--repeat', '2']),
+  'voice-evidence-boundary': testEntry('tests/record-e2e/voice-record-evidence-boundary-v1/run.js', ['--repeat', '2']),
+  'server-numeric-products': testEntry('scripts/server-numeric-product-tests.js'),
+  'query-customer-boundaries': testEntry('scripts/record-query-customer-boundary-tests.js'),
+  'query-core-existing': testEntry('scripts/core-feature-tests.js', ['--query-only']),
+  'voice-auth-continuation': testEntry('scripts/record-voice-auth-continuation-tests.js'),
+  'confirmation-provenance': testEntry('tests/record-e2e/multi-item-order-complete-save-v1/manual-item-provenance-tests.js'),
   'e2e-amb-002': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-AMB-002']),
   'e2e-amb-001': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-AMB-001']),
   'e2e-amb-005': testEntry('scripts/run-record-e2e-headless.js', ['--case-id', 'REC-E2E-AMB-005']),
@@ -264,6 +287,7 @@ const TESTS = Object.freeze({
   'shared-core-phase1e1': testEntry('scripts/record-shared-core-phase1e1-tests.js'),
   'shared-core-phase1e2a': testEntry('scripts/record-shared-core-phase1e2a-tests.js'),
   'shared-core-phase1e2a1': testEntry('scripts/record-shared-core-phase1e2a1-tests.js'),
+  'shared-core-phase1e2a2-static': testEntry('scripts/record-shared-core-phase1e2a2-static-tests.js'),
   'shared-confirmation': testEntry('scripts/record-shared-core-phase1d-tests.js'),
   'ui-structure': testEntry('scripts/ui-release-tests.js'),
   'voice-fake': testEntry('scripts/voice-recognition-tests.js')
@@ -290,18 +314,21 @@ function assertNoNetworkAttempts(attempts, testId) {
 
 function offlineAuditPath(testId) {
   return path.join(
-    '/private/tmp',
+    os.tmpdir(),
     `record-offline-${testId.replace(/[^a-z0-9-]/gi, '-')}-${process.pid}-${Date.now()}.jsonl`
   );
 }
 
 function fullCorpusEntry(outputPath) {
-  const resolved = path.resolve(outputPath);
-  if (!resolved.startsWith('/private/tmp/')) {
-    throw Object.assign(
-      new Error('Full corpus output must be under /private/tmp'),
-      { code: 'OFFLINE_TEST_ARGUMENT_ERROR' }
-    );
+  // Use the writer's boundary check so CLI admission and report writing agree.
+  // Load lazily: the network-guard preload must run before project modules.
+  const { validateOutputPath } = require('../tests/record-e2e/runner/write-full-report');
+  let resolved;
+  try {
+    resolved = validateOutputPath(outputPath);
+  } catch (error) {
+    error.code = 'OFFLINE_TEST_ARGUMENT_ERROR';
+    throw error;
   }
   return testEntry('scripts/run-record-e2e-headless.js', [
     '--all',
@@ -315,7 +342,7 @@ function fullCorpusEntry(outputPath) {
 function runAllowlistedTest(testId, options = {}) {
   const entry = testId === 'full-corpus'
     ? fullCorpusEntry(
-      options.output || '/private/tmp/record-parser-payment-intent-v1-offline.json'
+      options.output || path.join(os.tmpdir(), 'record-parser-payment-intent-v1-offline.json')
     )
     : TESTS[testId];
   if (!entry) {
@@ -359,7 +386,8 @@ function usage() {
     'Usage:',
     '  node scripts/run-record-offline-regression.js --list',
     '  node scripts/run-record-offline-regression.js --test TEST_ID',
-    '  node scripts/run-record-offline-regression.js --test full-corpus [--output /private/tmp/report.json]'
+    '  node scripts/run-record-offline-regression.js --test full-corpus [--output ABSOLUTE_TEMP_REPORT.json]',
+    `  Default full-corpus output: ${path.join(os.tmpdir(), 'record-parser-payment-intent-v1-offline.json')}`
   ].join('\n');
 }
 
@@ -401,8 +429,10 @@ module.exports = {
   TESTS,
   assertNoNetworkAttempts,
   buildOfflineEnv,
+  fullCorpusEntry,
   installOfflineNetworkGuard,
   main,
+  offlineAuditPath,
   parseDestination,
   readGuardAttempts,
   runAllowlistedTest

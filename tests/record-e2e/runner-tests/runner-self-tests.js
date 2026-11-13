@@ -1390,9 +1390,17 @@ const tests = [
       assert.strictEqual(forgedAbsentDeliveryDate.pass, false);
       assert.strictEqual(forgedDeliveryDateResult.caseStatus, 'CASE_FAIL');
       const voice006 = await executeOne(bundle('REC-E2E-VOICE-006'));
-      assert.strictEqual(voice006.routeEvidence.actualRoute, 'AI_STANDARD');
-      assert.strictEqual(voice006.routeEvidence.AIRequestCount, 1);
-      assert.strictEqual(voice006.routeEvidence.standardAIRequestCount, 1);
+      assert.strictEqual(voice006.routeEvidence.actualRoute, 'LOCAL');
+      assert.strictEqual(voice006.routeEvidence.AIRequestCount, 0);
+      assert.strictEqual(voice006.routeEvidence.standardAIRequestCount, 0);
+      assert.strictEqual(voice006.routeEvidence.AIProviderIdentity, 'NONE');
+      assert.strictEqual(voice006.routeEvidence.voiceStandardEligible, false);
+      assert.strictEqual(initialCanonicalRawResult(voice006).intent, 'order');
+      const voice006Item = voice006.observationSemantics.proposal.items[0];
+      assert.strictEqual(voice006Item.productName, '卡套');
+      assert.strictEqual(voice006Item.quantity, '1000');
+      assert.strictEqual(voice006Item.unitPrice, '5');
+      assert.strictEqual(voice006Item.totalAmount, '5000');
       assert.strictEqual(
         voice006.routeEvidence.duplicateVoiceStandardAIRequestCount,
         0
@@ -1407,19 +1415,18 @@ const tests = [
       assert.deepStrictEqual(voice006.preflightEvidence.blockingCodes, []);
       assert.strictEqual(
         voice006.productionObservation.productionEligibility,
-        'BLOCKED_NON_REAL_PROVIDER'
+        'ELIGIBLE_LOCAL'
       );
-      assert.strictEqual(voice006.productionObservation.pageFormalSaveAllowed, false);
-      assert.deepStrictEqual(voice006.productionObservation.blockingCodes, [
-        'UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION'
-      ]);
+      assert.strictEqual(voice006.productionObservation.pageFormalSaveAllowed, true);
+      assert.strictEqual(voice006.productionObservation.providerClassification, 'TEST_LOCAL_ONLY');
+      assert.deepStrictEqual(voice006.productionObservation.blockingCodes, []);
       assert.strictEqual(voice006.pageEvidence.afterEdits.surfaceCanCompleteFormal, true);
-      assert.strictEqual(voice006.pageEvidence.afterEdits.effectiveCanSaveFormal, false);
+      assert.strictEqual(voice006.pageEvidence.afterEdits.effectiveCanSaveFormal, true);
       const voice006SurfaceStatus = voice006.assertions.find((entry) => (
         entry.layer === 'SURFACE' && entry.name === 'status'
       ));
       assert(voice006SurfaceStatus);
-      assert.strictEqual(voice006SurfaceStatus.actual, 'BLOCKED');
+      assert.strictEqual(voice006SurfaceStatus.actual, 'CAN_COMPLETE');
       assert.strictEqual(voice006SurfaceStatus.pass, true);
       const voice006Driver = voice006.pageEvidence.pageDriverEvidence;
       assert.strictEqual(voice006Driver.pagePrimaryActionCalls.saveFormal, 0);
@@ -1436,14 +1443,8 @@ const tests = [
         voice006.isolatedCommitEvidence.prepared.businessHashBefore,
         voice006.isolatedCommitEvidence.prepared.businessHashAfter
       );
-      assert.strictEqual(
-        voice006.isolatedCommitEvidence.prepared.identityBypass.marker,
-        'TEST_ONLY_PROVIDER_IDENTITY_REMOVAL'
-      );
-      assert.strictEqual(
-        voice006.isolatedCommitEvidence.prepared.identityBypass.providerWasNeverSetToReal,
-        true
-      );
+      // Fully local parsing uses no provider identity and needs no test bypass.
+      assert.strictEqual(voice006.isolatedCommitEvidence.prepared.identityBypass, null);
       assert.strictEqual(voice006.isolatedCommitEvidence.commitResult.status, 'COMMITTED');
       assert.strictEqual(voice006.isolatedCommitEvidence.storageAudit.revision, 1);
       assert.strictEqual(voice006.isolatedCommitEvidence.storageAudit.receiptCount, 1);
@@ -1637,12 +1638,27 @@ const tests = [
       );
       assert.strictEqual(
         evidence.observationSemantics.proposal.operationSource,
-        'DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION'
+        'DRAFT_OPERATION'
       );
       assert.strictEqual(
         evidence.observationSemantics.outcome.source,
         'STATE_DIFF_AND_COMMIT'
       );
+    }
+  },
+  {
+    name: 'proposal-operation-source-tracks-the-value-actually-used',
+    async run() {
+      const semantic = { businessType: 'order', effectiveOperation: 'create_order' };
+      const explicit = proposalFromDraft({ intent: 'order', operation: 'create_order' }, semantic, 'FULL_PAGE');
+      assert.strictEqual(explicit.operation, 'create_order');
+      assert.strictEqual(explicit.operationSource, 'DRAFT_OPERATION');
+      const suggested = proposalFromDraft({ intent: 'order', operation: '', suggested_operation: 'update_order' }, semantic, 'FULL_PAGE');
+      assert.strictEqual(suggested.operation, 'update_order');
+      assert.strictEqual(suggested.operationSource, 'DRAFT_SUGGESTED_OPERATION');
+      const fallback = proposalFromDraft({ intent: 'order', operation: '' }, semantic, 'FULL_PAGE');
+      assert.strictEqual(fallback.operation, 'create_order');
+      assert.strictEqual(fallback.operationSource, 'DOMAIN_PREFLIGHT_EFFECTIVE_OPERATION');
     }
   },
   {

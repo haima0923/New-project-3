@@ -2451,6 +2451,10 @@ async function runHistoryWarningTests() {
 }
 
 async function main() {
+  if (process.argv.includes('--query-only')) {
+    runQueryTests();
+    return;
+  }
   runParseTests();
   runMultiSpecAndWholesaleUnitTests();
   runRecordActionsAndOrderEditTests();

@@ -4,6 +4,9 @@ const { simpleFingerprint } = require('./storage');
 const { normalizeBusinessText } = require('./text-normalize');
 const { applyLocalParseSafety } = require('./parse-safety');
 const { RAW_UNIT_PATTERN, UNIT_PATTERN, isSupportedUnit, normalizeUnit, unitsMatch } = require('./units');
+const { isCompoundNumericProductName } = require('./product-name-rules');
+// “三件套”中的“件”属于商品名称，不能作为独立采购单位。
+const QUANTITY_UNIT_PATTERN = `(?!件套)${UNIT_PATTERN}`;
 
 const PRODUCT_STOP_WORDS = /(价格|报价|报架|单价|订单|交货|发货|生产|做好|到期|月底|月结|结款|付款|欠款|定金|订金|预付|先记|记一下|三天后|下周|礼拜|星期|周[一二三四五六日天]).*$/;
 const KNOWN_PRODUCTS = [
@@ -79,6 +82,37 @@ function normalizeOriginalText(text) {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+// Mask only an explicit leading recording request. Equal-length spaces keep
+// evidence offsets intact; original_text and relation evidence keep the raw words.
+function recordingCommandContext(text) {
+  const source = String(text || '');
+  const match = source.match(/^((?:(?:请|麻烦|帮我|给我)\s*){1,3})?((?:给)?[\u4e00-\u9fa5A-Za-z]{1,8}?(?:总|老板|经理|姐|哥|先生|女士)\s*)?(?:(先不要|暂时不要|暂时别|暂时不|先别|不要|不用|先不|别|不|要不要|能不能|是不是|如果|准备|打算)\s*)?(记(?:一单|(?:一笔|一个|个|一下|下)?订单|(?:一笔|一个|个|一下|下)?报价|一笔|一下|下))/);
+  if (!match || /^(?:是什么意思|是什么|怎么|如何|这句话)/.test(source.slice(match[0].length).trim())) {
+    return { text: source, signal: null, negated: false };
+  }
+  const command = match[4];
+  const start = match[0].length - command.length;
+  const chars = match[0].split('').map(() => ' ');
+  if (match[2]) {
+    const customerStart = match[0].indexOf(match[2], match[1] ? match[1].length : 0);
+    for (let index = 0; index < match[2].length; index += 1) {
+      chars[customerStart + index] = match[2][index];
+    }
+  }
+  const type = /一单|订单/.test(command) ? 'order' : (/报价/.test(command) ? 'quotation' : '');
+  const uncertain = /^(?:要不要|能不能|是不是|如果|准备|打算)$/.test(match[3] || '');
+  return {
+    text: chars.join('') + source.slice(match[0].length),
+    negated: Boolean(match[3]) && !uncertain,
+    uncertain,
+    signal: type && !match[3] ? {
+      kind: type === 'order' ? 'ORDER_ACTION_POSITIVE' : 'QUOTATION_EXPLICIT',
+      sourceSpan: { start, end: start + command.length },
+      sourceText: command
+    } : null
+  };
 }
 
 function getPaymentClauses(text) {
@@ -395,6 +429,8 @@ function cleanCustomerName(value) {
   const oldNameWithAction = cleaned.match(/^(老[\u4e00-\u9fa5]{1,2}?)(?:要|问|欠|付|转|补|返单|做|收)$/);
   if (oldNameWithAction) cleaned = oldNameWithAction[1];
   if (!cleaned) return '';
+  // “五个 / 一个”出现在价格或交期前时是数量短语，不能成为客户称呼。
+  if (new RegExp(`^(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})$`).test(cleaned)) return '';
   // “老板今天要……”里的“老板”是说话对象，不是客户名。不能把日期的一部分吞进客户名。
   if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天|大后天)/.test(cleaned)) return '';
   if (/^(客户|老客户|这个客户|那个客户|老板|昨天|昨天没|今天|明天|后天|刚|刚才|刚刚|又|义乌|那笔|上一笔|不|不要|先|再|还有|另外|那个|这个)$/.test(cleaned)) return '';
@@ -572,7 +608,7 @@ function extractQuantity(text) {
     };
   }
 
-  const matches = Array.from(text.matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')));
+  const matches = Array.from(text.matchAll(new RegExp(`(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})`, 'g')));
   const match = matches.find((item) => {
     const parsedQuantity = parseQuantityWithUnit(item[1], item[2]);
     const rawUnit = parsedQuantity.unit;
@@ -672,6 +708,14 @@ function parseFenPriceNumber(fen, li) {
 }
 
 function extractUnitPrice(text) {
+  const namedProduct = extractProduct(text).value;
+  if (isCompoundNumericProductName(namedProduct)) {
+    text = text.split(namedProduct).join(' '.repeat(namedProduct.length));
+  }
+  // An adjacent calendar date is not the decimal tail of “3元8”。 Mask only
+  // this local price view; original text, date parsing and offsets are retained.
+  text = text.replace(/(?:[12]\d{3}年)?(?:\d{1,2}|[一二三四五六七八九十]{1,3})月(?:\d{1,2}|[一二三四五六七八九十]{1,3})[日号]?/g,
+    (dateText) => ' '.repeat(dateText.length));
   const priceUnit = RAW_UNIT_PATTERN;
   const chunk = numberPattern();
   const correctedUnitPrice = text.match(new RegExp(`(?:价格|单价|报价|价)[^，,。；;]{0,16}?(?:不是|不对)\\s*(?:${chunk})\\s*(?:块|元|毛|角|分)?\\s*(?:是|改成|应为)?\\s*(${chunk})`))
@@ -745,6 +789,12 @@ function extractUnitPrice(text) {
       value: toCleanNumber(parsePriceNumber(yuanCentsWithUnit[1], yuanCentsWithUnit[2])),
       source: 'rule:yuan_cent_unit_price'
     };
+  }
+
+  // 明确的“六元一个”优先于“三角架”这类名称中碰巧出现的“角”。
+  const explicitYuanUnitPrice = text.match(new RegExp(`(${chunk})\\s*(?:块|元)\\s*(?:一|每|/)${priceUnit}`));
+  if (explicitYuanUnitPrice) {
+    return { value: toCleanNumber(parseChineseNumber(explicitYuanUnitPrice[1])), source: 'rule:explicit_yuan_unit_price' };
   }
 
   const colloquialMao = text.match(new RegExp(`(${chunk})\\s*(?:毛钱|毛|角)\\s*(${DECIMAL_DIGIT})?`));
@@ -1037,6 +1087,14 @@ function extractRemainingAmount(text) {
 }
 
 function extractProduct(text, customerName = '') {
+  // A clearly named set/shape can be retained even before its purchase quantity
+  // is supplied. The boundary must be a separate fact, not part of the name.
+  const compound = text.match(new RegExp(
+    `((?:${numberPattern()})(?:件套|角)[\\u4e00-\\u9fa5A-Za-z]{0,12}?)(?=\\s*(?:(?:(?:要|订|买|做|采购|下单)\\s*)?(?:${numberPattern()})\\s*${QUANTITY_UNIT_PATTERN}|(?:每|一|/)${UNIT_PATTERN}|单价|价格|今天|明天|后天|下周|这周|周[一二三四五六日天]|\\d{1,2}月|[，,。；;\\s]|$))`
+  ));
+  if (compound && isCompoundNumericProductName(compound[1])) {
+    return { value: compound[1], source: 'rule:compound_product_name' };
+  }
   const changedProduct = KNOWN_PRODUCTS
     .slice()
     .sort((left, right) => right.length - left.length)
@@ -1052,7 +1110,7 @@ function extractProduct(text, customerName = '') {
     .sort((left, right) => left.index - right.index || right.item.length - left.item.length)[0];
   if (known) return { value: known.item, source: 'rule:known_product' };
 
-  const beforeQuantity = text.match(new RegExp(`(?:报价给|报给|发给|卖给|转给|给|帮|找|问|报架|下单|订货|订购|要货|返单|补单|采购|报|要|订|定了|定|补|做|发)?([\\u4e00-\\u9fa5A-Za-z]{2,18}?)\\s*(${numberPattern()})\\s*${UNIT_PATTERN}`));
+  const beforeQuantity = text.match(new RegExp(`(?:报价给|报给|发给|卖给|转给|给|帮|找|问|报架|下单|订货|订购|要货|返单|补单|采购|报|要|订|定了|定|补|做|发)?([\\u4e00-\\u9fa5A-Za-z]{2,18}?)\\s*(${numberPattern()})\\s*${QUANTITY_UNIT_PATTERN}`));
   if (beforeQuantity) {
     const productContext = beforeQuantity[1];
     const productWithoutCustomer = customerName
@@ -1070,7 +1128,7 @@ function extractProduct(text, customerName = '') {
     }
   }
 
-  const afterQuantity = text.match(new RegExp(`(?:${numberPattern()})\\s*${UNIT_PATTERN}\\s*([\\u4e00-\\u9fa5A-Za-z0-9]{1,18})`));
+  const afterQuantity = text.match(new RegExp(`(?:${numberPattern()})\\s*${QUANTITY_UNIT_PATTERN}\\s*([\\u4e00-\\u9fa5A-Za-z0-9]{1,18})`));
   if (afterQuantity) {
     const product = afterQuantity[1].replace(PRODUCT_STOP_WORDS, '').replace(/^的|^，/, '');
     if (product && !/^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分|钱)/.test(product)) {
@@ -1176,7 +1234,7 @@ function cleanItemProductName(value, customerName = '') {
     .find((item) => cleaned.includes(item));
   if (known) return known;
 
-  if (hadTrailingAction && cleaned.length <= 4) return '';
+  if (hadTrailingAction && cleaned.length <= 4 && !isCompoundNumericProductName(cleaned)) return '';
   if (!cleaned || cleaned.length > 12) return '';
   if (ITEM_EXACT_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
   if (new RegExp(`^(?:${SPEC_TOKEN_PATTERN})$`).test(cleaned)) return '';
@@ -1321,13 +1379,34 @@ function compactItemCandidates(candidates) {
 function extractItemCandidates(text, customerName = '') {
   const source = String(text || '');
   const candidates = [];
-  const quantityFirst = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})\\s*([\\u4e00-\\u9fa5A-Za-z]{1,16})`, 'g');
-  const productFirst = new RegExp(`([\\u4e00-\\u9fa5A-Za-z]{1,20})\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g');
+  const quantityFirst = new RegExp(`(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})\\s*([\\u4e00-\\u9fa5A-Za-z]{1,16})`, 'g');
+  const productFirst = new RegExp(`([\\u4e00-\\u9fa5A-Za-z]{1,20})\\s*(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})`, 'g');
 
   const pushCandidate = (match, rawProduct, rawQuantity, rawUnit, sourceName) => {
     let productText = rawProduct;
     let quantityText = rawQuantity;
+    // “一千个五元一个”后半段是价格，不是倒装的商品名。
+    if (sourceName === 'rule:item_quantity_product') {
+      if (/(?:块钱|元钱|块|元|毛|角|分)\s*$/.test(source.slice(0, match.index))) return;
+      const priceStart = String(productText || '').search(new RegExp(
+        `(?:${numberPattern()})\\s*(?:块钱|元钱|块|元|毛|角|分)`
+      ));
+      if (priceStart >= 0) productText = productText.slice(0, priceStart);
+      if (new RegExp(`(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})$`).test(productText)) return;
+    }
     if (sourceName === 'rule:item_product_quantity') {
+      // 贪婪候选可能一直读到计价用的“一个”。只在明确的
+      // 数量+单位+价格边界处回退，不拆“三件套”等商品名中的数字。
+      const priceBoundary = String(productText || '').match(new RegExp(
+        `^(.+?)(${numberPattern()})\\s*(${UNIT_PATTERN})(?=\\s*(?:${numberPattern()})\\s*(?:块钱|元钱|块|元|毛|角|分))`
+      ));
+      if (priceBoundary) {
+        productText = priceBoundary[1];
+        quantityText = priceBoundary[2];
+        rawUnit = priceBoundary[3];
+      }
+      if (/^(?:一|1)$/.test(String(quantityText))
+        && /(?:块钱|元钱|块|元|毛|角|分)$/.test(productText)) return;
       // 正则在“礼品盒五百套”里可能把“百”单独当数量、把“礼品盒五”当商品。
       // 把被截走的中文数字拼回去，再判断商品名。
       const splitQuantity = String(productText || '').match(/([零〇一二两三四五六七八九十百千万俩]+)$/);
@@ -1461,7 +1540,7 @@ function sameMoney(left, right) {
 }
 
 function countQuantityUnitPairs(text) {
-  return Array.from(String(text || '').matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')))
+  return Array.from(String(text || '').matchAll(new RegExp(`(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})`, 'g')))
     .filter((match) => {
       const parsedQuantity = parseQuantityWithUnit(match[1], match[2]);
       const unit = parsedQuantity.unit;
@@ -1739,6 +1818,10 @@ function analyzeQuotationOrderIntent(text, options = {}) {
     /来一单|下单|下订单|先下|订货|要货|确认了|追加|再来|先来|先整|先做|做货|生产|做好|开工|排产|返单/g,
     'ORDER_ACTION_POSITIVE'
   );
+  if (options.recordingCommandSignal) {
+    const signal = options.recordingCommandSignal;
+    (signal.kind === 'ORDER_ACTION_POSITIVE' ? orderPositiveSignals : quotationPositiveSignals).push(signal);
+  }
   const orderEntitySignals = collectIntentSignalMatches(
     orderSignalText,
     /订单/g,
@@ -1775,13 +1858,25 @@ function analyzeQuotationOrderIntent(text, options = {}) {
 
 function scoreIntent(text, context, businessDate, options = {}) {
   if (context === 'query') return { intent: 'query', candidates: ['query'] };
+  if (options.recordingCommandBlocked) return { intent: 'unknown', candidates: ['unknown'] };
   if (EXPLICIT_NON_RECORD_PATTERN.test(text)) {
     return { intent: 'unknown', candidates: ['unknown'] };
   }
   const quotationOrderIntent = analyzeQuotationOrderIntent(text, {
+    recordingCommandSignal: options.recordingCommandSignal,
     conversionText: options.conversionText || text,
     conversionSourceField: options.conversionSourceField || 'ORIGINAL_TEXT'
   });
+  const commandSignal = options.recordingCommandSignal;
+  if (commandSignal && (
+    (commandSignal.kind === 'ORDER_ACTION_POSITIVE'
+      && quotationOrderIntent.orderNegationSignals.length
+      && !quotationOrderIntent.reaffirmedOrderSignals.length)
+    || (commandSignal.kind === 'QUOTATION_EXPLICIT'
+      && quotationOrderIntent.quotationNegationSignals.length)
+  )) {
+    return { intent: 'unknown', candidates: ['unknown'], recordingCommandConflict: true };
+  }
   const hasQuotationToOrderPhrase = quotationOrderIntent.quotationToOrderPhraseSignals.length > 0;
   const hasQuotationToOrderConversion = quotationOrderIntent.quotationToOrderConversionSignals.length > 0;
   if (/(?:先按|按).{0,12}(?:不对|不是).{0,12}(?:最后|最终).{0,12}(?:块|元|价)/.test(text)) {
@@ -1874,6 +1969,7 @@ function scoreIntent(text, context, businessDate, options = {}) {
   if (/没结|未结|挂账/.test(text)) scores.receivable += 6;
   if (/还有一笔没结|没结.*(?:\d|[零一二两三四五六七八九十百千万俩])/.test(text)) scores.receivable += 4;
   if (/来一单/.test(orderSignalText)) scores.order += 4;
+  if (options.recordingCommandSignal && options.recordingCommandSignal.kind === 'ORDER_ACTION_POSITIVE') scores.order += 8;
   if (hasQuantity && extractProduct(text).value && /(?:下(?!周)|先整|先来|要货)/.test(orderSignalText)) scores.order += 4;
   if (/订单|下单|先下|交货|发货|要发|给我发|今天.*发|明天.*发|后天.*发|下午发|确认了|追加|再来|先来|先整|生产|做好|开工|排产|要货|返单|补\d|补[零一二两三四五六七八九十百千万俩]|定了|订|做|整|周[一二三四五六日天].*拿/.test(orderSignalText)) scores.order += 4;
   if (hasPhraseLevelOutboundDeliverySignal
@@ -2155,11 +2251,16 @@ function parseInput({
   const recognitionText = extractedText || text;
   const originalText = normalizeOriginalText(rawText || text);
   const extractedOriginalText = normalizeOriginalText(recognitionText);
-  const normalized = normalizeText(recognitionText);
+  const normalizedSource = normalizeText(recognitionText);
+  const recordingCommand = context === 'query'
+    ? { text: normalizedSource, signal: null, negated: false }
+    : recordingCommandContext(normalizedSource);
+  const normalized = recordingCommand.text;
   const hasTerminationSignal = TERMINATION_PATTERN.test(normalized);
   const requiresExistingRecord = hasTerminationSignal && REPLACEMENT_AFTER_TERMINATION_PATTERN.test(normalized);
   const mixedBusiness = detectMixedBusiness(normalized);
   const explicitNoRecord = EXPLICIT_NON_RECORD_PATTERN.test(normalized)
+    || recordingCommand.negated
     || (hasTerminationSignal && !requiresExistingRecord)
     || mixedBusiness;
   const structuredDraft = source === 'paste' ? getPasteStructuredDraft(pasteMeta) : null;
@@ -2169,6 +2270,8 @@ function parseInput({
     ? 'EXTRACTED_TEXT'
     : 'ORIGINAL_TEXT';
   const scoredIntent = scoreIntent(normalized, context, businessDate, {
+    recordingCommandSignal: recordingCommand.signal,
+    recordingCommandBlocked: recordingCommand.negated || recordingCommand.uncertain,
     conversionText: extractedOriginalText,
     conversionSourceField: relationSourceField
   });
@@ -2429,8 +2532,14 @@ function parseInput({
     source,
     original_text: originalText,
     date_detail: dateDetail,
-    formal_save_blocked: hasTerminationSignal || mixedBusiness,
-    block_reason: mixedBusiness
+    formal_save_blocked: Boolean(scoredIntent.recordingCommandConflict || recordingCommand.negated || recordingCommand.uncertain || hasTerminationSignal || mixedBusiness),
+    block_reason: scoredIntent.recordingCommandConflict
+      ? '原话中的记录要求与后面的说法不一致，请修改后再确认。'
+      : recordingCommand.uncertain
+      ? '原话尚未明确要求记录，请修改后再确认。'
+      : recordingCommand.negated
+      ? '原话明确要求先不记录，请修改后再确认。'
+      : mixedBusiness
       ? '一句话里包含多件业务，不能合成一笔正式记录。'
       : (hasTerminationSignal ? '这是取消、暂停或撤回旧记录的操作，必须先找到原记录并再次确认。' : ''),
     requires_existing_record: requiresExistingRecord,

@@ -157,7 +157,7 @@ function hasNonItemMoneyEvidencePrefix(text, index) {
 function countPotentialItemFactEvidence(text) {
   const sourceText = String(text || '');
   const number = numberPattern();
-  const quantityPattern = new RegExp(`(?:${number})\\s*${UNIT_PATTERN}`);
+  const quantityPattern = new RegExp(`(?:${number})\\s*(?!件套)${UNIT_PATTERN}`);
   const unitPricePattern = new RegExp(
     `(?:每\\s*${UNIT_PATTERN}\\s*(?:${number})|单价\\s*(?:是|为)?\\s*(?:${number})\\s*(?:元钱|块钱|元|块|毛钱|毛|角|分)?|(?:${number})\\s*(?:元钱|块钱|元|块|毛钱|毛|角|分)?\\s*(?:一|每|/)\\s*${UNIT_PATTERN})`
   );

@@ -436,7 +436,7 @@ async function proofArch001() {
     const text = fs.readFileSync(file, 'utf8');
     const matched = identifiers.filter((identifier) => text.includes(identifier));
     if (matched.length) {
-      output[path.relative(root, file)] = matched;
+      output[path.relative(root, file).split(path.sep).join('/')] = matched;
     }
     return output;
   }, {});
@@ -457,7 +457,7 @@ async function proofArch001() {
   ]));
   const exportsBlock = (safetySource.match(/module\.exports\s*=\s*\{([\s\S]*?)\n\};/) || [])[1] || '';
   const serverIssuerReferences = Object.keys(references)
-    .filter((file) => file.startsWith(`server${path.sep}`));
+    .filter((file) => file.startsWith('server/'));
   const evidence = {
     callCounts,
     definitionCounts,

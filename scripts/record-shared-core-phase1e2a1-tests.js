@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { withFixedTestClock } = require('./lib/fixed-test-clock');
 const {
   LEGACY_BUSINESS_STORAGE_KEY,
   STORAGE_MIGRATION_MODES
@@ -40,6 +41,7 @@ const {
 const { safeClone, stableSerialize } = require('../utils/record-state-diff');
 const {
   canonicalState,
+  fixedClock,
   runLegacyEquivalenceWithVisitor,
   stateWith
 } = require('./record-shared-core-phase1e1-tests');
@@ -114,9 +116,9 @@ function assertBusinessState(actual, expected, message) {
   );
 }
 
-test('23个Legacy Writer和app初始化全部经过统一存储门面且没有业务key字面量写入旁路', () => {
+test('24处Legacy写入含app初始化全部经过统一存储门面且没有业务key字面量写入旁路', () => {
   const root = path.resolve(__dirname, '..');
-  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 23);
+  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 24);
   const expectedApp = LEGACY_BUSINESS_BUNDLE_WRITE_SITES.find((item) => item.sourceFile === 'app.js');
   assert.deepStrictEqual(expectedApp, {
     sourceFile: 'app.js', callKind: 'prepareRecordStorageInfrastructure', occurrence: 1,
@@ -136,7 +138,7 @@ test('23个Legacy Writer和app初始化全部经过统一存储门面且没有�
       fs.readdirSync(current, { withFileTypes: true }).forEach((entry) => {
         const full = path.join(current, entry.name);
         if (entry.isDirectory()) walk(full);
-        else if (entry.isFile() && entry.name.endsWith('.js')) sourceFiles.push(path.relative(root, full));
+        else if (entry.isFile() && entry.name.endsWith('.js')) sourceFiles.push(path.relative(root, full).split(path.sep).join('/'));
       });
     }
     walk(path.join(root, directory));
@@ -740,7 +742,7 @@ test('持久化receipt有界且不保存业务正文，最近高风险操作受�
   assert.strictEqual(restartedGateway.getStats().writes, 0);
 });
 
-test('Phase 1E.1的22个业务场景在事务target bundle层继续与Legacy和Memory结果语义等价', async () => {
+test('Phase 1E.1的23个业务场景在事务target bundle层继续与Legacy和Memory结果语义等价', async () => {
   let count = 0;
   await runLegacyEquivalenceWithVisitor((entry) => {
     count += 1;
@@ -766,7 +768,7 @@ test('Phase 1E.1的22个业务场景在事务target bundle层继续与Legacy和M
     );
     assert.strictEqual(readRecordStorageControl(currentBundle(pair.gateway)).storageRevision, 1, entry.name);
   });
-  assert.strictEqual(count, 22);
+  assert.strictEqual(count, 23);
 });
 
 test('生产页面与business仍未接入共享Commit且旧Storage Adapter继续硬禁用commit', () => {
@@ -794,7 +796,7 @@ async function main() {
   let passed = 0;
   for (const item of tests) {
     try {
-      await item.fn();
+      await withFixedTestClock(fixedClock().now().toISOString(), 'Asia/Shanghai', item.fn);
       passed += 1;
       console.log(`PASS ${item.name}`);
     } catch (error) {

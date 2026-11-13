@@ -1265,9 +1265,8 @@
         "overrides": {}
       },
       "ai": {
-        "profile": "FAKE_STANDARD",
-        "expectedRoute": "AI_STANDARD",
-        "fixtureRef": "ai-case-rec-e2e-voice-006-v1"
+        "profile": "LOCAL_ONLY",
+        "expectedRoute": "LOCAL"
       },
       "interaction": {
         "userEdits": [],
@@ -1303,12 +1302,12 @@
           "absentFields": [],
           "conflictValues": {}
         },
-        "route": "AI_STANDARD",
+        "route": "LOCAL",
         "routing": {
-          "productionRoute": "AI_STANDARD",
-          "executionPath": "PRODUCTION_STANDARD",
-          "localSafetyStatus": "NEEDS_STANDARD_REVIEW",
-          "expectedAiCall": "MUST_CALL"
+          "productionRoute": "LOCAL",
+          "executionPath": "PRODUCTION_LOCAL",
+          "localSafetyStatus": "SAFE_LOCAL",
+          "expectedAiCall": "MUST_NOT_CALL"
         },
         "preflight": {
           "domainCanSaveFormal": true,
@@ -1335,9 +1334,9 @@
             ]
           },
           "fullPage": {
-            "status": "BLOCKED",
+            "status": "CAN_COMPLETE",
             "surfaceCanCompleteFormal": true,
-            "effectiveCanSaveFormal": false,
+            "effectiveCanSaveFormal": true,
             "missingCapabilities": []
           }
         },
@@ -1426,12 +1425,10 @@
           "backupFinal": "NOT_APPLICABLE"
         },
         "productionObservation": {
-          "productionEligibility": "BLOCKED_NON_REAL_PROVIDER",
-          "pageFormalSaveAllowed": false,
-          "blockingCodes": [
-            "UNTRUSTED_AI_PROVIDER_FOR_PRODUCTION"
-          ],
-          "providerClassification": "NON_REAL_FAKE",
+          "productionEligibility": "ELIGIBLE_LOCAL",
+          "pageFormalSaveAllowed": true,
+          "blockingCodes": [],
+          "providerClassification": "TEST_LOCAL_ONLY",
           "requiredCapabilitiesSatisfied": true
         },
         "isolatedExecution": {

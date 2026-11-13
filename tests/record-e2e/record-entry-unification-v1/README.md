@@ -18,7 +18,7 @@ existing `pages/input` Conversation flow.
 
 `REAL_WXML` and real-device behavior are explicitly not run in this phase.
 
-## Handoff contract
+## Handoff contract (historical R1B baseline)
 
 The intended production design is a module-private, process-memory, one-slot
 handoff with generation-bound handles:
@@ -45,6 +45,33 @@ The handoff must not use business/local Storage or query parameters. Storage
 would retain stale input across later page visits and could accidentally turn
 route, proof, or save eligibility into persisted authority. `switchTab` does not
 provide a reliable query transfer boundary for this tab page.
+
+## Current voice extension (verified 2026-10-28)
+
+The four-field contract above is the historical R1B contract. Commit `3a5ebb9`
+later extended the production handoff to preserve voice provenance. Do not remove
+that extension to satisfy the frozen failure-first assertions below.
+
+- Every normalized payload also contains `inputChannel`, derived from `source`:
+  `MANUAL_TEXT`, `PASTE_TEXT`, or `VOICE_TRANSCRIPT`. Caller-supplied channels
+  cannot override this mapping.
+- Voice may additionally carry a copied, allowlisted `voiceCompletionEvidence`.
+  Typed and paste payloads discard this field. Voice origins are `HOME_QUICK`,
+  `DASHBOARD_HERO`, or `CUSTOM_TAB_CENTER`.
+- The actual destination is still `FULL_PAGE`. For voice, the parser's
+  `entrySurface=HOME_QUICK` describes acquisition provenance; it does not mean
+  that Dashboard has parsed or saved the draft. Typed and paste parse with
+  `entrySurface=FULL_PAGE`.
+- The destination revalidates voice session/fingerprint evidence. Route,
+  provider trust, manual proofs, parsed fields and save authority are never
+  accepted as handoff metadata. One-slot generation and consume-once rules
+  remain unchanged.
+
+Current checks use the offline wrapper's `entry-handoff` and `flow-gate` suites.
+The former checks exact normalized payloads, copying, rejected extra fields and
+late failures; the latter follows production page methods through one navigation,
+one consume and one parse, preserving the exact original input with no early save.
+Neither suite claims real WXML rendering, microphone capture or device behavior.
 
 ## Baseline
 

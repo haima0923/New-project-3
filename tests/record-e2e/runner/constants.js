@@ -33,6 +33,7 @@ const PAGE_PATHS = Object.freeze({
   FULL_PAGE: 'pages/input/input.js',
   ORDER_LIST: 'pages/orders/orders.js',
   RECORD_DETAIL: 'pages/record-detail/record-detail.js',
+  RECORD_LIST: 'pages/records/records.js',
   QUOTATION_LIST: 'pages/quotations/quotations.js'
 });
 const OBSERVATION_LANES = Object.freeze([

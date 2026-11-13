@@ -253,7 +253,7 @@ function createHoldHarness(options = {}) {
     return tab[handler](event);
   }
 
-  async function followInput() {
+  async function followInput(options = {}) {
     const hasInputNavigation = navigation.audit().some((event) => event.url === '/pages/input/input');
     if (!hasInputNavigation) return false;
     if (currentPage === dashboard.page && typeof dashboard.page.onHide === 'function') {
@@ -267,7 +267,7 @@ function createHoldHarness(options = {}) {
     }
     if (typeof input.page.onShow === 'function') input.page.onShow();
     inputShown = true;
-    await settlePage(input.page);
+    if (options.settle !== false) await settlePage(input.page);
     return true;
   }
 

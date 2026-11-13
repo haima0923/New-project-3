@@ -648,7 +648,45 @@ async function main() {
 
     assert(standardRequests[0].messages[0].content.includes('2026-07-22'), 'standard prompt必须使用请求业务日期');
     assert(trustedDeepRequests[0].messages[0].content.includes('2026-07-22'), 'trusted deep prompt必须使用同一业务日期');
-    console.log('服务端识别路由测试通过：/deep不是权限，只有服务端重验的AUTO_DEEP可使用quality。');
+    const numericProducts = Object.assign({}, sample, {
+      source: 'typed',
+      text: '王总下单三件套500套，每套6元；三角架100个，每个5元；11月30日交。'
+    });
+    const numericParseStart = fakeAiRequests.length;
+    const numericParse = await request('/api/ai/parse', numericProducts);
+    assert.strictEqual(numericParse.statusCode, 409, '数字商品名不能制造额外数量证据');
+    assert.strictEqual(numericParse.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(fakeAiRequests.length, numericParseStart, '普通入口不能自动升级到quality');
+    fakeAiResponses.push({
+      intent: 'order',
+      fields: { customerName: '王总', dueDate: '2026-11-30', items: [
+        { productName: '三件套', quantity: '500', unit: '套', unitPrice: '6', priceUnit: '套', totalAmount: '3000' },
+        { productName: '三角架', quantity: '100', unit: '个', unitPrice: '5', priceUnit: '个', totalAmount: '500' }
+      ] },
+      missing_fields: [], low_confidence_fields: [], field_conflicts: []
+    });
+    const numericDeep = await request('/api/ai/parse/deep', numericProducts);
+    assert.strictEqual(numericDeep.statusCode, 200);
+    assert.strictEqual(numericDeep.body.ai_server_route, 'AUTO_DEEP');
+    assert.strictEqual(numericDeep.body.ai_business_result_valid, true);
+    assert.deepStrictEqual(numericDeep.body.fields.items.map(item => [item.productName, item.quantity, item.unitPrice]), [
+      ['三件套', '500', '6'], ['三角架', '100', '5']
+    ]);
+    assert.strictEqual(fakeAiRequests.length, numericParseStart + 1);
+    assert.strictEqual(fakeAiRequests[numericParseStart].model, 'offline-quality-model');
+    for (const text of [
+      '王总下单三件套每套6元，11月30日交',
+      '王总下单三角架500个，11月30日交',
+      '王总下单三件套500套，每套6元，总价4000元，11月30日交'
+    ]) {
+      const before = fakeAiRequests.length;
+      for (const pathname of ['/api/ai/parse', '/api/ai/parse/deep']) {
+        const blocked = await request(pathname, Object.assign({}, sample, { source: 'typed', text }));
+        assert.strictEqual(blocked.statusCode, 422, '商品名修复不得放行缺事实或金额冲突');
+      }
+      assert.strictEqual(fakeAiRequests.length, before, '缺事实或冲突不得进入上游');
+    }
+    console.log('服务端识别路由测试通过：可信Deep、数字商品名、缺事实及冲突保护均通过。');
   } finally {
     stopServer();
   }

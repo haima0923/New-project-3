@@ -44,13 +44,25 @@ function pageDraft(driver) {
 function pageSnapshot(driver) {
   const { page, surface } = driver;
   const draft = pageDraft(driver);
+  const rawMissingFields = safeClone(draft.missing_fields || []);
+  // Confirmation assertions describe the visible neutral NO_RECORD surface.
+  // Keep raw draft risks separately rather than deleting parser evidence.
+  const neutralNoRecord = page.data.isNoRecord === true
+    && page.data.showSurfaceGlobalRisk !== true
+    && !page.data.activeQuestion
+    && page.data.showFormalSaveButton !== true
+    && page.data.showPendingButton !== true
+    && page.data.showDeepReviewButton !== true;
   return {
     surface,
     originalInput: surface === 'HOME_QUICK' ? page.data.composerText : page.data.text,
     parseResult: draft,
     fields: safeClone(draft.fields || {}),
     items: safeClone((draft.fields && draft.fields.items) || []),
-    missingFields: safeClone(draft.missing_fields || []),
+    rawMissingFields,
+    missingFields: neutralNoRecord ? [] : rawMissingFields,
+    showSurfaceGlobalRisk: page.data.showSurfaceGlobalRisk === true,
+    surfaceGlobalRiskText: String(page.data.surfaceGlobalRiskText || ''),
     conflictFields: safeClone((draft.field_conflicts || []).map((item) => (
       typeof item === 'string' ? item : item && item.field
     )).filter(Boolean)),

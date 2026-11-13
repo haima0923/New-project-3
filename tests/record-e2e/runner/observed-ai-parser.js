@@ -136,18 +136,22 @@ function summarizeVoiceInputEvidence(payload = {}) {
   };
 }
 
-function captureCallSite() {
-  const stack = String(new Error().stack || '').split('\n')
-    .map((line) => line.trim())
+function compactAiParserCallSite(stackText) {
+  const stack = String(stackText || '').split('\n')
+    .map((line) => line.trim().replace(/\\/g, '/'))
     .filter((line) => line.includes('/utils/ai-parser.js:'));
   const compact = stack.map((line) => {
-    const match = line.match(/^at\s+([^(]+)\s+\([^:]+:(\d+):(\d+)\)$/)
-      || line.match(/^at\s+[^:]+:(\d+):(\d+)$/);
+    const match = line.match(/^at\s+([^(]+)\s+\(.+:(\d+):(\d+)\)$/)
+      || line.match(/^at\s+.+:(\d+):(\d+)$/);
     if (!match) return line.replace(/^at\s+/, '').slice(0, 120);
     if (match.length === 4) return `${match[1].trim()}:${match[2]}`;
     return `anonymous:${match[1]}`;
   });
   return compact.slice(0, 6);
+}
+
+function captureCallSite() {
+  return compactAiParserCallSite(new Error().stack);
 }
 
 function rawRoleFromCallSite(callSite) {
@@ -473,6 +477,7 @@ function parserInstrumentationAudit() {
 }
 
 module.exports = {
+  compactAiParserCallSite,
   collectParserObservationSince,
   loadObservedAiParser,
   parserInstrumentationAudit,

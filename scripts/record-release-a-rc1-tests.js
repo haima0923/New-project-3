@@ -3,6 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { withFixedTestClock } = require('./lib/fixed-test-clock');
 const {
   LEGACY_BUSINESS_STORAGE_KEY,
   RECORD_TRANSACTION_STORAGE_KEYS
@@ -40,6 +41,7 @@ const {
 const { safeClone, stableSerialize } = require('../utils/record-state-diff');
 const {
   canonicalState,
+  fixedClock: legacyBusinessClock,
   runLegacyEquivalenceWithVisitor
 } = require('./record-shared-core-phase1e1-tests');
 
@@ -114,10 +116,14 @@ function assertBusinessEqual(actual, expected, label) {
   );
 }
 
-test('23个物理Writer和20个生命周期均经统一门面并绑定受控source且无业务key写入旁路', () => {
-  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 23);
-  assert.strictEqual(LEGACY_PAGE_LIFECYCLE_INVENTORY.length, 20);
+test('24处物理写入和21个生命周期均经统一门面并绑定受控source且无业务key写入旁路', () => {
+  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 24);
+  assert.strictEqual(LEGACY_PAGE_LIFECYCLE_INVENTORY.length, 21);
   assert.strictEqual(new Set(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.map((item) => item.writerSource)).size, 23);
+  const recordSites = LEGACY_BUSINESS_BUNDLE_WRITE_SITES.filter((site) => site.sourceFile === 'pages/records/records.js');
+  assert.deepStrictEqual(recordSites.map((site) => [site.occurrence, site.lifecycleIds]), [
+    [1, ['quotation-cancel']], [2, ['soft-delete']]
+  ]);
   LEGACY_BUSINESS_BUNDLE_WRITE_SITES.forEach((site) => {
     assert(RECORD_STORAGE_LEGACY_WRITER_SOURCES[site.writerSource], site.writerSource);
     const source = fs.readFileSync(path.join(ROOT, site.sourceFile), 'utf8');
@@ -136,7 +142,9 @@ test('23个物理Writer和20个生命周期均经统一门面并绑定受控sour
     const walk = (current) => fs.readdirSync(current, { withFileTypes: true }).forEach((item) => {
       const full = path.join(current, item.name);
       if (item.isDirectory()) walk(full);
-      else if (item.isFile() && item.name.endsWith('.js')) productionFiles.push(path.relative(ROOT, full));
+      else if (item.isFile() && item.name.endsWith('.js')) {
+        productionFiles.push(path.relative(ROOT, full).split(path.sep).join('/'));
+      }
     });
     walk(absolute);
   });
@@ -256,7 +264,7 @@ test('已有Bundle纯启动零写入且不存在Bundle时只初始化一次并�
 
 test('23个代表业务的事务Legacy终态与旧Legacy和Shared Memory业务语义三路一致', async () => {
   let count = 0;
-  await runLegacyEquivalenceWithVisitor(({ name, initialState, legacyState, sharedState }) => {
+  const assertEquivalent = ({ name, initialState, legacyState, sharedState }) => {
     count += 1;
     const { gateway, coordinator } = releaseAHarness({
       [LEGACY_BUSINESS_STORAGE_KEY]: clone(initialState)
@@ -276,7 +284,10 @@ test('23个代表业务的事务Legacy终态与旧Legacy和Shared Memory业务�
       `${name}:release vs shared`
     );
     assert.strictEqual(readRecordStorageControl(persisted).storageRevision, 1, name);
-  });
+  };
+  await withFixedTestClock(legacyBusinessClock().now().toISOString(), 'Asia/Shanghai', () =>
+    runLegacyEquivalenceWithVisitor(assertEquivalent)
+  );
   assert.strictEqual(count, 23);
 });
 

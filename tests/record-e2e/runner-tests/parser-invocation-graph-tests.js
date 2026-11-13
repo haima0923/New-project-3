@@ -6,6 +6,7 @@ const {
 } = require('../runner/observation-semantics');
 const {
   collectParserObservationSince,
+  compactAiParserCallSite,
   loadObservedAiParser,
   observeHybridInvocationForTest,
   observeRawInvocationForTest,
@@ -140,6 +141,24 @@ function errorCodes(graph) {
 }
 
 const tests = [
+  {
+    name: 'production-call-sites-match-on-windows-and-posix-without-path-leaks',
+    run() {
+      const frames = (root) => [
+        'Error',
+        `    at prepareHybridLocalStage (${root}/utils/ai-parser.js:42:7)`,
+        `    at ${root}/utils/ai-parser.js:88:3`,
+        `    at unrelated (${root}/pages/input/input.js:99:4)`
+      ].join('\n');
+      const expected = ['prepareHybridLocalStage:42', 'anonymous:88'];
+      assert.deepStrictEqual(compactAiParserCallSite(frames('/Users/example/New project 5')), expected);
+      assert.deepStrictEqual(
+        compactAiParserCallSite(frames('C:/Users/example/New project 3').replace(/\//g, '\\')),
+        expected
+      );
+      assert.deepStrictEqual(compactAiParserCallSite(''), []);
+    }
+  },
   {
     name: 'one-hybrid-one-raw-is-captured',
     async run() {

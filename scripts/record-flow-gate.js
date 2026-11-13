@@ -1014,6 +1014,8 @@ function createAuditedHybrid(rootHybrid) {
       calls.push({
         entrySurface: String(payload && payload.entrySurface || ''),
         inputChannel: String(payload && payload.inputChannel || ''),
+        originSurface: String(payload && payload.originSurface || ''),
+        voiceCompletionEvidence: clone(payload && payload.voiceCompletionEvidence || null),
         source: String(payload && payload.source || '')
       });
       return rootHybrid(payload);
@@ -1045,6 +1047,13 @@ async function followDashboardEntry({
   const publishCalls = handoffAudit.calls.filter((call) => call.key === 'publishRecordEntryHandoff');
   const inputNavigation = harness.events.navigation.filter((event) => event.url === '/pages/input/input');
   const publishedPayload = publishCalls[0] && publishCalls[0].args[0] || null;
+  const handoffSource = testCase.source || 'typed';
+  const expectedInputChannel = handoffSource === 'voice'
+    ? 'VOICE_TRANSCRIPT' : (handoffSource === 'paste' ? 'PASTE_TEXT' : 'MANUAL_TEXT');
+  const allowedPayloadKeys = ['autoParse', 'originSurface', 'originalText', 'source', 'inputChannel']
+    .concat(handoffSource === 'voice' ? ['voiceCompletionEvidence'] : []);
+  const allowedOrigins = handoffSource === 'voice'
+    ? ['HOME_QUICK', 'DASHBOARD_HERO', 'CUSTOM_TAB_CENTER'] : ['HOME_QUICK'];
   const dashboardWxml = fs.readFileSync(DASHBOARD_WXML_PATH, 'utf8');
   const dashboardStateUnchanged = JSON.stringify(harness.getState()) === stateBeforeEntry;
   const dashboardStorageMutations = harness.events.storageWrites
@@ -1061,10 +1070,10 @@ async function followDashboardEntry({
   flowFailure('首页快记入口', Boolean(publishedPayload
     && publishedPayload.originalText === testCase.input
     && publishedPayload.source === (testCase.source || 'typed')
-    && publishedPayload.originSurface === 'HOME_QUICK'
+    && allowedOrigins.includes(publishedPayload.originSurface)
     && publishedPayload.autoParse === true
-    && JSON.stringify(Object.keys(publishedPayload).sort())
-      === JSON.stringify(['autoParse', 'originSurface', 'originalText', 'source'])),
+    && (!publishedPayload.inputChannel || publishedPayload.inputChannel === expectedInputChannel)
+    && Object.keys(publishedPayload).every((key) => allowedPayloadKeys.includes(key))),
   `handoff payload mismatch ${JSON.stringify(publishedPayload)}`, failures);
   flowFailure('首页快记入口', inputNavigation.length === 1
     && inputNavigation[0].type === 'switchTab'
@@ -1116,6 +1125,7 @@ async function followDashboardEntry({
   const consumeCalls = handoffAudit.calls.filter((call) => call.key === 'consumeRecordEntryHandoff');
   const runParseCalls = Number(inputPage.__methodCalls.runParse || 0);
   const parserPayload = auditedHybrid.calls[0] || {};
+  const consumedPayload = consumeCalls[0] && consumeCalls[0].result || {};
   const beforeRepeat = JSON.stringify({
     activeQuestion: inputPage.data.activeQuestion || null,
     conversationPhase: inputPage.data.conversationPhase || '',
@@ -1141,8 +1151,22 @@ async function followDashboardEntry({
     `Input runParse expected 1, got ${runParseCalls}`, failures);
   flowFailure('首页转完整页', auditedHybrid.calls.length === 1,
     `Input hybrid root expected 1, got ${auditedHybrid.calls.length}`, failures);
-  flowFailure('首页转完整页', parserPayload.entrySurface === 'FULL_PAGE',
-    `Input parser surface expected FULL_PAGE, got ${parserPayload.entrySurface}`, failures);
+  const expectedParserSurface = handoffSource === 'voice' ? 'HOME_QUICK' : 'FULL_PAGE';
+  flowFailure('首页转完整页', parserPayload.entrySurface === expectedParserSurface,
+    `Input parser source surface expected ${expectedParserSurface}, got ${parserPayload.entrySurface}`, failures);
+  flowFailure('首页转完整页', consumedPayload.inputChannel === expectedInputChannel,
+    `normalized handoff channel expected ${expectedInputChannel}, got ${consumedPayload.inputChannel}`, failures);
+  flowFailure('首页转完整页', parserPayload.inputChannel === expectedInputChannel,
+    `Input parser channel expected ${expectedInputChannel}, got ${parserPayload.inputChannel}`, failures);
+  flowFailure('首页转完整页', Object.keys(consumedPayload).every((key) => allowedPayloadKeys.includes(key)),
+    'normalized handoff contains unapproved control-plane fields', failures);
+  if (handoffSource === 'voice') {
+    flowFailure('首页转完整页', parserPayload.originSurface === consumedPayload.originSurface,
+      'voice origin was lost or replaced during handoff', failures);
+    flowFailure('首页转完整页', JSON.stringify(parserPayload.voiceCompletionEvidence)
+      === JSON.stringify(consumedPayload.voiceCompletionEvidence || null),
+    'voice final evidence changed or disappeared during handoff', failures);
+  }
   flowFailure('首页转完整页', parserPayload.source === (testCase.source || 'typed'),
     `Input parser source expected ${testCase.source || 'typed'}, got ${parserPayload.source}`, failures);
   flowFailure('首页转完整页', inputPage.data.source === (testCase.source || 'typed'),
@@ -1191,6 +1215,7 @@ async function followDashboardEntry({
           .filter((call) => call.key === 'consumeRecordEntryHandoff').length - 1)
       },
       input: {
+        destinationSurface: 'FULL_PAGE',
         activeQuestionTarget: String(inputPage.data.activeQuestion
           && inputPage.data.activeQuestion.target
           && inputPage.data.activeQuestion.target.field || ''),

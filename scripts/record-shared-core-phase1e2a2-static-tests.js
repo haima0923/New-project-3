@@ -158,7 +158,7 @@ function collectRuntimeDependencyGraph(outputRoot) {
       queue.push(resolved);
     }
   }
-  return Array.from(visited).map((file) => path.relative(outputRoot, file)).sort();
+  return Array.from(visited).map((file) => path.relative(outputRoot, file).split(path.sep).join('/')).sort();
 }
 
 test('隔离测试只定义四个带版本号的专用key且与真实业务key不同', () => {
@@ -522,8 +522,8 @@ test('TRANSACTION_PREVIEW只允许可信隔离Gateway且SHARED_COMMIT继续禁�
   });
 });
 
-test('23个生产Lifecycle继续LEGACY_ONLY且不引用任何隔离测试key', () => {
-  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 23);
+test('24处生产写入继续LEGACY_ONLY且不引用任何隔离测试key', () => {
+  assert.strictEqual(LEGACY_BUSINESS_BUNDLE_WRITE_SITES.length, 24);
   LEGACY_BUSINESS_BUNDLE_WRITE_SITES.forEach((site) => {
     const source = fs.readFileSync(path.join(root, site.sourceFile), 'utf8');
     RECORD_STORAGE_RUNTIME_TEST_KEY_LIST.forEach((key) => {

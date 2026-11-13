@@ -4,6 +4,8 @@ const { simpleFingerprint } = require('./storage');
 const { normalizeBusinessText } = require('./text-normalize');
 const { applyLocalParseSafety } = require('./parse-safety');
 const { RAW_UNIT_PATTERN, UNIT_PATTERN, isSupportedUnit, normalizeUnit, unitsMatch } = require('./units');
+const { isCompoundNumericProductName } = require('./product-name-rules');
+const QUANTITY_UNIT_PATTERN = `(?!件套)${UNIT_PATTERN}`;
 
 const PRODUCT_STOP_WORDS = /(价格|报价|报架|单价|订单|交货|发货|生产|做好|到期|月底|月结|结款|付款|欠款|定金|订金|预付|先记|记一下|三天后|下周|礼拜|星期|周[一二三四五六日天]).*$/;
 const KNOWN_PRODUCTS = [
@@ -194,7 +196,7 @@ function extractQuantity(text) {
     };
   }
 
-  const matches = Array.from(text.matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')));
+  const matches = Array.from(text.matchAll(new RegExp(`(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})`, 'g')));
   const match = matches.find((item) => {
     const parsedQuantity = parseQuantityWithUnit(item[1], item[2]);
     const rawUnit = parsedQuantity.unit;
@@ -294,6 +296,14 @@ function parseFenPriceNumber(fen, li) {
 }
 
 function extractUnitPrice(text) {
+  const namedProduct = extractProduct(text).value;
+  if (isCompoundNumericProductName(namedProduct)) {
+    text = text.split(namedProduct).join(' '.repeat(namedProduct.length));
+  }
+  // An adjacent calendar date is not the decimal tail of “3元8”。 Mask only
+  // this local price view; original text, date parsing and offsets are retained.
+  text = text.replace(/(?:[12]\d{3}年)?(?:\d{1,2}|[一二三四五六七八九十]{1,3})月(?:\d{1,2}|[一二三四五六七八九十]{1,3})[日号]?/g,
+    (dateText) => ' '.repeat(dateText.length));
   const priceUnit = RAW_UNIT_PATTERN;
   const chunk = numberPattern();
   const correctedUnitPrice = text.match(new RegExp(`(?:价格|单价|报价|价)[^，,。；;]{0,16}?(?:不是|不对)\\s*(?:${chunk})\\s*(?:块|元|毛|角|分)?\\s*(?:是|改成|应为)?\\s*(${chunk})`))
@@ -367,6 +377,11 @@ function extractUnitPrice(text) {
       value: toCleanNumber(parsePriceNumber(yuanCentsWithUnit[1], yuanCentsWithUnit[2])),
       source: 'rule:yuan_cent_unit_price'
     };
+  }
+
+  const explicitYuanUnitPrice = text.match(new RegExp(`(${chunk})\\s*(?:块|元)\\s*(?:一|每|/)${priceUnit}`));
+  if (explicitYuanUnitPrice) {
+    return { value: toCleanNumber(parseChineseNumber(explicitYuanUnitPrice[1])), source: 'rule:explicit_yuan_unit_price' };
   }
 
   const colloquialMao = text.match(new RegExp(`(${chunk})\\s*(?:毛钱|毛|角)\\s*(${DECIMAL_DIGIT})?`));
@@ -597,6 +612,14 @@ function extractRemainingAmount(text) {
 }
 
 function extractProduct(text) {
+  // A clearly named set/shape can be retained even before its purchase quantity
+  // is supplied. The boundary must be a separate fact, not part of the name.
+  const compound = text.match(new RegExp(
+    `((?:${numberPattern()})(?:件套|角)[\\u4e00-\\u9fa5A-Za-z]{0,12}?)(?=\\s*(?:(?:(?:要|订|买|做|采购|下单)\\s*)?(?:${numberPattern()})\\s*${QUANTITY_UNIT_PATTERN}|(?:每|一|/)${UNIT_PATTERN}|单价|价格|今天|明天|后天|下周|这周|周[一二三四五六日天]|\\d{1,2}月|[，,。；;\\s]|$))`
+  ));
+  if (compound && isCompoundNumericProductName(compound[1])) {
+    return { value: compound[1], source: 'rule:compound_product_name' };
+  }
   const changedProduct = KNOWN_PRODUCTS
     .slice()
     .sort((left, right) => right.length - left.length)
@@ -612,7 +635,7 @@ function extractProduct(text) {
     .sort((left, right) => left.index - right.index || right.item.length - left.item.length)[0];
   if (known) return { value: known.item, source: 'rule:known_product' };
 
-  const beforeQuantity = text.match(new RegExp(`(?:报价给|报给|发给|卖给|转给|给|帮|找|问|报|报架|要|订|定|定了|补|做|发)?([\\u4e00-\\u9fa5A-Za-z]{2,18}?)\\s*(${numberPattern()})\\s*${UNIT_PATTERN}`));
+  const beforeQuantity = text.match(new RegExp(`(?:报价给|报给|发给|卖给|转给|给|帮|找|问|报|报架|要|订|定|定了|补|做|发)?([\\u4e00-\\u9fa5A-Za-z]{2,18}?)\\s*(${numberPattern()})\\s*${QUANTITY_UNIT_PATTERN}`));
   if (beforeQuantity) {
     const product = beforeQuantity[1]
       .replace(/.*(?:总|老板|经理|姐|哥|先生|女士)/, '')
@@ -622,7 +645,7 @@ function extractProduct(text) {
     if (product && !/\d/.test(product)) return { value: product, source: 'rule:before_quantity_product' };
   }
 
-  const afterQuantity = text.match(new RegExp(`(?:${numberPattern()})\\s*${UNIT_PATTERN}\\s*([\\u4e00-\\u9fa5A-Za-z0-9]{1,18})`));
+  const afterQuantity = text.match(new RegExp(`(?:${numberPattern()})\\s*${QUANTITY_UNIT_PATTERN}\\s*([\\u4e00-\\u9fa5A-Za-z0-9]{1,18})`));
   if (afterQuantity) {
     const product = afterQuantity[1].replace(PRODUCT_STOP_WORDS, '').replace(/^的|^，/, '');
     if (product && !/^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万俩]+)\s*(?:块|元|毛|角|分|钱)/.test(product)) {
@@ -727,7 +750,7 @@ function cleanItemProductName(value, customerName = '') {
     .find((item) => cleaned.includes(item));
   if (known) return known;
 
-  if (hadTrailingAction && cleaned.length <= 4) return '';
+  if (hadTrailingAction && cleaned.length <= 4 && !isCompoundNumericProductName(cleaned)) return '';
   if (!cleaned || cleaned.length > 12) return '';
   if (ITEM_EXACT_BAD_PRODUCT_PATTERN.test(cleaned)) return '';
   if (/^老板(?:今|明|昨|后|早|晚|今天|明天|后天)/.test(cleaned)) return '';
@@ -870,13 +893,36 @@ function compactItemCandidates(candidates) {
 function extractItemCandidates(text, customerName = '') {
   const source = String(text || '');
   const candidates = [];
-  const quantityFirst = new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})\\s*([\\u4e00-\\u9fa5A-Za-z]{1,16})`, 'g');
-  const productFirst = new RegExp(`([\\u4e00-\\u9fa5A-Za-z]{1,20})\\s*(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g');
+  const quantityFirst = new RegExp(`(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})\\s*([\\u4e00-\\u9fa5A-Za-z]{1,16})`, 'g');
+  const productFirst = new RegExp(`([\\u4e00-\\u9fa5A-Za-z]{1,20})\\s*(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})`, 'g');
 
   const pushCandidate = (match, rawProduct, rawQuantity, rawUnit, sourceName) => {
     let productText = rawProduct;
     let quantityText = rawQuantity;
+    // “一千个五元一个”后半段是价格，不是倒装的商品名。
+    if (sourceName === 'rule:item_quantity_product') {
+      if (/(?:块钱|元钱|块|元|毛|角|分)\s*$/.test(source.slice(0, match.index))) return;
+      const priceStart = String(productText || '').search(new RegExp(
+        `(?:${numberPattern()})\\s*(?:块钱|元钱|块|元|毛|角|分)`
+      ));
+      if (priceStart >= 0) productText = productText.slice(0, priceStart);
+      if (new RegExp(`(?:${numberPattern()})\\s*(?:${UNIT_PATTERN})$`).test(productText)) return;
+    }
+
     if (sourceName === 'rule:item_product_quantity') {
+      // 贪婪候选可能一直读到计价用的“一个”。只在明确的
+      // 数量+单位+价格边界处回退，不拆“三件套”等商品名中的数字。
+      const priceBoundary = String(productText || '').match(new RegExp(
+        `^(.+?)(${numberPattern()})\\s*(${UNIT_PATTERN})(?=\\s*(?:${numberPattern()})\\s*(?:块钱|元钱|块|元|毛|角|分))`
+      ));
+      if (priceBoundary) {
+        productText = priceBoundary[1];
+        quantityText = priceBoundary[2];
+        rawUnit = priceBoundary[3];
+      }
+      if (/^(?:一|1)$/.test(String(quantityText))
+        && /(?:块钱|元钱|块|元|毛|角|分)$/.test(productText)) return;
+
       // 正则在“礼品盒五百套”里可能把“百”单独当数量、把“礼品盒五”当商品。
       // 把被截走的中文数字拼回去，再判断商品名。
       const splitQuantity = String(productText || '').match(/([零〇一二两三四五六七八九十百千万俩]+)$/);
@@ -885,7 +931,7 @@ function extractItemCandidates(text, customerName = '') {
         quantityText = `${splitQuantity[1]}${quantityText}`;
       }
       const hasKnownProduct = KNOWN_PRODUCTS.some((product) => productText.includes(product));
-      if (!hasKnownProduct && /(?:今天|明天|后天|要|订|下单|先整|先来|说|给|问|客户|老板|总|姐|哥)/.test(productText)) return;
+      if (!hasKnownProduct && !isCompoundNumericProductName(cleanItemProductName(productText, customerName)) && /(?:今天|明天|后天|要|订|下单|先整|先来|说|给|问|客户|老板|总|姐|哥)/.test(productText)) return;
     }
     const productName = cleanItemProductName(productText, customerName);
     const quantity = parseQuantityWithUnit(quantityText, rawUnit);
@@ -1012,7 +1058,7 @@ function sameMoney(left, right) {
 }
 
 function countQuantityUnitPairs(text) {
-  return Array.from(String(text || '').matchAll(new RegExp(`(${numberPattern()})\\s*(${UNIT_PATTERN})`, 'g')))
+  return Array.from(String(text || '').matchAll(new RegExp(`(${numberPattern()})\\s*(${QUANTITY_UNIT_PATTERN})`, 'g')))
     .filter((match) => {
       const parsedQuantity = parseQuantityWithUnit(match[1], match[2]);
       const unit = parsedQuantity.unit;

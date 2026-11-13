@@ -1,6 +1,7 @@
 const { diffDays, parseChineseDateDetail, today } = require('./date');
 const { stableHash } = require('./record-state-diff');
 const { RAW_UNIT_PATTERN, UNIT_PATTERN, unitsMatch } = require('./units');
+const { isCompoundNumericProductName, isQuantityOnlyProductName } = require('./product-name-rules');
 
 const SAFE_LOCAL = 'SAFE_LOCAL';
 const NEEDS_AI = 'NEEDS_AI';
@@ -278,6 +279,10 @@ function isAllowedManualFieldTransition(result, fields, field, itemKey) {
     return changedRootFields.every((name) => allowedRootFields.has(name));
   }
   const allowedRootFields = new Set([field]);
+  if (field === 'receivableId') {
+    ['receivableSelectionConfirmed', 'allowUnlinkedPayment', 'unlinkedPaymentCustomerId']
+      .forEach((name) => allowedRootFields.add(name));
+  }
   if (field === 'amount') {
     // Confirming the stated order amount also refreshes its canonical aliases.
     // These are deterministic projections of the same user answer, not extra
@@ -751,6 +756,19 @@ function reconcileTrustedUserManualEditState(result = {}, fields = {}, options =
   });
 }
 
+function isReceivableSelectionChange(before = {}, after = {}) {
+  const linked = Boolean(after.receivableId)
+    && after.receivableSelectionConfirmed === true
+    && after.allowUnlinkedPayment !== true;
+  const unlinked = !after.receivableId
+    && after.allowUnlinkedPayment === true
+    && Boolean(after.customerId)
+    && after.unlinkedPaymentCustomerId === after.customerId;
+  if (!linked && !unlinked) return false;
+  return ['receivableId', 'receivableSelectionConfirmed', 'allowUnlinkedPayment', 'unlinkedPaymentCustomerId']
+    .some((field) => !manualStateValuesEqual(before[field], after[field]));
+}
+
 function createTrustedUserManualEdit(result = {}, options = {}) {
   if (!requiresTrustedAiManualProof(result)) return result;
   const previousFields = result.fields || {};
@@ -764,7 +782,9 @@ function createTrustedUserManualEdit(result = {}, options = {}) {
     const previousItems = Array.isArray(previousFields.items) ? previousFields.items : [];
     const previousItem = findItemByKey(previousItems, itemKey);
     if (!previousItem || manualStateValuesEqual(previousItem[field], item[field])) return result;
-  } else if (manualStateValuesEqual(previousFields[field], fields[field])) {
+  } else if (field === 'receivableId'
+    ? !isReceivableSelectionChange(previousFields, fields)
+    : manualStateValuesEqual(previousFields[field], fields[field])) {
     return result;
   }
   if (!isAllowedManualFieldTransition(result, fields, field, itemKey)) return result;
@@ -1066,7 +1086,8 @@ function validateProductName(result, fields, issues) {
   const product = compact(fields.productName);
   if (!product) return;
   const customer = compact(fields.customerName);
-  if (PRODUCT_PRICE_LIKE.test(product) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
+  if (isQuantityOnlyProductName(product)) addIssue(issues, 'productName', `产品“${product}”看起来是数量`);
+  if ((PRODUCT_PRICE_LIKE.test(product) && !isCompoundNumericProductName(product)) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
     addIssue(issues, 'productName', `产品“${product}”看起来是价格`);
   }
   if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
@@ -1092,7 +1113,8 @@ function validateItems(result, fields, issues) {
     if (!product) {
       addIssue(issues, 'productName', `${label}缺少商品名`, 'missing');
     } else {
-      if (PRODUCT_PRICE_LIKE.test(product) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
+      if (isQuantityOnlyProductName(product)) addIssue(issues, 'productName', `${label}“${product}”看起来是数量`);
+      if ((PRODUCT_PRICE_LIKE.test(product) && !isCompoundNumericProductName(product)) || /^(?:块|元|毛|角|分|钱)/.test(product)) {
         addIssue(issues, 'productName', `${label}“${product}”看起来是价格`);
       }
       if (PRODUCT_BAD_PATTERN.test(product) && !isPackagingProductName(product)) {
@@ -1460,7 +1482,7 @@ function applyFinalParseSafety(result, options = {}) {
       .map((item) => Object.assign({}, item))
     : [];
   const needsItemKeys = rawItems.some((item) => String(item.confirmationItemKey || '').trim())
-    || Array.isArray(result.manual_item_fields)
+    || (Array.isArray(result.manual_item_fields) && result.manual_item_fields.length > 0)
     || (rawItems.length === 1 && manualFields.some((field) => MANUAL_ITEM_FIELDS.includes(field)))
     || (Array.isArray(result.field_conflicts) && result.field_conflicts.some((conflict) => (
       conflict && conflict.field === 'items' && conflict.itemKey
@@ -1595,12 +1617,24 @@ function applyFinalParseSafety(result, options = {}) {
       return !resolvedRiskIds.has(getConflictRiskDescriptor(conflict).riskId);
     });
   const keptConflictFields = uniqueStrings(fieldConflicts.map((conflict) => conflict && conflict.field));
+  // A missing-type marker can survive an earlier unknown draft. Clear only
+  // that stale marker once the current type is concrete and uncontested.
+  // Uncertain AI, mixed business and explicit type risks still need review.
+  const resolvedIntent = ['quotation', 'order', 'receivable', 'payment', 'todo', 'dunning'].includes(result.intent)
+    && !result.mixed_business
+    && (result.ai_fallback || {}).status !== 'returned_uncertain'
+    && !(result.low_confidence_fields || []).some((field) => ['intent', 'businessType'].includes(field))
+    && !(result.field_conflicts || []).some((conflict) => (
+      ['intent', 'businessType'].includes(typeof conflict === 'string' ? conflict : conflict && conflict.field)
+    ))
+    && !finalMissing.includes('intent');
   const finalLow = rawFinalLow
     .filter((field) => !conflictFields.includes(field) || keptConflictFields.includes(field))
     .filter((field) => !effectiveManualFields.includes(field))
     .filter((field) => !trustedResolvedFields.includes(field));
   const missingFields = uniqueStrings([]
     .concat(result.missing_fields || [])
+    .filter((field) => field !== 'intent' || !resolvedIntent)
     .filter((field) => !OPTIONAL_CONFIRM_FIELDS.includes(field))
     .filter((field) => !effectiveManualFields.includes(field))
     .filter((field) => !trustedResolvedFields.includes(field))

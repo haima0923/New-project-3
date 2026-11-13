@@ -8,18 +8,49 @@ const {
 } = require('./business');
 const { diffDays, endOfMonth, today } = require('./date');
 
-function includesName(customer, keyword) {
-  if (!customer || !keyword) return false;
-  return customer.name.includes(keyword) || keyword.includes(customer.name.replace(/总$/, ''));
-}
-
 function findCustomerKeyword(text, state) {
   const customers = (state.customers || []).filter((customer) => !customer.mergedInto);
-  const matched = customers.find((customer) => includesName(customer, text));
-  if (matched) return matched;
-  const nameMatch = text.match(/([\u4e00-\u9fa5]{1,4}总)/);
-  if (!nameMatch) return null;
-  return customers.find((customer) => includesName(customer, nameMatch[1]));
+  // Query prefixes identify scope only; keep the original question for dates
+  // and business matching. A missing named customer must never mean "all".
+  const scope = text.replace(/\s+/g, '').replace(
+    /^(?:(?:请问|请|帮我查(?:一下)?|帮我|麻烦你|麻烦|我想知道|我想看看|我想查(?:一下)?|查询|查一下|查(?=.{1,8}(?:总|姐|哥|老板|先生|女士))|看看|问一下|汇总一下|汇总|总计|总共|合计|一共|所有|全部|本周|这周|本月|这个月|本月底|月底前|月底|月末前|月末|今天|今日|明天|明日|最近|上次|近期|客户)(?:的)?[，,：:]*)+/,
+    ''
+  );
+  const businessStart = '(?:的|订单|单子|货|进度|上次|最近|本月|这个月|今天|明天|还欠|欠|还剩|有没有欠|收了|收到|收款|回款|报价|报多少|定金|订金|预付|尾款|待收|未收|没收|待办|提醒|$)';
+  const businessBoundary = new RegExp(`^${businessStart}`);
+  const named = customers.filter((customer) => {
+    const name = String(customer.name || '');
+    if (!name || !scope.startsWith(name)) return false;
+    const rest = scope.slice(name.length);
+    if (businessBoundary.test(rest)) return true;
+    return (state.orders || []).concat(state.quotations || [])
+      .filter((record) => record.customerId === customer.id)
+      .some((record) => getRecordProductNames(record).some((product) => rest.startsWith(product)));
+  });
+  const longestName = named.reduce((length, customer) => Math.max(length, customer.name.length), 0);
+  const matches = named.filter((customer) => customer.name.length === longestName);
+  const anotherTitle = /(?:和|与|及|、).{1,6}(?:总|姐|哥|老板|先生|女士)/.test(scope);
+  const anotherName = matches.length === 1 && customers.some((customer) => customer.id !== matches[0].id
+    && ['和', '与', '及', '、'].some((join) => scope.includes(`${join}${customer.name}`)));
+  if (matches.length > 1 || anotherTitle || anotherName) return { kind: 'ASK_NAME' };
+  if (matches.length === 1) return { kind: 'FOUND', customer: matches[0] };
+  const general = /^(?:谁|哪些|哪个|各|订单|单子|交货|要交|要收|已收|未收|没收|定金|订金|预付|尾款|报价|收款|回款|欠款|待收|待办|提醒|上次|最近|近期|月底|月末|生产中|待结算|待整理|有(?:哪些|哪个|谁|什么|啥|几|没有)|什么|要做|没做|未完成|还有|合计|一共|总计|总共|总额|总数|总金额|老板(?:今天|今日|明天|有什么|有啥|要干啥))/.test(scope);
+  if (!scope) return { kind: 'GLOBAL' };
+  if (general) {
+    const cues = scope.replace(/的/g, '').match(/[\u4e00-\u9fa5]{1,4}(?:老板|先生|女士|总|姐|哥)/g) || [];
+    const personCue = cues.some((cue) => !/(?:汇总|订单总|客户总|金额总|数量总|单价总|收款总|回款总|欠款总|待收总|定金总|尾款总)$/.test(cue)
+      && !/^(?:哪些|所有|全部|各位|各个)老板$/.test(cue));
+    const unresolvedRecipient = /给(?!谁|哪些|所有|全部|各位).+/.test(scope);
+    return { kind: personCue || unresolvedRecipient ? 'ASK_NAME' : 'GLOBAL' };
+  }
+  const titleMatch = scope.match(/^([\u4e00-\u9fa5]{1,4}?(?:老板娘|老板|先生|女士|总|姐|哥))(?!裁|监|经理|妹|们)/);
+  const plainMatch = scope.match(new RegExp(`^([\\u4e00-\\u9fa5]{2,8}?)(?=${businessStart})`));
+  if (titleMatch) {
+    return { kind: customers.some((customer) => customer.name === titleMatch[1]) ? 'ASK_NAME' : 'NOT_FOUND' };
+  }
+  if (plainMatch) return { kind: 'ASK_NAME' };
+  if (/订单|单子|交货|欠|收款|回款|报价|定金|尾款|待办|提醒/.test(scope)) return { kind: 'ASK_NAME' };
+  return { kind: 'GLOBAL' };
 }
 
 function getActiveTodos(state) {
@@ -94,7 +125,14 @@ function answerQuery(text, state) {
   const source = String(text || '').trim();
   if (!source) return { title: '还没输入问题', lines: ['可以问：谁还欠我钱？或者 王总上次报多少？'] };
   const current = today();
-  const customer = findCustomerKeyword(source, state);
+  const customerScope = findCustomerKeyword(source, state);
+  if (customerScope.kind === 'NOT_FOUND') {
+    return { title: '没找到这位客户', lines: ['请核对客户称呼，或先用“记一笔”记录这位客户的生意。'] };
+  }
+  if (customerScope.kind === 'ASK_NAME') {
+    return { title: '请确认要查哪位客户', lines: ['请用已记录的完整客户称呼，一次查询一位客户。'] };
+  }
+  const customer = customerScope.customer || null;
 
   if (/明天|明日/.test(source) && /待办|提醒|什么事|有啥事|要干啥/.test(source)) {
     const todos = decorateRecords(state, getActiveTodos(state))
@@ -128,6 +166,7 @@ function answerQuery(text, state) {
 
   if (/今天|今日|待办|什么事|有啥事|要干啥/.test(source)
     && !/交货|要交|订单|欠款|还欠|待收|收款|回款|报价|尾款|要收|哪些款/.test(source)) {
+    if (customer) return { title: '请具体问这位客户的一项生意', lines: ['可以问订单、欠款、报价或待办；暂不提供按客户的今日汇总。'] };
     const dashboard = getDashboard(state);
     return {
       title: `今天有 ${dashboard.totalThings} 件事`,
@@ -142,6 +181,7 @@ function answerQuery(text, state) {
   }
 
   if (/待整理|没整理|未整理/.test(source)) {
+    if (customer) return { title: '待整理暂不支持按客户查询', lines: ['待整理里的客户可能还没确认，请先查看全部待整理，再核对原话。'] };
     const pendingNotes = (state.pendingNotes || []).filter((item) => item.status === '待整理');
     return {
       title: pendingNotes.length ? `有 ${pendingNotes.length} 条待整理记录` : '没有待整理记录',
@@ -279,9 +319,10 @@ function answerQuery(text, state) {
   if (/没转订单|待跟进|跟进/.test(source)) {
     const quotations = decorateRecords(state, state.quotations)
       .filter((item) => item.status === '待确认')
+      .filter((item) => !customer || item.customerId === customer.id)
       .filter((item) => /没转订单/.test(source) || (item.deliveryDate ? diffDays(item.deliveryDate, current) <= 0 : diffDays(current, item.quoteDate) >= 3));
     return {
-      title: '待跟进报价',
+      title: customer ? `${customer.name} 待跟进报价` : '待跟进报价',
       lines: quotations.length
         ? quotations.slice(0, 8).map((item) => `${item.customerDisplay}：${getItemsSummary(item) || item.productName || '未填产品'}，报价 ${item.totalAmount || '-'}元，跟进 ${item.deliveryDate || '-'}`)
         : ['暂时没有到跟进时间的报价。']

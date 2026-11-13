@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 const assert = require('assert');
+const { withFixedTestClock } = require('./lib/fixed-test-clock');
 const {
   convertQuotationToOrder,
   generateReceivableFromOrder,
@@ -571,9 +572,7 @@ test('代表业务与现有business隔离保存结果等价', () => {
         { productName: '礼品盒', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个' },
         { productName: '水杯', quantity: '200', unit: '个', unitPrice: '3', priceUnit: '个' }
       ]
-    }, '王总订礼品盒100个和水杯200个，8月1日交', {
-      manual_fields: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate']
-    })],
+    }, '王总订礼品盒100个每个10元，水杯200个每个3元，8月1日交')],
     ['目录缺失时回填历史再保存', missingCatalogState, result('quotation', 'create_quotation', {
       customerName: '王总', customerId: 'cus-wang', productName: '水杯', quantity: '50', unit: '个',
       unitPrice: '3', priceUnit: '个', amount: '150'
@@ -655,6 +654,15 @@ test('代表业务与现有business隔离保存结果等价', () => {
     }
     assert.deepStrictEqual(modern.meta, normalizeDomainState(initial).meta, `${name}:meta must not change`);
     assert.deepStrictEqual(modern.dunningTemplates, normalizeDomainState(initial).dunningTemplates, `${name}:templates must not change`);
+    if (name === '多商品无顶层总额') {
+      assert.strictEqual(raw.fields.amount, undefined);
+      assert.strictEqual(raw.fields.totalAmount, undefined);
+      assert.strictEqual(modern.orders[0].totalAmount, '1600');
+      assert.strictEqual(modern.orders[0].items.length, 2);
+    }
+    if (name === '记一笔关联报价创建订单') {
+      assert.deepStrictEqual(modern.customers, initial.customers, '沿用报价的已核实客户，不额外改动客户日期');
+    }
     if (name === '目录缺失时回填历史再保存') {
       assert.deepStrictEqual(modern.productCatalog.map((item) => item.productName).sort(), ['水杯', '礼品盒']);
       assert(modern.productCatalog.every((item) => Number(item.useCount) >= 1));
@@ -715,6 +723,29 @@ test('代表业务与现有business隔离保存结果等价', () => {
       assert.strictEqual(modern.paymentRecords[0].receivableId, '');
     }
   });
+});
+
+test('多商品价格缺少原话依据时不能凭整单人工标记绕过逐商品核对', () => {
+  const raw = result('order', 'create_order', {
+    customerName: '王总', productName: '礼品盒', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个',
+    dueDate: '2026-08-01', items: [
+      { productName: '礼品盒', quantity: '100', unit: '个', unitPrice: '10', priceUnit: '个' },
+      { productName: '水杯', quantity: '200', unit: '个', unitPrice: '3', priceUnit: '个' }
+    ]
+  }, '王总订礼品盒100个和水杯200个，8月1日交', {
+    manual_fields: ['customerName', 'productName', 'quantity', 'unit', 'unitPrice', 'dueDate']
+  });
+  const initial = stateWith();
+  const before = clone(initial);
+  const prepared = prepare(raw, initial);
+  assert.strictEqual(prepared.savePlan.blocked, true);
+  assert(prepared.preflight.blockingIssues.some((issue) => issue.code === 'LOW_CONFIDENCE_FIELD' && issue.field === 'unitPrice'));
+  const store = createRecordMemoryStore(initial);
+  const receipt = commit(prepared.savePlan, store);
+  assert.notStrictEqual(receipt.status, COMMIT_STATUSES.COMMITTED);
+  assert.deepStrictEqual(store.getState(), before);
+  assert.strictEqual(raw.fields.amount, undefined);
+  assert.strictEqual(raw.fields.totalAmount, undefined);
 });
 
 test('多商品、originalText及产品目录副作用完整保留', () => {
@@ -1026,7 +1057,9 @@ test('非法plan枚举、目标ID、依赖投影和非MemoryStore均fail closed'
 test('报价已转单、订单状态变化和待收已结清使各自旧计划失效', () => {
   const wang = customer('cus-wang', '王总');
   const statesAndResults = [
-    [stateWith({ customers: [wang], quotations: [quotation('quo-1', 'cus-wang')] }), orderResult({ customerId: 'cus-wang', quotationId: 'quo-1' })],
+    [stateWith({ customers: [wang], quotations: [quotation('quo-1', 'cus-wang')] }), orderResult({
+      customerId: 'cus-wang', quotationId: 'quo-1', quotationSelectionConfirmed: true
+    })],
     [stateWith({ customers: [wang], orders: [order('ord-1', 'cus-wang')] }), result('payment', 'record_order_deposit', {
       customerName: '王总', customerId: 'cus-wang', orderId: 'ord-1', orderSelectionConfirmed: true,
       paymentAmount: '100', depositAmount: '100', paymentKind: 'deposit'
@@ -1035,6 +1068,9 @@ test('报价已转单、订单状态变化和待收已结清使各自旧计划�
       customerName: '王总', customerId: 'cus-wang', receivableId: 'rec-1', receivableSelectionConfirmed: true, paymentAmount: '100'
     }, '王总收款100元')]
   ];
+  const unconfirmed = prepare(orderResult({ customerId: 'cus-wang', quotationId: 'quo-1' }), statesAndResults[0][0]);
+  assert.strictEqual(unconfirmed.savePlan.blocked, true);
+  assert(unconfirmed.preflight.blockingIssues.some((issue) => issue.code === 'QUOTATION_SELECTION_CONFIRMATION_REQUIRED'));
   statesAndResults.forEach(([initial, raw], index) => {
     const plan = prepare(raw, initial).savePlan;
     assert.strictEqual(plan.blocked, false, JSON.stringify(plan.blockingIssues));
@@ -1057,7 +1093,7 @@ async function main() {
   let passed = 0;
   for (const item of tests) {
     try {
-      await item.fn();
+      await withFixedTestClock(FIXED_INSTANT, 'Asia/Shanghai', item.fn);
       passed += 1;
       console.log(`PASS ${item.name}`);
     } catch (error) {

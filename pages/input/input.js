@@ -11,7 +11,7 @@ const {
 } = require('../../utils/ai-parser');
 const { prewarmAiAuth } = require('../../utils/api-client');
 const { buildParseEvidence } = require('../../utils/parse-evidence');
-const { addDays, diffDays, parseChineseDateDetail, today } = require('../../utils/date');
+const { addDays, diffDays, isValidCalendarDate, parseChineseDateDetail, today } = require('../../utils/date');
 const { normalizeNumberText, numberPattern, parseChineseNumber } = require('../../utils/chinese-number');
 const { describeFields: describeVisibleFields, getFieldLabel, getVisibleFields } = require('../../utils/display');
 const { requestOrderFilterReset } = require('../../utils/navigation-state');
@@ -45,7 +45,7 @@ const {
   stopVoiceRecognition,
   validateVoiceCompletionEvidence
 } = require('../../utils/voice-recognition');
-const { normalizeUnit, unitsMatch } = require('../../utils/units');
+const { CANONICAL_UNITS, UNIT_ALIASES, normalizeUnit, unitsMatch } = require('../../utils/units');
 const {
   analyzeClipboardText,
   buildNoBusinessPasteResult,
@@ -70,6 +70,9 @@ const CONVERSATION_PHASE_CONFIRMING = 'CONFIRMING';
 const CONVERSATION_PHASE_SAFE_BLOCKED = 'SAFE_BLOCKED';
 const CONVERSATION_PHASE_SAVING = 'SAVING';
 const rawInputCaptureRegistry = new WeakMap();
+const automaticVoiceParseContexts = new WeakSet();
+const voiceAuthContinuations = new WeakMap();
+const VOICE_AUTH_WAIT_LIMIT_MS = 5000;
 const FOLLOWUP_DAY_VALUES = Array.from({ length: 30 }, (_, index) => index + 1);
 const FOLLOWUP_DAY_RANGE = FOLLOWUP_DAY_VALUES.map((days) => `${days} 天`);
 const intentRange = intentOptions.map((item) => INTENT_LABELS[item]);
@@ -1152,7 +1155,10 @@ function buildConfirmationSurfaceProjection({
     else placeFieldRisk(target.field, 'ACTIVE_QUESTION');
   }
 
-  const blockingIssues = domainPreflight && Array.isArray(domainPreflight.blockingIssues)
+  const noRecord = Boolean(domainPreflight && domainPreflight.noRecordPersistenceForbidden);
+  // NO_RECORD is a neutral outcome, not a request to fill business fields.
+  // Its domain blockers continue to forbid every persistence action.
+  const blockingIssues = !noRecord && domainPreflight && Array.isArray(domainPreflight.blockingIssues)
     ? domainPreflight.blockingIssues
     : [];
   blockingIssues.forEach((issue) => {
@@ -1201,7 +1207,7 @@ function buildConfirmationSurfaceProjection({
     riskByItem,
     safeBlockedMessage: safeBlocked ? '这笔信息暂时无法确认，请重新输入原话' : '',
     showSurfaceGlobalRisk: unplacedBlockingLines.length > 0 && !activeQuestion,
-    surfaceConfirmTitle: surfaceConfirmTitles[intent] || surfaceConfirmTitles.unknown,
+    surfaceConfirmTitle: noRecord ? '这条无需记录' : (surfaceConfirmTitles[intent] || surfaceConfirmTitles.unknown),
     surfaceGlobalRiskText: unplacedBlockingLines[0] || '',
     surfaceOriginalText: originalText
   };
@@ -2124,7 +2130,21 @@ function normalizeAssistantQuestionAnswer(question = {}, rawAnswer = '') {
   const fieldPath = String(target.fieldPath || '').trim();
   const itemKey = String(target.itemKey || '').trim();
 
-  if (type === 'TEXT') return { accepted: true, value: answer };
+  if (type === 'TEXT') {
+    if (field === 'priceUnit') {
+      if (!itemKey || !/^items\[\d+\]\.priceUnit$/.test(fieldPath)) {
+        return { accepted: false, code: 'ANSWER_TYPE_TARGET_MISMATCH' };
+      }
+      // Do not use the parser's magnitude normalization here: “万个” is not
+      // a safe alias for “个” in a user-confirmed pricing unit.
+      if (!CANONICAL_UNITS.includes(answer)
+        && !Object.prototype.hasOwnProperty.call(UNIT_ALIASES, answer)) {
+        return { accepted: false, code: 'ANSWER_UNIT_INVALID' };
+      }
+      return { accepted: true, value: normalizeUnit(answer) };
+    }
+    return { accepted: true, value: answer };
+  }
   if (type === 'DATE') {
     if (field !== 'dueDate' || fieldPath !== 'dueDate' || itemKey) {
       return { accepted: false, code: 'ANSWER_TYPE_TARGET_MISMATCH' };
@@ -2139,11 +2159,23 @@ function normalizeAssistantQuestionAnswer(question = {}, rawAnswer = '') {
       return { accepted: false, code: 'ANSWER_DATE_CONTEXT_INVALID' };
     }
     const detail = parseChineseDateDetail(answer, businessDate);
+    const canonicalDate = String(detail.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const matchedDate = String(detail.matchedText || '').trim();
+    const dateIndex = matchedDate ? answer.indexOf(matchedDate) : -1;
+    // 只接受完整日期或明确的日期角色句式；否定、左右、备选日期及其他修改不能被丢弃。
+    const dateOnlyAnswer = dateIndex >= 0
+      && /^(?:交期是|交期为|定在|安排在)?$/.test(answer.slice(0, dateIndex).trim())
+      && /^(?:交|交货|交付|发货)?[。.]?$/.test(answer.slice(dateIndex + matchedDate.length).trim());
     if (!detail.date
+      || !canonicalDate
+      || !isValidCalendarDate(Number(canonicalDate[1]), Number(canonicalDate[2]), Number(canonicalDate[3]))
       || detail.ambiguous
       || detail.invalid
-      || String(detail.matchedText || '').trim() !== answer) {
-      return { accepted: false, code: 'ANSWER_DATE_INVALID' };
+      || !dateOnlyAnswer) {
+      const message = detail.precision === 'day_without_month'
+        ? '请补充月份，如11月20号'
+        : (detail.precision === 'week_only' ? '请补到具体哪一天，如下周五' : '');
+      return { accepted: false, code: 'ANSWER_DATE_INVALID', message };
     }
     return { accepted: true, value: detail.date };
   }
@@ -2860,6 +2892,7 @@ function nextClientRuntimeId(page, prefix) {
 }
 
 function invalidateRawInputCapture(page, reasonCode = 'RAW_INPUT_CAPTURE_INVALIDATED') {
+  cancelPendingVoiceAuthContinuation(page);
   const active = rawInputCaptureRegistry.get(page) || null;
   rawInputCaptureRegistry.delete(page);
   page.rawInputCaptureRevision = Number(page.rawInputCaptureRevision || 0) + 1;
@@ -2924,8 +2957,121 @@ function getOriginalTextFingerprint(text) {
 }
 
 function invalidateActiveParseIdentity(page) {
+  const continuation = voiceAuthContinuations.get(page);
+  if (continuation) {
+    voiceAuthContinuations.delete(page);
+    continuation.cancel();
+  }
   page.activeParseRequestToken = null;
   page.activeParseIdentity = null;
+}
+
+function cancelPendingVoiceAuthContinuation(page) {
+  if (!voiceAuthContinuations.has(page)) return false;
+  invalidateActiveParseIdentity(page);
+  clearParseProgress(page);
+  const text = String(page.data.text || '');
+  const source = page.data.source || 'voice';
+  setConversationData(page, Object.assign({}, getEmptyConfirmationData(), {
+    text,
+    source,
+    sourceLabel: INPUT_SOURCE_LABELS[source],
+    parseAssistText: '原话已保留，请重新生成确认卡。',
+    parseButtonText: '生成确认卡',
+    parsing: false,
+    showParseProgress: false
+  }, getSourceState(source)));
+  return true;
+}
+
+function isVoiceAuthContinuationCurrent(page, identity, payload) {
+  if (page.activeParseIdentity !== identity
+    || page.activeParseRequestToken !== identity.requestId
+    || page.data.source !== 'voice'
+    || today() !== identity.businessDate
+    || !isParseIdentityCurrent(page, identity)) return false;
+  const currentEvidence = page.voiceCompletionEvidence;
+  const requestedEvidence = payload.voiceCompletionEvidence;
+  return Boolean(currentEvidence && requestedEvidence)
+    && currentEvidence.sessionId === requestedEvidence.sessionId
+    && currentEvidence.transcriptFingerprint === requestedEvidence.transcriptFingerprint
+    && validateVoiceCompletionEvidence(currentEvidence, payload.text, { inputChannel: 'VOICE_TRANSCRIPT' }).valid
+    && validateVoiceCompletionEvidence(requestedEvidence, payload.text, { inputChannel: 'VOICE_TRANSCRIPT' }).valid;
+}
+
+function createVoiceAuthContinuation(page, preparation) {
+  let waitSettled = false;
+  let timer = null;
+  let resolveWait;
+  let resolveCancelled;
+  const wait = new Promise((resolve) => { resolveWait = resolve; });
+  const cancelled = new Promise((resolve) => { resolveCancelled = resolve; });
+  const finishWait = (status) => {
+    if (waitSettled) return;
+    waitSettled = true;
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    resolveWait(status);
+  };
+  const continuation = {
+    wait,
+    cancelled,
+    cancel() {
+      finishWait({ ready: false, cancelled: true });
+      resolveCancelled(null);
+    }
+  };
+  voiceAuthContinuations.set(page, continuation);
+  timer = setTimeout(() => finishWait({ ready: false }), VOICE_AUTH_WAIT_LIMIT_MS);
+  Promise.resolve(preparation).then(
+    (status) => finishWait({ ready: Boolean(status && status.ready === true) }),
+    () => finishWait({ ready: false })
+  );
+  return continuation;
+}
+
+async function continueAutomaticVoiceAfterAuth(page, result, identity, payload, sourceContext, preparation) {
+  if (!automaticVoiceParseContexts.has(sourceContext)
+    || payload.source !== 'voice'
+    || identity.requestedRoute !== 'AI_STANDARD'
+    || !result || !result.ai_fallback
+    || result.ai_fallback.code !== 'AUTH_SESSION_NOT_READY'
+    || !preparation) return result;
+  if (!isVoiceAuthContinuationCurrent(page, identity, payload)) return result;
+  clearParseProgress(page);
+  setConversationData(page, {
+    parsing: true,
+    showParseProgress: true,
+    parseProgressTitle: '正在准备连接',
+    parseProgressDetail: '原话已保留，连接准备好后继续整理',
+    parseAssistText: '正在准备连接，请稍等。'
+  });
+  const continuation = createVoiceAuthContinuation(page, preparation);
+  try {
+    const status = await continuation.wait;
+    if (status.cancelled) return null;
+    if (!isVoiceAuthContinuationCurrent(page, identity, payload)) {
+      if (page.activeParseIdentity === identity) {
+        cancelPendingVoiceAuthContinuation(page);
+        page.confirmationSessionId = '';
+        page.confirmationBusinessDate = '';
+      }
+      return null;
+    }
+    if (!status.ready) return result;
+    startParseProgress(page, 'voice');
+    setConversationData(page, {
+      parseProgressTitle: '正在整理这条记录',
+      parseProgressDetail: '连接已准备好，正在核对原话',
+      parseAssistText: '正在识别，请稍等。'
+    });
+    // Keep the same tracked operation. Re-enter the public parser once so it
+    // independently revalidates the original voice evidence and natural route.
+    const retryPayload = Object.assign({}, payload, { businessDate: identity.businessDate });
+    return await Promise.race([parseHybridInput(retryPayload), continuation.cancelled]);
+  } finally {
+    if (voiceAuthContinuations.get(page) === continuation) voiceAuthContinuations.delete(page);
+  }
 }
 
 function advanceDraftRevision(page, options = {}) {
@@ -2989,6 +3135,19 @@ function isParseIdentityCurrent(page, identity) {
     && current.draftRevision === String(identity.draftRevision)
     && current.originalTextFingerprint === identity.originalTextFingerprint
     && current.requestedRoute === identity.requestedRoute;
+}
+
+function canPresentParseResult(page, identity, source) {
+  if (page.activeParseIdentity !== identity) return false;
+  // Same-text manual input changes the source without changing its fingerprint.
+  // It must revoke a voice result even before the auth wait has been installed.
+  if (source === 'voice' && page.data.source !== 'voice') {
+    invalidateActiveParseIdentity(page);
+    clearParseProgress(page);
+    setConversationData(page, { parsing: false, showParseProgress: false, parseButtonText: '生成确认卡' });
+    return false;
+  }
+  return isParseIdentityCurrent(page, identity);
 }
 
 function attachCurrentDraftContext(page, result) {
@@ -3308,7 +3467,7 @@ Page({
     refreshTabBarSelected(this);
     requestOrderFilterReset();
     // 页面一出现就准备登录；普通快速核对不会在 8 秒内临时等待登录。
-    prewarmAiAuth();
+    this.voiceEntryAuthPreparation = prewarmAiAuth();
     const pendingId = wx.getStorageSync('pending_to_edit');
     if (pendingId) {
       if (hasPendingRecordEntryHandoff()) consumeRecordEntryHandoff();
@@ -3379,14 +3538,19 @@ Page({
           showPendingButton: false,
           showParseProgress: false
         }, getSourceState(source)), () => {
-          this.runParse('standard', {
+          const sourceContext = {
             entrySurface: source === 'voice' ? 'HOME_QUICK' : 'FULL_PAGE',
             inputChannel,
             originSurface,
             voiceCompletionEvidence: source === 'voice'
               ? handoffVoiceCompletionEvidence
               : null
-          });
+          };
+          if (source === 'voice'
+            && ['DASHBOARD_HERO', 'CUSTOM_TAB_CENTER'].includes(originSurface)) {
+            automaticVoiceParseContexts.add(sourceContext);
+          }
+          this.runParse('standard', sourceContext);
         });
         return;
       }
@@ -3436,6 +3600,10 @@ Page({
       showParseProgress: false,
       parseButtonText: '生成确认卡'
     });
+  },
+
+  cancelVoiceAuthContinuation() {
+    return cancelPendingVoiceAuthContinuation(this);
   },
 
   onUnload() {
@@ -3743,7 +3911,8 @@ Page({
   },
 
   cancelVoice() {
-    if (!this.data.voiceRecording) return;
+    const continuationCancelled = cancelPendingVoiceAuthContinuation(this);
+    if (!this.data.voiceRecording && !continuationCancelled) return;
     invalidateRawInputCapture(this, 'FULL_PAGE_VOICE_CANCELLED');
     this.voiceCancelled = true;
     if (this.voiceCompletionEvidence) {
@@ -3911,9 +4080,13 @@ Page({
       payload.extractedText = pasteAnalysis.extractedText;
       payload.pasteMeta = getPasteMeta(pasteAnalysis);
     }
+    const authPreparation = this.voiceEntryAuthPreparation;
     const operation = parseHybridInput(payload)
+      .then((parseResult) => continueAutomaticVoiceAfterAuth(
+        this, parseResult, identity, payload, sourceContext, authPreparation
+      ))
       .then((parseResult) => {
-        if (!isParseIdentityCurrent(this, identity)) return;
+        if (!parseResult || !canPresentParseResult(this, identity, source)) return;
         invalidateActiveParseIdentity(this);
         clearParseProgress(this);
         if (sourceOriginalText) {
@@ -3952,7 +4125,7 @@ Page({
         }));
       })
       .catch(() => {
-        if (!isParseIdentityCurrent(this, identity)) return;
+        if (!canPresentParseResult(this, identity, source)) return;
         invalidateActiveParseIdentity(this);
         clearParseProgress(this);
         setConversationData(this, {
@@ -4155,14 +4328,18 @@ Page({
         value: this.data.assistantAnswerValue
       }
     });
-    if (result && typeof result.then === 'function') {
-      return result.then((settled) => {
-        if (settled && settled.accepted) setConversationData(this, { assistantAnswerValue: '' });
-        return settled;
-      });
-    }
-    if (result && result.accepted) this.setData({ assistantAnswerValue: '' });
-    return result;
+    const presentAnswerResult = (settled) => {
+      if (settled && settled.accepted) this.setData({ assistantAnswerValue: '' });
+      else if (settled && ['ANSWER_DATE_INVALID', 'ANSWER_UNIT_INVALID', 'ANSWER_UNIT_MISMATCH'].includes(settled.code)) {
+        wx.showToast({ title: settled.message || (settled.code === 'ANSWER_DATE_INVALID'
+          ? '请填具体日期或几天后，如5天之后'
+          : '请填计价单位，如个、把'), icon: 'none' });
+      }
+      return settled;
+    };
+    return result && typeof result.then === 'function'
+      ? result.then(presentAnswerResult)
+      : presentAnswerResult(result);
   },
 
   answerAssistantQuestion(event) {
@@ -4196,6 +4373,16 @@ Page({
     const answerValidation = normalizeAssistantQuestionAnswer(question, rawAnswer);
     if (!answerValidation.accepted) return answerValidation;
 
+    if (expectedTarget.field === 'priceUnit' && expectedTarget.itemKey) {
+      const item = ((this.data.fields || {}).items || []).find((entry) => (
+        String(entry.confirmationItemKey || '') === String(expectedTarget.itemKey)
+      ));
+      if (!item || !unitsMatch(item.unit, answerValidation.value)) {
+        return { accepted: false, code: 'ANSWER_UNIT_MISMATCH',
+          message: `数量按“${item && item.unit || '原单位'}”，请确认每单位单价` };
+      }
+    }
+
     let fields = Object.assign({}, this.data.fields || {});
     const baseResult = this.data.parseResult;
     const beforeProofState = evaluateUserResolvedAiState(baseResult);
@@ -4210,7 +4397,21 @@ Page({
       if (itemIndex < 0 || !MANUAL_ITEM_FIELDS.includes(field)) {
         return { accepted: false, code: 'QUESTION_TARGET_INVALID' };
       }
-      items[itemIndex] = Object.assign({}, items[itemIndex], { [field]: answer });
+      const nextItem = Object.assign({}, items[itemIndex], { [field]: answer });
+      const hasManualItemTotal = normalizeManualItemFields(baseResult.manual_item_fields, items)
+        .some((entry) => entry.itemKey === itemKey && entry.field === 'totalAmount');
+      // Show the same deterministic amount before saving as a direct card edit.
+      // Wait for the counting unit; never infer a conversion or replace a user's item total.
+      if (['quantity', 'unit', 'unitPrice', 'priceUnit'].includes(field)
+        && !hasManualItemTotal
+        && hasFieldValue(nextItem, 'unit')
+        && hasMoneyValue(nextItem.quantity)
+        && hasMoneyValue(nextItem.unitPrice)) {
+        nextItem.totalAmount = unitsMatch(nextItem.unit, nextItem.priceUnit)
+          ? formatMoneyValue(Number(nextItem.quantity) * Number(nextItem.unitPrice))
+          : '';
+      }
+      items[itemIndex] = nextItem;
       fields = syncFirstItemToLegacyFields(Object.assign({}, fields, { items }), {
         preserveConfirmedAmount: Array.isArray(baseResult.manual_fields)
           && baseResult.manual_fields.includes('amount')
@@ -4721,23 +4922,33 @@ Page({
     if (!this.data.parseResult) return;
     const selected = this.data.receivableOptions[Number(event.detail.value)];
     if (!selected) return;
+    const state = getState();
+    const customerId = String((this.data.fields || {}).customerId || '');
+    const customer = (state.customers || []).find((item) => item.id === customerId && !item.mergedInto);
+    const live = (state.receivables || []).find((item) => item.id === selected.id);
+    if (!customer || (selected.id !== UNLINKED_RECEIVABLE_OPTION_ID
+      && (!live || live.customerId !== customerId || !activeReceivableStatuses.includes(live.status)))) {
+      this.setData(buildConfirmationState(state, this.data.parseResult, this.data.intent, this.data.fields));
+      wx.showToast({ title: '这笔待收款已不可选，请重新确认', icon: 'none' });
+      return false;
+    }
     const fields = Object.assign({}, this.data.fields, {
       receivableId: selected.id
     });
     if (selected.id === UNLINKED_RECEIVABLE_OPTION_ID) {
+      delete fields.receivableId;
       delete fields.receivableSelectionConfirmed;
+      fields.allowUnlinkedPayment = true;
+      fields.unlinkedPaymentCustomerId = customerId;
     } else {
       delete fields.allowUnlinkedPayment;
       delete fields.unlinkedPaymentCustomerId;
       fields.receivableSelectionConfirmed = true;
     }
-    let baseResult = Object.assign({}, this.data.parseResult, {
-      missing_fields: uniqueFields(this.data.parseResult.missing_fields || [])
-        .filter((item) => item !== 'receivableId'),
-      low_confidence_fields: this.data.parseResult.low_confidence_fields || []
-    });
+    // A genuine picker action resolves only this relationship risk. Keep the
+    // original risk set so the signed edit cannot clear unrelated AI doubts.
+    let baseResult = createTrustedUserManualEdit(this.data.parseResult, { field: 'receivableId', fields });
     baseResult = rebuildAfterCandidateFactChange(this, baseResult);
-    const state = getState();
     this.setData(buildConfirmationState(state, baseResult, this.data.intent, fields));
   },
 

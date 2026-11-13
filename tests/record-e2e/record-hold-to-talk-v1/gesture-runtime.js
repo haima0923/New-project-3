@@ -50,6 +50,9 @@ function createVirtualScheduler() {
     advanceBy,
     now() { return now; },
     pendingCount() { return tasks.size; },
+    pendingTasks() {
+      return Array.from(tasks.values()).map((task) => ({ id: task.handle.id, delay: task.dueAt - now }));
+    },
     pendingDelays() {
       return Array.from(tasks.values()).map((task) => task.dueAt - now).sort((a, b) => a - b);
     },

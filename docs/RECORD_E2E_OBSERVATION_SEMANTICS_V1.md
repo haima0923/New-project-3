@@ -106,6 +106,12 @@ source
 缺客户、缺字段或低置信的订单仍可提案为 `order/create_order`。最终进入待整理不会把
 proposal 或 raw business type 倒灌为 `pending`。
 
+`proposal.operationSource` 必须按实际取值路径记录：草稿已有有效 `operation` 使用
+`DRAFT_OPERATION`；否则依次检查 `suggested_operation`，再回退到领域的 effective operation。
+不能因为该业务同时经过领域检查，就把已明确的草稿来源写成领域回退来源。
+2026-11-10 逐题核实并修订了 9 条仅来源标记不符的旧期望，业务断言未变，
+详见 [核对依据和完整结果](RECORD_COMMON_PHRASING_FIX_20261110.md)。
+
 ### 2.4 `outcome`
 
 `outcome` 只从实际 Commit、Receipt、State Diff 和保存决策产生：

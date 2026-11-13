@@ -253,7 +253,7 @@ function externalAsrSourceAudit() {
   productionFiles.push('app.js');
   const offenders = [];
   productionFiles.forEach((file) => {
-    if (file === 'utils/transcribe.js') return;
+    if (file.replace(/\\/g, '/') === 'utils/transcribe.js') return;
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     if (/transcribeVoice|require\([^)]*transcribe|\/api\/ai\/transcribe|wx\.uploadFile/.test(source)) {
       offenders.push(file);

@@ -3,6 +3,7 @@ const { parseInput } = require('./parser');
 const { getApiBaseUrl, requestJson } = require('./api-client');
 const { normalizeBusinessText } = require('./text-normalize');
 const { numberPattern, parseChineseNumber } = require('./chinese-number');
+const { isCompoundNumericProductName } = require('./product-name-rules');
 const {
   applyFinalParseSafety,
   applyLocalParseSafety,
@@ -354,8 +355,26 @@ function shouldApplyClientAutoDeepFactGate(localResult = {}) {
 
 function applyClientFactGateRisks(payload = {}, localResult = {}) {
   if (!shouldApplyClientAutoDeepFactGate(localResult)) return localResult;
-  const audit = evaluateClientAutoDeepFactGateForRoute(payload, localResult);
+  let audit = evaluateClientAutoDeepFactGateForRoute(payload, localResult);
   if (audit.complete) return localResult;
+  // Bind a source-fact question and its risk to the same stable item before
+  // the confirmation page assigns identities. Never invent extra items here.
+  const fields = localResult.fields || {};
+  if (Array.isArray(fields.items) && fields.items.length) {
+    const usedKeys = new Set();
+    const items = fields.items.filter(Boolean).map((item, index) => ensureConfirmationItemKey(
+      Object.assign({}, item), 'local', index, usedKeys
+    ));
+    localResult = Object.assign({}, localResult, {
+      fields: Object.assign({}, fields, { items })
+    });
+    audit = Object.assign({}, audit, {
+      missingTargets: audit.missingTargets.map((target) => Object.assign({}, target, {
+        item: items[target.itemIndex],
+        itemKey: items[target.itemIndex].confirmationItemKey
+      }))
+    });
+  }
   const existing = toArray(localResult.field_conflicts || []).slice();
   const conflicts = audit.missingTargets.reduce((output, target) => {
     const alreadyExists = existing.concat(output).some((conflict) => (
@@ -430,6 +449,21 @@ function getTrustedQuestionCandidate(text, localResult = {}) {
     safety.low_confidence_fields || []
   ));
   const invalid = uniqueStrings((((safety.field_validations || {}).invalid_fields) || []));
+  if (['order', 'quotation'].includes(localResult.intent)
+    && !String(fields.customerName || '').trim()
+    && missing.includes('customerName')
+    && !DEEP_AI_PATTERN.test(normalizeBusinessText(text))
+    && !fields.depositAmount && !fields.paymentAmount
+    && !localResult.mixed_business
+    && !localResult.requires_existing_record
+    && !fields.customerId && !fields.orderId && !fields.quotationId && !fields.receivableId) {
+    return {
+      answerType: 'text',
+      prompt: localResult.intent === 'order' ? '这张订单是哪位客户的？' : '这次是给哪位客户报价？',
+      riskIds: getRouteRiskIds(localResult, 'customerName'),
+      target: { field: 'customerName', fieldPath: 'customerName', itemIndex: -1 }
+    };
+  }
   const currentProductName = String((items[0] && items[0].productName) || fields.productName || '').trim();
   const productLooksLikeDeliveryPhrase = /(?:周|星期)[一二三四五六日天].*交|今天|明天|后天|月底|月末/.test(currentProductName);
   const productRisk = missing.includes('productName')
@@ -474,6 +508,37 @@ function getTrustedQuestionCandidate(text, localResult = {}) {
       prompt: '这张订单什么时候交货？',
       riskIds: getRouteRiskIds(localResult, 'dueDate'),
       target: { field: 'dueDate', fieldPath: 'dueDate', itemIndex: -1 }
+    };
+  }
+  // A single item's mismatched counting/pricing unit is a concrete user
+  // question. Keep other deep-review risks on their existing path; never
+  // assume a conversion between units or send a DATE answer to amount review.
+  const unitItem = items.length === 1 ? items[0] : null;
+  const unitConflicts = toArray(localResult.field_conflicts || []);
+  if (['order', 'quotation'].includes(localResult.intent)
+    && unitItem && unitItem.unit && unitItem.priceUnit
+    && !unitsMatch(unitItem.unit, unitItem.priceUnit)
+    && Number.isFinite(Number(unitItem.quantity)) && Number(unitItem.quantity) > 0
+    && Number.isFinite(Number(unitItem.unitPrice)) && Number(unitItem.unitPrice) > 0
+    && !String(unitItem.totalAmount || '').trim()
+    && unitConflicts.length > 0
+    && unitConflicts.every((conflict) => (conflict && conflict.field || conflict) === 'priceUnit')
+    && low.every((field) => field === 'priceUnit')
+    && invalid.every((field) => field === 'priceUnit')
+    && missing.every((field) => ['priceUnit', 'amount'].includes(field))
+    && !localResult.mixed_business && !localResult.requires_existing_record
+    && (localResult.context_policy || 'none') === 'none'
+    && toArray(localResult.raw_messages || []).length <= 1
+    && !fields.depositAmount && !fields.paymentAmount && !fields.paymentKind
+    && !fields.orderId && !fields.quotationId && !fields.receivableId
+    && !/定金|订金|预付|尾款|欠款|还款|收款|到账|转账|打款/.test(text)
+    && !/(?:不要|不用|不必|别|先不|先别|暂不)(?:给我)?(?:记录|记|录)/.test(text)
+    && !DEEP_AI_PATTERN.test(normalizeBusinessText(text))) {
+    return {
+      answerType: 'text',
+      prompt: `${unitItem.productName || '商品'}数量按“${unitItem.unit}”，单价按“${unitItem.priceUnit}”。请确认计价单位（如“${unitItem.unit}”）。`,
+      riskIds: getRouteRiskIds(localResult, 'priceUnit', 0),
+      target: { field: 'priceUnit', fieldPath: 'items[0].priceUnit', itemIndex: 0 }
     };
   }
   return null;
@@ -3150,7 +3215,7 @@ function isPlausibleLocalItemIdentity(value) {
   if (/^(?:到|交|发|要|做|订|买|拿|好|好的|可以|没问题)$/.test(productName)) return false;
   if (new RegExp(
     `^(?:${numberPattern()})\\s*(?:元|块|块钱|毛|角|分|钱|${SOURCE_EVIDENCE_UNIT_PATTERN})`
-  ).test(productName)) return false;
+  ).test(productName) && !isCompoundNumericProductName(productName)) return false;
   return !/(?:元|块|块钱|毛|角|分|钱).*(?:周|星期|礼拜|交|发|到)$/.test(productName);
 }
 

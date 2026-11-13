@@ -1,5 +1,6 @@
 const { getState } = require('../utils/storage');
 const { today } = require('../utils/date');
+const { prewarmAiAuth } = require('../utils/api-client');
 const {
   beginHold,
   cancelHold,
@@ -71,6 +72,13 @@ function ensureCenterVoiceOwner(component) {
     surface: 'CUSTOM_TAB_CENTER',
     project: (state) => projectCenterVoiceState(component, state),
     message: (message) => component.setData({ centerVoiceMessage: String(message || '') }),
+    startRequested: () => {
+      const page = component.getCurrentPage();
+      if (page && typeof page.cancelVoiceAuthContinuation === 'function') {
+        page.cancelVoiceAuthContinuation();
+      }
+      prewarmAiAuth();
+    },
     audioReady: () => component.setData({ centerVoiceMessage: '录音已完成' }),
     transcript: () => component.setData({ centerVoiceMessage: '正在打开记一笔' })
   });

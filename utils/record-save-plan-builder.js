@@ -1,4 +1,3 @@
-const { addDays } = require('./date');
 const { normalizeUnit, unitsMatch } = require('./units');
 const { maskPhone, simpleFingerprint } = require('./customer-identity');
 const { getDraftTotalAmount } = require('./business');
@@ -314,7 +313,7 @@ function createPayment(state, data, runtime, nextTempId) {
   return prepend(state, 'paymentRecords', {
     id: nextTempId('paymentRecords'), userId: 'local-user', customerId: data.customerId,
     orderId: data.orderId || '', receivableId: data.receivableId || '', kind: data.kind || 'receivable_payment',
-    amount: String(data.amount || ''), paidAt: runtime.businessDate, remark: data.remark || '',
+    amount: String(data.amount || ''), paidAt: String(data.paidAt || ''), remark: data.remark || '',
     originalText: data.originalText || '', createdAt: runtime.nowInstant
   });
 }
@@ -348,6 +347,7 @@ function applyPaymentToReceivable(state, receivable, amount, options, runtime, n
     receivableId: receivable.id,
     amount: classification.normalizedPaymentAmount,
     kind: options.paymentPurpose === 'ORDER_DEPOSIT' ? 'deposit' : classification.kind,
+    paidAt: options.paidAt,
     originalText: options.originalText,
     remark: options.remark
   }, runtime, nextTempId);
@@ -359,6 +359,10 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
   const originalText = getOriginalText(finalResult);
   const operation = finalResult.operation || '';
   const intent = finalResult.intent || 'unknown';
+  // Only ordinary payments use the legacy dueDate alias for the receipt date.
+  // Deposit/order/receivable dueDate means delivery or expected collection.
+  const paymentDate = String(fields.paymentDate
+    || (operation === 'record_payment' ? fields.dueDate : '') || '').trim();
 
   if (operation === 'update_quotation') {
     ensureCatalog(state, sourceState, runtime, nextTempId);
@@ -429,7 +433,7 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
       unitPrice: legacy.unitPrice, priceUnit: legacy.priceUnit, totalAmount: getDraftTotalAmount(fields, items),
       items, originalText, paymentMethod: fields.paymentMethod || '', followupDays: fields.followupDays || '',
       deliveryDate: fields.dueDate || '', quoteDate: fields.quoteDate || runtime.businessDate,
-      validUntil: addDays(runtime.businessDate, 7), status: '待确认', remark: fields.remark || '',
+      validUntil: fields.validUntil || '', status: '待确认', remark: fields.remark || '',
       createdAt: runtime.nowInstant, updatedAt: runtime.nowInstant
     };
     prepend(state, 'quotations', quotation);
@@ -440,7 +444,9 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
 
   if (intent === 'order') {
     ensureCatalog(state, sourceState, runtime, nextTempId);
-    const customer = resolveCustomerForWrite(state, fields, preflight, runtime, nextTempId, { required: true });
+    const customer = resolveCustomerForWrite(state, fields, preflight, runtime, nextTempId, {
+      required: true, touch: !fields.quotationId
+    });
     const items = getItemsFromFields(fields);
     const legacy = getLegacyFields(items, fields);
     const order = {
@@ -468,7 +474,7 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
     const depositAmount = toMoney(fields.depositAmount || fields.paymentAmount);
     if (depositAmount > 0) {
       createPayment(state, {
-        customerId: customer.id, orderId: order.id, amount: depositAmount, kind: 'deposit',
+        customerId: customer.id, orderId: order.id, amount: depositAmount, kind: 'deposit', paidAt: paymentDate,
         originalText, remark: fields.remark || finalResult.original_text || '订单定金'
       }, runtime, nextTempId);
       order.paymentMethod = order.paymentMethod || '预付';
@@ -490,7 +496,7 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
     const amount = toMoney(fields.paymentAmount || fields.depositAmount || fields.amount);
     if (!order) {
       createPayment(state, {
-        customerId: customer.id, amount, kind: 'unlinked_deposit', originalText,
+        customerId: customer.id, amount, kind: 'unlinked_deposit', originalText, paidAt: paymentDate,
         remark: fields.remark || finalResult.original_text || '未关联订单定金'
       }, runtime, nextTempId);
       appendParseLog(state, finalResult, 'save_unlinked_order_deposit', runtime, nextTempId);
@@ -500,11 +506,12 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
     if (linkedReceivable) {
       applyPaymentToReceivable(state, linkedReceivable, amount, {
         paymentPurpose: 'ORDER_DEPOSIT',
+        paidAt: paymentDate,
         kind: 'deposit', originalText, remark: fields.remark || finalResult.original_text || '订单定金'
       }, runtime, nextTempId);
     } else {
       createPayment(state, {
-        customerId: order.customerId, orderId: order.id, amount, kind: 'deposit', originalText,
+        customerId: order.customerId, orderId: order.id, amount, kind: 'deposit', originalText, paidAt: paymentDate,
         remark: fields.remark || finalResult.original_text || '订单定金'
       }, runtime, nextTempId);
     }
@@ -537,6 +544,7 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
       createPayment(state, {
         customerId: customer.id, orderId: fields.orderId || '', receivableId: receivable.id,
         amount: paymentAmount,
+        paidAt: paymentDate,
         kind: getReceivableSource(finalResult) === 'legacy' ? 'legacy_payment' : (fields.orderId ? 'final_payment' : 'receivable_payment'),
         originalText, remark: fields.remark || '由记一笔新建应收时记录'
       }, runtime, nextTempId);
@@ -555,14 +563,14 @@ function simulateFormalSave(sourceState, finalResult, preflight, runtime, nextTe
     const amount = toMoney(fields.paymentAmount || fields.amount);
     if (receivable) {
       applyPaymentToReceivable(state, receivable, amount, {
-        originalText, remark: fields.remark || ''
+        originalText, paidAt: paymentDate, remark: fields.remark || ''
       }, runtime, nextTempId);
       appendParseLog(state, finalResult, 'save_payment', runtime, nextTempId);
       return state;
     }
     const customer = resolveCustomerForWrite(state, fields, preflight, runtime, nextTempId, { required: true });
     createPayment(state, {
-      customerId: customer.id, amount, kind: 'unlinked_payment', originalText,
+      customerId: customer.id, amount, kind: 'unlinked_payment', originalText, paidAt: paymentDate,
       remark: fields.remark || '未关联收款'
     }, runtime, nextTempId);
     appendParseLog(state, finalResult, 'save_unlinked_payment', runtime, nextTempId);

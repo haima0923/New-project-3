@@ -3,6 +3,10 @@
 > 状态：**Release A RC1 基础设施候选已接入生产 Legacy 写入链；production 固定
 > `LEGACY_ONLY`；`SHARED_COMMIT` 禁用；没有真实用户 canary；尚未上传或发布。**
 
+> 2026-10-29：日期专项、新旧保存对照与 Release A 检查已通过；审计清单覆盖 24 处物理写入、
+> 21 个生命周期和 23 种 writerSource。Shared 继续禁用。
+> 详见 [本轮修复结果](RECORD_SAVE_DATE_CONSISTENCY_FIX_20261029.md)。
+
 ## 1. 当前真实控制能力
 
 | 能力 | 当前事实 | 能否影响已发布客户端 | 紧急回退结论 |
@@ -183,7 +187,7 @@ UNKNOWN
 ### Release A：基础设施版本
 
 - 固定 `LEGACY_ONLY`；
-- RC1 候选已让 23 个生产 Legacy writer 经统一 Coordinator、revision/CAS、恢复和
+- RC1 候选的 24 处生产 Legacy 写入（23 种 writerSource）经统一 Coordinator、revision/CAS、恢复和
   本地脱敏技术监测；
 - 启动先恢复，已有 Bundle 纯读取零写入，缺失 Bundle 才事务初始化；
 - 不开启 Shared；

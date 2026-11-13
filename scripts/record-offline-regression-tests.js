@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const {
   REQUIRED_GUARD_APIS,
   assertNoNetworkAttempts,
   buildOfflineEnv,
+  fullCorpusEntry,
+  offlineAuditPath,
   readGuardAttempts
 } = require('./run-record-offline-regression');
 const { parseMode } = require('./ai-contract-smoke');
@@ -18,7 +21,7 @@ let sequence = 0;
 function auditPath(label) {
   sequence += 1;
   return path.join(
-    '/private/tmp',
+    os.tmpdir(),
     `record-offline-self-test-${label}-${process.pid}-${sequence}.jsonl`
   );
 }
@@ -53,6 +56,44 @@ function assertGuardProbe(name, code, expectedApi) {
 }
 
 const tests = [
+  {
+    name: 'audit-files-use-the-platform-temp-directory',
+    run() {
+      assert.strictEqual(path.dirname(offlineAuditPath('windows/path-probe')), os.tmpdir());
+      assert(!path.basename(offlineAuditPath('../probe')).includes('..'));
+    }
+  },
+  {
+    name: 'full-corpus-accepts-platform-temp-output-with-unchanged-run-arguments',
+    run() {
+      const output = path.join(os.tmpdir(), 'record-offline-output-path-test.json');
+      assert.deepStrictEqual(fullCorpusEntry(output), {
+        command: process.execPath,
+        args: [
+          path.join(ROOT, 'scripts/run-record-e2e-headless.js'),
+          '--all', '--repeat', '2', '--output', path.resolve(output)
+        ]
+      });
+      assert.strictEqual(fs.existsSync(output), false, 'path validation must not create a report');
+    }
+  },
+  {
+    name: 'full-corpus-rejects-relative-repository-and-temp-prefix-escape-paths',
+    run() {
+      [
+        'report.json',
+        path.join(ROOT, 'report.json'),
+        path.join(`${os.tmpdir()}-other`, 'report.json'),
+        path.join(os.tmpdir(), path.relative(os.tmpdir(), ROOT), 'report.json')
+      ].forEach((output) => {
+        assert.throws(
+          () => fullCorpusEntry(output),
+          (error) => error.code === 'OFFLINE_TEST_ARGUMENT_ERROR',
+          output
+        );
+      });
+    }
+  },
   {
     name: 'default-ai-contract-smoke-refuses-without-network',
     run() {

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const assert = require('assert');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { parseArgs } = require('../../../scripts/run-record-e2e-headless');
 const { classifyFailureOwnership } = require('../runner/classify-failure-ownership');
@@ -648,8 +649,8 @@ const tests = [
       assert.throws(() => validateOutputPath('report.json'));
       assert.throws(() => validateOutputPath(path.resolve('report.json')));
       assert.strictEqual(
-        validateOutputPath('/private/tmp/record-e2e-report-self-test.json'),
-        '/private/tmp/record-e2e-report-self-test.json'
+        validateOutputPath(path.join(os.tmpdir(), 'record-e2e-report-self-test.json')),
+        path.join(os.tmpdir(), 'record-e2e-report-self-test.json')
       );
     }
   },
@@ -658,7 +659,7 @@ const tests = [
     run() {
       const args = parseArgs(['--all', '--repeat', '2']);
       assert.strictEqual(args.output, '');
-      const outputPath = `/private/tmp/record-e2e-report-self-test-${process.pid}.json`;
+      const outputPath = path.join(os.tmpdir(), `record-e2e-report-self-test-${process.pid}.json`);
       const written = writeFullReport(outputPath, { token: 'danger', value: 1 });
       try {
         assert.strictEqual(written.path, outputPath);
